@@ -613,13 +613,13 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 	}
 	for name, specifier := range candidatePackage.Dependencies {
 		dependency := importer.Dependencies[name]
-		if dependency.Specifier != specifier || !managedLockVersionMatches(candidate, name, dependency.Version) || !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, dependency.Version) {
+		if dependency.Specifier != specifier || !managedLockVersionMatches(candidate, name, specifier, dependency.Version) || !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, dependency.Version) {
 			return fmt.Errorf("candidate package-manager lock does not match dependency %q", name)
 		}
 	}
 	for name, specifier := range candidatePackage.DevDependencies {
 		dependency := importer.DevDependencies[name]
-		if dependency.Specifier != specifier || !managedLockVersionMatches(candidate, name, dependency.Version) || !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, dependency.Version) {
+		if dependency.Specifier != specifier || !managedLockVersionMatches(candidate, name, specifier, dependency.Version) || !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, dependency.Version) {
 			return fmt.Errorf("candidate package-manager lock does not match dev dependency %q", name)
 		}
 	}
@@ -679,10 +679,15 @@ func managedLockEntriesExist(packages map[string]any, snapshots map[string]manag
 	if lockVersion == "" || strings.HasPrefix(lockVersion, "link:") {
 		return false
 	}
-	packageKey := packageID + "@" + strings.SplitN(lockVersion, "(", 2)[0]
-	snapshotKey := packageID + "@" + lockVersion
+	resolvedName, resolvedVersion, ok := managedPnpmResolvedIdentity(packageID, lockVersion)
+	if !ok {
+		return false
+	}
+	packageKey := resolvedName + "@" + resolvedVersion
+	peerSuffix := strings.TrimPrefix(lockVersion, strings.SplitN(lockVersion, "(", 2)[0])
+	snapshotKey := resolvedName + "@" + resolvedVersion + peerSuffix
 	snapshotKeys := []string{snapshotKey, "/" + snapshotKey}
-	if !strings.Contains(lockVersion, "(") {
+	if !strings.Contains(lockVersion, "(") && snapshotKey == packageKey {
 		snapshotKeys = append(snapshotKeys, packageKey, "/"+packageKey)
 	}
 	for _, candidate := range []string{packageKey, "/" + packageKey} {
@@ -698,14 +703,20 @@ func managedLockEntriesExist(packages map[string]any, snapshots map[string]manag
 	return false
 }
 
-func managedLockVersionMatches(root, packageID, lockVersion string) bool {
+func managedLockVersionMatches(root, packageID, specifier, lockVersion string) bool {
 	if lockVersion == "" {
 		return false
 	}
-	// pnpm appends peer dependency context in parentheses. Compare the concrete
-	// version against the package physically installed in this generation.
-	resolved := strings.SplitN(lockVersion, "(", 2)[0]
-	if strings.HasPrefix(resolved, "link:") {
+	expectedName, versionRange := packageID, specifier
+	if strings.HasPrefix(specifier, "npm:") {
+		aliasName, aliasRange, ok := parseManagedNPMAlias(strings.TrimPrefix(specifier, "npm:"))
+		if !ok {
+			return false
+		}
+		expectedName, versionRange = aliasName, aliasRange
+	}
+	resolvedName, resolvedVersion, ok := managedPnpmResolvedIdentity(packageID, lockVersion)
+	if !ok || resolvedName != expectedName {
 		return false
 	}
 	manifest, err := os.ReadFile(filepath.Join(root, "node_modules", filepath.FromSlash(packageID), "package.json"))
@@ -713,10 +724,39 @@ func managedLockVersionMatches(root, packageID, lockVersion string) bool {
 		return false
 	}
 	var pkg struct{ Name, Version string }
-	if json.Unmarshal(manifest, &pkg) != nil || pkg.Name != packageID || pkg.Version == "" {
+	if json.Unmarshal(manifest, &pkg) != nil || pkg.Name != expectedName || pkg.Version == "" {
 		return false
 	}
-	return resolved == pkg.Version
+	return resolvedVersion == pkg.Version && specifierContainsVersion(versionRange, pkg.Version)
+}
+
+func parseManagedNPMAlias(specifier string) (string, string, bool) {
+	separator := strings.LastIndex(specifier, "@")
+	if separator <= strings.LastIndex(specifier, "/") {
+		return "", "", false
+	}
+	name, versionRange := specifier[:separator], specifier[separator+1:]
+	_, rangeErr := semrange.ParseRange(versionRange)
+	if name == "" || versionRange == "" || install_spec.Validate(name) != nil || rangeErr != nil {
+		return "", "", false
+	}
+	return name, versionRange, true
+}
+
+func managedPnpmResolvedIdentity(requestedPackage, lockVersion string) (string, string, bool) {
+	base := strings.SplitN(lockVersion, "(", 2)[0]
+	if strings.HasPrefix(base, "link:") || base == "" {
+		return "", "", false
+	}
+	separator := strings.LastIndex(base, "@")
+	if separator > strings.LastIndex(base, "/") {
+		name, version := base[:separator], base[separator+1:]
+		return name, version, name != "" && version != ""
+	}
+	if strings.Contains(base, "@") {
+		return "", "", false
+	}
+	return requestedPackage, base, true
 }
 
 type managedMarketplaceLockEntry struct {
@@ -868,18 +908,17 @@ func validateManagedExecutableProjection(root, packageID string) error {
 			return fmt.Errorf("generation executable shim %s does not target its declared package binary", commandName)
 		}
 	}
-	// Exercise a regular shim with a harmless interposed Node executable. This
-	// proves the launcher invokes the declared entry without executing it;
-	// kb-host's entrypoint starts the host unconditionally.
+	// Inspect regular shims without executing them: they are candidate files and
+	// may contain shell commands. kb-host has no safe version/help mode.
 	if info.Mode().IsRegular() {
-		if err := probeManagedExecutableShim(projection, resolvedEntry, executable.Version); err != nil {
-			return fmt.Errorf("generation executable projection %s failed its launcher probe: %w", commandName, err)
+		if err := validateManagedExecutableShim(projection, resolvedEntry); err != nil {
+			return fmt.Errorf("generation executable projection %s has an invalid launcher: %w", commandName, err)
 		}
 	}
 	return nil
 }
 
-func probeManagedExecutableShim(projection, resolvedEntry, version string) error {
+func validateManagedExecutableShim(projection, resolvedEntry string) error {
 	if runtime.GOOS == "windows" {
 		return nil
 	}
@@ -890,46 +929,44 @@ func probeManagedExecutableShim(projection, resolvedEntry, version string) error
 	if bytes.Count(data, []byte("exec node ")) != 1 {
 		return fmt.Errorf("launcher is outside the safe Node shim shape")
 	}
-	if _, err := os.Lstat(filepath.Join(filepath.Dir(projection), "node")); err == nil {
-		return fmt.Errorf("launcher directory contains a local Node executable")
-	} else if !os.IsNotExist(err) {
-		return err
+	if !bytes.HasPrefix(data, []byte("#!/bin/sh\n")) && !bytes.HasPrefix(data, []byte("#!/usr/bin/env sh\n")) {
+		return fmt.Errorf("launcher is not a supported POSIX shell shim")
 	}
-	probeDir, err := os.MkdirTemp("", "kb-managed-shim-probe-")
-	if err != nil {
-		return err
+	// sh -n parses syntax without executing commands, substitutions, or user code.
+	syntax := exec.Command("/bin/sh", "-n", projection)
+	if output, err := syntax.CombinedOutput(); err != nil {
+		return fmt.Errorf("launcher shell syntax is invalid: %s", strings.TrimSpace(string(output)))
 	}
-	defer os.RemoveAll(probeDir)
-	capture := filepath.Join(probeDir, "argv")
-	nodeStub := filepath.Join(probeDir, "node")
-	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(capture) + "\nprintf '%s\\n' " + shellQuote(version) + "\n"
-	if err := os.WriteFile(nodeStub, []byte(stub), 0o700); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, projection, "--version")
-	cmd.Dir = filepath.Dir(projection)
-	cmd.Env = append(os.Environ(), "PATH="+probeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	output, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), version) {
-		return fmt.Errorf("launcher did not complete the harmless probe")
-	}
-	args, err := os.ReadFile(capture)
-	if err != nil {
-		return fmt.Errorf("launcher did not invoke the interposed Node executable")
-	}
-	for _, arg := range strings.Split(strings.TrimSpace(string(args)), "\n") {
-		candidate := arg
-		if !filepath.IsAbs(candidate) {
-			candidate = filepath.Join(filepath.Dir(projection), candidate)
+	var targets []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "#") {
+			continue
 		}
-		resolved, resolveErr := filepath.EvalSymlinks(candidate)
-		if resolveErr == nil && filepath.Clean(resolved) == filepath.Clean(resolvedEntry) {
-			return nil
+		if index := strings.Index(line, "exec node "); index >= 0 {
+			parts := strings.Fields(line[index+len("exec node "):])
+			if len(parts) == 0 {
+				return fmt.Errorf("launcher node invocation has no entrypoint")
+			}
+			targets = append(targets, strings.Trim(parts[0], "\\\"'"))
 		}
 	}
-	return fmt.Errorf("launcher did not invoke its declared package binary")
+	if len(targets) != 1 {
+		return fmt.Errorf("launcher does not have one inspectable Node entrypoint")
+	}
+	target := strings.ReplaceAll(targets[0], "${basedir}", filepath.Dir(projection))
+	target = strings.ReplaceAll(target, "$basedir", filepath.Dir(projection))
+	if strings.Contains(target, "$") {
+		return fmt.Errorf("launcher entrypoint uses unsupported shell expansion")
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(filepath.Dir(projection), target)
+	}
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil || filepath.Clean(resolved) != filepath.Clean(resolvedEntry) {
+		return fmt.Errorf("launcher command does not invoke its declared package binary")
+	}
+	return nil
 }
 
 func firstMarketplaceSpec(specs map[string]struct{}) string {
