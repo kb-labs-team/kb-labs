@@ -81,6 +81,10 @@ describe('RegistryPackageSource', () => {
     await expect(source.resolveIdentity('@kb-labs/private'))
       .rejects.toMatchObject({ code: 'AUTH_FAILED' });
 
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
+    await expect(source.resolveIdentity('@kb-labs/private'))
+      .rejects.toMatchObject({ code: 'TRANSPORT_FAILED' });
+
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network unavailable'); }));
     await expect(source.resolveIdentity('@kb-labs/private'))
       .rejects.toMatchObject({ code: 'TRANSPORT_FAILED' });
