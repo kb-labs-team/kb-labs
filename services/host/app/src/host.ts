@@ -41,6 +41,7 @@ import {
   defineHostModule,
   reserveLoopbackPorts,
   runHost,
+  requireEnvironmentSecret,
   type HostConfig,
   type HostModule,
   type ServiceContext,
@@ -110,6 +111,7 @@ interface PreparedHost {
   settings: HostSettings;
   upstreams: GatewayUpstreams;
   platformDataRoot: string;
+  projectScopeAllowed: boolean;
   gatewayAddress?: string;
 }
 
@@ -284,7 +286,13 @@ export async function createHostConfig(
         const effective = await loadEffectiveConfig({
           platformRoot: ctx.platformRoot,
         });
-        const platformConfig = (effective?.data as { platform?: unknown } | undefined)?.platform;
+        const configData = effective?.data as {
+          platform?: { deployment?: { topology?: string } };
+          gateway?: { access?: { mode?: string } };
+        } | undefined;
+        const projectScopeAllowed = configData?.gateway?.access?.mode === "local"
+          && configData.platform?.deployment?.topology === "local";
+        const platformConfig = configData?.platform;
         if (platformConfig && typeof platformConfig === "object" && !Array.isArray(platformConfig)) {
           const issues = await validatePlatformAdapterOptions(gatewayConfigRoot, platformConfig as Record<string, unknown>);
           const issue = issues[0];
@@ -319,7 +327,7 @@ export async function createHostConfig(
           gatewayAddress = `http://${INTERNAL_BIND_HOST}:${listenAddress.port}`;
         }
         const platformDataRoot = await resolvePlatformDataRoot(ctx.platformRoot);
-        return { settings, upstreams, platformDataRoot, gatewayAddress };
+        return { settings, upstreams, platformDataRoot, projectScopeAllowed, gatewayAddress };
       } catch (error) {
         releaseResolveHook();
         throw error;
@@ -366,7 +374,7 @@ export async function createHostConfig(
     ...GATEWAY_SERVICE_NETWORK,
     id: GATEWAY_SERVICE_NETWORK.serviceId,
     setup: async (ctx) => {
-      const { settings, upstreams, gatewayAddress } = await prepare(ctx);
+      const { settings, upstreams, gatewayAddress, projectScopeAllowed } = await prepare(ctx);
       if (!isSelected(settings, "gateway")) {
         ctx.logger.info("Module disabled by host.modules", {
           moduleId: "gateway",
@@ -454,7 +462,11 @@ export async function createHostConfig(
         ? internalBaseUrl(ctx, "marketplace")
         : undefined;
       const pluginsRoutes = marketplaceBaseUrl
-        ? [createPluginsRoutes({ registry, marketplace: new MarketplaceClient(marketplaceBaseUrl) })]
+        ? [createPluginsRoutes({
+          registry,
+          marketplace: new MarketplaceClient(marketplaceBaseUrl, requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET")),
+          projectScopeAllowed,
+        })]
         : [];
       if (isSelected(settings, "marketplace") && !marketplaceBaseUrl) {
         ctx.logger.warn(

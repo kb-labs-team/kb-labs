@@ -650,6 +650,13 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       autoEnable?: boolean;
     },
   ): Promise<SyncResult> {
+    const effectiveCtx = await this.resolveSyncScope(ctx);
+    const scopeRoot = resolveScopeRoot(this.roots, effectiveCtx);
+    return this.withScopeMutation(scopeRoot, () => this.syncInScope(effectiveCtx, scopeRoot, opts));
+  }
+
+  /** Resolve sync's physical lock owner before the API authorizes the request. */
+  async resolveSyncScope(ctx: ScopeContext): Promise<ScopeContext> {
     let effectiveCtx = ctx;
     if (ctx.scope === 'project') {
       const projectRoot = ctx.projectRoot ?? this.roots.projectRoot;
@@ -665,8 +672,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         }
       }
     }
-    const scopeRoot = resolveScopeRoot(this.roots, effectiveCtx);
-    return this.withScopeMutation(scopeRoot, () => this.syncInScope(effectiveCtx, scopeRoot, opts));
+    return effectiveCtx;
   }
 
   private async syncInScope(

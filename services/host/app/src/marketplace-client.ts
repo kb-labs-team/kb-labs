@@ -12,6 +12,8 @@
  * call never leaves the process boundary.
  */
 
+import { forwardedIdentityHeaders, type AuthContext } from "@kb-labs/gateway-contracts";
+
 export interface MarketplacePackageEntry {
   id: string;
   version: string;
@@ -58,12 +60,15 @@ export class MarketplaceClientError extends Error {
 }
 
 export class MarketplaceClient {
-  constructor(private readonly baseUrl: string) {}
+  constructor(private readonly baseUrl: string, private readonly internalSecret: string) {
+    if (!internalSecret) { throw new Error("Marketplace client requires GATEWAY_INTERNAL_SECRET"); }
+  }
 
   async listPackages(
     params: ListPackagesParams,
+    auth: AuthContext,
   ): Promise<{ entries: MarketplacePackageEntry[]; total: number }> {
-    const url = new URL("/packages", this.baseUrl);
+    const url = new URL("/api/v1/marketplace/packages", this.baseUrl);
     if (params.kind) {
       url.searchParams.set("kind", params.kind);
     }
@@ -73,15 +78,15 @@ export class MarketplaceClient {
     }
     return this.request<{ entries: MarketplacePackageEntry[]; total: number }>(
       url,
-      { method: "GET" },
+      { method: "GET", headers: forwardedIdentityHeaders(auth, this.internalSecret) },
     );
   }
 
-  async setEnabled(params: SetEnabledParams, enabled: boolean): Promise<void> {
-    const url = new URL(`/packages/${enabled ? "enable" : "disable"}`, this.baseUrl);
+  async setEnabled(params: SetEnabledParams, enabled: boolean, auth: AuthContext): Promise<void> {
+    const url = new URL(`/api/v1/marketplace/packages/${enabled ? "enable" : "disable"}`, this.baseUrl);
     await this.request<unknown>(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...forwardedIdentityHeaders(auth, this.internalSecret) },
       body: JSON.stringify({
         packageId: params.packageId,
         scope: params.scope,
@@ -90,20 +95,20 @@ export class MarketplaceClient {
     });
   }
 
-  async installPackages(params: InstallPackagesParams): Promise<unknown> {
-    const url = new URL("/packages/install", this.baseUrl);
+  async installPackages(params: InstallPackagesParams, auth: AuthContext): Promise<unknown> {
+    const url = new URL("/api/v1/marketplace/packages/install", this.baseUrl);
     return this.request<unknown>(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...forwardedIdentityHeaders(auth, this.internalSecret) },
       body: JSON.stringify(params),
     });
   }
 
-  async uninstallPackages(params: UninstallPackagesParams): Promise<void> {
-    const url = new URL("/packages/uninstall", this.baseUrl);
+  async uninstallPackages(params: UninstallPackagesParams, auth: AuthContext): Promise<void> {
+    const url = new URL("/api/v1/marketplace/packages/uninstall", this.baseUrl);
     await this.request<unknown>(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...forwardedIdentityHeaders(auth, this.internalSecret) },
       body: JSON.stringify(params),
     });
   }

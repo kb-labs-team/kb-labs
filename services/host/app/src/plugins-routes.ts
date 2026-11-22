@@ -9,7 +9,8 @@
  * loopback address for the co-located marketplace module (ADR-0043), so there
  * is never a second `.kb/marketplace.lock` writer. Mounted on the gateway as
  * {@link HostRoutes} (`@kb-labs/gateway-app`), after the gateway's global auth
- * hooks — this module adds no authentication of its own.
+ * hooks — it forwards the resolved caller and fails closed when the Gateway
+ * has not provided an identity or project ownership is unavailable.
  *
  * Response shape mirrors the REST API's envelope (`{ ok: true, data }` /
  * `{ ok: false, error }`) so Studio's existing HTTP client and error mapper
@@ -23,15 +24,24 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
+import { PERMISSIONS } from "@kb-labs/core-contracts";
 import { projectErrorEnvelope, showProject } from "@kb-labs/core-project-registry";
 import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
+import type { AuthContext } from "@kb-labs/gateway-contracts";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
 import { MarketplaceClientError, type MarketplaceClient } from "./marketplace-client.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    authContext?: AuthContext;
+  }
+}
 
 export interface PluginsRoutesOptions {
   registry: IProjectRegistry;
   marketplace: MarketplaceClient;
+  projectScopeAllowed: boolean;
 }
 
 interface EnableDisableBody {
@@ -78,20 +88,23 @@ function requireString(
  * {@link HostRoutes} via `GatewayEmbedOptions.hostRoutes`.
  */
 export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
-  const { registry, marketplace } = options;
+  const { registry, marketplace, projectScopeAllowed } = options;
 
   async function setEnabled(
     request: FastifyRequest<{ Body: EnableDisableBody }>,
     reply: FastifyReply,
     enabled: boolean,
   ) {
+    const auth = requireAuth(request, reply);
+    if (!auth) return reply;
     const { projectId, packageId } = request.body ?? {};
     if (!requireString(reply, projectId, "projectId") || !requireString(reply, packageId, "packageId")) {
       return reply;
     }
+    if (!authorizeProjectScope(reply, request, projectScopeAllowed, PERMISSIONS.PLUGINS_WRITE)) return reply;
     try {
       const projectRoot = await resolveProjectRoot(registry, projectId);
-      await marketplace.setEnabled({ packageId, scope: "project", projectRoot }, enabled);
+      await marketplace.setEnabled({ packageId, scope: "project", projectRoot }, enabled, auth);
       return sendData(reply, { id: packageId, enabled, scope: "project" });
     } catch (error) {
       if (error instanceof MarketplaceClientError) {
@@ -105,13 +118,16 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
     app.get<{ Querystring: { projectId?: string } }>(
       "/api/v1/plugins",
       async (request, reply) => {
+        const auth = requireAuth(request, reply);
+        if (!auth) return reply;
         const { projectId } = request.query;
         if (!requireString(reply, projectId, "projectId")) {
           return reply;
         }
+        if (!authorizeProjectScope(reply, request, projectScopeAllowed, PERMISSIONS.PLUGINS_READ)) return reply;
         try {
           const projectRoot = await resolveProjectRoot(registry, projectId);
-          const data = await marketplace.listPackages({ kind: "plugin", scope: "project", projectRoot });
+          const data = await marketplace.listPackages({ kind: "plugin", scope: "project", projectRoot }, auth);
           return sendData(reply, data.entries);
         } catch (error) {
           if (error instanceof MarketplaceClientError) {
@@ -133,13 +149,16 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
     );
 
     app.post<{ Body: InstallBody }>("/api/v1/plugins/install", async (request, reply) => {
+      const auth = requireAuth(request, reply);
+      if (!auth) return reply;
       const { projectId, spec } = request.body ?? {};
       if (!requireString(reply, projectId, "projectId") || !requireString(reply, spec, "spec")) {
         return reply;
       }
+      if (!authorizeProjectScope(reply, request, projectScopeAllowed, PERMISSIONS.PLUGINS_WRITE)) return reply;
       try {
         const projectRoot = await resolveProjectRoot(registry, projectId);
-        const result = await marketplace.installPackages({ specs: [spec], scope: "project", projectRoot });
+        const result = await marketplace.installPackages({ specs: [spec], scope: "project", projectRoot }, auth);
         return sendData(reply, result, 201);
       } catch (error) {
         if (error instanceof MarketplaceClientError) {
@@ -150,13 +169,16 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
     });
 
     app.post<{ Body: EnableDisableBody }>("/api/v1/plugins/uninstall", async (request, reply) => {
+      const auth = requireAuth(request, reply);
+      if (!auth) return reply;
       const { projectId, packageId } = request.body ?? {};
       if (!requireString(reply, projectId, "projectId") || !requireString(reply, packageId, "packageId")) {
         return reply;
       }
+      if (!authorizeProjectScope(reply, request, projectScopeAllowed, PERMISSIONS.PLUGINS_WRITE)) return reply;
       try {
         const projectRoot = await resolveProjectRoot(registry, projectId);
-        await marketplace.uninstallPackages({ packageIds: [packageId], scope: "project", projectRoot });
+        await marketplace.uninstallPackages({ packageIds: [packageId], scope: "project", projectRoot }, auth);
         return sendData(reply, { id: packageId, removed: true });
       } catch (error) {
         if (error instanceof MarketplaceClientError) {
@@ -166,4 +188,29 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
       }
     });
   };
+}
+
+function requireAuth(request: FastifyRequest, reply: FastifyReply): AuthContext | null {
+  const auth = request.authContext;
+  if (auth) return auth;
+  sendEnvelope(reply, createErrorEnvelope("KB_AUTH_REQUIRED", {
+    correlationId: String(request.id),
+    hint: "Send this request through the authenticated Gateway, then retry.",
+  }));
+  return null;
+}
+
+function authorizeProjectScope(
+  reply: FastifyReply,
+  request: FastifyRequest,
+  allowed: boolean,
+  permission: string,
+): boolean {
+  if (allowed) return true;
+  sendEnvelope(reply, createErrorEnvelope("KB_AUTH_FORBIDDEN", {
+    correlationId: String(request.id),
+    details: { permission },
+    hint: "Project ownership cannot be verified for this secured or shared installation.",
+  }));
+  return false;
 }

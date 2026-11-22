@@ -5,6 +5,8 @@ import type { FastifyReply, FastifyRequest } from 'fastify';
 
 export interface MarketplaceMutationAuth {
   internalSecret: string;
+  /** Project paths have no principal ownership binding in the registry. */
+  projectScopeAllowed: boolean;
 }
 
 export function authorizeMarketplaceMutation(
@@ -20,6 +22,17 @@ export function authorizeMarketplaceMutation(
       error: createErrorEnvelope('KB_AUTH_REQUIRED', {
         correlationId: String(request.id),
         hint: 'Send this request through the authenticated Gateway, then retry the Marketplace operation.',
+      }),
+    });
+    return false;
+  }
+  if (scope === 'project' && !policy.projectScopeAllowed) {
+    reply.code(403).send({
+      ok: false,
+      error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+        correlationId: String(request.id),
+        details: { permission: PERMISSIONS.PLUGINS_WRITE },
+        hint: 'Project ownership cannot be verified for this secured or shared installation.',
       }),
     });
     return false;
@@ -53,6 +66,18 @@ export function authorizeMarketplaceRead(
       error: createErrorEnvelope('KB_AUTH_REQUIRED', {
         correlationId: String(request.id),
         hint: 'Send this request through the authenticated Gateway, then retry the Marketplace operation.',
+      }),
+    });
+    return false;
+  }
+
+  if ((scope === 'project' || scope === 'all') && !policy.projectScopeAllowed) {
+    reply.code(403).send({
+      ok: false,
+      error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+        correlationId: String(request.id),
+        details: { permission: PERMISSIONS.PLUGINS_READ },
+        hint: 'Project ownership cannot be verified for this secured or shared installation.',
       }),
     });
     return false;
