@@ -50,6 +50,7 @@ from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
                            run_selected_smoke,
                            record_runner_exception, replay_steps)
+from redaction import redact_text
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
                                read_journey_selection, use_journey_selection)
@@ -305,6 +306,16 @@ def journey_verdict_detail(result: dict) -> str:
     if not row:
         return f"journey returned {result.get('status', 'unknown')} without a failing row"
     return f"{row.get('name') or 'journey step'}: {row.get('message') or 'no failure message'}"
+
+
+def missing_service_report_detail(result, report: Path, env: dict[str, str]) -> str:
+    """Explain a child-runner report gap with bounded, redacted process output."""
+    streams = []
+    for label, value in (("stdout", result.stdout), ("stderr", result.stderr)):
+        excerpt = " ".join(redact_text(value or "", env).split())[-700:]
+        streams.append(f"{label}: {excerpt or 'no output'}")
+    return (f"service_runner exited {result.returncode} without a usable result report at {report}; "
+            + "; ".join(streams))
 
 
 def confirmation_hint_matches_invocation(hint: str, invocation: list[str]) -> bool:
@@ -2318,20 +2329,24 @@ def _main(*, update_variant_runner=None):
                     fail("service runner result states field was not an object")
             except (OSError, json.JSONDecodeError) as error:
                 fail(f"service runner result could not provide state probes: {error}")
+        if not service_report.exists():
+            detail = missing_service_report_detail(result, service_report, service_env)
+            report_step_name = f"{mode} service runner result report"
+            CASE_JOURNEY.step(report_step_name, "journey.runner",
+                              lambda: detail, role="lifecycle")
+            fail(f"{mode} service journey: {detail}")
+            block_outer_dependents(outer_graph, ["marketplace", "marketplace-fixtures", "adapters",
+                                                 "plugin-author", "workflow", "analytics", "studio"])
+            _run_final_uninstall(outer_graph, env, launcher)
+            return finalize_run(False)
+
         if result.returncode != 0:
             try:
                 service_result = json.loads(service_report.read_text())
                 detail = journey_verdict_detail(service_result)
             except (OSError, json.JSONDecodeError):
-                excerpt = " ".join(result.stdout.split())[-1500:]
-                detail = f"service_runner exited {result.returncode} without a result JSON; {excerpt or 'no output'}"
+                detail = missing_service_report_detail(result, service_report, service_env)
             fail(f"{mode} service journey: {detail}")
-
-        if not service_report.exists():
-            block_outer_dependents(outer_graph, ["marketplace", "marketplace-fixtures", "adapters",
-                                                 "plugin-author", "workflow", "analytics", "studio"])
-            _run_final_uninstall(outer_graph, env, launcher)
-            return finalize_run(False)
         fixture_state_needed = (not outer_graph.selection_active
                                 or "fixtures-installed" in outer_graph.needed_states)
         project_b_consumers_selected = (
