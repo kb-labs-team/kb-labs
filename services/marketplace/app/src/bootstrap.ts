@@ -15,7 +15,7 @@ import {
   NpmPackageSource,
   RegistryPackageSource,
 } from "@kb-labs/marketplace-npm";
-import { createManagedPlatformInstallDispatcher, isManagedPlatformRoot } from "./managed-marketplace-owner.js";
+import { createManagedPlatformMutationDispatcher, isManagedPlatformRoot } from "./managed-marketplace-owner.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -82,8 +82,8 @@ export async function setup({
     && configData.platform?.deployment?.topology === 'local';
   const managedPlatform = (typeof process.env.KB_INSTALLATION_ID === 'string' && process.env.KB_INSTALLATION_ID.length > 0)
     || await isManagedPlatformRoot(platformRoot);
-  const dispatchManagedPlatformInstall = managedPlatform
-    ? createManagedPlatformInstallDispatcher({
+  const dispatchManagedPlatformMutation = managedPlatform
+    ? createManagedPlatformMutationDispatcher({
       ownerBinary: process.env.KB_CREATE_OWNER_BINARY,
       platformRoot,
     })
@@ -96,7 +96,7 @@ export async function setup({
       internalSecret,
       projectScopeAllowed,
       managedPlatform,
-      ...(dispatchManagedPlatformInstall ? { dispatchManagedPlatformInstall } : {}),
+      ...(dispatchManagedPlatformMutation ? { dispatchManagedPlatformMutation } : {}),
     },
   });
   await server.listen(getListenOptions(port, host));

@@ -440,6 +440,7 @@ describe('MarketplaceService', () => {
     it('updates a platform adapter only when the Marketplace version moves forward', async () => {
       const packageId = '@kb-labs/update-adapter';
       const sourcePackage = await createAdapterDir(tmpDir, 'update-adapter', packageId);
+      await fs.writeFile(path.join(sourcePackage, 'dist', 'index.js'), 'export {};\n');
       let version = '1.0.0';
       const source: PackageSource = {
         async resolve() {

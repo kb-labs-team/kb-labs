@@ -10,10 +10,14 @@ export interface MarketplaceMutationAuth {
   /** Managed installations must route graph writes through the Go owner. */
   managedPlatform?: boolean;
   /** Trusted server-side dispatcher supplied by the Host bootstrap. */
-  dispatchManagedPlatformInstall?: (input: { specs: string[]; dev?: boolean; shareToken?: string }) => Promise<unknown>;
+  dispatchManagedPlatformMutation?: (input: ManagedPlatformMutationRequest) => Promise<unknown>;
 }
 
-export type MarketplaceMutationKind = 'install' | 'other';
+export type ManagedPlatformMutationRequest =
+  | { operation: 'install'; specs: string[]; dev?: boolean; shareToken?: string }
+  | { operation: 'update'; packageIds?: string[] };
+
+export type MarketplaceMutationKind = 'install' | 'update' | 'other';
 
 export function authorizeMarketplaceMutation(
   request: FastifyRequest,
@@ -58,7 +62,7 @@ export function authorizeMarketplaceMutation(
     return false;
   }
   if (scope === 'platform' && policy.managedPlatform
-      && (kind !== 'install' || !policy.dispatchManagedPlatformInstall)) {
+      && ((kind !== 'install' && kind !== 'update') || !policy.dispatchManagedPlatformMutation)) {
     reply.code(503).send({
       ok: false,
       error: createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {

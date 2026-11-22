@@ -2,11 +2,9 @@ import { spawn } from 'node:child_process';
 import { lstat, realpath } from 'node:fs/promises';
 import * as path from 'node:path';
 
-export interface ManagedPlatformInstallRequest {
-  specs: string[];
-  dev?: boolean;
-  shareToken?: string;
-}
+export type ManagedPlatformMutationRequest =
+  | { operation: "install"; specs: string[]; dev?: boolean; shareToken?: string }
+  | { operation: "update"; packageIds?: string[] };
 
 export class ManagedPlatformOwnerError extends Error {
   readonly code = 'KB_MARKETPLACE_INSTALL_FAILED';
@@ -32,12 +30,12 @@ export async function isManagedPlatformRoot(platformRoot: string): Promise<boole
  * Its executable and generation roots come from Go's managed Host startup,
  * never from request data or PATH lookup.
  */
-export function createManagedPlatformInstallDispatcher(options: {
+export function createManagedPlatformMutationDispatcher(options: {
   ownerBinary: string | undefined;
   platformRoot: string;
-}): (request: ManagedPlatformInstallRequest) => Promise<unknown> {
+}): (request: ManagedPlatformMutationRequest) => Promise<unknown> {
   return async (request) => {
-    if (request.shareToken) throw new ManagedPlatformOwnerError('Managed platform installation does not accept request-scoped share tokens.');
+    if (request.operation === "install" && request.shareToken) throw new ManagedPlatformOwnerError('Managed platform installation does not accept request-scoped share tokens.');
     if (!options.ownerBinary || !path.isAbsolute(options.ownerBinary)) {
       throw new ManagedPlatformOwnerError('The trusted managed Marketplace owner executable is not configured.');
     }
@@ -70,7 +68,10 @@ export function createManagedPlatformInstallDispatcher(options: {
       child.once('error', (error) => resolve({ code: null, error }));
       child.once('close', (code) => resolve({ code }));
     });
-    child.stdin.end(JSON.stringify({ mutation: { operation: 'install', specs: request.specs, ...(request.dev === undefined ? {} : { dev: request.dev }) } }));
+    const mutation = request.operation === 'install'
+      ? { operation: 'install', specs: request.specs, ...(request.dev === undefined ? {} : { dev: request.dev }) }
+      : { operation: 'update', ...(request.packageIds === undefined ? {} : { packageIds: request.packageIds }) };
+    child.stdin.end(JSON.stringify({ mutation }));
     const result = await completion;
     if (result.error || result.code !== 0 || outputSize > 64 * 1024) {
       throw new ManagedPlatformOwnerError();

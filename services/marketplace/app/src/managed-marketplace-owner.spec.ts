@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFi
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createManagedPlatformInstallDispatcher, isManagedPlatformRoot } from './managed-marketplace-owner.js';
+import { createManagedPlatformMutationDispatcher, isManagedPlatformRoot } from './managed-marketplace-owner.js';
 
 describe('managed Marketplace owner dispatcher', () => {
   let root = '';
@@ -22,13 +22,18 @@ describe('managed Marketplace owner dispatcher', () => {
     const previous = process.env.KB_OWNER_CAPTURE;
     process.env.KB_OWNER_CAPTURE = capture;
     try {
-      const dispatch = createManagedPlatformInstallDispatcher({ ownerBinary: owner, platformRoot });
-      const result = await dispatch({ specs: ['@kb-labs/sample-adapter@1.2.3'], dev: true });
+      const dispatch = createManagedPlatformMutationDispatcher({ ownerBinary: owner, platformRoot });
+      const result = await dispatch({ operation: 'install', specs: ['@kb-labs/sample-adapter@1.2.3'], dev: true });
       expect(result).toEqual({ ok: true, activeRoot: '/install/versions/next' });
       expect(JSON.parse(await readFile(capture, 'utf8'))).toEqual({
         args: ['marketplace-owner', '--platform-root', platformRoot, '--json'],
         cwd: platformRoot,
         input: JSON.stringify({ mutation: { operation: 'install', specs: ['@kb-labs/sample-adapter@1.2.3'], dev: true } }),
+      });
+      const update = await dispatch({ operation: 'update', packageIds: ['@kb-labs/sample-adapter'] });
+      expect(update).toEqual({ ok: true, activeRoot: '/install/versions/next' });
+      expect(JSON.parse(await readFile(capture, 'utf8'))).toMatchObject({
+        input: JSON.stringify({ mutation: { operation: 'update', packageIds: ['@kb-labs/sample-adapter'] } }),
       });
     } finally {
       if (previous === undefined) delete process.env.KB_OWNER_CAPTURE;
@@ -37,8 +42,8 @@ describe('managed Marketplace owner dispatcher', () => {
   });
 
   it('rejects request-scoped credentials before launching the owner', async () => {
-    const dispatch = createManagedPlatformInstallDispatcher({ ownerBinary: undefined, platformRoot: '/install/versions/old' });
-    await expect(dispatch({ specs: ['@kb-labs/sample-adapter'], shareToken: 'request-secret' })).rejects.toThrow(/share tokens/);
+    const dispatch = createManagedPlatformMutationDispatcher({ ownerBinary: undefined, platformRoot: '/install/versions/old' });
+    await expect(dispatch({ operation: 'install', specs: ['@kb-labs/sample-adapter'], shareToken: 'request-secret' })).rejects.toThrow(/share tokens/);
   });
 
   it('recognizes a managed version root even without Host-provided environment markers', async () => {

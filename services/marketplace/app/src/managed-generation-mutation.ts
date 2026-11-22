@@ -128,40 +128,63 @@ export async function runManagedGenerationMutation(): Promise<void> {
   });
   const scope = { scope: "platform" as const };
   const resolvedBySpec = new Map<string, { id: string; version: string }>();
-  for (const spec of request.specs) {
-    let primaryKind: string | undefined;
-    let identity: { id: string; version: string } | undefined;
-    let resolved = false;
-    for (const source of sources) {
-      const candidate = await source.resolveIdentity(spec);
-      if (candidate.status === "not-found-unowned") continue;
-      resolved = true;
-      if (candidate.status === "found") {
-        primaryKind = candidate.package.primaryKind;
-        identity = { id: candidate.package.id, version: candidate.package.version };
+  let updatePackageIds: string[] = [];
+  if (request.operation === "install") {
+    for (const spec of request.specs) {
+      let primaryKind: string | undefined;
+      let identity: { id: string; version: string } | undefined;
+      let resolved = false;
+      for (const source of sources) {
+        const candidate = await source.resolveIdentity(spec);
+        if (candidate.status === "not-found-unowned") continue;
+        resolved = true;
+        if (candidate.status === "found") {
+          primaryKind = candidate.package.primaryKind;
+          identity = { id: candidate.package.id, version: candidate.package.version };
+        }
+        break;
       }
-      break;
+      if (!resolved || primaryKind === undefined || !identity) throw new Error("managed package is not present in configured sources");
+      if (primaryKind !== "adapter" && primaryKind !== "plugin") throw new Error("managed generation install accepts plugin and adapter packages only");
+      resolvedBySpec.set(spec, identity);
     }
-    if (!resolved || primaryKind === undefined || !identity) throw new Error("managed package is not present in configured sources");
-    if (primaryKind !== "adapter" && primaryKind !== "plugin") throw new Error("managed generation install accepts plugin and adapter packages only");
-    resolvedBySpec.set(spec, identity);
+  } else {
+    const lockPath = path.join(platformRoot, ".kb", "marketplace.lock");
+    const lock = JSON.parse(await fs.readFile(lockPath, "utf8")) as unknown;
+    if (!record(lock) || !record(lock.adapters)) throw new Error("managed adapter update requires an existing adapter lock");
+    const marketplaceAdapterIds = Object.entries(lock.adapters)
+      .filter(([, entry]) => record(entry) && entry.source === "marketplace")
+      .map(([id]) => id);
+    updatePackageIds = request.packageIds ?? marketplaceAdapterIds;
+    if (updatePackageIds.length === 0 || updatePackageIds.some(id => !marketplaceAdapterIds.includes(id))) {
+      throw new Error("managed Marketplace update accepts only installed platform adapters");
+    }
   }
-  const result = await service.install(scope, request.specs, { dev: request.dev });
-  if (result.installed.length !== request.specs.length || result.installed.some(item => (item.primaryKind !== "adapter" && item.primaryKind !== "plugin") || item.scope !== "platform")) {
-    throw new Error("Marketplace helper did not install every requested platform package");
+  const result = request.operation === "install"
+    ? await service.install(scope, request.specs, { dev: request.dev })
+    : await service.update(scope, updatePackageIds);
+  const expectedCount = request.operation === "install" ? request.specs.length : updatePackageIds.length;
+  if (result.installed.length !== expectedCount || result.installed.some(item => item.scope !== "platform"
+    || (request.operation === "update" ? item.primaryKind !== "adapter" : item.primaryKind !== "adapter" && item.primaryKind !== "plugin"))) {
+    const operationLabel = request.operation === "update" ? "update every requested platform adapter" : "install every requested platform package";
+    throw new Error(`Marketplace helper did not ${operationLabel} (expected ${expectedCount}, received ${result.installed.length})`);
   }
   const installed = [];
   for (const item of result.installed) {
     if (!item.spec) throw new Error("Marketplace install result omitted its requested package spec");
-    const expected = resolvedBySpec.get(item.spec);
-    if (!expected || expected.id !== item.id || expected.version !== item.version) throw new Error("Marketplace install result does not match the resolved request");
+    if (request.operation === "install") {
+      const expected = resolvedBySpec.get(item.spec);
+      if (!expected || expected.id !== item.id || expected.version !== item.version) throw new Error("Marketplace install result does not match the resolved request");
+    } else if (!updatePackageIds.includes(item.id)) {
+      throw new Error("Marketplace update result does not match the requested adapter");
+    }
     const resolvedPackageRoot = await fs.realpath(item.packageRoot);
     const resolvedStage = await fs.realpath(platformRoot);
     const relative = path.relative(resolvedStage, resolvedPackageRoot);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("installed package escaped the candidate generation");
-    installed.push({ requestedSpec: item.spec, packageId: item.id, version: item.version, resolvedVersion: expected.version, primaryKind: item.primaryKind });
+    installed.push({ requestedSpec: item.spec, packageId: item.id, version: item.version, resolvedVersion: item.version, primaryKind: item.primaryKind });
   }
-  process.stdout.write(JSON.stringify({ schema: 1, operation: "install", installed, warnings: result.warnings }) + "\n");
+  process.stdout.write(JSON.stringify({ schema: 1, operation: request.operation, installed, warnings: result.warnings }) + "\n");
 }
 
 export async function listManagedGenerationEnvRefs(): Promise<void> {

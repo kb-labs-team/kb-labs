@@ -507,13 +507,22 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         return { installed: [], warnings: ['No marketplace.lock found'], scope: ctx.scope };
       }
 
-      const ids = packageIds ?? Object.keys(lock.plugins);
+      const updateSpecs = new Map<string, string>();
+      for (const [id, entry] of Object.entries(lock.plugins)) {
+        if (entry.source !== 'local') updateSpecs.set(id, entry.package);
+      }
+      if (ctx.scope === 'platform') {
+        for (const [id, entry] of Object.entries(lock.adapters ?? {})) {
+          if (entry.source === 'marketplace') updateSpecs.set(id, id);
+        }
+      }
+      const ids = packageIds ?? [...updateSpecs.keys()];
       const warnings = packageIds
-        ?.filter(id => !(id in lock.plugins))
-        .map(id => `Plugin ${id} is not installed in the ${ctx.scope} scope and cannot be updated.`) ?? [];
-      const specs = ids.filter(id => id in lock.plugins).map(id => {
-        const entry = lock.plugins[id]!;
-        return entry.package!;
+        ?.filter(id => !updateSpecs.has(id))
+        .map(id => `Package ${id} is not an updateable Marketplace package in the ${ctx.scope} scope.`) ?? [];
+      const specs = ids.flatMap(id => {
+        const spec = updateSpecs.get(id);
+        return spec ? [spec] : [];
       });
 
       const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true);

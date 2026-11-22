@@ -22,8 +22,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestManagedMarketplaceMutationExposesOnlyVerifiedAdapterInstall(t *testing.T) {
-	for _, operation := range []ManagedMarketplaceOperation{"update", "uninstall", "enable", "disable"} {
+func TestManagedMarketplaceMutationExposesInstallAndBoundedAdapterUpdateOnly(t *testing.T) {
+	for _, operation := range []ManagedMarketplaceOperation{"uninstall", "enable", "disable", "link", "sync"} {
 		t.Run(string(operation), func(t *testing.T) {
 			if err := validateManagedMarketplaceMutation(ManagedMarketplaceMutation{Operation: operation}); err == nil {
 				t.Fatalf("unsupported operation %q was accepted", operation)
@@ -32,6 +32,48 @@ func TestManagedMarketplaceMutationExposesOnlyVerifiedAdapterInstall(t *testing.
 	}
 	if err := validateManagedMarketplaceMutation(ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall}); err == nil {
 		t.Fatal("empty adapter install was accepted")
+	}
+	if err := validateManagedMarketplaceMutation(ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{"@kb-labs/sample-adapter"}}); err != nil {
+		t.Fatalf("valid adapter update was rejected: %v", err)
+	}
+	for _, mutation := range []ManagedMarketplaceMutation{
+		{Operation: ManagedMarketplaceUpdate, Specs: []string{"@kb-labs/sample-adapter@1.2.3"}},
+		{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{"@kb-labs/sample-adapter", "@kb-labs/sample-adapter"}},
+		{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{"@kb-labs/sample-adapter@1.2.3"}},
+	} {
+		if err := validateManagedMarketplaceMutation(mutation); err == nil {
+			t.Fatalf("invalid adapter update was accepted: %#v", mutation)
+		}
+	}
+}
+
+func TestManagedMarketplaceUpdateTargetsAreLimitedToActiveMarketplaceAdapters(t *testing.T) {
+	active := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(active, ".kb"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock := `{"schema":"kb.marketplace/3","plugins":{"@kb-labs/plugin":{"source":"marketplace"}},"adapters":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0"},"@kb-labs/local-adapter":{"source":"platform","version":"1.0.0"}}}`
+	if err := os.WriteFile(filepath.Join(active, ".kb", "marketplace.lock"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	all, err := managedMarketplaceUpdateTargets(active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate})
+	if err != nil || len(all) != 1 {
+		t.Fatalf("all adapter update targets = %#v, %v; want only marketplace adapter", all, err)
+	}
+	if _, ok := all["@kb-labs/adapter"]; !ok {
+		t.Fatalf("update targets omitted marketplace adapter: %#v", all)
+	}
+	for _, packageID := range []string{"@kb-labs/plugin", "@kb-labs/local-adapter", "@kb-labs/missing"} {
+		if _, err := managedMarketplaceUpdateTargets(active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{packageID}}); err == nil {
+			t.Errorf("non-marketplace adapter target %q was accepted", packageID)
+		}
+	}
+	duplicateLock := `{"schema":"kb.marketplace/3","plugins":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0"}},"adapters":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0"}}}`
+	if err := os.WriteFile(filepath.Join(active, ".kb", "marketplace.lock"), []byte(duplicateLock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := managedMarketplaceUpdateTargets(active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate}); err == nil {
+		t.Fatal("an identity present in both Marketplace lock sections was accepted for adapter update")
 	}
 }
 
@@ -713,6 +755,91 @@ func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnS
 				t.Fatalf("helper mutated active generation: %v", statErr)
 			}
 		})
+	}
+}
+
+// case: S-269.12
+func TestManagedMarketplaceOwnerUpdatesOnlyAnAdapterInsideCandidate(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("Node.js is required for the installed-helper transaction test")
+	}
+	constPackageID := "@kb-labs/sample-adapter"
+	layout, active := initialLayout(t, filepath.Join(t.TempDir(), "install"), "1.0.0")
+	seedManagedGraphFixture(t, active, constPackageID+"@1.0.0", "npm", "1.0.0", false, false, false)
+	installFakeManagedPnpm(t, layout)
+	if err := os.WriteFile(filepath.Join(active, ".kb", "kb.config.jsonc"), []byte(`{"marketplace":{"sources":[{"kind":"npm","url":"https://registry.example.test"}]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adapterRoot := filepath.Join(active, "node_modules", filepath.FromSlash(constPackageID))
+	if err := os.MkdirAll(adapterRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeAdapter := func(root, version string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, "package.json"), []byte(fmt.Sprintf(`{"name":%q,"version":%q,"kb":{"adapter":{"manifest":"manifest.mjs"}}}`, constPackageID, version)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "manifest.mjs"), []byte("export const manifest = {};\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeAdapter(adapterRoot, "1.0.0")
+	if err := os.MkdirAll(filepath.Join(active, ".kb"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	lock := fmt.Sprintf(`{"schema":"kb.marketplace/3","plugins":{},"adapters":{%q:{"source":"marketplace","version":"1.0.0","integrity":"sha256-Zml4dHVyZQ==","resolvedPath":"node_modules/%s","enabled":true,"marketplaceSource":"npm","signatureStatus":"unsigned"}}}`, constPackageID, constPackageID)
+	if err := os.WriteFile(filepath.Join(active, ".kb", "marketplace.lock"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(active, "node_modules", "@kb-labs", "marketplace-app")
+	if err := os.MkdirAll(filepath.Join(app, "dist"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(app, "package.json"), []byte(`{"name":"@kb-labs/marketplace-app","kb":{"managedGenerationMutation":1}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	adapterName, _ := json.Marshal(constPackageID)
+	helperScript := `if(process.argv[2]==="--managed-generation-mutation-env-refs"){process.stdout.write(JSON.stringify({schema:1,environment:[]})+"\n");process.exit(0);}const fs=require("node:fs");const envelope=JSON.parse(fs.readFileSync(0,"utf8"));const id=` + string(adapterName) + `;if(envelope.mutation.operation!=="update"||JSON.stringify(envelope.mutation.packageIds)!==JSON.stringify([id]))process.exit(31);const root=process.cwd();const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));pkg.dependencies[id]="^1.1.0";fs.writeFileSync("package.json",JSON.stringify(pkg));fs.writeFileSync("pnpm-lock.yaml",` + strconv.Quote("lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      '@kb-labs/cli-bin':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/host-app':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/sample-adapter':\n        specifier: ^1.1.0\n        version: 1.1.0\npackages:\n  '@kb-labs/cli-bin@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/host-app@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/sample-adapter@1.1.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\nsnapshots:\n  '@kb-labs/cli-bin@1.0.0': {}\n  '@kb-labs/host-app@1.0.0': {}\n  '@kb-labs/sample-adapter@1.1.0': {}\n") + `);const entry={source:"marketplace",version:"1.1.0",integrity:"sha256-Zml4dHVyZQ==",resolvedPath:"node_modules/"+id,enabled:true,marketplaceSource:"npm",signatureStatus:"unsigned"};fs.writeFileSync(".kb/marketplace.lock",JSON.stringify({schema:"kb.marketplace/3",plugins:{},adapters:{[id]:entry}}));const adapterRoot=require("node:path").join(root,"node_modules",id);fs.writeFileSync(require("node:path").join(adapterRoot,"package.json"),JSON.stringify({name:id,version:"1.1.0",kb:{adapter:{manifest:"manifest.mjs"}}}));fs.writeFileSync(require("node:path").join(adapterRoot,"manifest.mjs"),"export const manifest = {};\n");fs.writeFileSync("mutation.marker","updated-in-candidate");process.stdout.write(JSON.stringify({schema:1,operation:"update",installed:[{requestedSpec:id,packageId:id,version:"1.1.0",resolvedVersion:"1.1.0",primaryKind:"adapter"}],warnings:[]})+"\n");`
+	if err := os.WriteFile(filepath.Join(app, "dist", "bin.js"), []byte(helperScript+"\n// --managed-generation-mutation capability\n// --managed-generation-mutation-env-refs capability\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := layout.RunManagedMarketplaceMutation(context.Background(), active, ManagedMarketplaceMutation{
+		Operation: ManagedMarketplaceUpdate, PackageIDs: []string{constPackageID},
+	})
+	if err != nil {
+		t.Fatalf("managed adapter update failed: %v", err)
+	}
+	selected, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected == active || len(result.Installed) != 1 || result.Installed[0].Version != "1.1.0" || result.Installed[0].PrimaryKind != "adapter" {
+		t.Fatalf("managed adapter update result = %#v, active=%q", result, selected)
+	}
+	if result.Installed[0].PackageRoot != filepath.Join(selected, "node_modules", filepath.FromSlash(constPackageID)) {
+		t.Fatalf("updated adapter root = %q; want activated candidate path", result.Installed[0].PackageRoot)
+	}
+	oldPackage, err := os.ReadFile(filepath.Join(active, "node_modules", filepath.FromSlash(constPackageID), "package.json"))
+	if err != nil || !strings.Contains(string(oldPackage), `"version":"1.0.0"`) {
+		t.Fatalf("running physical generation was changed during update: %s, %v", oldPackage, err)
+	}
+	newPackage, err := os.ReadFile(filepath.Join(selected, "node_modules", filepath.FromSlash(constPackageID), "package.json"))
+	if err != nil || !strings.Contains(string(newPackage), `"version":"1.1.0"`) {
+		t.Fatalf("activated candidate does not contain updated adapter: %s, %v", newPackage, err)
+	}
+	_, err = layout.RunManagedMarketplaceMutation(context.Background(), active, ManagedMarketplaceMutation{
+		Operation: ManagedMarketplaceUpdate, PackageIDs: []string{constPackageID},
+	})
+	if err == nil || !strings.Contains(err.Error(), "did not move forward") {
+		t.Fatalf("non-increasing adapter update error = %v; want candidate validation refusal", err)
+	}
+	stillSelected, err := layout.Active()
+	if err != nil || stillSelected != selected {
+		t.Fatalf("failed adapter update changed the active generation: selected=%q now=%q err=%v", selected, stillSelected, err)
+	}
+	newPackage, err = os.ReadFile(filepath.Join(selected, "node_modules", filepath.FromSlash(constPackageID), "package.json"))
+	if err != nil || !strings.Contains(string(newPackage), `"version":"1.1.0"`) {
+		t.Fatalf("failed adapter update changed the prior active generation: %s, %v", newPackage, err)
 	}
 }
 

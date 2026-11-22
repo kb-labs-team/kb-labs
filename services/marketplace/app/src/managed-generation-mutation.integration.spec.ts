@@ -9,7 +9,10 @@ import { describe, expect, it } from "vitest";
 
 describe("managed Marketplace helper with an installed-shaped candidate", () => {
   // case: S-269.12
-  it("runs the installed helper child to install a real adapter with the receipt-pinned shared cache", async () => {
+  it("installs and updates a real adapter with the installed helper and receipt-pinned cache", async () => {
+    if (process.versions.node.split(".")[0] !== "24") {
+      throw new Error("This installed Marketplace fixture requires Node.js 24.x, the managed platform runtime for pnpm 11.4.0.");
+    }
     const installRoot = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "managed-marketplace-child-")));
     const active = path.join(installRoot, "versions", "1.0.0");
     const candidate = path.join(installRoot, "versions", ".stage-managed-integration");
@@ -92,7 +95,7 @@ describe("managed Marketplace helper with an installed-shaped candidate", () => 
         name: "kb-platform", version: "1.0.0", packageManager: "pnpm@11.4.0", dependencies: { [sealedId]: "1.0.0" },
       }));
       await fs.writeFile(path.join(candidate, "pnpm-workspace.yaml"), [
-        "minimumReleaseAge: 10080", "minimumReleaseAgeExclude: []", "overrides:",
+        "minimumReleaseAge: 10080", "minimumReleaseAgeExclude:", `  - "${sealedId}@1.0.0"`, "overrides:",
         `  "${sealedId}": "file:${path.join(cacheRoot, "packages", `${sealedDigest}.tgz`).replaceAll("\\", "/")}"`, "",
       ].join("\n"));
 

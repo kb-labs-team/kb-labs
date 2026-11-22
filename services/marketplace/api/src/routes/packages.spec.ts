@@ -396,14 +396,14 @@ describe('Marketplace API error boundary', () => {
       warnings: [],
       scope: 'platform',
     };
-    const dispatchManagedPlatformInstall = vi.fn()
+    const dispatchManagedPlatformMutation = vi.fn()
       .mockResolvedValueOnce(expectedInstallResult)
       .mockResolvedValueOnce(pluginInstallResult)
       .mockResolvedValueOnce(expectedUpdateResult);
     const server = await createServer({
       service: { ...directWrites, resolveSyncScope: vi.fn(async (ctx: unknown) => ctx) } as unknown as MarketplaceService,
       logger,
-      auth: { internalSecret, projectScopeAllowed: false, managedPlatform: true, dispatchManagedPlatformInstall },
+      auth: { internalSecret, projectScopeAllowed: false, managedPlatform: true, dispatchManagedPlatformMutation },
     });
     servers.push(server);
 
@@ -413,7 +413,7 @@ describe('Marketplace API error boundary', () => {
     });
     expect(install.statusCode).toBe(201);
     expect(install.json()).toEqual(expectedInstallResult);
-    expect(dispatchManagedPlatformInstall).toHaveBeenCalledWith({ specs: ['@kb-labs/sample-adapter@1.2.3'], dev: undefined, shareToken: undefined });
+    expect(dispatchManagedPlatformMutation).toHaveBeenCalledWith({ operation: 'install', specs: ['@kb-labs/sample-adapter@1.2.3'], dev: undefined, shareToken: undefined });
     expect(directWrites.install).not.toHaveBeenCalled();
 
     const pluginInstall = await server.inject({
@@ -429,7 +429,7 @@ describe('Marketplace API error boundary', () => {
     });
     expect(update.statusCode).toBe(200);
     expect(update.json()).toEqual(expectedUpdateResult);
-    expect(dispatchManagedPlatformInstall).toHaveBeenLastCalledWith({ operation: 'update', packageIds: ['@kb-labs/sample-adapter'] });
+    expect(dispatchManagedPlatformMutation).toHaveBeenLastCalledWith({ operation: 'update', packageIds: ['@kb-labs/sample-adapter'] });
     expect(directWrites.update).not.toHaveBeenCalled();
 
     const deniedRequests: InjectOptions[] = [
@@ -446,7 +446,7 @@ describe('Marketplace API error boundary', () => {
       expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_INSTALL_RECEIPT_UNAVAILABLE' } });
     }
     for (const writer of Object.values(directWrites)) expect(writer).not.toHaveBeenCalled();
-    expect(dispatchManagedPlatformInstall).toHaveBeenCalledTimes(3);
+    expect(dispatchManagedPlatformMutation).toHaveBeenCalledTimes(3);
 
     const unavailableInstall = vi.fn();
     const noOwner = await createServer({
@@ -470,7 +470,7 @@ describe('Marketplace API error boundary', () => {
         internalSecret,
         projectScopeAllowed: false,
         managedPlatform: true,
-        dispatchManagedPlatformInstall: vi.fn().mockRejectedValue(ownerFailure),
+        dispatchManagedPlatformMutation: vi.fn().mockRejectedValue(ownerFailure),
       },
     });
     servers.push(failedOwner);

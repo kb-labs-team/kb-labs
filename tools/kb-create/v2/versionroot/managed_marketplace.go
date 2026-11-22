@@ -30,15 +30,17 @@ type ManagedMarketplaceOperation string
 
 const (
 	ManagedMarketplaceInstall ManagedMarketplaceOperation = "install"
+	ManagedMarketplaceUpdate  ManagedMarketplaceOperation = "update"
 )
 
 // ManagedMarketplaceMutation is the authority-bounded request accepted by the
 // installed Marketplace helper. Roots, environment, scope, handlers, and
 // permissions are derived by the Go owner and are never caller-provided.
 type ManagedMarketplaceMutation struct {
-	Operation ManagedMarketplaceOperation `json:"operation"`
-	Specs     []string                    `json:"specs,omitempty"`
-	Dev       bool                        `json:"dev,omitempty"`
+	Operation  ManagedMarketplaceOperation `json:"operation"`
+	Specs      []string                    `json:"specs,omitempty"`
+	PackageIDs []string                    `json:"packageIds,omitempty"`
+	Dev        bool                        `json:"dev,omitempty"`
 }
 
 // ManagedMarketplaceMutationResult carries the Marketplace API response fields
@@ -195,6 +197,11 @@ func (l Layout) runManagedMarketplaceMutationLocked(ctx context.Context, running
 	if activeReceipt.InstallationID != runningReceipt.InstallationID {
 		return ManagedMarketplaceMutationResult{}, fmt.Errorf("protected running generation belongs to a different installation")
 	}
+	if mutation.Operation == ManagedMarketplaceUpdate {
+		if _, err := managedMarketplaceUpdateTargets(active, mutation); err != nil {
+			return ManagedMarketplaceMutationResult{}, err
+		}
+	}
 
 	stage, err := l.StageManagedGeneration()
 	if err != nil {
@@ -208,7 +215,7 @@ func (l Layout) runManagedMarketplaceMutationLocked(ctx context.Context, running
 		}
 		return ManagedMarketplaceMutationResult{}, failure
 	}
-	if err := verifyManagedMarketplaceInstall(stage, mutation, result); err != nil {
+	if err := verifyManagedMarketplaceMutation(active, stage, mutation, result); err != nil {
 		if cleanupErr := l.AbortManagedGeneration(stage); cleanupErr != nil {
 			err = errors.Join(err, fmt.Errorf("remove invalid Marketplace stage: %w", cleanupErr))
 		}
@@ -318,23 +325,44 @@ func managedMarketplaceAPIEntries(stage string, result managedMarketplaceInstall
 }
 
 func validateManagedMarketplaceMutation(mutation ManagedMarketplaceMutation) error {
-	if mutation.Operation != ManagedMarketplaceInstall {
+	switch mutation.Operation {
+	case ManagedMarketplaceInstall:
+		if len(mutation.Specs) == 0 || len(mutation.Specs) > 32 || len(mutation.PackageIDs) != 0 {
+			return fmt.Errorf("Marketplace install requires between 1 and 32 package specs")
+		}
+		seen := map[string]struct{}{}
+		for _, spec := range mutation.Specs {
+			if err := install_spec.Validate(spec); err != nil {
+				return fmt.Errorf("invalid Marketplace package spec: %w", err)
+			}
+			if _, duplicate := seen[spec]; duplicate {
+				return fmt.Errorf("duplicate Marketplace install spec %q", spec)
+			}
+			seen[spec] = struct{}{}
+		}
+		return nil
+	case ManagedMarketplaceUpdate:
+		if len(mutation.Specs) != 0 || mutation.Dev {
+			return fmt.Errorf("Marketplace adapter update accepts package IDs only")
+		}
+		if len(mutation.PackageIDs) > 32 {
+			return fmt.Errorf("Marketplace adapter update accepts at most 32 package IDs")
+		}
+		seen := map[string]struct{}{}
+		for _, packageID := range mutation.PackageIDs {
+			name, version, ok := splitMarketplaceSpec(packageID)
+			if !ok || name != packageID || version != "" {
+				return fmt.Errorf("invalid Marketplace package ID %q", packageID)
+			}
+			if _, duplicate := seen[packageID]; duplicate {
+				return fmt.Errorf("duplicate Marketplace package ID %q", packageID)
+			}
+			seen[packageID] = struct{}{}
+		}
+		return nil
+	default:
 		return fmt.Errorf("unsupported managed Marketplace operation %q", mutation.Operation)
 	}
-	if len(mutation.Specs) == 0 || len(mutation.Specs) > 32 {
-		return fmt.Errorf("Marketplace install requires between 1 and 32 package specs")
-	}
-	seen := map[string]struct{}{}
-	for _, spec := range mutation.Specs {
-		if err := install_spec.Validate(spec); err != nil {
-			return fmt.Errorf("invalid Marketplace package spec: %w", err)
-		}
-		if _, duplicate := seen[spec]; duplicate {
-			return fmt.Errorf("duplicate Marketplace install spec %q", spec)
-		}
-		seen[spec] = struct{}{}
-	}
-	return nil
 }
 
 func runMarketplaceStageHelper(ctx context.Context, layout Layout, configRoot, stage string, mutation ManagedMarketplaceMutation) (managedMarketplaceInstallResult, error) {
@@ -515,12 +543,31 @@ func decodeManagedHelperFailure(data []byte) error {
 }
 
 func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMutation, result managedMarketplaceInstallResult) error {
-	if result.Schema != 1 || result.Operation != ManagedMarketplaceInstall || len(result.Installed) != len(mutation.Specs) {
-		return fmt.Errorf("Marketplace helper result does not prove all requested installs")
+	return verifyManagedMarketplaceMutation(stage, stage, mutation, result)
+}
+
+func verifyManagedMarketplaceMutation(active, stage string, mutation ManagedMarketplaceMutation, result managedMarketplaceInstallResult) error {
+	if result.Schema != 1 || result.Operation != mutation.Operation {
+		return fmt.Errorf("Marketplace helper result does not match the requested operation")
 	}
 	requestedSpecs := make(map[string]struct{}, len(mutation.Specs))
-	for _, spec := range mutation.Specs {
-		requestedSpecs[spec] = struct{}{}
+	requestedIDs := make(map[string]string, len(mutation.PackageIDs))
+	if mutation.Operation == ManagedMarketplaceInstall {
+		if len(result.Installed) != len(mutation.Specs) {
+			return fmt.Errorf("Marketplace helper result does not prove all requested installs")
+		}
+		for _, spec := range mutation.Specs {
+			requestedSpecs[spec] = struct{}{}
+		}
+	} else {
+		var err error
+		requestedIDs, err = managedMarketplaceUpdateTargets(active, mutation)
+		if err != nil {
+			return err
+		}
+		if len(result.Installed) != len(requestedIDs) {
+			return fmt.Errorf("Marketplace helper result does not prove all requested adapter updates")
+		}
 	}
 	type lockEntry struct {
 		Version           string   `json:"version"`
@@ -555,10 +602,25 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 		if !ok || requestedName != installed.PackageID || (requestedVersion != "" && requestedVersion != installed.Version) {
 			return fmt.Errorf("Marketplace helper result does not match requested spec %q", installed.RequestedSpec)
 		}
-		if _, requested := requestedSpecs[installed.RequestedSpec]; !requested {
-			return fmt.Errorf("Marketplace helper reported an unrequested package spec %q", installed.RequestedSpec)
+		if mutation.Operation == ManagedMarketplaceInstall {
+			if _, requested := requestedSpecs[installed.RequestedSpec]; !requested {
+				return fmt.Errorf("Marketplace helper reported an unrequested package spec %q", installed.RequestedSpec)
+			}
+			delete(requestedSpecs, installed.RequestedSpec)
+		} else {
+			if installed.PrimaryKind != "adapter" {
+				return fmt.Errorf("managed Marketplace update may change adapters only")
+			}
+			installedVersion, requested := requestedIDs[installed.PackageID]
+			if !requested {
+				return fmt.Errorf("Marketplace helper reported an unrequested adapter update %q", installed.PackageID)
+			}
+			comparison, compareErr := semrange.Compare(installed.Version, installedVersion)
+			if compareErr != nil || comparison <= 0 {
+				return fmt.Errorf("Marketplace adapter update %q did not move forward from %s", installed.PackageID, installedVersion)
+			}
+			delete(requestedIDs, installed.PackageID)
 		}
-		delete(requestedSpecs, installed.RequestedSpec)
 		if err := install_spec.Validate(installed.PackageID + "@" + installed.Version); err != nil {
 			return fmt.Errorf("Marketplace helper returned an invalid installed package identity: %w", err)
 		}
@@ -634,7 +696,64 @@ func verifyManagedMarketplaceInstall(stage string, mutation ManagedMarketplaceMu
 	if len(requestedSpecs) != 0 {
 		return fmt.Errorf("Marketplace helper omitted requested package spec %q", firstMarketplaceSpec(requestedSpecs))
 	}
+	if len(requestedIDs) != 0 {
+		return fmt.Errorf("Marketplace helper omitted requested adapter update %q", firstMarketplaceUpdateTarget(requestedIDs))
+	}
 	return nil
+}
+
+func managedMarketplaceUpdateTargets(active string, mutation ManagedMarketplaceMutation) (map[string]string, error) {
+	type lockEntry struct {
+		Source  string `json:"source"`
+		Version string `json:"version"`
+	}
+	var lock struct {
+		Schema   string               `json:"schema"`
+		Plugins  map[string]lockEntry `json:"plugins"`
+		Adapters map[string]lockEntry `json:"adapters"`
+	}
+	data, err := os.ReadFile(filepath.Join(active, ".kb", "marketplace.lock"))
+	if err != nil {
+		return nil, fmt.Errorf("read active Marketplace lock for adapter update: %w", err)
+	}
+	if err := json.Unmarshal(data, &lock); err != nil || lock.Schema != "kb.marketplace/3" {
+		return nil, fmt.Errorf("active Marketplace lock is invalid for adapter update")
+	}
+	requested := make(map[string]string)
+	if len(mutation.PackageIDs) == 0 {
+		for id, entry := range lock.Adapters {
+			if entry.Source == "marketplace" && entry.Version != "" {
+				if _, plugin := lock.Plugins[id]; plugin {
+					return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")
+				}
+				if _, err := semrange.ParseVersion(entry.Version); err != nil {
+					return nil, fmt.Errorf("managed Marketplace adapter %q has an invalid installed version pin", id)
+				}
+				requested[id] = entry.Version
+			}
+		}
+	} else {
+		for _, id := range mutation.PackageIDs {
+			entry, exists := lock.Adapters[id]
+			if !exists || entry.Source != "marketplace" {
+				return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")
+			}
+			if _, plugin := lock.Plugins[id]; plugin {
+				return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")
+			}
+			if entry.Version == "" {
+				return nil, fmt.Errorf("managed Marketplace adapter %q has no installed version pin", id)
+			}
+			if _, err := semrange.ParseVersion(entry.Version); err != nil {
+				return nil, fmt.Errorf("managed Marketplace adapter %q has an invalid installed version pin", id)
+			}
+			requested[id] = entry.Version
+		}
+	}
+	if len(requested) == 0 {
+		return nil, fmt.Errorf("no installed Marketplace platform adapters are available to update")
+	}
+	return requested, nil
 }
 
 func splitMarketplaceSpec(spec string) (name, version string, ok bool) {
@@ -1120,8 +1239,15 @@ func firstMarketplaceSpec(specs map[string]struct{}) string {
 	return ordered[0]
 }
 
+func firstMarketplaceUpdateTarget(targets map[string]string) string {
+	for target := range targets {
+		return target
+	}
+	return ""
+}
+
 func managedMarketplaceInstallIsNoop(active, stage string, mutation ManagedMarketplaceMutation, result managedMarketplaceInstallResult) (bool, error) {
-	if err := verifyManagedMarketplaceInstall(active, mutation, result); err != nil {
+	if err := verifyManagedMarketplaceMutation(active, stage, mutation, result); err != nil {
 		return false, nil
 	}
 	for _, relative := range []string{"package.json", "pnpm-lock.yaml", "node_modules/.modules.yaml", ".kb/marketplace.lock"} {
