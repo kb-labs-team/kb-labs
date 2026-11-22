@@ -1100,9 +1100,8 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 _output(_run(kb_command(uninstall), cwd=project, env=base_env, runner=runner), uninstall)
             shutil.rmtree(fixture_root, ignore_errors=True)
 
-    journey.step("install npm plugin with dependency from configured npm source",
-                 "marketplace", install_npm_plugin_with_private_transitive_dependency,
-                 cases=["S-010.8"], runners=("agent:commit", "agent-secured:commit"))
+    register_transitive_npm_dependency_step(
+        journey, install_npm_plugin_with_private_transitive_dependency)
 
     # S-047 requires a second project plugin to survive target uninstall.
     unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
@@ -1598,6 +1597,20 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     journey.step("reject REST's internal API mount in public URLs", "marketplace",
                  reject_rest_internal_mount_prefix, cases=["S-192.6"],
                  requires=("step:reinstall Commit and call its project REST route",))
+
+
+def register_transitive_npm_dependency_step(
+    journey: Journey,
+    check: Callable[[], str | None],
+):
+    """Register S-010.8 on the service journeys that execute Marketplace lifecycle flows."""
+    return journey.step(
+        "install npm plugin with dependency from configured npm source",
+        "marketplace",
+        check,
+        cases=["S-010.8"],
+        runners=("service-local:explore", "service-secured:explore"),
+    )
 
 
 def run_marketplace_steps(journey: Journey, project_root: str | Path, project_id: str, registry: str,

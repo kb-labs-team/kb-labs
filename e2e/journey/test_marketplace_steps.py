@@ -27,10 +27,12 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                publish_commit_update_fixture,
                                run_ordered_source_journey_steps,
                                run_plugin_policy_diagnostic_step,
+                               register_transitive_npm_dependency_step,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
+from journey_selection import JourneySelection
 from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
@@ -48,6 +50,31 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    # case: S-010.8
+    def test_transitive_dependency_install_step_runs_for_local_and_secured_service_owners(self):
+        for mode, selector in (("local", "service-local:explore"),
+                               ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                selection = JourneySelection(
+                    requested=("S-010.8",),
+                    claims=frozenset({"S-010.8"}),
+                    owning_steps={},
+                    prerequisite_steps=frozenset(),
+                    prerequisite_flows=frozenset(),
+                    capabilities=frozenset({"marketplace"}),
+                    runner_selector=selector,
+                    requested_runners=selector,
+                )
+                journey = Journey(mode, f"s0108-{mode}", selection=selection)
+                invoked = []
+
+                result = register_transitive_npm_dependency_step(
+                    journey, lambda: invoked.append(mode))
+
+                self.assertEqual(result.status, "PASS")
+                self.assertEqual(invoked, [mode])
+                self.assertEqual(result.cases, ["S-010.8"])
+
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
             {"kind": "registry", "url": "https://registry.example"}, {"kind": "npm"},

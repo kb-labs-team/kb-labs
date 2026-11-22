@@ -1276,6 +1276,34 @@ class DispatchRegistryTests(unittest.TestCase):
             "step:verify restored receipt, config, host, and project command",
         ])
 
+    # case: S-010.8
+    def test_s0108_selects_marketplace_lifecycle_runner_in_both_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        line, declaration = next(
+            (line, item) for line, item in _case_declarations(source, root).items()
+            if item.get("name") == "install npm plugin with dependency from configured npm source")
+        self.assertEqual(declaration["runners"], ["service-local:explore", "service-secured:explore"])
+        claim = {"source": source, "kind": "journey", "line": line}
+        coverage = [{
+            "mode": mode,
+            "cases": [{
+                "id": "S-010",
+                "status": "active",
+                "release": True,
+                "steps": [{"stepId": "S-010.8", "claims": [claim]}],
+            }],
+        } for mode in ("local", "secured")]
+
+        for mode, selector in (("local", "service-local:explore"),
+                               ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                resolved = selection_from_coverage(coverage, "S-010.8", mode=mode)
+                self.assertEqual(resolved["runners"], [selector])
+                self.assertEqual(resolved["selectedOwningSteps"], {
+                    "install npm plugin with dependency from configured npm source": ["S-010.8"]
+                })
+
     def test_s181_3_selects_the_supplied_password_install_file_scan(self):
         resolved = selection_from_coverage(self._coverage(), "S-181.3")
         self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
