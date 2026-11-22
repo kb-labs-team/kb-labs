@@ -47,7 +47,7 @@ export class PnpmInstaller implements PackageInstaller {
   }
 
   async install(options: PackageInstallOptions): Promise<PackageInstallResult> {
-    const { name, version, projectDir, casDir } = options;
+    const { name, version, projectDir, casDir, registryUrl } = options;
     const spec = options.spec ?? version;
 
     await fs.mkdir(projectDir, { recursive: true });
@@ -68,7 +68,12 @@ export class PnpmInstaller implements PackageInstaller {
       }
     }
 
-    const installArgs = ['install', '--store-dir', casDir];
+    const installArgs = [
+      'install',
+      '--store-dir',
+      casDir,
+      ...(registryUrl ? [`--registry=${registryUrl}`] : []),
+    ];
     const { execa } = await import('execa');
     try {
       await execa(this.pnpmPath, installArgs, {

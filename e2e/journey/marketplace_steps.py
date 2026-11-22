@@ -977,6 +977,133 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         commit_install_package = (fixture_entry or {}).get("package")
         if not isinstance(commit_install_package, str) or not commit_install_package:
             raise RuntimeError("published Commit fixture has no package identity to pin in lifecycle checks")
+
+    def install_npm_plugin_with_private_transitive_dependency() -> None:
+        suffix = str(time.time_ns())
+        plugin_id = f"@kb-labs/journey-transitive-plugin-{suffix}"
+        dependency_id = f"@kb-labs/journey-transitive-dependency-{suffix}"
+        version = "1.0.0"
+        marker = f"configured-npm-source-{suffix}"
+        sdk_package = active_platform_root(platform_root) / "node_modules" / "@kb-labs" / "sdk" / "package.json"
+        try:
+            sdk_version = json.loads(sdk_package.read_text(encoding="utf-8")).get("version")
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("S-010.8 cannot read the installed SDK version for its fixture plugin") from error
+        if not isinstance(sdk_version, str) or not sdk_version:
+            raise RuntimeError("S-010.8 fixture plugin requires the installed platform SDK version")
+
+        fixture_root = Path(tempfile.mkdtemp(prefix="kb-marketplace-transitive-dependency-"))
+        dependency_dir = fixture_root / "dependency"
+        plugin_dir = fixture_root / "plugin"
+        (dependency_dir / "dist").mkdir(parents=True)
+        (plugin_dir / "dist" / "commands").mkdir(parents=True)
+        try:
+            (dependency_dir / "package.json").write_text(json.dumps({
+                "name": dependency_id,
+                "version": version,
+                "type": "module",
+                "main": "./index.js",
+                "exports": {".": "./index.js"},
+                "files": ["index.js"],
+                "license": "UNLICENSED",
+            }), encoding="utf-8")
+            (dependency_dir / "index.js").write_text(
+                f"export const marker = {json.dumps(marker)};\n", encoding="utf-8")
+            manifest = {
+                "schema": "kb.plugin/3",
+                "id": plugin_id,
+                "version": version,
+                "display": {
+                    "name": "Marketplace transitive dependency fixture",
+                    "description": "Verifies a package dependency published only to the configured npm source.",
+                },
+                "permissions": {"platform": {}},
+                "platform": {"requires": []},
+                "cli": {
+                    "groupMeta": [{"path": "journey", "describe": "Journey fixture commands"}],
+                    "commands": [{
+                        "path": "journey transitive show",
+                        "describe": "Return a marker imported from the transitive fixture dependency",
+                        "operationType": "execute",
+                        "handler": "./commands/show.js#default",
+                    }],
+                },
+            }
+            (plugin_dir / "package.json").write_text(json.dumps({
+                "name": plugin_id,
+                "version": version,
+                "type": "module",
+                "main": "./dist/manifest.js",
+                "exports": {".": "./dist/manifest.js"},
+                "files": ["dist/manifest.js", "dist/manifest.json", "dist/commands/*.js"],
+                "kb": {
+                    "manifest": "./dist/manifest.js",
+                    "requiredOutputs": ["./dist/manifest.json", "./dist/commands/show.js"],
+                },
+                "dependencies": {dependency_id: version, "@kb-labs/sdk": sdk_version},
+                "license": "UNLICENSED",
+            }), encoding="utf-8")
+            (plugin_dir / "dist" / "manifest.js").write_text(
+                f"export const manifest = {json.dumps(manifest)};\n", encoding="utf-8")
+            (plugin_dir / "dist" / "commands" / "show.js").write_text(
+                "import { defineCommand } from '@kb-labs/sdk';\n"
+                f"import {{ marker }} from {json.dumps(dependency_id)};\n"
+                "export default defineCommand({ id: 'journey:transitive-show', description: 'Check dependency resolution', "
+                "handler: { async execute() { return { ok: true, result: { marker } }; } } });\n",
+                encoding="utf-8")
+
+            workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+            manifest_command = [
+                "node", str(workspace / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs"),
+                "--module", str(plugin_dir / "dist" / "manifest.js"),
+                "--output", str(plugin_dir / "dist" / "manifest.json"),
+            ]
+            _output(_run(manifest_command, cwd=project, env=base_env, runner=runner), manifest_command)
+            for package_dir in (dependency_dir, plugin_dir):
+                publish = ["npm", "publish", str(package_dir), "--json", f"--registry={registry}"]
+                _output(_run(publish, cwd=project, env=base_env, runner=runner), publish)
+
+            install = ["marketplace", "install", f"{plugin_id}@{version}", "--scope", "project", "--json"]
+            installed_result = _json(cli(install), install)
+            installed = installed_result.get("installed")
+            if (installed_result.get("scope") != "project" or not isinstance(installed, list)
+                    or not any(isinstance(item, dict) and item.get("id") == plugin_id
+                               and item.get("version") == version and item.get("source") == "npm"
+                               for item in installed)):
+                raise RuntimeError("S-010.8 Marketplace did not report the npm fixture plugin as installed")
+
+            lock_path = project / ".kb" / "marketplace.lock"
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            entry = lock.get("plugins", {}).get(plugin_id) if isinstance(lock, dict) else None
+            if (not isinstance(entry, dict) or entry.get("package") != plugin_id
+                    or entry.get("version") != version or entry.get("marketplaceSource") != "npm"
+                    or not entry.get("integrity")):
+                raise RuntimeError("S-010.8 install did not record the plugin's npm source and integrity in the project lock")
+
+            listed = ["marketplace", "plugins", "list", "--scope", "project", "--json"]
+            entries = _entries(_json(cli(listed), listed))
+            if not any(item.get("id") == plugin_id and item.get("version") == version for item in entries):
+                raise RuntimeError("S-010.8 fixture plugin was not discoverable in the project plugin list")
+
+            show = ["journey", "transitive", "show", "--json"]
+            output = _json(cli(show), show)
+            if marker not in json.dumps(output, sort_keys=True):
+                raise RuntimeError("S-010.8 fixture command did not load its dependency from the configured npm source")
+        finally:
+            try:
+                lock = json.loads((project / ".kb" / "marketplace.lock").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                lock = {}
+            plugins = lock.get("plugins", {}) if isinstance(lock, dict) else {}
+            if isinstance(plugins, dict) and plugin_id in plugins:
+                uninstall = ["marketplace", "uninstall", plugin_id, "--scope", "project", "--json"]
+                _output(_run(kb_command(uninstall), cwd=project, env=base_env, runner=runner), uninstall)
+            shutil.rmtree(fixture_root, ignore_errors=True)
+
+    journey.step("install npm plugin with dependency from configured npm source",
+                 "marketplace", install_npm_plugin_with_private_transitive_dependency,
+                 cases=["S-010.8"], runners=("agent:commit", "agent-secured:commit"))
+
     # S-047 requires a second project plugin to survive target uninstall.
     unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
     install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
