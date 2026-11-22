@@ -19,12 +19,14 @@ class ProductAreaBatchSummaryTests(unittest.TestCase):
             }}))
 
             write_mode_metadata(source, destination, "local", "PASS", 12,
-                                "S-010,S-268", "", "marketplace")
+                                "S-010,S-268", "", "marketplace", "S-026")
 
             metadata = json.loads(destination.read_text())
         self.assertEqual(metadata["requestedArea"], "marketplace")
         self.assertEqual(metadata["requestedSelection"], ["S-010", "S-268"])
+        self.assertEqual(metadata["requestedAreaUncoveredCases"], ["S-026"])
 
+    # case: S-262.18
     def test_area_summary_selection_is_validated_and_distinct_from_full_batch(self):
         self.assertEqual(requested_area("@area:studio"), "studio")
         self.assertIsNone(requested_area("S-120,S-121"))
