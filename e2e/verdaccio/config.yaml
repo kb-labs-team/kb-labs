@@ -3,8 +3,8 @@
 # All @kb-labs/* packages are published here from the monorepo build.
 # All other packages proxy transparently to npmjs.org.
 #
-# Auth: $all includes $anonymous → no credentials needed to publish.
-# This is intentional — Verdaccio runs in an isolated Docker network.
+# Verdaccio requires authentication for publish even on an isolated Docker
+# network. Journey package fixtures register a throwaway user before publishing.
 
 storage: /verdaccio/storage
 
