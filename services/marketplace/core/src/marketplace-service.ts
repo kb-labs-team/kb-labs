@@ -195,7 +195,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     ctx: ScopeContext,
     scopeRoot: string,
     specs: string[],
-    opts?: { dev?: boolean; shareToken?: string },
+    opts?: { dev?: boolean; shareToken?: string; allowedSourceKinds?: string[] },
     isUpdate = false,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
@@ -229,6 +229,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           details: { plugin: spec },
           cause: sourceResults.join('; '),
         }));
+      }
+      if (opts?.allowedSourceKinds && !opts.allowedSourceKinds.includes(source.kind)) {
+        throw new Error(`Resolved package ${resolved.id} from unsupported Marketplace source ${source.kind}; no package was installed`);
       }
       if (!resolved.primaryKind) {
         throw new PackageClassificationError(
@@ -499,7 +502,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   // Update
   // -------------------------------------------------------------------------
 
-  async update(ctx: ScopeContext, packageIds?: string[]): Promise<InstallResult> {
+  async update(ctx: ScopeContext, packageIds?: string[], options?: { allowedSourceKinds?: string[] }): Promise<InstallResult> {
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
     return this.withScopeMutation(scopeRoot, async () => {
       const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
@@ -529,7 +532,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         return spec ? [spec] : [];
       });
 
-      const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true);
+      const result = await this.installInScope(ctx, scopeRoot, specs, options, true);
       if (ctx.scope === 'platform' && result.installed.length > 0) {
         const updatedLock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
         if (updatedLock) {

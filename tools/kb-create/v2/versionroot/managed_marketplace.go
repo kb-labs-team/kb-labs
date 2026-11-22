@@ -39,10 +39,26 @@ const (
 // installed Marketplace helper. Roots, environment, scope, handlers, and
 // permissions are derived by the Go owner and are never caller-provided.
 type ManagedMarketplaceMutation struct {
-	Operation  ManagedMarketplaceOperation `json:"operation"`
-	Specs      []string                    `json:"specs,omitempty"`
-	PackageIDs []string                    `json:"packageIds,omitempty"`
-	Dev        bool                        `json:"dev,omitempty"`
+	Operation          ManagedMarketplaceOperation `json:"operation"`
+	Specs              []string                    `json:"specs,omitempty"`
+	PackageIDs         []string                    `json:"packageIds,omitempty"`
+	Dev                bool                        `json:"dev,omitempty"`
+	packageIDsProvided bool
+}
+
+func (mutation *ManagedMarketplaceMutation) UnmarshalJSON(data []byte) error {
+	type wire ManagedMarketplaceMutation
+	var decoded wire
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	*mutation = ManagedMarketplaceMutation(decoded)
+	_, mutation.packageIDsProvided = fields["packageIds"]
+	return nil
 }
 
 // ManagedMarketplaceMutationResult carries the Marketplace API response fields
@@ -346,6 +362,9 @@ func validateManagedMarketplaceMutation(mutation ManagedMarketplaceMutation) err
 	case ManagedMarketplaceUpdate:
 		if len(mutation.Specs) != 0 || mutation.Dev {
 			return fmt.Errorf("Marketplace adapter update accepts package IDs only")
+		}
+		if mutation.packageIDsProvided && mutation.PackageIDs == nil {
+			return fmt.Errorf("Marketplace adapter update package IDs must be omitted or contain at least one ID")
 		}
 		if mutation.PackageIDs != nil && len(mutation.PackageIDs) == 0 {
 			return fmt.Errorf("Marketplace adapter update package IDs must be omitted or contain at least one ID")
@@ -652,7 +671,7 @@ func verifyManagedMarketplaceMutation(active, stage string, mutation ManagedMark
 		if installed.PrimaryKind == "plugin" {
 			entry, ok = lock.Plugins[installed.PackageID]
 		}
-		if !ok || entry.Version != installed.Version || entry.ResolvedPath == "" || entry.Integrity == "" || filepath.IsAbs(entry.ResolvedPath) || entry.Source != "marketplace" || entry.Enabled == nil || (mutation.Operation == ManagedMarketplaceInstall && !*entry.Enabled) || (mutation.Operation == ManagedMarketplaceUpdate && activeAdapterEnabled[installed.PackageID] != *entry.Enabled) || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") || (entry.SignatureStatus != "verified" && entry.SignatureStatus != "unsigned") {
+		if !ok || entry.Version != installed.Version || entry.ResolvedPath == "" || entry.Integrity == "" || filepath.IsAbs(entry.ResolvedPath) || entry.Source != "marketplace" || entry.Enabled == nil || (mutation.Operation == ManagedMarketplaceInstall && !*entry.Enabled) || (mutation.Operation == ManagedMarketplaceUpdate && activeAdapterEnabled[installed.PackageID] != *entry.Enabled) || (entry.MarketplaceSource != "npm" && entry.MarketplaceSource != "registry") || (mutation.Operation == ManagedMarketplaceUpdate && entry.MarketplaceSource != "npm") || (entry.SignatureStatus != "verified" && entry.SignatureStatus != "unsigned") {
 			return fmt.Errorf("staged Marketplace lock does not contain the reported package %q", installed.PackageID)
 		}
 		if installed.PrimaryKind == "plugin" && (entry.Package != installed.PackageID || entry.PrimaryKind != "plugin") {
@@ -745,7 +764,7 @@ func managedMarketplaceUpdateTargets(active string, mutation ManagedMarketplaceM
 		for id, entry := range lock.Adapters {
 			if entry.Source == "marketplace" && entry.Version != "" {
 				if entry.MarketplaceSource != "npm" {
-					return nil, fmt.Errorf("managed Marketplace adapter update currently supports npm-backed adapters only; %q uses %q", id, entry.MarketplaceSource)
+					continue
 				}
 				if _, plugin := lock.Plugins[id]; plugin {
 					return nil, fmt.Errorf("managed Marketplace update accepts installed Marketplace adapters only")

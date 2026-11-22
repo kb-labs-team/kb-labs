@@ -39,6 +39,13 @@ func TestManagedMarketplaceMutationExposesInstallAndBoundedAdapterUpdateOnly(t *
 	if err := validateManagedMarketplaceMutation(ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{}}); err == nil {
 		t.Fatal("an explicit empty packageIds array was treated as update-all")
 	}
+	var nullIDs ManagedMarketplaceMutation
+	if err := json.Unmarshal([]byte(`{"operation":"update","packageIds":null}`), &nullIDs); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateManagedMarketplaceMutation(nullIDs); err == nil {
+		t.Fatal("explicit packageIds:null was treated as omission")
+	}
 	for _, mutation := range []ManagedMarketplaceMutation{
 		{Operation: ManagedMarketplaceUpdate, Specs: []string{"@kb-labs/sample-adapter@1.2.3"}},
 		{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{"@kb-labs/sample-adapter", "@kb-labs/sample-adapter"}},
@@ -55,13 +62,13 @@ func TestManagedMarketplaceUpdateTargetsAreLimitedToActiveMarketplaceAdapters(t 
 	if err := os.MkdirAll(filepath.Join(active, ".kb"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	lock := `{"schema":"kb.marketplace/3","plugins":{"@kb-labs/plugin":{"source":"marketplace"}},"adapters":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0","marketplaceSource":"npm"},"@kb-labs/local-adapter":{"source":"platform","version":"1.0.0"}}}`
+	lock := `{"schema":"kb.marketplace/3","plugins":{"@kb-labs/plugin":{"source":"marketplace"}},"adapters":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0","marketplaceSource":"npm"},"@kb-labs/registry-adapter":{"source":"marketplace","version":"2.0.0","marketplaceSource":"registry"},"@kb-labs/local-adapter":{"source":"platform","version":"1.0.0"}}}`
 	if err := os.WriteFile(filepath.Join(active, ".kb", "marketplace.lock"), []byte(lock), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	all, err := managedMarketplaceUpdateTargets(active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate})
 	if err != nil || len(all) != 1 {
-		t.Fatalf("all adapter update targets = %#v, %v; want only marketplace adapter", all, err)
+		t.Fatalf("all adapter update targets = %#v, %v; want only npm-backed marketplace adapter", all, err)
 	}
 	if _, ok := all["@kb-labs/adapter"]; !ok {
 		t.Fatalf("update targets omitted marketplace adapter: %#v", all)
@@ -74,12 +81,8 @@ func TestManagedMarketplaceUpdateTargetsAreLimitedToActiveMarketplaceAdapters(t 
 			t.Errorf("non-marketplace adapter target %q was accepted", packageID)
 		}
 	}
-	registryLock := `{"schema":"kb.marketplace/3","plugins":{},"adapters":{"@kb-labs/registry-adapter":{"source":"marketplace","version":"1.0.0","marketplaceSource":"registry"}}}`
-	if err := os.WriteFile(filepath.Join(active, ".kb", "marketplace.lock"), []byte(registryLock), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := managedMarketplaceUpdateTargets(active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate}); err == nil || !strings.Contains(err.Error(), "npm-backed") {
-		t.Fatalf("registry-backed adapter update error = %v; want explicit safe refusal", err)
+	if _, err := managedMarketplaceUpdateTargets(active, ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{"@kb-labs/registry-adapter"}}); err == nil || !strings.Contains(err.Error(), "npm-backed") {
+		t.Fatalf("explicit registry adapter update error = %v; want fail-closed refusal", err)
 	}
 	duplicateLock := `{"schema":"kb.marketplace/3","plugins":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0"}},"adapters":{"@kb-labs/adapter":{"source":"marketplace","version":"1.0.0"}}}`
 	if err := os.WriteFile(filepath.Join(active, ".kb", "marketplace.lock"), []byte(duplicateLock), 0o600); err != nil {
@@ -873,6 +876,34 @@ func TestManagedMarketplaceOwnerUpdatesOnlyAnAdapterInsideCandidate(t *testing.T
 }
 
 // case: S-269.10
+func TestManagedMarketplaceUpdatePostconditionRejectsRegistryResolvedCandidate(t *testing.T) {
+	active, candidate := t.TempDir(), t.TempDir()
+	const packageID = "@kb-labs/sample-adapter"
+	seedManagedGraphFixture(t, active, packageID+"@1.0.0", "npm", "1.0.0", false, false, false)
+	seedManagedGraphFixture(t, candidate, packageID+"@1.1.0", "npm", "1.1.0", false, false, false)
+	lockPath := filepath.Join(candidate, ".kb", "marketplace.lock")
+	data, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lock map[string]any
+	if err := json.Unmarshal(data, &lock); err != nil {
+		t.Fatal(err)
+	}
+	adapters := lock["adapters"].(map[string]any)
+	entry := adapters[packageID].(map[string]any)
+	entry["marketplaceSource"] = "registry"
+	data, _ = json.Marshal(lock)
+	if err := os.WriteFile(lockPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutation := ManagedMarketplaceMutation{Operation: ManagedMarketplaceUpdate, PackageIDs: []string{packageID}}
+	result := managedMarketplaceInstallResult{Schema: 1, Operation: ManagedMarketplaceUpdate, Installed: []managedMarketplaceInstallEntry{{RequestedSpec: packageID, PackageID: packageID, Version: "1.1.0", ResolvedVersion: "1.1.0", PrimaryKind: "adapter"}}}
+	if err := verifyManagedMarketplaceMutation(active, candidate, mutation, result); err == nil || !strings.Contains(err.Error(), "staged Marketplace lock does not contain") {
+		t.Fatalf("registry-resolved update postcondition error = %v; want fail-closed rejection", err)
+	}
+}
+
 func TestManagedMarketplaceFailedPnpmMutationPreservesActiveGeneration(t *testing.T) {
 	if _, err := exec.LookPath("node"); err != nil {
 		t.Skip("Node.js is required for the installed-helper transaction test")

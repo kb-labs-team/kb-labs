@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { serializeManagedGenerationFailure } from "./managed-generation-mutation.js";
+import { selectManagedAdapterUpdateIds, serializeManagedGenerationFailure } from "./managed-generation-mutation.js";
 import { parseManagedGenerationMutation } from "./managed-generation-request.js";
 
 describe("managed Marketplace mutation boundary", () => {
@@ -12,6 +12,16 @@ describe("managed Marketplace mutation boundary", () => {
       .toEqual({ operation: "update", packageIds: ["@kb-labs/sample-adapter"] });
     expect(parseManagedGenerationMutation({ operation: "update" }))
       .toEqual({ operation: "update" });
+  });
+
+  it("updates npm-backed pins by default and rejects explicitly selected Registry pins", () => {
+    const lock = { adapters: {
+      "@kb-labs/npm-adapter": { source: "marketplace", marketplaceSource: "npm" },
+      "@kb-labs/registry-adapter": { source: "marketplace", marketplaceSource: "registry" },
+    } };
+    expect(selectManagedAdapterUpdateIds(lock)).toEqual(["@kb-labs/npm-adapter"]);
+    expect(() => selectManagedAdapterUpdateIds(lock, ["@kb-labs/registry-adapter"]))
+      .toThrow(/npm-backed adapters only/);
   });
 
   it("emits bounded typed helper diagnostics with referenced secrets redacted", () => {
@@ -39,6 +49,7 @@ describe("managed Marketplace mutation boundary", () => {
       { operation: "uninstall", packageIds: ["@kb-labs/commit"] },
       { operation: "update", packageIds: ["@kb-labs/commit", "@kb-labs/commit"] },
       { operation: "update", packageIds: [] },
+      { operation: "update", packageIds: null },
       { operation: "update", packageIds: ["@kb-labs/commit@1.2.3"] },
       { operation: "install", specs: Array.from({ length: 33 }, () => "@kb-labs/commit@1.2.3") },
     ]) expect(() => parseManagedGenerationMutation(request)).toThrow();

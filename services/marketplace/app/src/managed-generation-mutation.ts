@@ -10,6 +10,23 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+export function selectManagedAdapterUpdateIds(lock: unknown, requestedIds?: string[]): string[] {
+  if (!record(lock) || !record(lock.adapters)) throw new Error("managed adapter update requires an existing adapter lock");
+  const marketplaceAdapters = Object.entries(lock.adapters)
+    .filter(([, entry]) => record(entry) && entry.source === "marketplace");
+  const selected = requestedIds === undefined
+    ? marketplaceAdapters.filter(([, entry]) => record(entry) && entry.marketplaceSource === "npm")
+    : marketplaceAdapters.filter(([id]) => requestedIds.includes(id));
+  const registryAdapter = selected.find(([, entry]) => record(entry) && entry.marketplaceSource !== "npm");
+  if (registryAdapter) throw new Error(`managed adapter update currently supports npm-backed adapters only; ${registryAdapter[0]} uses ${String(record(registryAdapter[1]) ? registryAdapter[1].marketplaceSource : "unknown")}`);
+  const marketplaceAdapterIds = marketplaceAdapters.map(([id]) => id);
+  const ids = requestedIds ?? selected.map(([id]) => id);
+  if (ids.length === 0 || ids.some(id => !marketplaceAdapterIds.includes(id))) {
+    throw new Error("managed Marketplace update accepts only installed platform adapters");
+  }
+  return ids;
+}
+
 const requestSecretValues = new Set<string>();
 
 export function serializeManagedGenerationFailure(error: unknown, sensitiveValues = [...requestSecretValues]): string {
@@ -151,23 +168,11 @@ export async function runManagedGenerationMutation(): Promise<void> {
   } else {
     const lockPath = path.join(platformRoot, ".kb", "marketplace.lock");
     const lock = JSON.parse(await fs.readFile(lockPath, "utf8")) as unknown;
-    if (!record(lock) || !record(lock.adapters)) throw new Error("managed adapter update requires an existing adapter lock");
-    const marketplaceAdapters = Object.entries(lock.adapters)
-      .filter(([, entry]) => record(entry) && entry.source === "marketplace");
-    const selected = request.packageIds === undefined
-      ? marketplaceAdapters
-      : marketplaceAdapters.filter(([id]) => request.packageIds!.includes(id));
-    const registryAdapter = selected.find(([, entry]) => record(entry) && entry.marketplaceSource !== "npm");
-    if (registryAdapter) throw new Error(`managed adapter update currently supports npm-backed adapters only; ${registryAdapter[0]} uses ${String(record(registryAdapter[1]) ? registryAdapter[1].marketplaceSource : "unknown")}`);
-    const marketplaceAdapterIds = marketplaceAdapters.map(([id]) => id);
-    updatePackageIds = request.packageIds ?? marketplaceAdapterIds;
-    if (updatePackageIds.length === 0 || updatePackageIds.some(id => !marketplaceAdapterIds.includes(id))) {
-      throw new Error("managed Marketplace update accepts only installed platform adapters");
-    }
+    updatePackageIds = selectManagedAdapterUpdateIds(lock, request.packageIds);
   }
   const result = request.operation === "install"
     ? await service.install(scope, request.specs, { dev: request.dev })
-    : await service.update(scope, updatePackageIds);
+    : await service.update(scope, updatePackageIds, { allowedSourceKinds: ["npm"] });
   const expectedCount = request.operation === "install" ? request.specs.length : updatePackageIds.length;
   if (result.installed.length !== expectedCount || result.installed.some(item => item.scope !== "platform"
     || (request.operation === "update" ? item.primaryKind !== "adapter" : item.primaryKind !== "adapter" && item.primaryKind !== "plugin"))) {

@@ -477,6 +477,24 @@ describe('MarketplaceService', () => {
         .toMatchObject({ version: '1.1.0', integrity: computeIntegrity('1.1.0'), source: 'marketplace', enabled: false });
     });
 
+    it('rejects a newly selected Registry source before installing a managed adapter update', async () => {
+      const packageId = '@kb-labs/update-registry-adapter';
+      const dir = await createAdapterDir(tmpDir, 'update-registry-adapter', packageId);
+      const info = { dir, version: '1.0.0', integrity: computeIntegrity('registry-adapter-1.0.0') };
+      const registry = createMockSource(new Map([[packageId, info]]));
+      const install = vi.spyOn(registry, 'install');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, registrySource: registry });
+      await service.install({ scope: 'platform' }, [packageId]);
+      info.version = '1.1.0';
+
+      await expect(service.update({ scope: 'platform' }, [packageId], { allowedSourceKinds: ['npm'] }))
+        .rejects.toThrow(/unsupported Marketplace source registry; no package was installed/);
+
+      expect(install).toHaveBeenCalledTimes(1);
+      expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.adapters?.[packageId])
+        .toMatchObject({ version: '1.0.0', marketplaceSource: 'registry' });
+    });
+
     it('warns for unknown requested packages and leaves existing pins unchanged', async () => {
       const packageId = '@kb-labs/pinned-plugin';
       const unknownPackageId = '@kb-labs/not-published';

@@ -173,6 +173,15 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
         },
       },
     },
+    preValidation: (request, reply, done) => {
+      const body = request.body;
+      if (body !== null && typeof body === 'object' && !Array.isArray(body)
+        && Object.hasOwn(body, 'packageIds') && (body as Record<string, unknown>).packageIds === null) {
+        reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: 'packageIds must be omitted or a non-empty array' });
+        return;
+      }
+      done();
+    },
   }, async (request, reply) => {
     const body = (request.body ?? {}) as { packageIds?: string[] } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
