@@ -40,6 +40,7 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps,
                                   commit_marketplace_install_record,
+                                  requested_commit_marketplace_install_satisfied,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
 from journey_resources import (case_catalog_root, host_structured_log_problem, journey_module,
@@ -1498,7 +1499,7 @@ def _main(*, update_variant_runner=None):
                               and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_receipt = result_records[0].get("data", {}).get("receipt", {}) if len(result_records) == 1 else {}
             install_plan = install_receipt.get("plan", {}) if isinstance(install_receipt, dict) else {}
-            install_marketplace_ok = commit_marketplace_install_record(install_receipt) is not None
+            install_marketplace_ok = requested_commit_marketplace_install_satisfied(install_receipt)
             install_plan_summary_ok = (isinstance(install_plan, dict)
                                        and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
                                        and bool(install_plan.get("artifacts")))

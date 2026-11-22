@@ -123,8 +123,24 @@ def commit_marketplace_install_record(receipt: dict) -> dict | None:
     installs = receipt.get("marketplaceInstalls", [])
     return next((entry for entry in installs
                  if isinstance(entry, dict) and entry.get("id") == "@kb-labs/commit"
-                 and entry.get("spec") == f"@kb-labs/commit@{entry.get('version')}"
+                 and entry.get("spec") in ("@kb-labs/commit", f"@kb-labs/commit@{entry.get('version')}")
                  and entry.get("version") and entry.get("source")), None)
+
+
+def requested_commit_marketplace_install_satisfied(receipt: dict) -> bool:
+    """Require a matching Commit receipt only when the resolved request selected it."""
+    request = receipt.get("plan", {}).get("request", {})
+    specs = request.get("marketplaceInstallSpecs", [])
+    if specs is None:
+        specs = []
+    if not isinstance(specs, list) or any(not isinstance(spec, str) for spec in specs):
+        return False
+    requested = [spec for spec in specs
+                 if spec == "@kb-labs/commit" or spec.startswith("@kb-labs/commit@")]
+    if not requested:
+        return True
+    record = commit_marketplace_install_record(receipt)
+    return record is not None and record.get("spec") in requested
 
 
 def assert_commit_marketplace_receipt(receipt: dict) -> None:
