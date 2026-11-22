@@ -283,12 +283,64 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                          "journey command 'commit bogus' is absent from the live CLI registry: "
                          '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
 
+    def test_plugin_preflight_uses_the_active_candidate_extension_store(self):
+        platform = self.root / "platform"
+        active = platform / "versions" / "candidate"
+        active.mkdir(parents=True)
+        (platform / "current").symlink_to(Path("versions/candidate"))
+        package = active / "node_modules/@kb-labs/core-extension-store"
+        (package / "dist").mkdir(parents=True)
+        (package / "package.json").write_text(json.dumps({
+            "name": "@kb-labs/core-extension-store", "version": "candidate-version",
+        }))
+        module = package / "dist/index.js"
+        module.write_text("export {};")
+        workspace_source = self.root / "workspace/core/extension-store"
+        workspace_source.mkdir(parents=True)
+        self.assertFalse((workspace_source / "dist/index.js").exists())
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {}}))
+        env = {
+            **self.env,
+            "KB_JOURNEY_PLATFORM_ROOT": str(platform),
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root / "workspace"),
+        }
+        commands = []
+
+        def run(_runner, command, **_kwargs):
+            commands.append(command)
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                return subprocess.CompletedProcess(command, 0, "[]", "")
+            return subprocess.CompletedProcess(command, 0, "help", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=run):
+            preflight_installed_plugin_command(
+                ["commit", "--help"], self.project, env, subprocess.run, self.kb,
+            )
+
+        self.assertEqual(len(commands), 1)
+        self.assertEqual(Path(commands[0][-1]), module.resolve())
+        self.assertIn(str(active.resolve()), commands[0][-1])
+
     def test_group_preflight_rejects_a_missing_manifest_declared_child_route(self):
         routes = ["commit", "commit commit", "commit plan show"]
         missing_route = next(route for route in routes if route.startswith("commit ") and route != "commit commit")
         lock = self.project / ".kb/marketplace.lock"
         lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"enabled": True}}}))
-        env = {**self.env, "KB_JOURNEY_WORKSPACE_ROOT": str(self.root)}
+        platform = self.root / "platform"
+        active = platform / "versions" / "candidate"
+        package = active / "node_modules/@kb-labs/core-extension-store"
+        (package / "dist").mkdir(parents=True)
+        (platform / "current").symlink_to(Path("versions/candidate"))
+        (package / "package.json").write_text(json.dumps({
+            "name": "@kb-labs/core-extension-store", "version": "candidate-version",
+        }))
+        (package / "dist/index.js").write_text("export {};")
+        env = {
+            **self.env,
+            "KB_JOURNEY_PLATFORM_ROOT": str(platform),
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root),
+        }
 
         def command_runner(_runner, command, **kwargs):
             if command[:3] == ["node", "--input-type=module", "-e"]:

@@ -451,9 +451,12 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             shared_data.mkdir(parents=True)
             (platform_root / ".kb").mkdir(parents=True, exist_ok=True)
             (platform_root / ".kb" / "data").symlink_to(os.path.relpath(shared_data, platform_root / ".kb"), target_is_directory=True)
+            shared_config = install_root / "state" / "kb.config.jsonc"
+            (platform_root / ".kb" / "kb.config.jsonc").symlink_to(
+                os.path.relpath(shared_config, platform_root / ".kb"))
             receipt = platform_root / ".kb" / "v2" / "receipt.json"
             receipt.parent.mkdir(parents=True)
-            receipt.write_text(json.dumps({"id": "sealed", "plan": {"artifacts": [
+            receipt.write_text(json.dumps({"id": "sealed", "plan": {"request": {"platformRoot": str(install_root)}, "artifacts": [
                 {"id": "workflow", "kind": "service", "package": "@kb-labs/workflow-daemon",
                  "version": "2.120.1", "sha256": "workflow-digest", "tarball": "registry/workflow.tgz"},
                 {"id": "openai", "kind": "adapter", "package": "@kb-labs/adapters-openai", "config": [
@@ -506,7 +509,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 args = command[1:]
                 if command[0] == "kb-create" and args[:2] == ["status", "--platform-root"]:
                     return subprocess.CompletedProcess(command, 0,
-                        json.dumps({"ok": True, "host": {"healthUrl": "http://health.test/health"}}), "")
+                        json.dumps({"ok": True, "running": True, "reachable": True,
+                                    "host": {"healthUrl": "http://health.test/health"}}), "")
                 if command[0] == "git" and args == ["ls-files", "-z"]:
                     return subprocess.CompletedProcess(command, 0, b"README.md\0", b"")
                 if command[0] == "kb-create" and args[:3] == ["doctor", "--platform-root", str(install_root)]:
@@ -515,7 +519,8 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                         gateway_manifest.write_text(json.dumps({"schema": "kb.create.artifact-manifest/v2", "id": "gateway-app",
                             "package": "@kb-labs/gateway-app", "version": "1.0.0"}))
                         return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
-                            "operation": "doctor-fix", "findings": []}}), "")
+                            "operation": "doctor-fix", "findings": [], "snapshot": {"id": "doctor-snapshot"},
+                            "hostRestarted": True}}), "")
                     if not gateway_manifest.exists():
                         result = {"ok": True, "data": {"operation": "doctor", "status": "unhealthy",
                             "findings": [{"code": "KB_INSTALL_MANIFEST_PROJECTION_INVALID",
@@ -823,6 +828,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             expected = ({f"S-054.{number}" for number in range(1, 9)}
                         | {f"S-054.{number}" for number in range(10, 17)}
                         | {"S-054.18", "S-054.19", "S-054.24", "S-054.25"}
+                        | {"S-025.11"}
                         | {"S-054.21", "S-054.22", "S-051.5"}
                         | {f"S-048.{number}" for number in range(1, 8)})
             claims = {claim["claimId"] for claim in journey.result().case_run["claims"]}

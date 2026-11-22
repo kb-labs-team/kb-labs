@@ -109,7 +109,7 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
   };
 
   const install = async (request: InstallPackageRequest): Promise<ResolvedStoreEntry> => {
-    const { name, version, kind, spec, expectedIntegrity } = request;
+    const { name, version, kind, spec, expectedIntegrity, registryUrl } = request;
     const staging = join(tmpDir, randomUUID());
     try {
       const result = await installer.install({
@@ -117,6 +117,7 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
         version,
         spec,
         expectedIntegrity,
+        registryUrl,
         projectDir: staging,
         casDir,
         ...(options.platformRoot ? { platformRoot: options.platformRoot } : {}),

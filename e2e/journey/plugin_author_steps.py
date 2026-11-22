@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import active_platform_root, layout_relative, layout_value
 from marketplace_sync_fixture import (
     marketplace_sync_request_count,
     start_marketplace_sync_fixture,
@@ -197,17 +197,34 @@ def preflight_installed_plugin_command(
     kb_path: Path,
 ) -> None:
     """Check a plugin route against declarations in the enabled installed packages."""
-    workspace_root = env.get("KB_JOURNEY_WORKSPACE_ROOT")
+    platform_root_value = env.get("KB_JOURNEY_PLATFORM_ROOT")
     lock_path = project / ".kb" / "marketplace.lock"
-    if not workspace_root or not lock_path.is_file() or not args:
+    if not platform_root_value or not lock_path.is_file() or not args:
         return
+
+    active_root = active_platform_root(Path(platform_root_value))
+    extension_store_package = active_root / "node_modules" / "@kb-labs" / "core-extension-store"
+    package_path = extension_store_package / "package.json"
+    module_path = extension_store_package / "dist" / "index.js"
+    try:
+        package_root = extension_store_package.resolve(strict=True)
+        package_root.relative_to(active_root.resolve(strict=True))
+        resolved_package_path = package_path.resolve(strict=True)
+        resolved_package_path.relative_to(active_root.resolve(strict=True))
+        package = json.loads(resolved_package_path.read_text(encoding="utf-8"))
+        resolved_module = module_path.resolve(strict=True)
+        resolved_module.relative_to(active_root.resolve(strict=True))
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            "installed candidate is missing a contained @kb-labs/core-extension-store module"
+        ) from error
+    if not isinstance(package, dict) or package.get("name") != "@kb-labs/core-extension-store":
+        raise RuntimeError("installed candidate Extension Store package identity does not match")
 
     script = """
 import { readFile } from 'node:fs/promises';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-const workspace = process.env.KB_JOURNEY_WORKSPACE_ROOT;
-const { createExtensionStore } = await import(pathToFileURL(path.join(workspace, 'core/extension-store/dist/index.js')).href);
+const { createExtensionStore } = await import(pathToFileURL(process.argv[2]).href);
 const lock = JSON.parse(await readFile(process.argv[1], 'utf8'));
 const store = createExtensionStore({ env: process.env });
 const routes = new Set();
@@ -223,8 +240,8 @@ process.stdout.write(JSON.stringify([...routes]));
 """
     result = run_with_runner(
         command_runner,
-        ["node", "--input-type=module", "-e", script, str(lock_path)],
-        cwd=Path(workspace_root),
+        ["node", "--input-type=module", "-e", script, str(lock_path), str(resolved_module)],
+        cwd=active_root,
         env=env,
         timeout=60,
     )

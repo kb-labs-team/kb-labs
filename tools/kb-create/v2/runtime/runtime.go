@@ -459,7 +459,7 @@ func DoctorFix(platformRoot string, repair doctor.RepairPlan, deps Dependencies)
 	return lifecycle.Mutate(platformRoot, platformRoot, snapshotsDirectory, now(deps.Clock), func() error {
 		return doctor.ApplyDefaults(platformRoot, repair)
 	}, func() error {
-		_, err := verify.Run(active.Plan, now(deps.Clock))
+		_, err := verify.RunWithConfigRoot(active.Plan, now(deps.Clock), platformRoot)
 		return err
 	}, nil)
 }

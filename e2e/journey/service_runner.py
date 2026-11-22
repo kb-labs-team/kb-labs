@@ -937,7 +937,7 @@ SERVICE_GROUPS = {
 
 
 def service_selection_groups(root: Path | None = None, runner_selector: str = "") -> dict[str, dict]:
-    """Attach resolver-owned marketplace registrations to the service graph."""
+    """Attach resolver-owned journey registrations to their service graph groups."""
     groups = {name: dict(spec) for name, spec in SERVICE_GROUPS.items()}
     source_root = root or resource_root()
     declaration = journey_source_group_declaration(
@@ -950,6 +950,14 @@ def service_selection_groups(root: Path | None = None, runner_selector: str = ""
     # The imported source closure includes unrelated runner owners. Case IDs identify
     # marketplace flows without making those cross-module step names select this group.
     groups[group_name] = group
+    adapter_declaration = journey_source_group_declaration(
+        "e2e/journey/adapter_defaults_steps.py", source_root, runner_selector)
+    adapter_group = dict(groups["adapters"])
+    adapter_group["cases"] = tuple(sorted(
+        set(adapter_group.get("cases", ())) | set(adapter_declaration["cases"])))
+    adapter_group["steps"] = tuple(sorted(
+        set(adapter_group.get("steps", ())) | set(adapter_declaration["steps"])))
+    groups["adapters"] = adapter_group
     return groups
 STATE_PRODUCERS = {
     state: group for group, spec in SERVICE_GROUPS.items()
