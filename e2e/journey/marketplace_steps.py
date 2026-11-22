@@ -173,6 +173,12 @@ def _publish_npm_fixture_package(package_dir: Path, registry: str, cwd: Path,
     _output(_run(command, cwd=cwd, env=publish_env, runner=runner), command)
 
 
+def _transitive_npm_fixture_ids(suffix: str) -> tuple[str, str]:
+    """Return a platform plugin id and an ordinary npm dependency id."""
+    return (f"@kb-labs/journey-transitive-plugin-{suffix}",
+            f"journey-transitive-dependency-{suffix}")
+
+
 def _output(result: CompletedProcess[str], command: list[str]) -> str:
     if result.returncode != 0:
         detail = " ".join(f"{result.stdout or ''} {result.stderr or ''}".split())
@@ -1119,8 +1125,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
 
     def install_npm_plugin_with_private_transitive_dependency() -> None:
         suffix = str(time.time_ns())
-        plugin_id = f"@kb-labs/journey-transitive-plugin-{suffix}"
-        dependency_id = f"@kb-labs/journey-transitive-dependency-{suffix}"
+        plugin_id, dependency_id = _transitive_npm_fixture_ids(suffix)
         version = "1.0.0"
         marker = f"configured-npm-source-{suffix}"
         sdk_package = active_platform_root(platform_root) / "node_modules" / "@kb-labs" / "sdk" / "package.json"

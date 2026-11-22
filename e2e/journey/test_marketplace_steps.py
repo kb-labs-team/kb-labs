@@ -32,6 +32,7 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                run_ordered_source_journey_steps,
                                run_plugin_policy_diagnostic_step,
                                register_transitive_npm_dependency_step,
+                               _transitive_npm_fixture_ids,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
@@ -160,6 +161,14 @@ class MarketplaceStepTests(unittest.TestCase):
 
             self.assertEqual(resolved.read_text(encoding="utf-8"), config.read_text(encoding="utf-8"))
             self.assertNotEqual(resolved, platform / ".kb" / "kb.config.jsonc")
+
+    # case: S-010.8
+    def test_transitive_npm_fixture_dependency_is_not_platform_scoped(self):
+        plugin_id, dependency_id = _transitive_npm_fixture_ids("test")
+
+        self.assertEqual(plugin_id, "@kb-labs/journey-transitive-plugin-test")
+        self.assertEqual(dependency_id, "journey-transitive-dependency-test")
+        self.assertFalse(dependency_id.startswith("@kb-labs/"))
 
     # case: S-010.8
     def test_transitive_dependency_install_step_runs_for_local_and_secured_service_owners(self):
