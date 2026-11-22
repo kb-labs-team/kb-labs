@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -52,6 +53,11 @@ type managedMarketplaceInstallEntry struct {
 	Version         string `json:"version"`
 	ResolvedVersion string `json:"resolvedVersion"`
 	PrimaryKind     string `json:"primaryKind"`
+}
+
+type managedPnpmLockSnapshot struct {
+	Dependencies         map[string]string `yaml:"dependencies"`
+	OptionalDependencies map[string]string `yaml:"optionalDependencies"`
 }
 
 type managedMarketplaceEnvRefs struct {
@@ -589,14 +595,16 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 		DevDependencies map[string]lockDependency `yaml:"devDependencies"`
 	}
 	var lock struct {
-		LockfileVersion string                  `yaml:"lockfileVersion"`
-		Importers       map[string]lockImporter `yaml:"importers"`
+		LockfileVersion string                             `yaml:"lockfileVersion"`
+		Importers       map[string]lockImporter            `yaml:"importers"`
+		Packages        map[string]any                     `yaml:"packages"`
+		Snapshots       map[string]managedPnpmLockSnapshot `yaml:"snapshots"`
 	}
 	lockData, err := os.ReadFile(filepath.Join(candidate, "pnpm-lock.yaml"))
 	if err != nil {
 		return fmt.Errorf("read candidate package-manager lock: %w", err)
 	}
-	if err := yaml.Unmarshal(lockData, &lock); err != nil || lock.LockfileVersion == "" {
+	if err := yaml.Unmarshal(lockData, &lock); err != nil || lock.LockfileVersion == "" || lock.Packages == nil || lock.Snapshots == nil {
 		return fmt.Errorf("candidate package-manager lock is invalid")
 	}
 	importer, ok := lock.Importers["."]
@@ -604,13 +612,34 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 		return fmt.Errorf("candidate package-manager lock has no platform importer")
 	}
 	for name, specifier := range candidatePackage.Dependencies {
-		if importer.Dependencies[name].Specifier != specifier || !managedLockVersionMatches(candidate, name, importer.Dependencies[name].Version) {
+		dependency := importer.Dependencies[name]
+		if dependency.Specifier != specifier || !managedLockVersionMatches(candidate, name, dependency.Version) || !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, dependency.Version) {
 			return fmt.Errorf("candidate package-manager lock does not match dependency %q", name)
 		}
 	}
 	for name, specifier := range candidatePackage.DevDependencies {
-		if importer.DevDependencies[name].Specifier != specifier || !managedLockVersionMatches(candidate, name, importer.DevDependencies[name].Version) {
+		dependency := importer.DevDependencies[name]
+		if dependency.Specifier != specifier || !managedLockVersionMatches(candidate, name, dependency.Version) || !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, dependency.Version) {
 			return fmt.Errorf("candidate package-manager lock does not match dev dependency %q", name)
+		}
+	}
+	// Verify the complete frozen-install resolution graph: every package
+	// snapshot must have package metadata, and every locked transitive edge must
+	// resolve to both a package record and a peer-aware snapshot.
+	for key, snapshot := range lock.Snapshots {
+		packageKey := strings.SplitN(key, "(", 2)[0]
+		if !lockPackageExists(lock.Packages, packageKey) {
+			return fmt.Errorf("candidate package-manager lock snapshot %q has no package record", key)
+		}
+		for name, version := range snapshot.Dependencies {
+			if !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, version) {
+				return fmt.Errorf("candidate package-manager lock snapshot %q has unresolved dependency %q", key, name)
+			}
+		}
+		for name, version := range snapshot.OptionalDependencies {
+			if !managedLockEntriesExist(lock.Packages, lock.Snapshots, name, version) {
+				return fmt.Errorf("candidate package-manager lock snapshot %q has unresolved optional dependency %q", key, name)
+			}
 		}
 	}
 	if err := validateManagedPnpmModules(candidate); err != nil {
@@ -625,6 +654,48 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 		}
 	}
 	return nil
+}
+
+func lockPackageExists(packages map[string]any, key string) bool {
+	for _, candidate := range []string{key, "/" + key} {
+		record, ok := packages[candidate].(map[string]any)
+		if !ok || record == nil {
+			continue
+		}
+		resolution, ok := record["resolution"].(map[string]any)
+		if !ok || resolution == nil {
+			continue
+		}
+		for _, field := range []string{"integrity", "tarball", "repo", "directory"} {
+			if value, ok := resolution[field].(string); ok && value != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func managedLockEntriesExist(packages map[string]any, snapshots map[string]managedPnpmLockSnapshot, packageID, lockVersion string) bool {
+	if lockVersion == "" || strings.HasPrefix(lockVersion, "link:") {
+		return false
+	}
+	packageKey := packageID + "@" + strings.SplitN(lockVersion, "(", 2)[0]
+	snapshotKey := packageID + "@" + lockVersion
+	snapshotKeys := []string{snapshotKey, "/" + snapshotKey}
+	if !strings.Contains(lockVersion, "(") {
+		snapshotKeys = append(snapshotKeys, packageKey, "/"+packageKey)
+	}
+	for _, candidate := range []string{packageKey, "/" + packageKey} {
+		if !lockPackageExists(packages, candidate) {
+			continue
+		}
+		for _, snapshotCandidate := range snapshotKeys {
+			if _, snapshotOK := snapshots[snapshotCandidate]; snapshotOK {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func managedLockVersionMatches(root, packageID, lockVersion string) bool {
@@ -797,16 +868,68 @@ func validateManagedExecutableProjection(root, packageID string) error {
 			return fmt.Errorf("generation executable shim %s does not target its declared package binary", commandName)
 		}
 	}
-	// Execute the projection itself. A marker can describe the right target
-	// while the launcher is broken or points elsewhere.
+	// Exercise a regular shim with a harmless interposed Node executable. This
+	// proves the launcher invokes the declared entry without executing it;
+	// kb-host's entrypoint starts the host unconditionally.
+	if info.Mode().IsRegular() {
+		if err := probeManagedExecutableShim(projection, resolvedEntry, executable.Version); err != nil {
+			return fmt.Errorf("generation executable projection %s failed its launcher probe: %w", commandName, err)
+		}
+	}
+	return nil
+}
+
+func probeManagedExecutableShim(projection, resolvedEntry, version string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	data, err := os.ReadFile(projection)
+	if err != nil {
+		return err
+	}
+	if bytes.Count(data, []byte("exec node ")) != 1 {
+		return fmt.Errorf("launcher is outside the safe Node shim shape")
+	}
+	if _, err := os.Lstat(filepath.Join(filepath.Dir(projection), "node")); err == nil {
+		return fmt.Errorf("launcher directory contains a local Node executable")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	probeDir, err := os.MkdirTemp("", "kb-managed-shim-probe-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(probeDir)
+	capture := filepath.Join(probeDir, "argv")
+	nodeStub := filepath.Join(probeDir, "node")
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + shellQuote(capture) + "\nprintf '%s\\n' " + shellQuote(version) + "\n"
+	if err := os.WriteFile(nodeStub, []byte(stub), 0o700); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, projection, "--version")
+	cmd.Dir = filepath.Dir(projection)
+	cmd.Env = append(os.Environ(), "PATH="+probeDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	output, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(output), executable.Version) {
-		return fmt.Errorf("generation executable projection %s failed its version probe", commandName)
+	if err != nil || !strings.Contains(string(output), version) {
+		return fmt.Errorf("launcher did not complete the harmless probe")
 	}
-	return nil
+	args, err := os.ReadFile(capture)
+	if err != nil {
+		return fmt.Errorf("launcher did not invoke the interposed Node executable")
+	}
+	for _, arg := range strings.Split(strings.TrimSpace(string(args)), "\n") {
+		candidate := arg
+		if !filepath.IsAbs(candidate) {
+			candidate = filepath.Join(filepath.Dir(projection), candidate)
+		}
+		resolved, resolveErr := filepath.EvalSymlinks(candidate)
+		if resolveErr == nil && filepath.Clean(resolved) == filepath.Clean(resolvedEntry) {
+			return nil
+		}
+	}
+	return fmt.Errorf("launcher did not invoke its declared package binary")
 }
 
 func firstMarketplaceSpec(specs map[string]struct{}) string {

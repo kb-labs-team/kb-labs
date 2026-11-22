@@ -123,7 +123,7 @@ func TestManagedMarketplacePostconditionRequiresValidEnabledAdapterAndManifest(t
 			t.Fatal(err)
 		}
 		data, _ := json.Marshal(map[string]any{"schema": "kb.marketplace/3", "plugins": map[string]any{}, "adapters": map[string]any{
-			packageID: map[string]any{"source": source, "version": "1.0.0", "integrity": "sha512-fixture", "resolvedPath": resolvedPath, "enabled": enabled, "marketplaceSource": selectedSource, "signatureStatus": "unsigned"},
+			packageID: map[string]any{"source": source, "version": "1.0.0", "integrity": "sha512-Zml4dHVyZQ==", "resolvedPath": resolvedPath, "enabled": enabled, "marketplaceSource": selectedSource, "signatureStatus": "unsigned"},
 		}})
 		if err := os.WriteFile(lockPath, data, 0o600); err != nil {
 			t.Fatal(err)
@@ -168,8 +168,8 @@ func TestManagedMarketplacePostconditionRequiresValidEnabledAdapterAndManifest(t
 // case: S-269.10
 func TestManagedMarketplaceCoreGraphAcceptsRealInstallVariantsAndRequiresModulesMetadata(t *testing.T) {
 	for _, test := range []struct {
-		name, request, source, oldVersion, installedVersion                             string
-		binAsFile, omitModules, invalidModules, badResolved, missingResolved, wantError bool
+		name, request, source, oldVersion, installedVersion                                                                  string
+		binAsFile, omitModules, invalidModules, badResolved, missingResolved, omitLockGraph, invalidPackageRecord, wantError bool
 	}{
 		{name: "unversioned-npm-install-with-pnpm-file-shims", request: "@kb-labs/sample", source: "npm", installedVersion: "1.2.3", binAsFile: true},
 		{name: "npm-update-of-existing-adapter", request: "@kb-labs/sample", source: "npm", oldVersion: "1.0.0", installedVersion: "2.0.0"},
@@ -178,6 +178,8 @@ func TestManagedMarketplaceCoreGraphAcceptsRealInstallVariantsAndRequiresModules
 		{name: "invalid-pnpm-modules-metadata", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", invalidModules: true, wantError: true},
 		{name: "missing-resolved-lock-version", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", missingResolved: true, wantError: true},
 		{name: "incorrect-resolved-lock-version", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", badResolved: true, wantError: true},
+		{name: "missing-pnpm-package-snapshot-graph", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", omitLockGraph: true, wantError: true},
+		{name: "missing-pnpm-package-resolution", request: "@kb-labs/sample@1.2.3", source: "registry", installedVersion: "1.2.3", invalidPackageRecord: true, wantError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			active := filepath.Join(t.TempDir(), "active")
@@ -187,7 +189,7 @@ func TestManagedMarketplaceCoreGraphAcceptsRealInstallVariantsAndRequiresModules
 			} else {
 				seedManagedGraphFixture(t, active, "", "", "", false, false, false)
 			}
-			seedManagedGraphFixture(t, candidate, test.request, test.source, test.installedVersion, test.binAsFile, test.omitModules, test.invalidModules, test.badResolved, test.missingResolved)
+			seedManagedGraphFixture(t, candidate, test.request, test.source, test.installedVersion, test.binAsFile, test.omitModules, test.invalidModules, test.badResolved, test.missingResolved, test.omitLockGraph, test.invalidPackageRecord)
 			mutation := ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall, Specs: []string{test.request}}
 			result := managedMarketplaceInstallResult{Schema: 1, Operation: ManagedMarketplaceInstall, Installed: []managedMarketplaceInstallEntry{{RequestedSpec: test.request, PackageID: "@kb-labs/sample", Version: test.installedVersion, ResolvedVersion: test.installedVersion, PrimaryKind: "adapter"}}}
 			err := verifyManagedMarketplaceCoreGraph(active, candidate, mutation, result)
@@ -233,6 +235,9 @@ func seedManagedGraphFixture(t *testing.T, root, adapterSpec, marketplaceSource,
 	if len(lockOptions) > 1 {
 		missingResolved = lockOptions[1]
 	}
+	omitLockGraph := len(lockOptions) > 2 && lockOptions[2]
+	invalidPackageRecord := len(lockOptions) > 3 && lockOptions[3]
+	lockEntries := map[string]bool{}
 	for name, version := range dependencies {
 		resolved := version
 		if strings.HasPrefix(name, "@kb-labs/") && strings.Contains(name, "sample") {
@@ -244,6 +249,21 @@ func seedManagedGraphFixture(t *testing.T, root, adapterSpec, marketplaceSource,
 		fmt.Fprintf(&lock, "      '%s':\n        specifier: %s\n", name, version)
 		if !missingResolved {
 			fmt.Fprintf(&lock, "        version: %s\n", resolved)
+		}
+		lockEntries[name+"@"+resolved] = true
+	}
+	if !omitLockGraph {
+		lock.WriteString("packages:\n")
+		for key := range lockEntries {
+			if invalidPackageRecord {
+				fmt.Fprintf(&lock, "  '%s': {}\n", key)
+			} else {
+				fmt.Fprintf(&lock, "  '%s': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n", key)
+			}
+		}
+		lock.WriteString("snapshots:\n")
+		for key := range lockEntries {
+			fmt.Fprintf(&lock, "  '%s': {}\n", key)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte(lock.String()), 0o600); err != nil {
@@ -267,7 +287,7 @@ func seedManagedGraphFixture(t *testing.T, root, adapterSpec, marketplaceSource,
 			t.Fatal(err)
 		}
 		if binAsFile {
-			shim := "#!/bin/sh\n# cmd-shim-target=" + entry + "\nexec \"" + entry + "\" \"$@\"\n"
+			shim := "#!/bin/sh\n# cmd-shim-target=" + entry + "\nexec node \"" + entry + "\" \"$@\"\n"
 			if err := os.WriteFile(linkPath, []byte(shim), 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -291,7 +311,7 @@ func seedManagedGraphFixture(t *testing.T, root, adapterSpec, marketplaceSource,
 		if err := os.MkdirAll(filepath.Join(root, ".kb"), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		lockEntry := map[string]any{"source": "marketplace", "version": installedVersion, "integrity": "sha512-fixture", "resolvedPath": filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(name))), "enabled": true, "marketplaceSource": marketplaceSource, "signatureStatus": "unsigned"}
+		lockEntry := map[string]any{"source": "marketplace", "version": installedVersion, "integrity": "sha512-Zml4dHVyZQ==", "resolvedPath": filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(name))), "enabled": true, "marketplaceSource": marketplaceSource, "signatureStatus": "unsigned"}
 		data, _ := json.Marshal(map[string]any{"schema": "kb.marketplace/3", "plugins": map[string]any{}, "adapters": map[string]any{name: lockEntry}})
 		if err := os.WriteFile(filepath.Join(root, ".kb", "marketplace.lock"), data, 0o600); err != nil {
 			t.Fatal(err)
@@ -420,11 +440,55 @@ func TestManagedExecutableProjectionMustActuallyRunDeclaredBinary(t *testing.T) 
 	seedManagedGraphFixture(t, root, "", "", "", true, false, false)
 	projection := filepath.Join(root, "node_modules", ".bin", "kb")
 	target := filepath.Join(root, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
-	if err := os.WriteFile(projection, []byte("#!/bin/sh\n# cmd-shim-target="+target+"\nexec /bin/false\n"), 0o700); err != nil {
+	if err := os.WriteFile(projection, []byte("#!/bin/sh\n# cmd-shim-target="+target+"\nexec node /bin/false \"$@\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := validateManagedExecutableProjection(root, "@kb-labs/cli-bin"); err == nil {
 		t.Fatal("broken launcher passed because its comment named the valid target")
+	}
+}
+
+func TestManagedHostProjectionValidationDoesNotStartHost(t *testing.T) {
+	root := t.TempDir()
+	seedManagedGraphFixture(t, root, "", "", "", true, false, false)
+	marker := filepath.Join(root, "host-started")
+	entry := filepath.Join(root, "node_modules", "@kb-labs", "host-app", "dist", "bin.js")
+	if err := os.WriteFile(entry, []byte("#!/bin/sh\nprintf started > '"+marker+"'\nprintf '1.0.0\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateManagedExecutableProjection(root, "@kb-labs/host-app"); err != nil {
+		t.Fatalf("safe structural host check failed: %v", err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("host started during validation: %v", err)
+	}
+}
+
+func TestManagedMarketplaceRejectsDanglingFrozenLockTransitiveEdge(t *testing.T) {
+	active := filepath.Join(t.TempDir(), "active")
+	candidate := filepath.Join(t.TempDir(), "candidate")
+	seedManagedGraphFixture(t, active, "", "", "", false, false, false)
+	seedManagedGraphFixture(t, candidate, "@kb-labs/sample@1.2.3", "registry", "1.2.3", false, false, false)
+	lock := "lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      '@kb-labs/cli-bin':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/host-app':\n        specifier: 1.0.0\n        version: 1.0.0\npackages:\n  '@kb-labs/cli-bin@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/host-app@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/sample@1.2.3': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\nsnapshots:\n  '@kb-labs/cli-bin@1.0.0':\n    dependencies:\n      '@kb-labs/missing': 1.0.0\n  '@kb-labs/host-app@1.0.0': {}\n  '@kb-labs/sample@1.2.3': {}\n"
+	if err := os.WriteFile(filepath.Join(candidate, "pnpm-lock.yaml"), []byte(lock), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mutation := ManagedMarketplaceMutation{Operation: ManagedMarketplaceInstall, Specs: []string{"@kb-labs/sample@1.2.3"}}
+	result := managedMarketplaceInstallResult{Schema: 1, Operation: ManagedMarketplaceInstall, Installed: []managedMarketplaceInstallEntry{{RequestedSpec: "@kb-labs/sample@1.2.3", PackageID: "@kb-labs/sample", Version: "1.2.3", ResolvedVersion: "1.2.3", PrimaryKind: "adapter"}}}
+	if err := verifyManagedMarketplaceCoreGraph(active, candidate, mutation, result); err == nil || !strings.Contains(err.Error(), "unresolved dependency") {
+		t.Fatalf("dangling transitive lock edge was not rejected: %v", err)
+	}
+}
+
+func TestManagedLockRequiresPeerAwareSnapshot(t *testing.T) {
+	packages := map[string]any{"@kb-labs/sample@1.2.3": map[string]any{"resolution": map[string]any{"integrity": "sha512-Zml4dHVyZQ=="}}}
+	snapshots := map[string]managedPnpmLockSnapshot{"@kb-labs/sample@1.2.3": {}}
+	if managedLockEntriesExist(packages, snapshots, "@kb-labs/sample", "1.2.3(peer@2.0.0)") {
+		t.Fatal("base snapshot incorrectly satisfied a peer-qualified lock resolution")
+	}
+	snapshots["@kb-labs/sample@1.2.3(peer@2.0.0)"] = managedPnpmLockSnapshot{}
+	if !managedLockEntriesExist(packages, snapshots, "@kb-labs/sample", "1.2.3(peer@2.0.0)") {
+		t.Fatal("matching peer-qualified snapshot was rejected")
 	}
 }
 
@@ -465,7 +529,7 @@ func TestManagedMarketplaceOwnerRunsInstalledHelperInCandidateAndSwitchesOnlyOnS
 				t.Fatal(err)
 			}
 			helper := filepath.Join(filepath.Dir(pkg), "dist", "bin.js")
-			script := `if(process.argv[2]==="--managed-generation-mutation-env-refs"){process.stdout.write(JSON.stringify({schema:1,environment:["KB_TEST_REGISTRY_TOKEN"]})+"\n");process.exit(0);}let body="";process.stdin.on("data",b=>body+=b);process.stdin.on("end",()=>{const envelope=JSON.parse(body);const r=envelope.mutation;if(process.argv[2]!=="--managed-generation-mutation"||r.operation!=="install"||process.env.KB_PLATFORM_ROOT!==process.cwd()||Object.hasOwn(process.env,"KB_TEST_REGISTRY_TOKEN")||envelope.environment.KB_TEST_REGISTRY_TOKEN!=="fixture-secret")process.exit(31);const result=JSON.stringify({schema:1,operation:"install",installed:[{requestedSpec:"@kb-labs/example@1.0.0",packageId:"@kb-labs/example",version:"1.0.0",resolvedVersion:"1.0.0",primaryKind:"adapter"}]})+"\n";if(` + strconv.Itoa(helperExit) + `===19)process.exit(19);if(` + strconv.Itoa(helperExit) + `===20){process.stdout.write(result);return;}const fs=require("node:fs");fs.mkdirSync("node_modules/@kb-labs/example",{recursive:true});fs.writeFileSync("node_modules/@kb-labs/example/package.json",JSON.stringify({name:"@kb-labs/example",version:"1.0.0",kb:{adapter:{manifest:"manifest.mjs"}}}));fs.writeFileSync("node_modules/@kb-labs/example/manifest.mjs","export const manifest = {};");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));pkg.dependencies["@kb-labs/example"]="1.0.0";fs.writeFileSync("package.json",JSON.stringify(pkg));fs.writeFileSync("pnpm-lock.yaml","lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      '@kb-labs/cli-bin':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/host-app':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/example':\n        specifier: 1.0.0\n        version: 1.0.0\n");fs.writeFileSync(".kb/marketplace.lock",JSON.stringify({schema:"kb.marketplace/3",plugins:{},adapters:{"@kb-labs/example":{source:"marketplace",version:"1.0.0",integrity:"sha256-test",resolvedPath:"node_modules/@kb-labs/example",enabled:true,marketplaceSource:"npm",signatureStatus:"unsigned"}}}));fs.writeFileSync("mutation.marker","staged");process.stdout.write(result);});`
+			script := `if(process.argv[2]==="--managed-generation-mutation-env-refs"){process.stdout.write(JSON.stringify({schema:1,environment:["KB_TEST_REGISTRY_TOKEN"]})+"\n");process.exit(0);}let body="";process.stdin.on("data",b=>body+=b);process.stdin.on("end",()=>{const envelope=JSON.parse(body);const r=envelope.mutation;if(process.argv[2]!=="--managed-generation-mutation"||r.operation!=="install"||process.env.KB_PLATFORM_ROOT!==process.cwd()||Object.hasOwn(process.env,"KB_TEST_REGISTRY_TOKEN")||envelope.environment.KB_TEST_REGISTRY_TOKEN!=="fixture-secret")process.exit(31);const result=JSON.stringify({schema:1,operation:"install",installed:[{requestedSpec:"@kb-labs/example@1.0.0",packageId:"@kb-labs/example",version:"1.0.0",resolvedVersion:"1.0.0",primaryKind:"adapter"}]})+"\n";if(` + strconv.Itoa(helperExit) + `===19)process.exit(19);if(` + strconv.Itoa(helperExit) + `===20){process.stdout.write(result);return;}const fs=require("node:fs");fs.mkdirSync("node_modules/@kb-labs/example",{recursive:true});fs.writeFileSync("node_modules/@kb-labs/example/package.json",JSON.stringify({name:"@kb-labs/example",version:"1.0.0",kb:{adapter:{manifest:"manifest.mjs"}}}));fs.writeFileSync("node_modules/@kb-labs/example/manifest.mjs","export const manifest = {};");const pkg=JSON.parse(fs.readFileSync("package.json","utf8"));pkg.dependencies["@kb-labs/example"]="1.0.0";fs.writeFileSync("package.json",JSON.stringify(pkg));fs.writeFileSync("pnpm-lock.yaml","lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      '@kb-labs/cli-bin':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/host-app':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/example':\n        specifier: 1.0.0\n        version: 1.0.0\npackages:\n  '@kb-labs/cli-bin@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/host-app@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/example@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\nsnapshots:\n  '@kb-labs/cli-bin@1.0.0': {}\n  '@kb-labs/host-app@1.0.0': {}\n  '@kb-labs/example@1.0.0': {}\n");fs.writeFileSync(".kb/marketplace.lock",JSON.stringify({schema:"kb.marketplace/3",plugins:{},adapters:{"@kb-labs/example":{source:"marketplace",version:"1.0.0",integrity:"sha256-test",resolvedPath:"node_modules/@kb-labs/example",enabled:true,marketplaceSource:"npm",signatureStatus:"unsigned"}}}));fs.writeFileSync("mutation.marker","staged");process.stdout.write(result);});`
 			if err := os.WriteFile(helper, []byte(script), 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -666,7 +730,7 @@ func seedManagedCoreCommandGraph(t *testing.T, root string) {
 	if err := os.WriteFile(filepath.Join(root, "package.json"), data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      '@kb-labs/cli-bin':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/host-app':\n        specifier: 1.0.0\n        version: 1.0.0\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\nimporters:\n  .:\n    dependencies:\n      '@kb-labs/cli-bin':\n        specifier: 1.0.0\n        version: 1.0.0\n      '@kb-labs/host-app':\n        specifier: 1.0.0\n        version: 1.0.0\npackages:\n  '@kb-labs/cli-bin@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\n  '@kb-labs/host-app@1.0.0': {resolution: {integrity: sha512-Zml4dHVyZQ==}}\nsnapshots:\n  '@kb-labs/cli-bin@1.0.0': {}\n  '@kb-labs/host-app@1.0.0': {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, executable := range []struct{ name, command string }{{"@kb-labs/cli-bin", "kb"}, {"@kb-labs/host-app", "kb-host"}} {
