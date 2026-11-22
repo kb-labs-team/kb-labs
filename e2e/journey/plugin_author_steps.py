@@ -39,6 +39,71 @@ ORIGINAL_GREETING = "Hello, ${who} from demo!"
 EDITED_GREETING = "Edited demo greeting for ${who}!"
 
 
+_RESOLVE_EXTENSION_STORE_SCRIPT = """
+import { createRequire } from 'node:module';
+import { realpathSync } from 'node:fs';
+import { join, resolve, relative, isAbsolute, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const root = realpathSync(resolve(process.argv[1]));
+const runtimeEntry = realpathSync(join(root, 'node_modules/@kb-labs/core-runtime/dist/index.cjs'));
+const runtimeRequire = createRequire(pathToFileURL(runtimeEntry));
+const discoveryEntry = realpathSync(runtimeRequire.resolve('@kb-labs/core-discovery'));
+const discoveryRequire = createRequire(pathToFileURL(discoveryEntry));
+const extensionStoreEntry = realpathSync(
+  discoveryRequire.resolve('@kb-labs/core-extension-store'),
+);
+const relativeEntry = relative(root, extensionStoreEntry);
+if (isAbsolute(relativeEntry) || relativeEntry === '..' || relativeEntry.startsWith(`..${sep}`)) {
+  throw new Error('resolved Extension Store module is outside the installed platform');
+}
+process.stdout.write(extensionStoreEntry);
+"""
+
+
+def _resolve_installed_extension_store_module(
+    active_root: Path,
+    env: dict[str, str],
+    command_runner: Callable[..., CompletedProcess[str]],
+) -> Path:
+    """Resolve Extension Store through core-runtime's pnpm dependency graph."""
+    result = run_with_runner(
+        command_runner,
+        ["node", "--input-type=module", "-e", _RESOLVE_EXTENSION_STORE_SCRIPT,
+         str(active_root)],
+        cwd=active_root,
+        env=env,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        detail = " ".join((result.stdout + result.stderr).split())
+        raise RuntimeError(
+            "installed candidate is missing a contained @kb-labs/core-extension-store module"
+            + (f": {detail}" if detail else "")
+        )
+
+    try:
+        resolved_root = active_root.resolve(strict=True)
+        resolved_module = Path(result.stdout.strip()).resolve(strict=True)
+        resolved_module.relative_to(resolved_root)
+        package_path = next(
+            candidate / "package.json"
+            for candidate in resolved_module.parents
+            if (candidate / "package.json").is_file()
+            and json.loads((candidate / "package.json").read_text(encoding="utf-8")).get("name")
+            == "@kb-labs/core-extension-store"
+        )
+        package = json.loads(package_path.read_text(encoding="utf-8"))
+        package_path.resolve(strict=True).relative_to(resolved_root)
+    except (OSError, ValueError, StopIteration, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            "installed candidate is missing a contained @kb-labs/core-extension-store module"
+        ) from error
+    if not isinstance(package, dict) or package.get("name") != "@kb-labs/core-extension-store":
+        raise RuntimeError("installed candidate Extension Store package identity does not match")
+    return resolved_module
+
+
 def _run(command: list[str], *, cwd: Path, env: dict[str, str],
          command_runner: Callable[..., CompletedProcess[str]]) -> str:
     result = command_runner(command, cwd=cwd, env=env, text=True, check=False)
@@ -203,23 +268,8 @@ def preflight_installed_plugin_command(
         return
 
     active_root = active_platform_root(Path(platform_root_value))
-    extension_store_package = active_root / "node_modules" / "@kb-labs" / "core-extension-store"
-    package_path = extension_store_package / "package.json"
-    module_path = extension_store_package / "dist" / "index.js"
-    try:
-        package_root = extension_store_package.resolve(strict=True)
-        package_root.relative_to(active_root.resolve(strict=True))
-        resolved_package_path = package_path.resolve(strict=True)
-        resolved_package_path.relative_to(active_root.resolve(strict=True))
-        package = json.loads(resolved_package_path.read_text(encoding="utf-8"))
-        resolved_module = module_path.resolve(strict=True)
-        resolved_module.relative_to(active_root.resolve(strict=True))
-    except (OSError, ValueError, json.JSONDecodeError) as error:
-        raise RuntimeError(
-            "installed candidate is missing a contained @kb-labs/core-extension-store module"
-        ) from error
-    if not isinstance(package, dict) or package.get("name") != "@kb-labs/core-extension-store":
-        raise RuntimeError("installed candidate Extension Store package identity does not match")
+    resolved_module = _resolve_installed_extension_store_module(
+        active_root, env, command_runner)
 
     script = """
 import { readFile } from 'node:fs/promises';

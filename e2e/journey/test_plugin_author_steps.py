@@ -248,6 +248,44 @@ class PluginAuthorJourneyTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _create_pnpm_extension_store_tree(self, active: Path) -> Path:
+        pnpm = active / "node_modules/.pnpm"
+        runtime = pnpm / "@kb-labs+core-runtime@candidate/node_modules/@kb-labs/core-runtime"
+        discovery = pnpm / "@kb-labs+core-discovery@candidate/node_modules/@kb-labs/core-discovery"
+        extension_store = pnpm / (
+            "@kb-labs+core-extension-store@candidate/node_modules/@kb-labs/core-extension-store")
+        runtime_entry = runtime / "dist/index.cjs"
+        discovery_entry = discovery / "dist/index.cjs"
+        extension_store_entry = extension_store / "dist/index.js"
+        runtime_entry.parent.mkdir(parents=True)
+        discovery_entry.parent.mkdir(parents=True)
+        extension_store_entry.parent.mkdir(parents=True)
+        runtime_entry.write_text("module.exports = {};\n", encoding="utf-8")
+        discovery_entry.write_text("module.exports = {};\n", encoding="utf-8")
+        extension_store_entry.write_text(
+            "export const createExtensionStore = () => ({ lookup: async () => null });\n",
+            encoding="utf-8",
+        )
+        for package, name, main in (
+            (runtime, "@kb-labs/core-runtime", "./dist/index.cjs"),
+            (discovery, "@kb-labs/core-discovery", "./dist/index.cjs"),
+            (extension_store, "@kb-labs/core-extension-store", "./dist/index.js"),
+        ):
+            (package / "package.json").write_text(
+                json.dumps({"name": name, "version": "candidate-version", "main": main}),
+                encoding="utf-8",
+            )
+
+        def link(parent: Path, name: str, target: Path) -> None:
+            link_path = parent / name
+            link_path.parent.mkdir(parents=True, exist_ok=True)
+            link_path.symlink_to(Path(os.path.relpath(target, link_path.parent)), target_is_directory=True)
+
+        link(active / "node_modules/@kb-labs", "core-runtime", runtime)
+        link(runtime / "node_modules/@kb-labs", "core-discovery", discovery)
+        link(discovery / "node_modules/@kb-labs", "core-extension-store", extension_store)
+        return extension_store_entry
+
     def test_fake_cli_rejects_unregistered_nested_plugin_routes(self):
         result = subprocess.run([str(self.kb), "commit", "bogus", "--help"],
                                 cwd=self.project, env=self.env, capture_output=True, text=True)
@@ -283,18 +321,14 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                          "journey command 'commit bogus' is absent from the live CLI registry: "
                          '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
 
-    def test_plugin_preflight_uses_the_active_candidate_extension_store(self):
+    # case: S-010.8
+    def test_plugin_preflight_resolves_the_active_candidate_extension_store_through_pnpm(self):
         platform = self.root / "platform"
         active = platform / "versions" / "candidate"
         active.mkdir(parents=True)
         (platform / "current").symlink_to(Path("versions/candidate"))
-        package = active / "node_modules/@kb-labs/core-extension-store"
-        (package / "dist").mkdir(parents=True)
-        (package / "package.json").write_text(json.dumps({
-            "name": "@kb-labs/core-extension-store", "version": "candidate-version",
-        }))
-        module = package / "dist/index.js"
-        module.write_text("export {};")
+        module = self._create_pnpm_extension_store_tree(active)
+        self.assertFalse((active / "node_modules/@kb-labs/core-extension-store").exists())
         workspace_source = self.root / "workspace/core/extension-store"
         workspace_source.mkdir(parents=True)
         self.assertFalse((workspace_source / "dist/index.js").exists())
@@ -310,7 +344,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         def run(_runner, command, **_kwargs):
             commands.append(command)
             if command[:3] == ["node", "--input-type=module", "-e"]:
-                return subprocess.CompletedProcess(command, 0, "[]", "")
+                if "store.lookup" in command[3]:
+                    return subprocess.CompletedProcess(command, 0, "[]", "")
+                return subprocess.run(command, capture_output=True, text=True, **_kwargs)
             return subprocess.CompletedProcess(command, 0, "help", "")
 
         with patch("plugin_author_steps.run_with_runner", side_effect=run):
@@ -318,9 +354,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 ["commit", "--help"], self.project, env, subprocess.run, self.kb,
             )
 
-        self.assertEqual(len(commands), 1)
-        self.assertEqual(Path(commands[0][-1]), module.resolve())
-        self.assertIn(str(active.resolve()), commands[0][-1])
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(Path(commands[-1][-1]), module.resolve())
+        self.assertIn(str(active.resolve()), commands[-1][-1])
 
     def test_group_preflight_rejects_a_missing_manifest_declared_child_route(self):
         routes = ["commit", "commit commit", "commit plan show"]
@@ -329,13 +365,8 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"enabled": True}}}))
         platform = self.root / "platform"
         active = platform / "versions" / "candidate"
-        package = active / "node_modules/@kb-labs/core-extension-store"
-        (package / "dist").mkdir(parents=True)
+        self._create_pnpm_extension_store_tree(active)
         (platform / "current").symlink_to(Path("versions/candidate"))
-        (package / "package.json").write_text(json.dumps({
-            "name": "@kb-labs/core-extension-store", "version": "candidate-version",
-        }))
-        (package / "dist/index.js").write_text("export {};")
         env = {
             **self.env,
             "KB_JOURNEY_PLATFORM_ROOT": str(platform),
@@ -344,7 +375,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
         def command_runner(_runner, command, **kwargs):
             if command[:3] == ["node", "--input-type=module", "-e"]:
-                return subprocess.CompletedProcess(command, 0, json.dumps(routes), "")
+                if "store.lookup" in command[3]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(routes), "")
+                return subprocess.run(command, capture_output=True, text=True, **kwargs)
             invoked_route = command[1:-2]
             if invoked_route == missing_route.split():
                 return subprocess.CompletedProcess(
