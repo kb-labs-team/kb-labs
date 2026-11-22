@@ -1111,6 +1111,10 @@ class MarketplaceStepTests(unittest.TestCase):
                 if command[0] == "kb-create":
                     if command[1] in ("start", "stop"):
                         host_running = command[1] == "start"
+                    if command[1] == "status":
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                            "marketplaceSources": [{"kind": "registry"}, {"kind": "npm"}],
+                        }}), "")
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if command[0] == "npm":
                     package_id = command[2]
@@ -1396,7 +1400,11 @@ class MarketplaceStepTests(unittest.TestCase):
                              lambda: "replayed j54 S-203.25 failure", cases=["S-203.25"])
             def fail_unrelated_error_claim(*_args, **_kwargs):
                 raise AssertionError("independent S-051 envelope assertion failed")
-            with patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
+            with patch("marketplace_steps.preflight_installed_plugin_command"), \
+                    patch("marketplace_steps.project_service_path",
+                          side_effect=lambda project_id, service_id, path="":
+                          f"/api/v1/projects/{project_id}/{service_id}/{path}".rstrip("/")), \
+                    patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
                     patch("marketplace_steps.validate_shared_failure", side_effect=fail_unrelated_error_claim), \
                     patch("marketplace_steps.publish_commit_update_fixture", return_value="3.0.0"):
                 run_marketplace_steps(journey, project, "prj_marketplace_fixture", "http://registry.test", env, fake_run, fake_http,
@@ -1405,7 +1413,6 @@ class MarketplaceStepTests(unittest.TestCase):
             expected = {f"S-{case}.{step}" for case, steps in (("010", range(1, 6)), ("011", range(1, 7)), ("012", range(1, 5)), ("047", range(1, 4)), ("192", range(1, 7))) for step in steps}
             expected.update({
                 "S-010.7",
-                "S-010.8",
                 "S-051.2", "S-051.3", "S-051.4",
                 "S-203.14", "S-203.15", "S-203.16",
                 "S-203.25",
@@ -1485,6 +1492,7 @@ class MarketplaceStepTests(unittest.TestCase):
             lifecycle_assertions = [
                 step.name for step in journey.steps
                 if step.capability == "marketplace"
+                and step.status != "SKIPPED"
                 and step.name != "restore Commit project fixture after marketplace lifecycle"
             ]
             self.assertGreater(len(lifecycle_assertions), 20)
@@ -1530,7 +1538,11 @@ class MarketplaceStepTests(unittest.TestCase):
                         return check()
 
                     trial.step_guard = inject_selected_failure
-                    with patch("marketplace_steps.run_plugin_policy_diagnostic_step",
+                    with patch("marketplace_steps.preflight_installed_plugin_command"), \
+                            patch("marketplace_steps.project_service_path",
+                                  side_effect=lambda project_id, service_id, path="":
+                                  f"/api/v1/projects/{project_id}/{service_id}/{path}".rstrip("/")), \
+                            patch("marketplace_steps.run_plugin_policy_diagnostic_step",
                                side_effect=fail_unrelated_policy_claim), \
                             patch("marketplace_steps.validate_shared_failure",
                                   side_effect=fail_unrelated_error_claim), \

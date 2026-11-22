@@ -37,6 +37,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from journey_selection import JourneySelection
 from invocations import catalogued_error_hint, run_pty_command, store_report_secret
+from nightly_report import load_results
 from steps.auth import run_secured_auth_steps
 
 
