@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 from plugin_author_steps import (
+    _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
     _validate_plugin_route_help,
     preflight_installed_plugin_command,
     run_commit_case_steps,
@@ -320,6 +321,38 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(str(raised.exception),
                          "journey command 'commit bogus' is absent from the live CLI registry: "
                          '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
+
+    # case: S-010.8
+    def test_preflight_skips_store_entries_without_static_manifests(self):
+        lock = self.root / "marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {
+            "@kb-labs/commit": {
+                "package": "@kb-labs/commit", "version": "1.0.0", "integrity": "sha512-commit",
+                "enabled": True,
+            },
+            "@kb-labs/with-manifest": {
+                "package": "@kb-labs/with-manifest", "version": "1.0.0", "integrity": "sha512-manifest",
+                "enabled": True,
+            },
+        }}), encoding="utf-8")
+        extension_store = self.root / "extension-store.mjs"
+        extension_store.write_text(
+            "export function createExtensionStore() { return { lookup: async ({ name }) => ({ entry: {"
+            "manifest: name === '@kb-labs/commit' ? undefined : { cli: { commands: [{ path: 'known command' }] } }"
+            "} }) }; }\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
+             str(lock), str(extension_store)],
+            cwd=self.root,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["known command"])
 
     # case: S-010.8
     def test_plugin_preflight_resolves_the_active_candidate_extension_store_through_pnpm(self):

@@ -60,6 +60,26 @@ if (isAbsolute(relativeEntry) || relativeEntry === '..' || relativeEntry.startsW
 process.stdout.write(extensionStoreEntry);
 """
 
+_READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT = """
+import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+const { createExtensionStore } = await import(pathToFileURL(process.argv[2]).href);
+const lock = JSON.parse(await readFile(process.argv[1], 'utf8'));
+const store = createExtensionStore({ env: process.env });
+const routes = new Set();
+for (const [id, pin] of Object.entries(lock.plugins ?? {})) {
+  if (!pin || pin.enabled === false || !pin.version || !pin.integrity) continue;
+  const name = pin.package ?? id;
+  const installed = await store.lookup({ name, version: pin.version, expectedIntegrity: pin.integrity });
+  // Some valid store entries have no static manifest; without one there are
+  // no declared routes to preflight for this package.
+  if (!installed?.entry.manifest) continue;
+  for (const declaration of installed.entry.manifest.cli?.groupMeta ?? []) routes.add(declaration.path);
+  for (const declaration of installed.entry.manifest.cli?.commands ?? []) routes.add(declaration.path);
+}
+process.stdout.write(JSON.stringify([...routes]));
+"""
+
 
 def _resolve_installed_extension_store_module(
     active_root: Path,
@@ -271,26 +291,10 @@ def preflight_installed_plugin_command(
     resolved_module = _resolve_installed_extension_store_module(
         active_root, env, command_runner)
 
-    script = """
-import { readFile } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
-const { createExtensionStore } = await import(pathToFileURL(process.argv[2]).href);
-const lock = JSON.parse(await readFile(process.argv[1], 'utf8'));
-const store = createExtensionStore({ env: process.env });
-const routes = new Set();
-for (const [id, pin] of Object.entries(lock.plugins ?? {})) {
-  if (!pin || pin.enabled === false || !pin.version || !pin.integrity) continue;
-  const name = pin.package ?? id;
-  const installed = await store.lookup({ name, version: pin.version, expectedIntegrity: pin.integrity });
-  if (!installed?.entry.manifest) throw new Error(`enabled plugin ${id} has no installed manifest`);
-  for (const declaration of installed.entry.manifest.cli?.groupMeta ?? []) routes.add(declaration.path);
-  for (const declaration of installed.entry.manifest.cli?.commands ?? []) routes.add(declaration.path);
-}
-process.stdout.write(JSON.stringify([...routes]));
-"""
     result = run_with_runner(
         command_runner,
-        ["node", "--input-type=module", "-e", script, str(lock_path), str(resolved_module)],
+        ["node", "--input-type=module", "-e", _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
+         str(lock_path), str(resolved_module)],
         cwd=active_root,
         env=env,
         timeout=60,
