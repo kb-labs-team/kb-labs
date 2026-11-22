@@ -582,6 +582,7 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 
 	type lockDependency struct {
 		Specifier string `yaml:"specifier"`
+		Version   string `yaml:"version"`
 	}
 	type lockImporter struct {
 		Dependencies    map[string]lockDependency `yaml:"dependencies"`
@@ -603,12 +604,12 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 		return fmt.Errorf("candidate package-manager lock has no platform importer")
 	}
 	for name, specifier := range candidatePackage.Dependencies {
-		if importer.Dependencies[name].Specifier != specifier {
+		if importer.Dependencies[name].Specifier != specifier || !managedLockVersionMatches(candidate, name, importer.Dependencies[name].Version) {
 			return fmt.Errorf("candidate package-manager lock does not match dependency %q", name)
 		}
 	}
 	for name, specifier := range candidatePackage.DevDependencies {
-		if importer.DevDependencies[name].Specifier != specifier {
+		if importer.DevDependencies[name].Specifier != specifier || !managedLockVersionMatches(candidate, name, importer.DevDependencies[name].Version) {
 			return fmt.Errorf("candidate package-manager lock does not match dev dependency %q", name)
 		}
 	}
@@ -624,6 +625,27 @@ func verifyManagedMarketplaceCoreGraph(active, candidate string, mutation Manage
 		}
 	}
 	return nil
+}
+
+func managedLockVersionMatches(root, packageID, lockVersion string) bool {
+	if lockVersion == "" {
+		return false
+	}
+	// pnpm appends peer dependency context in parentheses. Compare the concrete
+	// version against the package physically installed in this generation.
+	resolved := strings.SplitN(lockVersion, "(", 2)[0]
+	if strings.HasPrefix(resolved, "link:") {
+		return false
+	}
+	manifest, err := os.ReadFile(filepath.Join(root, "node_modules", filepath.FromSlash(packageID), "package.json"))
+	if err != nil {
+		return false
+	}
+	var pkg struct{ Name, Version string }
+	if json.Unmarshal(manifest, &pkg) != nil || pkg.Name != packageID || pkg.Version == "" {
+		return false
+	}
+	return resolved == pkg.Version
 }
 
 type managedMarketplaceLockEntry struct {
@@ -746,34 +768,43 @@ func validateManagedExecutableProjection(root, packageID string) error {
 		if err != nil || filepath.Clean(resolvedProjection) != filepath.Clean(resolvedEntry) {
 			return fmt.Errorf("generation executable projection %s does not target its declared package binary", commandName)
 		}
-		return nil
+	} else {
+		if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Size() == 0 || info.Size() > 1024*1024 {
+			return fmt.Errorf("generation executable projection %s is not a bounded executable file", commandName)
+		}
+		data, err := os.ReadFile(projection)
+		if err != nil {
+			return err
+		}
+		const marker = "cmd-shim-target="
+		markerIndex := bytes.Index(data, []byte(marker))
+		if markerIndex < 0 {
+			return fmt.Errorf("generation executable shim %s omits its package target", commandName)
+		}
+		lineEnd := bytes.IndexByte(data[markerIndex:], '\n')
+		if lineEnd < 0 {
+			lineEnd = len(data) - markerIndex
+		}
+		target := strings.TrimSpace(string(data[markerIndex+len(marker) : markerIndex+lineEnd]))
+		if target == "" {
+			return fmt.Errorf("generation executable shim %s has an empty package target", commandName)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(projection), target)
+		}
+		resolvedTarget, err := filepath.EvalSymlinks(target)
+		if err != nil || filepath.Clean(resolvedTarget) != filepath.Clean(resolvedEntry) {
+			return fmt.Errorf("generation executable shim %s does not target its declared package binary", commandName)
+		}
 	}
-	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Size() == 0 || info.Size() > 1024*1024 {
-		return fmt.Errorf("generation executable projection %s is not a bounded executable file", commandName)
-	}
-	data, err := os.ReadFile(projection)
-	if err != nil {
-		return err
-	}
-	const marker = "cmd-shim-target="
-	markerIndex := bytes.Index(data, []byte(marker))
-	if markerIndex < 0 {
-		return fmt.Errorf("generation executable shim %s omits its package target", commandName)
-	}
-	lineEnd := bytes.IndexByte(data[markerIndex:], '\n')
-	if lineEnd < 0 {
-		lineEnd = len(data) - markerIndex
-	}
-	target := strings.TrimSpace(string(data[markerIndex+len(marker) : markerIndex+lineEnd]))
-	if target == "" {
-		return fmt.Errorf("generation executable shim %s has an empty package target", commandName)
-	}
-	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(projection), target)
-	}
-	resolvedTarget, err := filepath.EvalSymlinks(target)
-	if err != nil || filepath.Clean(resolvedTarget) != filepath.Clean(resolvedEntry) {
-		return fmt.Errorf("generation executable shim %s does not target its declared package binary", commandName)
+	// Execute the projection itself. A marker can describe the right target
+	// while the launcher is broken or points elsewhere.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, projection, "--version")
+	output, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(output), executable.Version) {
+		return fmt.Errorf("generation executable projection %s failed its version probe", commandName)
 	}
 	return nil
 }

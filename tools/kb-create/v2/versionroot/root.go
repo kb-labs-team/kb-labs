@@ -937,8 +937,8 @@ func (l Layout) AbortManagedGeneration(stage string) error {
 // targets into these small launcher files, unlike symlinks which remain
 // relative to their package tree.
 func rewriteManagedBinShimRoots(root string, oldRoots []string, newRoot string) error {
-	binDir := filepath.Join(root, "node_modules", ".bin")
-	info, err := os.Lstat(binDir)
+	nodeModules := filepath.Join(root, "node_modules")
+	info, err := os.Lstat(nodeModules)
 	if os.IsNotExist(err) {
 		return nil
 	}
@@ -946,28 +946,104 @@ func rewriteManagedBinShimRoots(root string, oldRoots []string, newRoot string) 
 		return err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("managed executable projection directory is not a physical directory")
+		return fmt.Errorf("managed node_modules is not a physical directory")
 	}
 	newRoot, err = filepath.Abs(newRoot)
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(binDir)
+	var binDirs []string
+	err = filepath.WalkDir(nodeModules, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			if entry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.IsDir() && entry.Name() == ".bin" {
+			binDirs = append(binDirs, path)
+			return nil
+		}
+		return nil
+	})
 	if err != nil {
 		return err
 	}
-	for _, entry := range entries {
-		path := filepath.Join(binDir, entry.Name())
-		fileInfo, err := os.Lstat(path)
+	for _, binDir := range binDirs {
+		entries, err := os.ReadDir(binDir)
 		if err != nil {
 			return err
 		}
-		if fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() || fileInfo.Size() == 0 || fileInfo.Size() > 1024*1024 {
-			continue
+		for _, entry := range entries {
+			path := filepath.Join(binDir, entry.Name())
+			fileInfo, err := os.Lstat(path)
+			if err != nil {
+				return err
+			}
+			if fileInfo.Mode()&os.ModeSymlink != 0 || !fileInfo.Mode().IsRegular() || fileInfo.Size() == 0 || fileInfo.Size() > 1024*1024 {
+				continue
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			rewritten := data
+			for _, oldRoot := range oldRoots {
+				oldRoot, err = filepath.Abs(oldRoot)
+				if err != nil {
+					return err
+				}
+				rewritten = replaceManagedShimRoot(rewritten, oldRoot, newRoot)
+			}
+			if bytes.Equal(data, rewritten) {
+				continue
+			}
+			temporary, err := os.CreateTemp(binDir, ".kb-shim-")
+			if err != nil {
+				return err
+			}
+			temporaryPath := temporary.Name()
+			if err := temporary.Chmod(fileInfo.Mode().Perm()); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if _, err := temporary.Write(rewritten); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := temporary.Sync(); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := temporary.Close(); err != nil {
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := os.Rename(temporaryPath, path); err != nil {
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := syncDirectory(binDir); err != nil {
+				return err
+			}
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
+	}
+	// pnpm stores an absolute virtualStoreDir in this metadata on some
+	// platforms. It must follow the physical generation through both renames.
+	modulesPath := filepath.Join(nodeModules, ".modules.yaml")
+	if modulesInfo, statErr := os.Lstat(modulesPath); statErr == nil {
+		if !modulesInfo.Mode().IsRegular() || modulesInfo.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("managed pnpm modules metadata is not a regular file")
+		}
+		data, readErr := os.ReadFile(modulesPath)
+		if readErr != nil {
+			return readErr
 		}
 		rewritten := data
 		for _, oldRoot := range oldRoots {
@@ -977,40 +1053,41 @@ func rewriteManagedBinShimRoots(root string, oldRoots []string, newRoot string) 
 			}
 			rewritten = replaceManagedShimRoot(rewritten, oldRoot, newRoot)
 		}
-		if bytes.Equal(data, rewritten) {
-			continue
+		if !bytes.Equal(data, rewritten) {
+			temporary, err := os.CreateTemp(nodeModules, ".kb-modules-")
+			if err != nil {
+				return err
+			}
+			temporaryPath := temporary.Name()
+			if err := temporary.Chmod(modulesInfo.Mode().Perm()); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if _, err := temporary.Write(rewritten); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := temporary.Sync(); err != nil {
+				_ = temporary.Close()
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := temporary.Close(); err != nil {
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := os.Rename(temporaryPath, modulesPath); err != nil {
+				_ = os.Remove(temporaryPath)
+				return err
+			}
+			if err := syncDirectory(nodeModules); err != nil {
+				return err
+			}
 		}
-		temporary, err := os.CreateTemp(binDir, ".kb-shim-")
-		if err != nil {
-			return err
-		}
-		temporaryPath := temporary.Name()
-		if err := temporary.Chmod(fileInfo.Mode().Perm()); err != nil {
-			_ = temporary.Close()
-			_ = os.Remove(temporaryPath)
-			return err
-		}
-		if _, err := temporary.Write(rewritten); err != nil {
-			_ = temporary.Close()
-			_ = os.Remove(temporaryPath)
-			return err
-		}
-		if err := temporary.Sync(); err != nil {
-			_ = temporary.Close()
-			_ = os.Remove(temporaryPath)
-			return err
-		}
-		if err := temporary.Close(); err != nil {
-			_ = os.Remove(temporaryPath)
-			return err
-		}
-		if err := os.Rename(temporaryPath, path); err != nil {
-			_ = os.Remove(temporaryPath)
-			return err
-		}
-		if err := syncDirectory(binDir); err != nil {
-			return err
-		}
+	} else if !os.IsNotExist(statErr) {
+		return statErr
 	}
 	return nil
 }
