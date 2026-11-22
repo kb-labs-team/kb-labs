@@ -523,7 +523,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         if not isinstance(recorded_root, str) or Path(recorded_root).resolve() != platform_root:
             raise RuntimeError("the installed receipt does not retain the canonical install root for doctor verification")
         config_projection = platform_content_root / ".kb" / "kb.config.jsonc"
-        shared_config = platform_root / "state" / "kb.config.jsonc"
+        shared_config = platform_root / layout_value("sharedRuntimePaths.kb_kb_config_jsonc.statePath")
         if not config_projection.is_symlink() or config_projection.resolve() != shared_config.resolve():
             raise RuntimeError("the active version does not link its runtime config to install-root shared state")
         if (platform_root / ".kb" / "kb.config.jsonc").exists():

@@ -683,8 +683,8 @@ thread.join()
         runner = importlib.import_module("runner")
         selection = JourneySelection(
             requested=("S-140.5",), claims=frozenset({"S-140.5"}), owning_steps={},
-            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
-            runner_selector="agent-secured:commit", requested_runners="",
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset({"mcp"}),
+            runner_selector="service-secured:explore", requested_runners="",
         )
         graph = FlowGraph(Journey("secured", "secured-mcp-claim", selection=selection), {})
         calls = []

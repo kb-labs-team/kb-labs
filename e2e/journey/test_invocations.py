@@ -67,7 +67,8 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
                 key = literal_key(target.slice) if isinstance(target, ast.Subscript) else None
                 if (isinstance(target, ast.Subscript) and is_env_mapping(target.value)
                         and isinstance(target.ctx, (ast.Store, ast.Del))
-                        and key is not None and redaction.is_secret_key(key)):
+                        and key is not None and redaction.is_secret_key(key)
+                        and not (isinstance(node.value, ast.Constant) and node.value.value == "")):
                     violations.append(f"{filename}:{node.lineno}: direct secret-key assignment")
                 if (is_env_mapping(target) and contains_secret_mapping_write(node.value)):
                     violations.append(f"{filename}:{node.lineno}: secret literal assigned to environment")
@@ -611,6 +612,9 @@ class ReportRedactionTest(unittest.TestCase):
         for source in reads:
             with self.subTest(source=source):
                 self.assertEqual(secret_environment_write_violations(source), [], source)
+
+        self.assertEqual(secret_environment_write_violations('env["KB_X_TOKEN"] = ""'), [])
+        self.assertTrue(secret_environment_write_violations('env["KB_X_TOKEN"] = token'))
 
 
 if __name__ == "__main__":
