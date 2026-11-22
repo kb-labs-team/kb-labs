@@ -21,6 +21,7 @@ from journey_selection import JourneySelection
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (commit_marketplace_install_record,
+                                  first_admin_credential_disclosed_once,
                                   requested_commit_marketplace_install_satisfied)
 import runner
 from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
@@ -165,6 +166,18 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
             "marketplaceInstalls": [],
         }
         self.assertFalse(requested_commit_marketplace_install_satisfied(receipt))
+
+    # case: PC-001.2
+    def test_clean_install_checks_the_first_admin_disclosure_marker(self):
+        self.assertTrue(first_admin_credential_disclosed_once({
+            "email": "journey-admin@example.test", "password": "fixture-password", "state": "disclosed",
+        }, "result fixture-password"))
+        self.assertFalse(first_admin_credential_disclosed_once({
+            "email": "journey-admin@example.test", "password": "fixture-password", "state": "previously-disclosed",
+        }, "result fixture-password"))
+        self.assertFalse(first_admin_credential_disclosed_once({
+            "email": "journey-admin@example.test", "password": "fixture-password", "state": "disclosed",
+        }, "result fixture-password fixture-password"))
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:
