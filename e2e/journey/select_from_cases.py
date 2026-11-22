@@ -1012,11 +1012,13 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
-def case_ids_for_area(results: list[dict], area: str) -> list[str]:
-    """Resolve a focused product-area run from the QA catalog metadata."""
+def _area_case_groups(results: list[dict], area: str) -> tuple[list[str], list[str]]:
+    """Split active area cases by whether every step has a journey claim."""
     if not isinstance(area, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", area):
         raise ValueError(f"invalid product area {area!r}; use a lowercase QA area slug")
     area_by_id: dict[str, str] = {}
+    steps_by_id: dict[str, set[str]] = {}
+    journey_steps_by_id: dict[str, set[str]] = {}
     for coverage in results:
         for case in coverage.get("cases", []):
             case_id = case.get("id")
@@ -1028,11 +1030,43 @@ def case_ids_for_area(results: list[dict], area: str) -> list[str]:
             previous = area_by_id.setdefault(case_id, case_area)
             if previous != case_area:
                 raise ValueError(f"QA coverage reports inconsistent product areas for {case_id}")
-    selected = sorted(case_id for case_id, case_area in area_by_id.items() if case_area == area)
-    if not selected:
+            if case_area != area:
+                continue
+            for step in case.get("steps", []):
+                step_id = step.get("stepId")
+                if not isinstance(step_id, str):
+                    continue
+                steps_by_id.setdefault(case_id, set()).add(step_id)
+                if any(
+                    isinstance(claim, dict)
+                    and claim.get("kind") in {"journey", "e2e"}
+                    and str(claim.get("source", "")).startswith(("e2e/journey/", "e2e/studio/", "e2e/"))
+                    for claim in step.get("claims", [])
+                ):
+                    journey_steps_by_id.setdefault(case_id, set()).add(step_id)
+    active_area = sorted(case_id for case_id, case_area in area_by_id.items() if case_area == area)
+    if not active_area:
         available = ", ".join(sorted(set(area_by_id.values()))) or "none"
         raise ValueError(f"unknown or empty product area {area!r}; active QA areas: {available}")
-    return selected
+    selected = []
+    uncovered = []
+    for case_id in active_area:
+        steps = steps_by_id.get(case_id, set())
+        if steps and steps <= journey_steps_by_id.get(case_id, set()):
+            selected.append(case_id)
+        else:
+            uncovered.append(case_id)
+    return selected, uncovered
+
+
+def case_ids_for_area(results: list[dict], area: str) -> list[str]:
+    """Resolve active area cases with complete journey claims."""
+    return _area_case_groups(results, area)[0]
+
+
+def uncovered_case_ids_for_area(results: list[dict], area: str) -> list[str]:
+    """Return active area cases that have no journey claim for at least one step."""
+    return _area_case_groups(results, area)[1]
 
 
 def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
@@ -1166,6 +1200,9 @@ def main() -> int:
     if len(sys.argv) == 3 and sys.argv[1] == "--case-ids-for-area":
         print_report_text(",".join(case_ids_for_area(coverage_results(), sys.argv[2])), flush=True)
         return 0
+    if len(sys.argv) == 3 and sys.argv[1] == "--uncovered-case-ids-for-area":
+        print_report_text(",".join(uncovered_case_ids_for_area(coverage_results(), sys.argv[2])), flush=True)
+        return 0
     results = coverage_results()
     requested = ",".join(read_requested_cases(os.environ))
     if requested:
@@ -1187,8 +1224,9 @@ def coverage_results(root: Path | None = None) -> list[dict]:
     catalog = decode_ux_success_result(read_ux_cli_result(catalog_result))
     if not isinstance(catalog, dict) or not isinstance(catalog.get("cases"), list):
         raise ValueError("QA case catalog result has no cases array")
-    areas = {item.get("id"): item.get("area") for item in catalog["cases"]
-             if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    catalog_cases = {item["id"]: item for item in catalog["cases"]
+                     if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    areas = {case_id: item.get("area") for case_id, item in catalog_cases.items()}
     results = []
     for mode in ("local", "secured"):
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
@@ -1199,9 +1237,19 @@ def coverage_results(root: Path | None = None) -> list[dict]:
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
         coverage = read_coverage_result(result)
+        coverage_case_ids = set()
         for case in coverage.get("cases", []):
             if isinstance(case, dict) and case.get("id") in areas:
                 case["area"] = areas[case["id"]]
+                coverage_case_ids.add(case["id"])
+        for case_id, catalog_case in catalog_cases.items():
+            if case_id not in coverage_case_ids:
+                coverage.setdefault("cases", []).append({
+                    "id": case_id,
+                    "area": catalog_case.get("area"),
+                    "status": catalog_case.get("status"),
+                    "steps": [],
+                })
         results.append(coverage)
     return results
 

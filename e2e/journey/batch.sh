@@ -143,6 +143,7 @@ run_mode() {
   mode=$1 producer=$(absolute "$2") out=$(absolute "$3")
   selected_cases=$4
   selected_area=${5:-}
+  selected_area_uncovered=""
   case "$mode" in local|secured) ;; *) usage ;; esac
   shared="$producer/shared"; mode_dir="$out/$mode"
   rm -rf "$mode_dir"
@@ -172,7 +173,11 @@ run_mode() {
   fi
   if [ -n "$selected_area" ]; then
     selected_cases=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --case-ids-for-area "$selected_area") || {
-      echo "journey product area could not resolve to active QA cases: $selected_area" >&2
+      echo "journey product area could not resolve active QA cases: $selected_area" >&2
+      return 1
+    }
+    selected_area_uncovered=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --uncovered-case-ids-for-area "$selected_area") || {
+      echo "journey product area could not resolve uncovered QA cases: $selected_area" >&2
       return 1
     }
   fi
@@ -191,6 +196,15 @@ run_mode() {
     return 1
   fi
   run_started=$(date +%s)
+  if [ -n "$selected_area" ] && [ -z "$selected_cases" ]; then
+    printf 'product area has no cases with complete journey claims\n'
+    printf 'product area has no cases with complete journey claims\nexit=0\n' > "$mode_dir/batch.log"
+    duration=$(($(date +%s) - run_started))
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
+      "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS \
+      "$duration" "" "" "$selected_area" "$selected_area_uncovered" || return 1
+    return 0
+  fi
   if [ -n "$selected_cases" ]; then
     selection_plan=$(KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py") || {
@@ -205,7 +219,7 @@ run_mode() {
       duration=$(($(date +%s) - run_started))
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
         "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS \
-        "$duration" "$selected_cases" "" "$selected_area" || return 1
+        "$duration" "$selected_cases" "" "$selected_area" "$selected_area_uncovered" || return 1
       return 0
     fi
   else
@@ -287,7 +301,7 @@ run_mode() {
   fi
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
     "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" "$selected_cases" \
-    "$failure_reason" "$selected_area" || return 1
+    "$failure_reason" "$selected_area" "$selected_area_uncovered" || return 1
   if [ "$scoreboard_missing" -eq 1 ]; then
     echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: $(next_runner_command)" >&2
     return 1

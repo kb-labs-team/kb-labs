@@ -20,7 +20,9 @@ from service_steps import FlowGraph, Journey
 from journey_selection import JourneySelection
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
-from installer_case_steps import commit_marketplace_install_record
+from installer_case_steps import (commit_marketplace_install_record,
+                                  first_admin_credential_disclosed_once,
+                                  requested_commit_marketplace_install_satisfied)
 import runner
 from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
                     registry_install_request)
@@ -142,6 +144,40 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
         self.assertIsNone(commit_marketplace_install_record({"marketplaceInstalls": [
             {"spec": "@kb-labs/commit", "id": "@kb-labs/other", "primaryKind": "plugin"},
         ]}))
+
+    # case: PC-001.2
+    def test_clean_install_accepts_unversioned_requested_marketplace_spec(self):
+        receipt = {
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit"]}, "artifacts": []},
+            "marketplaceInstalls": [{"spec": "@kb-labs/commit", "id": "@kb-labs/commit",
+                                     "version": "2.120.1", "source": "npm"}],
+        }
+        self.assertTrue(requested_commit_marketplace_install_satisfied(receipt))
+
+    # case: PC-001.2
+    def test_clean_install_does_not_require_unrequested_marketplace_receipt(self):
+        receipt = {"plan": {"request": {"scenarioId": "custom"}, "artifacts": []}}
+        self.assertTrue(requested_commit_marketplace_install_satisfied(receipt))
+
+    # case: PC-001.2
+    def test_clean_install_still_requires_receipt_for_requested_commit(self):
+        receipt = {
+            "plan": {"request": {"marketplaceInstallSpecs": ["@kb-labs/commit"]}, "artifacts": []},
+            "marketplaceInstalls": [],
+        }
+        self.assertFalse(requested_commit_marketplace_install_satisfied(receipt))
+
+    # case: PC-001.2
+    def test_clean_install_checks_the_first_admin_disclosure_marker(self):
+        self.assertTrue(first_admin_credential_disclosed_once({
+            "email": "journey-admin@example.test", "password": "fixture-password", "state": "disclosed",
+        }, "result fixture-password"))
+        self.assertFalse(first_admin_credential_disclosed_once({
+            "email": "journey-admin@example.test", "password": "fixture-password", "state": "previously-disclosed",
+        }, "result fixture-password"))
+        self.assertFalse(first_admin_credential_disclosed_once({
+            "email": "journey-admin@example.test", "password": "fixture-password", "state": "disclosed",
+        }, "result fixture-password fixture-password"))
 
 
 def state_environment_reader_violations(sources: dict[str, str]) -> list[str]:

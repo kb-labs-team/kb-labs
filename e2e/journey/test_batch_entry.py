@@ -204,6 +204,11 @@ case "$1" in
       printf 'S-268.1,S-268.2\\n'
       exit 0
     fi
+    if [ "${{2:-}}" = "--uncovered-case-ids-for-area" ]; then
+      [ "${{3:-}}" = marketplace ] || exit 2
+      printf 'S-026\\n'
+      exit 0
+    fi
     mode="$KB_JOURNEY_SELECTION_MODE"
     case "$mode" in local) runners="${{SELECTED_RUNNERS_LOCAL:-[]}}" ;; secured) runners="${{SELECTED_RUNNERS_SECURED:-[]}}" ;; *) exit 2 ;; esac
     SELECTED_RUNNERS="$runners" "{sys.executable}" -c 'import json,os; tokens=[x.strip() for x in os.environ["KB_JOURNEY_CASES"].split(",") if x.strip()]; claims=[x if "." in x else x+".1" for x in tokens]; print(json.dumps({{"selection":tokens,"steps":claims,"prerequisiteSteps":[],"selectedOwningSteps":{{"selected owner":claims}},"selectedClaimOwners":{{"selected owner":claims}},"runners":json.loads(os.environ["SELECTED_RUNNERS"])}}))'
@@ -911,6 +916,7 @@ exec "$REAL_TAR" "$@"
             metadata = json.loads((self.root / f"{mode}-artifact/{mode}/batch-metadata.json").read_text())
             self.assertEqual(metadata["requestedArea"], "marketplace")
             self.assertEqual(metadata["requestedSelection"], ["S-268.1", "S-268.2"])
+            self.assertEqual(metadata["requestedAreaUncoveredCases"], ["S-026"])
 
         summary = subprocess.run(
             [ENTRY_SHELL, str(self.root / "e2e/journey/batch.sh"), "summarize",
@@ -921,6 +927,8 @@ exec "$REAL_TAR" "$@"
         self.assertNotEqual(summary.returncode, 0, summary.stderr)
         rendered = (self.root / "summary/shared/summary.md").read_text()
         self.assertIn("- Product area: `marketplace`", rendered)
+        self.assertIn("Product area coverage: NOT COVERED", rendered)
+        self.assertIn("S-026", rendered)
         self.assertIn("- Result: PARTIAL", rendered)
         self.assertNotIn("- Result: PASS", rendered)
 
