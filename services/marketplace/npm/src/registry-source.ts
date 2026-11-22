@@ -57,11 +57,23 @@ export class RegistryPackageSource implements MarketplaceSource {
     if (version) { query.set('version', version); }
     const response = await this.fetch(`${this.baseUrl}/api/v1/resolve?${query.toString()}`, identity);
     if (!response.ok) {
-      throw new RegistryPackageError(response.status === 401 || response.status === 403 ? 'AUTH_FAILED' : 'RESOLUTION_FAILED', `Registry identity resolution failed with HTTP ${response.status}`, identity);
+      const code = response.status === 401 || response.status === 403
+        ? 'AUTH_FAILED'
+        : response.status >= 500 ? 'TRANSPORT_FAILED' : 'RESOLUTION_FAILED';
+      throw new RegistryPackageError(code, `Registry identity resolution failed with HTTP ${response.status}`, identity);
     }
     const result = await response.json() as import('@kb-labs/marketplace-contracts').MarketplaceSourceResolution;
     if (result.status !== 'found') { return result; }
-    return result;
+    const downloadUrl = result.package.downloadUrl
+      ? this.resolveDownloadUrl(result.package.downloadUrl, result.package.id)
+      : undefined;
+    return {
+      ...result,
+      package: {
+        ...result.package,
+        ...(downloadUrl ? { downloadUrl } : {}),
+      },
+    };
   }
 
   async resolve(spec: string): Promise<ResolvedPackage> {
