@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Callable
 
 from journey_resources import active_platform_root
+from platform_snapshot import _platform_snapshot
 from sdk_runtime_import_check import check_installed_runtime_imports
 from service_steps import Journey
-from marketplace_steps import _platform_snapshot
 from platform_update_steps import _changed_paths
 from invocations import (
     CompletedProcess,

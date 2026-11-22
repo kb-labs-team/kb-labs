@@ -16,6 +16,8 @@ import select_from_cases
 from select_from_cases import (read_coverage_result, runners_for_case_selection,
                                selection_from_coverage, selectors_from_coverage)
 from service_steps import Journey
+from service_steps import FlowGraph
+from journey_selection import JourneySelection
 from select_from_cases import _case_declarations
 from installed_fixture import configure_hermetic_cli_fixture, layout_value
 
@@ -72,13 +74,36 @@ class CaseJourneySelectionTests(unittest.TestCase):
         registry_lifecycle = set(registry_groups["marketplace-lifecycle"].get("cases", ()))
         default_registry = set(default_groups["marketplace-registry"].get("cases", ()))
         registry_registry = set(registry_groups["marketplace-registry"].get("cases", ()))
+        registry_adapter = set(registry_groups["adapters"].get("cases", ()))
         self.assertIn("S-047.1", default_lifecycle)
         self.assertNotIn("S-268.1", default_lifecycle)
         self.assertNotIn("S-268.1", registry_lifecycle)
         self.assertTrue(registry_steps <= registry_registry)
         self.assertNotIn("S-047.1", registry_registry)
+        self.assertFalse(registry_steps.intersection(registry_adapter))
+        selection = JourneySelection(
+            requested=tuple(sorted(registry_steps)),
+            claims=frozenset(registry_steps),
+            owning_steps={name: tuple(cases) for name, cases in registry["selectedOwningSteps"].items()},
+            prerequisite_steps=frozenset(registry["prerequisiteSteps"]),
+            prerequisite_flows=frozenset(registry["prerequisiteFlows"]),
+            capabilities=frozenset(registry["capabilities"]),
+            runner_selector=registry["runners"][0],
+            requested_runners=registry["runners"][0],
+        )
+        journey = Journey("local", "registry-selection-excludes-adapters", selection=selection)
+        graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in registry_groups.items()},
+                          groups=registry_groups)
+        adapter_calls = []
+        adapter_flow = graph.flow(
+            "adapter defaults flow", "adapters", "adapter", lambda: adapter_calls.append("ran"),
+            cases=["S-054.1", "S-048.1"], record_empty_success=False,
+        )
+        self.assertEqual(adapter_flow, "SKIPPED")
+        self.assertEqual(adapter_calls, [])
         # Imported declaration closure must not accidentally claim the unrelated MCP case.
-        for cases in (default_lifecycle, registry_lifecycle, default_registry, registry_registry):
+        for cases in (default_lifecycle, registry_lifecycle, default_registry, registry_registry,
+                      registry_adapter):
             self.assertNotIn("S-140.1", cases)
 
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
