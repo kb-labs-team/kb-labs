@@ -18,7 +18,10 @@ import (
 const KBHomeEnv = contracts.KBHomeEnv
 
 // State names the per-installation host lifecycle files.
-type State struct{ Dir string }
+type State struct {
+	Dir               string
+	operationLockPath string
+}
 
 // StateForRoot returns lifecycle files inside the installation container so
 // the running host record survives a switch between immutable version roots.
@@ -30,7 +33,7 @@ func StateForRoot(platformRoot string) (State, error) {
 	if err != nil {
 		return State{}, fmt.Errorf("resolve platform root for lifecycle state: %w", err)
 	}
-	return State{Dir: layout.HostStateDir()}, nil
+	return State{Dir: layout.HostStateDir(), operationLockPath: layout.OperationLockPath()}, nil
 }
 
 // KBHome resolves the explicitly overridden home or the installation-owned home.
@@ -77,7 +80,12 @@ func (s State) SupervisorLog() string  { return filepath.Join(s.Dir, "supervisor
 func (s State) Control() string        { return filepath.Join(s.Dir, "control.json") }
 func (s State) HostExit() string       { return filepath.Join(s.Dir, "host-exit.json") }
 func (s State) UpdateRequests() string { return filepath.Join(s.Dir, "update-requests.json") }
-func (s State) OperationLock() string  { return operationlock.Path(s.Dir) }
+func (s State) OperationLock() string {
+	if s.operationLockPath != "" {
+		return s.operationLockPath
+	}
+	return operationlock.Path(s.Dir)
+}
 
 // Ensure creates the state directory with owner-only permissions.
 func (s State) Ensure() error { return os.MkdirAll(s.Dir, 0o700) }

@@ -12,6 +12,7 @@ import (
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/operationlock"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/versionroot"
 )
 
 func TestStateHomeIsPerUserAndFollowsKBHome(t *testing.T) {
@@ -75,6 +76,13 @@ func TestStateForRootSeparatesConcurrentInstallations(t *testing.T) {
 	}
 	if stateA.Dir != filepath.Join(canonicalRoot, filepath.Base(rootA), "installer", "host") {
 		t.Fatalf("host lifecycle state = %q; it must survive version switches inside the installation root", stateA.Dir)
+	}
+	layoutA, err := versionroot.ForPlatformPath(rootA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateA.OperationLock() != layoutA.OperationLockPath() {
+		t.Fatalf("lifecycle lock = %q; generation owner lock = %q", stateA.OperationLock(), layoutA.OperationLockPath())
 	}
 	stateAAgain, err := StateForRoot(rootA)
 	if err != nil || stateAAgain.Dir != stateA.Dir {

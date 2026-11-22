@@ -41,6 +41,14 @@ type ManagedMarketplaceMutation struct {
 	Dev       bool                        `json:"dev,omitempty"`
 }
 
+// OperationLockPath is the per-installation kernel lock shared by generation
+// activation and platform lifecycle writers. Keep lock ownership rooted in the
+// installation container so callers cannot accidentally serialize on the
+// version directory that changes during activation.
+func (l Layout) OperationLockPath() string {
+	return operationlock.Path(l.HostStateDir())
+}
+
 type managedMarketplaceInstallResult struct {
 	Schema    int                              `json:"schema"`
 	Operation ManagedMarketplaceOperation      `json:"operation"`
@@ -104,7 +112,7 @@ func (l Layout) RunManagedMarketplaceMutation(ctx context.Context, runningRoot s
 	if strings.TrimSpace(runningRoot) == "" {
 		return "", fmt.Errorf("physical running or active generation root is required for retention")
 	}
-	lock, err := operationlock.Acquire(operationlock.Path(l.HostStateDir()), "managed-marketplace-mutation")
+	lock, err := operationlock.Acquire(l.OperationLockPath(), "managed-marketplace-mutation")
 	if err != nil {
 		return "", fmt.Errorf("acquire installation operation lock: %w", err)
 	}
