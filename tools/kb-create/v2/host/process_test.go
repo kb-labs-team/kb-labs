@@ -998,6 +998,34 @@ func TestHostEnvironmentSuppressesCompletedBootstrapPasswordFromAllSources(t *te
 	}
 }
 
+func TestHostEnvironmentUsesGoOwnedMarketplaceDispatcherIdentity(t *testing.T) {
+	t.Setenv("KB_CREATE_OWNER_BINARY", "/attacker/selected/kb-create")
+	t.Setenv("KB_INSTALLATION_ID", "attacker-selected-installation")
+	runner := newRunner(t, 10, 5)
+	if runner.runner.Spec.Env == nil {
+		runner.runner.Spec.Env = make(map[string]string)
+	}
+	runner.runner.Spec.Env["KB_CREATE_OWNER_BINARY"] = "/trusted/install/kb-create"
+
+	environment, err := runner.runner.environment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := map[string][]string{}
+	for _, entry := range environment {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && (key == "KB_CREATE_OWNER_BINARY" || key == "KB_INSTALLATION_ID") {
+			values[key] = append(values[key], value)
+		}
+	}
+	if got := values["KB_CREATE_OWNER_BINARY"]; len(got) != 1 || got[0] != "/trusted/install/kb-create" {
+		t.Fatalf("owner binary environment = %#v; want exactly the Go-configured executable", got)
+	}
+	if got := values["KB_INSTALLATION_ID"]; len(got) != 1 || got[0] != runner.runner.InstallationID {
+		t.Fatalf("installation identity environment = %#v; want exactly the receipt-bound identity", got)
+	}
+}
+
 func TestStderrTailIsLimitedToFortyLines(t *testing.T) {
 	buffer := &tailBuffer{limit: 64 * 1024}
 	for i := 0; i < 80; i++ {

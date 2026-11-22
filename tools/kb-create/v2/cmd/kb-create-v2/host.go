@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -82,6 +83,25 @@ func (c hostCommand) setup(runnerOperation string) (*host.ProcessRunner, host.St
 	if err != nil {
 		return nil, host.State{}, asDiag(err)
 	}
+	ownerBinary := c.Executable
+	if ownerBinary == "" {
+		ownerBinary, err = os.Executable()
+		if err != nil {
+			return nil, host.State{}, asDiag(err)
+		}
+	}
+	ownerBinary, err = filepath.EvalSymlinks(ownerBinary)
+	if err != nil {
+		return nil, host.State{}, contracts.NewDiag("KB_RUNTIME_EXECUTABLE_PATH_UNAVAILABLE", "The trusted Marketplace owner executable could not be resolved.", "Run `kb-create doctor` and retry after repairing the installation.", err)
+	}
+	ownerBinary, err = filepath.Abs(ownerBinary)
+	if err != nil {
+		return nil, host.State{}, asDiag(err)
+	}
+	if runner.Spec.Env == nil {
+		runner.Spec.Env = make(map[string]string)
+	}
+	runner.Spec.Env["KB_CREATE_OWNER_BINARY"] = ownerBinary
 	if _, err := (secrets.Store{PlatformRoot: c.PlatformRoot}).BootstrapCompleted(); err != nil {
 		return nil, host.State{}, asDiag(err)
 	}

@@ -15,6 +15,7 @@ import {
   NpmPackageSource,
   RegistryPackageSource,
 } from "@kb-labs/marketplace-npm";
+import { createManagedPlatformInstallDispatcher, isManagedPlatformRoot } from "./managed-marketplace-owner.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -79,7 +80,25 @@ export async function setup({
   const projectScopeAllowed = configData?.gateway?.access?.mode === 'local'
     && configData.gateway.auth?.enabled !== true
     && configData.platform?.deployment?.topology === 'local';
-  const server = await createServer({ service, port, logger, auth: { internalSecret, projectScopeAllowed } });
+  const managedPlatform = (typeof process.env.KB_INSTALLATION_ID === 'string' && process.env.KB_INSTALLATION_ID.length > 0)
+    || await isManagedPlatformRoot(platformRoot);
+  const dispatchManagedPlatformInstall = managedPlatform
+    ? createManagedPlatformInstallDispatcher({
+      ownerBinary: process.env.KB_CREATE_OWNER_BINARY,
+      platformRoot,
+    })
+    : undefined;
+  const server = await createServer({
+    service,
+    port,
+    logger,
+    auth: {
+      internalSecret,
+      projectScopeAllowed,
+      managedPlatform,
+      ...(dispatchManagedPlatformInstall ? { dispatchManagedPlatformInstall } : {}),
+    },
+  });
   await server.listen(getListenOptions(port, host));
 
   logger.info(`Marketplace service listening on http://${host}:${port}`);

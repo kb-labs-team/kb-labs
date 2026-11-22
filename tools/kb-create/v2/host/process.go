@@ -501,6 +501,9 @@ func (r *ProcessRunner) environment() ([]string, error) {
 		if _, omit := suppressed[key]; omit {
 			continue
 		}
+		if _, overridden := values[key]; overridden {
+			continue
+		}
 		env = append(env, entry)
 	}
 	for key, value := range values {

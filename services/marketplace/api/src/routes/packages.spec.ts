@@ -353,6 +353,93 @@ describe('Marketplace API error boundary', () => {
     expect(sync).not.toHaveBeenCalled();
   });
 
+  // case: S-269.12
+  it('dispatches only managed platform installs to the trusted owner and fails every other graph writer closed', async () => {
+    const { logger } = makeContextLogger();
+    const internalSecret = 'managed-owner-test-secret';
+    const headers = {
+      'x-internal-secret': internalSecret,
+      'x-kb-auth-type': 'user',
+      'x-kb-auth-user-id': 'platform-admin',
+      'x-kb-auth-namespace-id': 'tenant-a',
+      'x-kb-auth-tier': 'pro',
+      'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLATFORM_SETTINGS_WRITE]),
+    };
+    const directWrites = {
+      install: vi.fn(), uninstall: vi.fn(), enable: vi.fn(), disable: vi.fn(), update: vi.fn(), link: vi.fn(), unlink: vi.fn(), sync: vi.fn(),
+    };
+    const dispatchManagedPlatformInstall = vi.fn().mockResolvedValue({ generation: 'candidate-1' });
+    const server = await createServer({
+      service: directWrites as unknown as MarketplaceService,
+      logger,
+      auth: { internalSecret, projectScopeAllowed: false, managedPlatform: true, dispatchManagedPlatformInstall },
+    });
+    servers.push(server);
+
+    const install = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/install', headers,
+      payload: { specs: ['@kb-labs/sample-adapter@1.2.3'], scope: 'platform' },
+    });
+    expect(install.statusCode).toBe(201);
+    expect(dispatchManagedPlatformInstall).toHaveBeenCalledWith({ specs: ['@kb-labs/sample-adapter@1.2.3'], dev: undefined, shareToken: undefined });
+    expect(directWrites.install).not.toHaveBeenCalled();
+
+    const deniedRequests: InjectOptions[] = [
+      { method: 'POST', url: '/api/v1/marketplace/packages/uninstall', headers, payload: { packageIds: ['@kb-labs/sample-adapter'], scope: 'platform' } },
+      { method: 'POST', url: '/api/v1/marketplace/packages/enable', headers, payload: { packageId: '@kb-labs/sample-adapter', scope: 'platform' } },
+      { method: 'POST', url: '/api/v1/marketplace/packages/disable', headers, payload: { packageId: '@kb-labs/sample-adapter', scope: 'platform' } },
+      { method: 'POST', url: '/api/v1/marketplace/packages/update', headers, payload: { packageIds: ['@kb-labs/sample-adapter'], scope: 'platform' } },
+      { method: 'POST', url: '/api/v1/marketplace/packages/link', headers, payload: { packageId: '@kb-labs/sample-adapter', path: '/tmp/adapter', scope: 'platform' } },
+      { method: 'POST', url: '/api/v1/marketplace/packages/unlink', headers, payload: { packageId: '@kb-labs/sample-adapter', scope: 'platform' } },
+      { method: 'POST', url: '/api/v1/marketplace/workspace/sync', headers, payload: { include: ['adapters/*'], scope: 'platform' } },
+    ];
+    for (const request of deniedRequests) {
+      const response = await server.inject(request);
+      expect(response.statusCode).toBe(503);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_INSTALL_RECEIPT_UNAVAILABLE' } });
+    }
+    for (const writer of Object.values(directWrites)) expect(writer).not.toHaveBeenCalled();
+    expect(dispatchManagedPlatformInstall).toHaveBeenCalledTimes(1);
+
+    const unavailableInstall = vi.fn();
+    const noOwner = await createServer({
+      service: { install: unavailableInstall } as unknown as MarketplaceService,
+      logger,
+      auth: { internalSecret, projectScopeAllowed: false, managedPlatform: true },
+    });
+    servers.push(noOwner);
+    const unavailable = await noOwner.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/install', headers,
+      payload: { specs: ['@kb-labs/sample-adapter@1.2.3'], scope: 'platform' },
+    });
+    expect(unavailable.statusCode).toBe(503);
+    expect(unavailableInstall).not.toHaveBeenCalled();
+
+    const ownerFailure = Object.assign(new Error('redacted owner failure'), { code: 'KB_MARKETPLACE_INSTALL_FAILED' });
+    const failedOwner = await createServer({
+      service: { install: unavailableInstall } as unknown as MarketplaceService,
+      logger,
+      auth: {
+        internalSecret,
+        projectScopeAllowed: false,
+        managedPlatform: true,
+        dispatchManagedPlatformInstall: vi.fn().mockRejectedValue(ownerFailure),
+      },
+    });
+    servers.push(failedOwner);
+    const failed = await failedOwner.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/install', headers,
+      payload: { specs: ['@kb-labs/sample-adapter@1.2.3'], scope: 'platform' },
+    });
+    expect(failed.statusCode).toBe(422);
+    expect(failed.json()).toMatchObject({
+      ok: false,
+      error: { code: 'KB_MARKETPLACE_INSTALL_FAILED', message: 'The managed platform package graph could not be confirmed as activated.' },
+    });
+    expect(failed.json().error.message).not.toContain('redacted owner failure');
+    expect(unavailableInstall).not.toHaveBeenCalled();
+  });
+
   it('refuses secured startup without the Gateway internal secret', async () => {
     const { logger } = makeContextLogger();
     await expect(createServer({

@@ -98,6 +98,9 @@ var operationDescriptors = []operationDescriptor{
 	{Name: "supervise", Short: "Run the host supervisor", Hidden: true, Args: cobra.NoArgs, Flags: []string{"platform-root", "foreground"}, Human: renderSupervise, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, deps commandDependencies) (any, *diag.Diag) {
 		return executeHostSupervise(ctx, hostCommand{PlatformRoot: flags.String("platform-root"), Foreground: flags.Bool("foreground"), Executable: deps.Executable, Version: buildVersion})
 	}},
+	{Name: "marketplace-owner", Short: "Run a managed Marketplace mutation as installation owner", Hidden: true, Args: cobra.NoArgs, Flags: []string{"platform-root"}, Handler: func(ctx context.Context, _ *cobra.Command, flags *commandFlagReader, _ commandDependencies) (any, *diag.Diag) {
+		return executeMarketplaceOwnerMutation(ctx, flags.String("platform-root"), os.Stdin)
+	}},
 	{Name: "version", Short: "Show launcher build identity", Args: cobra.NoArgs, Human: renderVersion, Handler: func(ctx context.Context, _ *cobra.Command, _ *commandFlagReader, _ commandDependencies) (any, *diag.Diag) {
 		return executeVersion(ctx, versionCommandInput{})
 	}},

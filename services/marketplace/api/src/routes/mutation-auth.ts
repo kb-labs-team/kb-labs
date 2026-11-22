@@ -7,13 +7,20 @@ export interface MarketplaceMutationAuth {
   internalSecret: string;
   /** Project paths have no principal ownership binding in the registry. */
   projectScopeAllowed: boolean;
+  /** Managed installations must route graph writes through the Go owner. */
+  managedPlatform?: boolean;
+  /** Trusted server-side dispatcher supplied by the Host bootstrap. */
+  dispatchManagedPlatformInstall?: (input: { specs: string[]; dev?: boolean; shareToken?: string }) => Promise<unknown>;
 }
+
+export type MarketplaceMutationKind = 'install' | 'other';
 
 export function authorizeMarketplaceMutation(
   request: FastifyRequest,
   reply: FastifyReply,
   policy: MarketplaceMutationAuth,
   scope: 'platform' | 'project',
+  kind: MarketplaceMutationKind = 'other',
 ): boolean {
   const identity = readForwardedIdentity(request.headers, policy.internalSecret);
   if (identity.kind === 'rejected') {
@@ -46,6 +53,18 @@ export function authorizeMarketplaceMutation(
       error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
         correlationId: String(request.id),
         details: { permission },
+      }),
+    });
+    return false;
+  }
+  if (scope === 'platform' && policy.managedPlatform
+      && (kind !== 'install' || !policy.dispatchManagedPlatformInstall)) {
+    reply.code(503).send({
+      ok: false,
+      error: createErrorEnvelope('KB_INSTALL_RECEIPT_UNAVAILABLE', {
+        correlationId: String(request.id),
+        message: 'Managed platform package changes require the installation owner.',
+        hint: 'Retry after the managed Marketplace owner is available.',
       }),
     });
     return false;

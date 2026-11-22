@@ -138,7 +138,15 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
   let message: string | undefined;
   let hint: string | undefined;
 
-  if ('validation' in err) {
+  if ('code' in err && err.code === 'KB_MARKETPLACE_INSTALL_FAILED') {
+    diagnostic = {
+      code: 'KB_MARKETPLACE_INSTALL_FAILED',
+      details: { package: 'requested packages', scope: 'platform', source: 'managed-owner' },
+      templateValues: { sourceName: 'the managed installation owner' },
+    };
+    message = 'The managed platform package graph could not be confirmed as activated.';
+    hint = 'Inspect the Marketplace inventory and installation health before retrying the operation.';
+  } else if ('validation' in err) {
     diagnostic = { code: 'KB_RUNTIME_INPUT_INVALID', details: {} };
     message = err.message;
   } else if (err instanceof ScopeRequestError || err instanceof ScopeResolutionError || err instanceof AdapterScopeError) {

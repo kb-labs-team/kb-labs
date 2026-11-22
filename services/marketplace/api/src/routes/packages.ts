@@ -75,10 +75,12 @@ export function registerPackagesRoutes(app: FastifyInstance, mutationAuth: Marke
   }, async (request, reply) => {
     const body = request.body as { specs: string[]; dev?: boolean; token?: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
-    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope)) return;
+    if (!authorizeMarketplaceMutation(request, reply, mutationAuth, ctx.scope, 'install')) return;
     const result = await app.observability.observeOperation(
       'marketplace.install',
-      () => app.marketplace.install(ctx, body.specs, { dev: body.dev, shareToken: body.token }),
+      () => ctx.scope === 'platform' && mutationAuth.managedPlatform
+        ? mutationAuth.dispatchManagedPlatformInstall!({ specs: body.specs, dev: body.dev, shareToken: body.token })
+        : app.marketplace.install(ctx, body.specs, { dev: body.dev, shareToken: body.token }),
     );
     return reply.code(201).send(result);
   });

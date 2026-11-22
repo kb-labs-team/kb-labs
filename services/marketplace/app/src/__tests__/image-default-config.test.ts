@@ -60,7 +60,7 @@ describe("Marketplace image default config", () => {
       sources: [expect.objectContaining({ options: { registryUrl: generatedConfig.marketplace.sources[0]?.url } })],
     }));
     expect(mocks.createServer).toHaveBeenCalledWith(expect.objectContaining({
-      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false },
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false, managedPlatform: false },
     }));
   });
 
@@ -117,14 +117,14 @@ describe("Marketplace image default config", () => {
     } as unknown as Parameters<typeof setup>[0];
     await setup(context);
     expect(mocks.createServer).toHaveBeenLastCalledWith(expect.objectContaining({
-      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: true },
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: true, managedPlatform: false },
     }));
 
     config.gateway.auth = { enabled: true };
     await fs.writeFile(configPath, JSON.stringify(config));
     await setup(context);
     expect(mocks.createServer).toHaveBeenLastCalledWith(expect.objectContaining({
-      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false },
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false, managedPlatform: false },
     }));
 
     config.gateway.auth.enabled = false;
@@ -132,7 +132,7 @@ describe("Marketplace image default config", () => {
     await fs.writeFile(configPath, JSON.stringify(config));
     await setup(context);
     expect(mocks.createServer).toHaveBeenLastCalledWith(expect.objectContaining({
-      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false },
+      auth: { internalSecret: "fixture-internal-secret", projectScopeAllowed: false, managedPlatform: false },
     }));
   });
 });
