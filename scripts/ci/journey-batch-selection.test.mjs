@@ -19,7 +19,7 @@ test('every trigger of the journey batch workflow resolves to an explicit select
   for (const event of events) {
     const ref = event === 'push' ? 'batch/tag' : 'refs/pull/1/merge';
     const selection = resolveSelection(event, ref);
-    assert.ok(selection === 'full' || /^cases:.+/.test(selection), `${event} -> ${selection}`);
+    assert.ok(selection === 'full' || /^cases:.+/.test(selection) || /^area:[a-z][a-z0-9-]*$/.test(selection), `${event} -> ${selection}`);
   }
 });
 
@@ -31,6 +31,17 @@ test('a pushed cases ref yields its decoded non-empty case list; other batch ref
   assert.equal(selectionIds(selection), ids);
   assert.deepEqual(batchArguments(resolveSelection('push', 'batch/plain')), []);
   assert.equal(selectionIds('full'), '');
+});
+
+// case: S-262.18
+test('a pushed area ref selects that QA catalog area as a partial run', () => {
+  const selection = resolveSelection('push', 'batch/t1/areas/marketplace');
+  assert.equal(selection, 'area:marketplace');
+  assert.deepEqual(batchArguments(selection), ['--area', 'marketplace']);
+  assert.equal(selectionIds(selection), '@area:marketplace');
+  assert.equal(sharedUnitSuiteMode(selection), 'skip');
+  assert.equal(sharedUnitSuiteMode(resolveSelection('push', 'batch/t1/areas/studio')),
+    'skip');
 });
 
 // case: S-262.8
@@ -68,6 +79,8 @@ test('only an explicit case selection skips the shared generic unit suite', () =
 test('an undeclared trigger and an empty encoded selection are refused', () => {
   assert.throws(() => resolveSelection('schedule', 'x'), /no declared case selection for trigger "schedule"/);
   assert.throws(() => resolveSelection('push', `batch/t/cases/${encode('  ')}`), /empty case selection/);
+  assert.throws(() => resolveSelection('push', 'batch/t/areas/Marketplace'), /invalid or empty product area/);
+  assert.throws(() => batchArguments('area:Bad'), /unknown journey batch selection/);
   assert.throws(() => batchArguments(''), /unknown journey batch selection/);
 });
 
