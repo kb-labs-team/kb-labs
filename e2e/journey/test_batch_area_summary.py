@@ -25,6 +25,7 @@ class ProductAreaBatchSummaryTests(unittest.TestCase):
         self.assertEqual(metadata["requestedArea"], "marketplace")
         self.assertEqual(metadata["requestedSelection"], ["S-010", "S-268"])
         self.assertEqual(metadata["requestedAreaUncoveredCases"], ["S-026"])
+        self.assertEqual(metadata["requestedAreaCoverage"], "NOT_COVERED")
 
     # case: S-262.18
     def test_area_summary_selection_is_validated_and_distinct_from_full_batch(self):
