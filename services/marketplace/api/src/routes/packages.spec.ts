@@ -58,8 +58,10 @@ function makeContextLogger(): { logger: IContextLogger; errors: CapturedLog[] } 
   };
 }
 
+const LOCAL_INTERNAL_SECRET = 'local-gateway-internal-secret';
+
 function createLocalServer(options: Omit<CreateServerOptions, 'auth'>): Promise<Awaited<ReturnType<typeof createServer>>> {
-  return createServer({ ...options, auth: { required: false } });
+  return createServer({ ...options, auth: { internalSecret: LOCAL_INTERNAL_SECRET } });
 }
 
 function createFailingSource(failure: Error, throwsDuringResolve: boolean): PackageSource {
@@ -98,20 +100,20 @@ describe('Marketplace API error boundary', () => {
   });
 
   // case: S-269.11
-  it('authorizes secured mutations from Gateway identity and keeps local no-login access', async () => {
+  it('requires Gateway identity in every mode and applies scope-specific permissions', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'marketplace-mutation-auth-'));
     roots.push(root);
     const { logger } = makeContextLogger();
     const install = vi.fn().mockResolvedValue({ installed: [], warnings: [], scope: 'platform' });
     const service = { install } as unknown as MarketplaceService;
     const internalSecret = 'test-gateway-internal-secret';
-    const secured = await createServer({ service, logger, auth: { required: true, internalSecret } });
+    const secured = await createServer({ service, logger, auth: { internalSecret } });
     servers.push(secured);
 
     const direct = await secured.inject({
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
-      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'project', projectRoot: root },
     });
     expect(direct.statusCode).toBe(401);
     expect(direct.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
@@ -127,7 +129,7 @@ describe('Marketplace API error boundary', () => {
         'x-kb-auth-tier': 'pro',
         'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLUGINS_WRITE]),
       },
-      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'project', projectRoot: root },
     });
     expect(forgedHeaders.statusCode).toBe(401);
     expect(install).not.toHaveBeenCalled();
@@ -143,7 +145,7 @@ describe('Marketplace API error boundary', () => {
         'x-kb-auth-tier': 'pro',
         'x-kb-auth-permissions': '[]',
       },
-      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'project', projectRoot: root },
     });
     expect(readOnly.statusCode).toBe(403);
     expect(readOnly.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN' } });
@@ -160,20 +162,69 @@ describe('Marketplace API error boundary', () => {
         'x-kb-auth-tier': 'pro',
         'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLUGINS_WRITE]),
       },
-      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'project', projectRoot: root },
     });
     expect(writer.statusCode).toBe(201);
     expect(install).toHaveBeenCalledTimes(1);
 
     const localInstall = vi.fn().mockResolvedValue({ installed: [], warnings: [], scope: 'platform' });
-    const local = await createServer({ service: { install: localInstall } as unknown as MarketplaceService, logger, auth: { required: false } });
+    const local = await createServer({ service: { install: localInstall } as unknown as MarketplaceService, logger, auth: { internalSecret } });
     servers.push(local);
     const localResponse = await local.inject({
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
+      headers: {
+        'x-internal-secret': internalSecret,
+        'x-kb-auth-type': 'machine',
+        'x-kb-auth-user-id': 'local-admin',
+        'x-kb-auth-namespace-id': 'local',
+        'x-kb-auth-tier': 'enterprise',
+        'x-kb-auth-permissions': JSON.stringify(Object.values(PERMISSIONS)),
+      },
       payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
     });
     expect(localResponse.statusCode).toBe(201);
+    expect(localInstall).toHaveBeenCalledTimes(1);
+
+    const platformDenied = await secured.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      headers: {
+        'x-internal-secret': internalSecret,
+        'x-kb-auth-type': 'user',
+        'x-kb-auth-user-id': 'tenant-member',
+        'x-kb-auth-namespace-id': 'tenant-a',
+        'x-kb-auth-tier': 'pro',
+        'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLUGINS_WRITE]),
+      },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+    });
+    expect(platformDenied.statusCode).toBe(403);
+    expect(platformDenied.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_FORBIDDEN', details: { permission: PERMISSIONS.PLATFORM_SETTINGS_WRITE } } });
+    expect(install).toHaveBeenCalledTimes(1);
+
+    const platformAdmin = await secured.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      headers: {
+        'x-internal-secret': internalSecret,
+        'x-kb-auth-type': 'user',
+        'x-kb-auth-user-id': 'tenant-admin',
+        'x-kb-auth-namespace-id': 'tenant-a',
+        'x-kb-auth-tier': 'pro',
+        'x-kb-auth-permissions': JSON.stringify([PERMISSIONS.PLUGINS_WRITE, PERMISSIONS.PLATFORM_SETTINGS_WRITE]),
+      },
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+    });
+    expect(platformAdmin.statusCode).toBe(201);
+    expect(install).toHaveBeenCalledTimes(2);
+
+    const localDirect = await local.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
+    });
+    expect(localDirect.statusCode).toBe(401);
     expect(localInstall).toHaveBeenCalledTimes(1);
   });
 
@@ -182,7 +233,7 @@ describe('Marketplace API error boundary', () => {
     await expect(createServer({
       service: {} as unknown as MarketplaceService,
       logger,
-      auth: { required: true },
+      auth: { internalSecret: '' },
     })).rejects.toThrow('secured Marketplace API requires GATEWAY_INTERNAL_SECRET');
   });
 

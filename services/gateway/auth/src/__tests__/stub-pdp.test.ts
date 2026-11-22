@@ -92,6 +92,7 @@ describe('enumeratePermissions', () => {
       PERMISSIONS.WORKFLOWS_READ, PERMISSIONS.WORKFLOWS_WRITE,
       PERMISSIONS.ACCOUNT_READ, PERMISSIONS.ACCOUNT_WRITE,
     ]);
+    expect((await pdp.check(userIdentity, PERMISSIONS.PLATFORM_SETTINGS_WRITE)).allow).toBe(false);
   });
 
   it('returns the full canonical set for tenant-admin', async () => {

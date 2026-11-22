@@ -41,4 +41,27 @@ describe('marketplace project scope', () => {
     expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot: alias })).toThrow(/inside the managed platform installation/);
     expect(lstatSync(alias).isSymbolicLink()).toBe(true);
   });
+
+  // case: S-269.11
+  it('rejects project write targets that alias managed metadata or package graph through symlinks', () => {
+    sandbox = mkdtempSync(join(tmpdir(), 'kb-marketplace-managed-target-'));
+    const installRoot = join(sandbox, 'install');
+    const platformRoot = join(installRoot, 'versions', '1.0.0');
+    const projectRoot = join(sandbox, 'project');
+    mkdirSync(join(platformRoot, '.kb'), { recursive: true });
+    mkdirSync(projectRoot, { recursive: true });
+    symlinkSync(join('versions', '1.0.0'), join(installRoot, 'current'), 'dir');
+
+    symlinkSync(join(platformRoot, '.kb'), join(projectRoot, '.kb'), 'dir');
+    expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toThrow(/managed platform installation/);
+
+    rmSync(join(projectRoot, '.kb'));
+    symlinkSync(platformRoot, join(projectRoot, 'node_modules'), 'dir');
+    expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toThrow(/managed platform installation/);
+
+    rmSync(join(projectRoot, 'node_modules'));
+    const dotNameInsideInstall = join(installRoot, '..draft');
+    mkdirSync(dotNameInsideInstall);
+    expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot: dotNameInsideInstall })).toThrow(/managed platform installation/);
+  });
 });
