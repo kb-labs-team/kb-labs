@@ -64,6 +64,12 @@ def _installed_gateway_url(env: dict[str, str]) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
 
 
+def marketplace_platform_config_path(platform_root: Path) -> Path:
+    """Resolve the installed config through the active version's shared-state link."""
+    return active_platform_root(platform_root) / layout_value(
+        "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
+
+
 def _assert_registry_gateway_config(env: dict[str, str]) -> None:
     platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
     registry_upstream = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
@@ -968,7 +974,7 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
         token = env.get("KB_JOURNEY_MARKETPLACE_TOKEN", "")
         if not expected_url or not key or not token:
             raise RuntimeError("journey Marketplace source URL or secret references are absent from the installer environment")
-        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config_path = marketplace_platform_config_path(platform_root)
         raw_config = config_path.read_text()
         if ("${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY}" not in raw_config
                 or "${KB_JOURNEY_MARKETPLACE_TOKEN}" not in raw_config
