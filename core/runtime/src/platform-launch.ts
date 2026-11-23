@@ -404,6 +404,8 @@ async function launch(options: PlatformLaunchOptions): Promise<PlatformRuntime> 
             stage: "launch",
             errorCode: envelope.code,
             correlationId: envelope.correlationId,
+          failureMessage: envelope.message,
+          ...(envelope.hint ? { remediationHint: envelope.hint } : {}),
           },
         });
       } catch {

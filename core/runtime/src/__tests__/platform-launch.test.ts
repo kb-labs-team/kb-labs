@@ -94,6 +94,8 @@ describe("launchPlatform", () => {
     expect(output).toContain('Platform startup failed');
     expect(output).toContain('"event":"platform.failed"');
     expect(output).toContain('"errorCode":"KB_DEPLOYMENT_TOPOLOGY_REQUIRED"');
+    expect(output).toContain('"failureMessage":"The platform deployment topology is missing from platform.deployment.topology."');
+    expect(output).toContain('"remediationHint":"Set platform.deployment.topology in the producer configuration: kb-create writes local, release images provide cloud, and Helm writes k8s."');
     expect(output.match(/platform\.failed/g)).toHaveLength(1);
     expect(output).not.toContain('stack');
     expect(output).not.toContain('startup-secret-sentinel');

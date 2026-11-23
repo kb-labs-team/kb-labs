@@ -23,4 +23,4 @@ A developer can find a safe, actionable startup failure in the managed service l
 
 | # | Action | Expected |
 |---|---|---|
-| S-317.1 | Set `KB_LOG_LEVEL=info`, run `kb-dev start workflow`, then inspect `kb-dev logs workflow --lines 200` | Startup exits unsuccessfully. The service log contains one error-level `platform.failed` record with the message `Platform startup failed`, an error code, and a correlation ID. The record does not contain the failing configuration value or a stack trace. |
+| S-317.1 | Set `KB_LOG_LEVEL=info`, run `kb-dev start workflow`, then inspect `kb-dev logs workflow --lines 200` | Startup exits unsuccessfully. The service log contains one error-level `platform.failed` record with the message `Platform startup failed`, the typed error code, its safe public summary and remediation hint when available, and a correlation ID. The record does not contain the raw exception, failing configuration value, or stack trace. |
