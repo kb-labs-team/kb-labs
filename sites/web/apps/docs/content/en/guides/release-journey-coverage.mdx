@@ -1,7 +1,7 @@
 ---
 title: "Case First QA Coverage"
 description: "Validate product cases and generate release coverage from executed tests."
-updatedAt: "2026-10-01"
+updatedAt: "2026-11-23"
 order: 9
 ---
 
@@ -46,6 +46,27 @@ reports `PASS`, `FAIL`, `NOT RUN`, or `NOT COVERED`; cases outside the selected
 install mode report `NOT REQUIRED`. Release coverage passes only when every
 active release case passes all of its steps with an executed journey or e2e
 claim. Unit claims alone do not satisfy a release case.
+
+### Evidence-backed coverage pilot
+
+The evidence-backed mode adds an independent candidate/profile check and
+verified configuration and log artifacts to the result. Keep the expected
+candidate and profile in a separate plan file, then run:
+
+```bash
+kb qa coverage show --level release --mode local --evidence \
+  --evidence-plan .journey/evidence-plan.json \
+  --run .journey/installer-case-local-agent-commit-default.json --json
+```
+
+The installed journey currently collects this evidence for `PC-001.2`: its
+case-run record identifies the validated release-catalog SHA-256 digest and
+observed run profile, and links the redacted installed config and the actual
+invocations recorded for that install step. The artifacts live below the
+run-record directory and their SHA-256 digests are checked by the coverage
+command. A missing artifact or a plan mismatch reports `INCOMPLETE`; the
+journey's observed `PASS` or `FAIL` remains separate. This pilot does not
+provide evidence for other case steps.
 
 Projects can keep their catalog elsewhere by setting `qa.casesPath` in their
 plugin configuration. The default is `docs/qa/scenarios`.

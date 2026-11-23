@@ -165,7 +165,8 @@ def capture_clean_install_artifacts(*, report_root: str | Path, run_id: str,
 
 def apply_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[Mapping[str, Any]], *,
                                       profile: Mapping[str, str], candidate_digest: str | None,
-                                      candidate_verified: bool, artifacts: Mapping[str, str]) -> dict[str, Any]:
+                                      candidate_verified: bool, artifacts: Mapping[str, str],
+                                      evidence_run_id: str | None = None) -> dict[str, Any]:
     """Bind captured evidence to the recorded result without changing its status."""
     claims = case_run.get("claims")
     if not isinstance(claims, list) or not any(
@@ -175,7 +176,7 @@ def apply_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[M
 
     result: dict[str, Any] = {
         "schema": "kb.qa-case-run/v3",
-        "runId": case_run.get("runId") if isinstance(case_run.get("runId"), str) else "",
+        "runId": evidence_run_id or (case_run.get("runId") if isinstance(case_run.get("runId"), str) else ""),
         "mode": case_run.get("mode") if case_run.get("mode") in {"local", "secured"} else "local",
         "claims": [dict(claim) for claim in claims if isinstance(claim, Mapping)],
     }

@@ -35,7 +35,9 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
                 "candidate provenance", "journey.orchestration", lambda: None,
                 details=lambda: {"candidateCommit": "source-commit"},
             )
-            with invocations.invocation_context(report_root=report_root, step_id="PC-001.2"):
+            evidence_run_id = "installer-local-attempt-one"
+            attempt_root = report_root / "qa-attempts" / evidence_run_id
+            with invocations.invocation_context(report_root=attempt_root, step_id="PC-001.2"):
                 command = invocations.run_command(
                     [sys.executable, "-c", "print('install complete redis://journey:p%40ss@cache.internal:6379/0')"],
                     cwd=root,
@@ -48,15 +50,15 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
             case_run = journey.result().__dict__["case_run"]
             digest = "a" * 64
             artifacts = capture_clean_install_artifacts(
-                report_root=report_root, run_id=case_run["runId"],
+                report_root=report_root, run_id=evidence_run_id,
                 config_path=config_link, installation_root=platform_root,
-                invocation_log_path=report_root / "invocations" / "calls.jsonl",
+                invocation_log_path=attempt_root / "invocations" / "calls.jsonl",
             )
             result = apply_clean_install_case_evidence(
                 case_run, journey.result().__dict__["steps"],
                 profile={"os": "linux-x64", "runner": "service-local:explore"},
                 candidate_digest=digest, candidate_verified=provenance.status == "PASS",
-                artifacts=artifacts,
+                artifacts=artifacts, evidence_run_id=evidence_run_id,
             )
 
             self.assertEqual(result["schema"], "kb.qa-case-run/v3")
@@ -73,13 +75,78 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
             self.assertIn("install complete", log_contents)
 
     # case: S-315.2
+    def test_successive_attempts_keep_candidate_profile_and_step_logs_separate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report_root = root / "run-record"
+            report_root.mkdir()
+            platform_root = root / "platform"
+            config_target = platform_root / "state" / "kb.config.jsonc"
+            config_target.parent.mkdir(parents=True)
+            config_link = platform_root / "current" / ".kb" / "kb.config.jsonc"
+            config_link.parent.mkdir(parents=True)
+            config_link.symlink_to(Path("../../state/kb.config.jsonc"))
+            results = []
+
+            for suffix, output, profile, digest in (
+                ("one", "first attempt", {"os": "linux-x64", "runner": "service-local:explore"}, "1" * 64),
+                ("two", "second attempt", {"os": "linux-arm64", "runner": "service-secured:explore"}, "2" * 64),
+            ):
+                config_target.write_text(json.dumps({"attempt": suffix, "port": 4000}) + "\n")
+                Journey.reset_run_registry()
+                journey = Journey("local", "installer-local")
+                provenance = journey.step("candidate provenance", "journey.orchestration", lambda: None)
+                evidence_run_id = f"installer-local-{suffix}"
+                attempt_root = report_root / "qa-attempts" / evidence_run_id
+                with invocations.invocation_context(report_root=attempt_root, step_id="PC-001.2"):
+                    command = invocations.run_command(
+                        [sys.executable, "-c", f"print({output!r})"], cwd=root,
+                        env={"KB_JOURNEY_HOME_LABEL": "main"}, timeout=10,
+                    )
+                journey.step("clean install leaves a running host", "platform.install",
+                              lambda: None if command.returncode == 0 else "installer failed",
+                              cases=["PC-001.2"])
+                case_run = journey.result().__dict__["case_run"]
+                artifacts = capture_clean_install_artifacts(
+                    report_root=report_root, run_id=evidence_run_id,
+                    config_path=config_link, installation_root=platform_root,
+                    invocation_log_path=attempt_root / "invocations" / "calls.jsonl",
+                )
+                results.append((apply_clean_install_case_evidence(
+                    case_run, journey.result().__dict__["steps"], profile=profile,
+                    candidate_digest=digest, candidate_verified=provenance.status == "PASS",
+                    artifacts=artifacts, evidence_run_id=evidence_run_id,
+                ), report_root))
+
+            first, second = results
+            self.assertNotEqual(first[0]["runId"], second[0]["runId"])
+            self.assertEqual(first[0]["candidateId"], f"sha256:{'1' * 64}")
+            self.assertEqual(second[0]["candidateId"], f"sha256:{'2' * 64}")
+            self.assertNotEqual(first[0]["profile"], second[0]["profile"])
+            first_claim, second_claim = first[0]["claims"][0], second[0]["claims"][0]
+            first_log = (first[1] / first_claim["logRef"]).read_text()
+            second_log = (second[1] / second_claim["logRef"]).read_text()
+            first_config = (first[1] / first_claim["configRef"]).read_text()
+            second_config = (second[1] / second_claim["configRef"]).read_text()
+            self.assertIn("first attempt", first_log)
+            self.assertNotIn("second attempt", first_log)
+            self.assertIn("second attempt", second_log)
+            self.assertNotIn("first attempt", second_log)
+            self.assertIn('"attempt": "one"', first_config)
+            self.assertIn('"attempt": "two"', second_config)
+            self.assertNotEqual(first_claim["logRef"], second_claim["logRef"])
+            self.assertNotEqual(first_claim["configRef"], second_claim["configRef"])
+
+    # case: S-315.2
     def test_failed_provenance_and_invalid_utf8_log_never_make_valid_candidate(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             report_root = root / "run-record"
             report_root.mkdir()
-            calls = report_root / "invocations" / "calls.jsonl"
-            calls.parent.mkdir()
+            evidence_run_id = "installer-failed-attempt"
+            attempt_root = report_root / "qa-attempts" / evidence_run_id
+            calls = attempt_root / "invocations" / "calls.jsonl"
+            calls.parent.mkdir(parents=True)
             calls.write_bytes(b'{"step_id":"PC-001.2","stdout":"invalid \xff byte"}\n')
             case_run = {
                 "schema": "kb.qa-case-run/v2", "runId": "installer-failed", "mode": "local",
@@ -87,13 +154,13 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
             }
             steps = [{"name": "candidate provenance", "status": "FAIL", "details": {"candidateCommit": "mismatch"}}]
             artifacts = capture_clean_install_artifacts(
-                report_root=report_root, run_id=case_run["runId"],
+                report_root=report_root, run_id=evidence_run_id,
                 config_path=root / "missing-config", installation_root=root,
                 invocation_log_path=calls,
             )
             result = apply_clean_install_case_evidence(
                 case_run, steps, profile={}, candidate_digest="b" * 64,
-                candidate_verified=False, artifacts=artifacts,
+                candidate_verified=False, artifacts=artifacts, evidence_run_id=evidence_run_id,
             )
 
             self.assertEqual(result["claims"][0]["status"], "FAIL")

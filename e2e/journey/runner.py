@@ -19,6 +19,7 @@ import sys
 import tempfile
 import time
 import traceback
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -113,6 +114,8 @@ LAST_COMMAND_CWD: str | None = None
 CLEAN_INSTALL_EVIDENCE_CAPTURE: dict[str, str] = {}
 CLEAN_INSTALL_CANDIDATE_DIGEST: str | None = None
 CLEAN_INSTALL_CANDIDATE_VERIFIED = False
+CLEAN_INSTALL_EVIDENCE_RUN_ID = ""
+CLEAN_INSTALL_ATTEMPT_ROOT: Path | None = None
 
 
 def marketplace_install_flags(env: dict[str, str], *, gateway_url: str | None = None) -> list[str]:
@@ -992,6 +995,7 @@ def finalize_run(passed: bool) -> int:
             candidate_digest=CLEAN_INSTALL_CANDIDATE_DIGEST,
             candidate_verified=CLEAN_INSTALL_CANDIDATE_VERIFIED,
             artifacts=CLEAN_INSTALL_EVIDENCE_CAPTURE,
+            evidence_run_id=CLEAN_INSTALL_EVIDENCE_RUN_ID,
         )
         write_report_json(case_report, result, env=BASE_ENV)
     if not report.exists():
@@ -1285,6 +1289,7 @@ def _main(*, update_variant_runner=None):
     global ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
     global CLEAN_INSTALL_EVIDENCE_CAPTURE, CLEAN_INSTALL_CANDIDATE_DIGEST
     global CLEAN_INSTALL_CANDIDATE_VERIFIED
+    global CLEAN_INSTALL_EVIDENCE_RUN_ID, CLEAN_INSTALL_ATTEMPT_ROOT
     STATE_DUMP_GUARD.reset()
     Journey.reset_run_registry()
     FIRST_FAILURE = ""
@@ -1292,6 +1297,8 @@ def _main(*, update_variant_runner=None):
     CLEAN_INSTALL_EVIDENCE_CAPTURE = {}
     CLEAN_INSTALL_CANDIDATE_DIGEST = None
     CLEAN_INSTALL_CANDIDATE_VERIFIED = False
+    CLEAN_INSTALL_EVIDENCE_RUN_ID = ""
+    CLEAN_INSTALL_ATTEMPT_ROOT = None
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
@@ -1310,6 +1317,9 @@ def _main(*, update_variant_runner=None):
     mode = "secured" if VARIANT.endswith("secured") else "local"
     scenario_setup = runner_scenario(SCENARIO, secured=mode == "secured")
     CASE_JOURNEY = Journey(mode, f"installer-{mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}")
+    CLEAN_INSTALL_EVIDENCE_RUN_ID = f"{CASE_JOURNEY.run_id}-{uuid.uuid4().hex}"
+    summary_root = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).parent
+    CLEAN_INSTALL_ATTEMPT_ROOT = summary_root / "qa-attempts" / CLEAN_INSTALL_EVIDENCE_RUN_ID
     diagnostics = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
         "journey-diagnostics.log")
     selection_groups = outer_selection_groups()
@@ -1425,7 +1435,7 @@ def _main(*, update_variant_runner=None):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
-        with invocation_context(step_id="PC-001.2"):
+        with invocation_context(step_id="PC-001.2", report_root=CLEAN_INSTALL_ATTEMPT_ROOT):
             code, output, duration, apply_offset = pty_install(
                 [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
             )
@@ -1507,7 +1517,7 @@ def _main(*, update_variant_runner=None):
                     "--input", str(request_path), "--registry", REGISTRY,
                     "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
         if operation == "install":
-            with invocation_context(step_id="PC-001.2"):
+            with invocation_context(step_id="PC-001.2", report_root=CLEAN_INSTALL_ATTEMPT_ROOT):
                 result, elapsed = run(args, env=env, timeout=1200)
         else:
             result, elapsed = run(args, env=env, timeout=1200)
@@ -1679,10 +1689,10 @@ def _main(*, update_variant_runner=None):
     if any(claim.get("claimId") == "PC-001.2" for claim in evidence_case_run.get("claims", [])):
         report_root = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).parent
         CLEAN_INSTALL_EVIDENCE_CAPTURE = capture_clean_install_artifacts(
-            report_root=report_root, run_id=CASE_JOURNEY.run_id,
+            report_root=report_root, run_id=CLEAN_INSTALL_EVIDENCE_RUN_ID,
             config_path=PLATFORM_CURRENT / ".kb" / "kb.config.jsonc",
             installation_root=PLATFORM,
-            invocation_log_path=report_root / "invocations" / "calls.jsonl",
+            invocation_log_path=CLEAN_INSTALL_ATTEMPT_ROOT / "invocations" / "calls.jsonl",
         )
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
