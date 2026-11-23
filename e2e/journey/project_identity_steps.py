@@ -56,6 +56,15 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
                 journey.step("prepare project registry fixtures", "projects",
                              lambda: f"could not initialize {project.name}: {initialized.stderr.strip()}")
                 return
+        fixture_catalog = projects[1] / "docs" / "qa" / "scenarios"
+        fixture_catalog.mkdir(parents=True)
+        (fixture_catalog / "S-999-journey-fixture.md").write_text(
+            "---\nid: S-999\ntitle: Journey fixture\npersona: solo-developer\narea: platform\n"
+            "priority: P2\nstatus: planned\nrelease: false\nmodes: [local]\nsurfaces: [cli]\n---\n\n"
+            "## Goal\n\nProvide a valid disposable catalog for the installed QA CLI journey.\n\n"
+            "## Steps\n\n| # | Action | Expected |\n|---|---|---|\n"
+            "| S-999.1 | List the disposable fixture | The catalog is readable. |\n",
+            encoding="utf-8")
         ids: dict[Path, str] = {}
 
         def registration() -> str | None:
