@@ -41,7 +41,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Keep PR reruns coalesced, but give every master push its own group so a
+  # newer merge cannot cancel verification tied to an earlier source SHA.
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'push' && github.sha || 'latest' }}
   cancel-in-progress: true
 
 jobs:
