@@ -3340,6 +3340,7 @@
     "marketplace and adapter failures use the shared envelope",
     "prepare clean scopes for the S-010 install",
     "install exact marketplace plugin into both scopes",
+    "install a platform plugin from its public source with authenticated dependency routing",
     "reject an unknown project service without starting its runtime",
     "verify S-192 platform and project pins and route are absent before install",
     "install Commit into the project for the route lifecycle",

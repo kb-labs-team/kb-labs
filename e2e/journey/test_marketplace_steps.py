@@ -96,6 +96,28 @@ class MarketplaceStepTests(unittest.TestCase):
 
         self.assertIn("S-300.1", declaration["cases"])
 
+    def test_public_platform_registry_install_is_local_runner_only(self):
+        from journey_selection import JourneySelection
+
+        for mode, selector, expected in (
+            ("local", "service-local:explore", "PASS"),
+            ("secured", "service-secured:explore", "FAIL"),
+        ):
+            selection = JourneySelection(
+                requested=("S-300.1",), claims=frozenset({"S-300.1"}),
+                owning_steps={"S-300.1": "install a platform plugin from its public source with authenticated dependency routing"},
+                prerequisite_steps=frozenset(), prerequisite_flows=frozenset(),
+                capabilities=frozenset({"marketplace"}), runner_selector=selector,
+                requested_runners=selector,
+            )
+            journey = Journey(mode, f"s3001-{mode}", selection=selection)
+            result = journey.step(
+                "install a platform plugin from its public source with authenticated dependency routing",
+                "marketplace", lambda: None, cases=["S-300.1"],
+                runners=("service-local:explore",),
+            )
+            self.assertEqual(result.status, expected)
+
     def test_two_local_npm_registries_keep_secret_out_of_request_evidence(self):
         from urllib.error import HTTPError
         from urllib.parse import quote
@@ -107,6 +129,8 @@ class MarketplaceStepTests(unittest.TestCase):
                 source_metadata = json.loads(response.read())
             self.assertEqual(source_metadata["versions"]["1.0.0"]["name"], ROUTED_PLUGIN)
             self.assertIn(fixture.source.url, source_metadata["versions"]["1.0.0"]["dist"]["tarball"])
+            with urllib.request.urlopen(source_metadata["versions"]["1.0.0"]["dist"]["tarball"], timeout=5) as response:
+                self.assertGreater(len(response.read()), 0)
 
             dependency_metadata_url = f"{fixture.dependencies.url}/{quote(ROUTED_DEPENDENCY, safe='')}"
             with self.assertRaises(HTTPError) as unauthorized:
@@ -129,14 +153,18 @@ class MarketplaceStepTests(unittest.TestCase):
             evidence = json.dumps(fixture.request_summary(), sort_keys=True)
             self.assertNotIn(token, evidence)
             requests = fixture.request_summary()
-            self.assertTrue(any(
+            self.assertEqual(sum(
                 item["package"] == ROUTED_PLUGIN and item["kind"] == "metadata"
                 for item in requests["source"]
-            ))
-            self.assertTrue(all(
+            ), 1)
+            self.assertEqual(sum(
+                item["package"] == ROUTED_PLUGIN and item["kind"] == "tarball"
+                for item in requests["source"]
+            ), 1)
+            self.assertEqual(sum(
                 item["package"] == ROUTED_DEPENDENCY and item["authorized"]
                 for item in requests["dependencies"] if item["authorized"]
-            ))
+            ), 2)
 
     def test_npm_fixture_publish_registers_a_local_user_and_uses_scoped_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -1524,6 +1552,7 @@ class MarketplaceStepTests(unittest.TestCase):
             def fail_unrelated_error_claim(*_args, **_kwargs):
                 raise AssertionError("independent S-051 envelope assertion failed")
             with patch("marketplace_steps.preflight_installed_plugin_command"), \
+                    patch("marketplace_steps._run_public_platform_registry_install"), \
                     patch("marketplace_steps.project_service_path",
                           side_effect=lambda project_id, service_id, path="":
                           f"/api/v1/projects/{project_id}/{service_id}/{path}".rstrip("/")), \
@@ -1662,6 +1691,7 @@ class MarketplaceStepTests(unittest.TestCase):
 
                     trial.step_guard = inject_selected_failure
                     with patch("marketplace_steps.preflight_installed_plugin_command"), \
+                            patch("marketplace_steps._run_public_platform_registry_install"), \
                             patch("marketplace_steps.project_service_path",
                                   side_effect=lambda project_id, service_id, path="":
                                   f"/api/v1/projects/{project_id}/{service_id}/{path}".rstrip("/")), \

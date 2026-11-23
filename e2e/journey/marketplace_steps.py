@@ -9,6 +9,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import shutil
 import tempfile
 import tarfile
@@ -43,6 +44,12 @@ from invocations import (
 )
 from plugin_author_steps import preflight_installed_plugin_command, run_commit_case_steps
 from commit_fixture import commit_fixture_source_version
+from platform_registry_routing_fixture import (
+    DEPENDENCY as ROUTING_FIXTURE_DEPENDENCY,
+    PLUGIN as ROUTING_FIXTURE_PLUGIN,
+    VERSION as ROUTING_FIXTURE_VERSION,
+    PlatformRegistryRoutingFixture,
+)
 
 
 CommandRunner = Callable[..., CompletedProcess[str]]
@@ -133,6 +140,164 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
          input: str | None = None) -> CompletedProcess[str]:
     return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300, input=input)
+
+
+def _restore_fixture_file(path: Path, original: bytes | None, mode: int | None) -> None:
+    if original is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(original)
+    if mode is not None:
+        path.chmod(mode)
+
+
+def _restart_installed_marketplace(platform_root: Path, project: Path, env: dict[str, str],
+                                   runner: CommandRunner) -> None:
+    platform = active_platform_root(platform_root)
+    config = platform / ".kb" / "devservices.yaml"
+    executable = platform / ".kb" / "v2" / "bin" / "kb-dev"
+    if not executable.is_file() or not config.is_file():
+        raise RuntimeError("the installed Marketplace service manager fixture is unavailable")
+    command = [str(executable), "--config", str(config), "--net-offset", "0",
+               "--no-cascade", "--json", "restart", "marketplace"]
+    result = run_with_runner(runner, command, cwd=project, env=env, timeout=180)
+    if result.returncode != 0:
+        raise RuntimeError("kb-dev could not restart the installed Marketplace service for the registry fixture")
+
+
+def _run_public_platform_registry_install(project: Path, env: dict[str, str],
+                                          runner: CommandRunner) -> None:
+    platform_root_value = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not platform_root_value:
+        raise RuntimeError("the public Marketplace registry journey has no installed platform root")
+    platform_root = active_platform_root(Path(platform_root_value))
+    config_path = marketplace_platform_config_path(platform_root)
+    npmrc_path = platform_root / ".npmrc"
+    original_config = config_path.read_bytes() if config_path.is_file() else None
+    config_mode = config_path.stat().st_mode & 0o777 if config_path.is_file() else None
+    original_npmrc = npmrc_path.read_bytes() if npmrc_path.is_file() else None
+    npmrc_mode = npmrc_path.stat().st_mode & 0o777 if npmrc_path.is_file() else None
+    user_config = env.get("npm_config_userconfig") or env.get("NPM_CONFIG_USERCONFIG")
+    user_npmrc = (Path(user_config) if user_config else Path(env.get("HOME", str(Path.home()))) / ".npmrc")
+    if not user_npmrc.is_absolute():
+        user_npmrc = project / user_npmrc
+    original_user_npmrc = user_npmrc.read_bytes() if user_npmrc.is_file() else None
+
+    token = secrets.token_urlsafe(32)
+    fixture_env = dict(env)
+    store_report_secret(fixture_env, "KB_JOURNEY_PLATFORM_NPM_TOKEN", token,
+                        "platform npm dependency registry credential")
+    store_key = ROUTING_FIXTURE_PLUGIN.replace("/", "+") + "@" + ROUTING_FIXTURE_VERSION
+    kb_home = Path(fixture_env.get("KB_HOME") or (Path(fixture_env["HOME"]) / ".kb"))
+    store_entry = kb_home / "store" / "entries" / store_key
+    if store_entry.exists():
+        raise RuntimeError("the public Marketplace plugin store entry was not empty before the install")
+
+    config_changed = False
+    cleanup_failed = False
+    try:
+        with PlatformRegistryRoutingFixture(token) as fixture:
+            registry_host = urlsplit(fixture.dependencies.url).netloc
+            npmrc_path.write_text(
+                f"@fixture:registry={fixture.dependencies.url}/\n"
+                f"//{registry_host}/:_authToken=${{KB_JOURNEY_PLATFORM_NPM_TOKEN}}\n"
+                "always-auth=true\n",
+                encoding="utf-8",
+            )
+            npmrc_path.chmod(0o600)
+
+            sources = json.dumps([{"kind": "npm", "url": fixture.source.url}], separators=(",", ":"))
+            configure = kb_command(["config", "set", "--scope", "platform", "marketplace.sources",
+                                    sources, "--json"])
+            configure_result = _run(configure, cwd=project, env=fixture_env, runner=runner)
+            if configure_result.returncode != 0:
+                raise RuntimeError("the journey could not configure the temporary Marketplace source")
+            config_changed = True
+            _restart_installed_marketplace(platform_root, project, fixture_env, runner)
+
+            fixture.clear_requests()
+            install = ["marketplace", "install", f"{ROUTING_FIXTURE_PLUGIN}@{ROUTING_FIXTURE_VERSION}",
+                       "--scope", "platform", "--json"]
+            with invocation_context(step_id="S-300.1"):
+                result = _run(kb_command(install), cwd=project, env=fixture_env, runner=runner)
+            try:
+                payload = read_ux_cli_result(result)
+                data = decode_ux_success_result(payload)
+            except (ValueError, json.JSONDecodeError):
+                if result.returncode != 0:
+                    try:
+                        failure = decode_ux_error_result(read_ux_cli_result(result))
+                    except (ValueError, json.JSONDecodeError):
+                        failure = {}
+                    code = failure.get("code") if isinstance(failure, dict) else None
+                    if isinstance(code, str) and re.fullmatch(r"[A-Z0-9_]+", code):
+                        raise RuntimeError(f"the public Marketplace install failed with {code}") from None
+                raise RuntimeError("the public Marketplace install did not return a successful JSON result") from None
+            if result.returncode != 0 or not isinstance(data, dict):
+                raise RuntimeError("the public Marketplace install did not return success data")
+            installed = data.get("installed")
+            if (data.get("scope") != "platform" or not isinstance(installed, list)
+                    or not any(isinstance(item, dict)
+                               and item.get("id") == ROUTING_FIXTURE_PLUGIN
+                               and item.get("version") == ROUTING_FIXTURE_VERSION
+                               and item.get("source") == "npm" for item in installed)):
+                raise RuntimeError("the public Marketplace CLI did not report the installed platform plugin")
+
+            lock_path = platform_root / layout_value("versionStatePaths.kb_marketplace_lock")
+            try:
+                lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                raise RuntimeError("the platform Marketplace lock was missing or invalid after install") from None
+            plugins = lock.get("plugins") if isinstance(lock, dict) else None
+            entry = plugins.get(ROUTING_FIXTURE_PLUGIN) if isinstance(plugins, dict) else None
+            if (not isinstance(entry, dict) or entry.get("version") != ROUTING_FIXTURE_VERSION
+                    or entry.get("source") != "marketplace" or entry.get("marketplaceSource") != "npm"
+                    or not entry.get("integrity")):
+                raise RuntimeError("the platform Marketplace lock did not record the exact source and version")
+
+            package_root = store_entry / "node_modules" / Path(ROUTING_FIXTURE_PLUGIN)
+            dependency_path = package_root / "node_modules" / Path(ROUTING_FIXTURE_DEPENDENCY)
+            if not (package_root / "package.json").is_file() or not (dependency_path / "package.json").is_file():
+                raise RuntimeError("the extension store did not contain the plugin and its routed dependency")
+            if (store_entry / ".npmrc").exists() or (package_root / ".npmrc").exists():
+                raise RuntimeError("package manager config was copied into the Marketplace store entry")
+            if (npmrc_path.read_text(encoding="utf-8") != (
+                    f"@fixture:registry={fixture.dependencies.url}/\n"
+                    f"//{registry_host}/:_authToken=${{KB_JOURNEY_PLATFORM_NPM_TOKEN}}\n"
+                    "always-auth=true\n")):
+                raise RuntimeError("the platform package manager config changed during installation")
+            if (user_npmrc.is_file() != (original_user_npmrc is not None)
+                    or (original_user_npmrc is not None and user_npmrc.read_bytes() != original_user_npmrc)):
+                raise RuntimeError("the ordinary user npm config changed during platform installation")
+
+            requests = fixture.request_summary()
+            source_requests = requests["source"]
+            dependency_requests = requests["dependencies"]
+            if ({item["package"] for item in source_requests} != {ROUTING_FIXTURE_PLUGIN}
+                    or not any(item["kind"] == "metadata" for item in source_requests)
+                    or not any(item["kind"] == "tarball" for item in source_requests)):
+                raise RuntimeError("Marketplace source A did not serve both plugin metadata and tarball")
+            if ({item["package"] for item in dependency_requests} != {ROUTING_FIXTURE_DEPENDENCY}
+                    or not any(item["kind"] == "metadata" and item["authorized"] for item in dependency_requests)
+                    or not any(item["kind"] == "tarball" and item["authorized"] for item in dependency_requests)
+                    or any(not item["authorized"] for item in dependency_requests)):
+                raise RuntimeError("platform registry B did not serve only the dependency with authorization")
+            evidence = json.dumps({"result": result.stdout, "stderr": result.stderr, "requests": requests})
+            if token in evidence:
+                raise RuntimeError("the Marketplace result or registry evidence exposed its temporary credential")
+    except Exception:
+        raise
+    finally:
+        try:
+            _restore_fixture_file(npmrc_path, original_npmrc, npmrc_mode)
+            if config_changed:
+                _restore_fixture_file(config_path, original_config, config_mode)
+                _restart_installed_marketplace(platform_root, project, fixture_env, runner)
+        except Exception:
+            cleanup_failed = True
+    if cleanup_failed:
+        raise RuntimeError("the temporary Marketplace registry configuration could not be restored")
 
 
 def _publish_npm_fixture_package(package_dir: Path, registry: str, cwd: Path,
@@ -1130,6 +1295,14 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         commit_install_package = (fixture_entry or {}).get("package")
         if not isinstance(commit_install_package, str) or not commit_install_package:
             raise RuntimeError("published Commit fixture has no package identity to pin in lifecycle checks")
+
+    journey.step(
+        "install a platform plugin from its public source with authenticated dependency routing",
+        "marketplace",
+        lambda: _run_public_platform_registry_install(project, base_env, runner),
+        cases=["S-300.1"],
+        runners=("service-local:explore",),
+    )
 
     def install_npm_plugin_with_private_transitive_dependency() -> None:
         suffix = str(time.time_ns())
