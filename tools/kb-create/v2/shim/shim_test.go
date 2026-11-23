@@ -111,7 +111,45 @@ func TestManagedShimProvidesPlatformRootForPeerResolution(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(cliEntry), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cliEntry, []byte("process.stdout.write(process.env.KB_PLATFORM_ROOT ?? '')\n"), 0o600); err != nil {
+	cliScript := `import { registerHooks } from 'node:module';
+import { pathToFileURL } from 'node:url';
+const root = process.env.KB_PLATFORM_ROOT;
+if (process.argv[2] === '--print-root') {
+  process.stdout.write(root ?? '');
+} else {
+  if (!root) throw new Error('KB_PLATFORM_ROOT is missing');
+  registerHooks({ resolve(specifier, context, nextResolve) {
+    if (specifier === '@kb-labs/sdk') {
+      return nextResolve(specifier, { ...context, parentURL: pathToFileURL(root + '/package.json').href });
+    }
+    return nextResolve(specifier, context);
+  }});
+  const handler = await import(pathToFileURL(process.argv[2]).href);
+  process.stdout.write(handler.value);
+}
+`
+	if err := os.WriteFile(cliEntry, []byte(cliScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sdkRoot := filepath.Join(stage, "node_modules", "@kb-labs", "sdk")
+	if err := os.MkdirAll(sdkRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sdkRoot, "package.json"), []byte(`{"name":"@kb-labs/sdk","type":"module","exports":"./index.js"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sdkRoot, "index.js"), []byte(`export const value = 'sdk-from-platform';`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pluginRoot := filepath.Join(root, "store-entry", "node_modules", "@kb-labs", "qa")
+	if err := os.MkdirAll(pluginRoot, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginRoot, "package.json"), []byte(`{"name":"@kb-labs/qa","type":"module","peerDependencies":{"@kb-labs/sdk":"2.121.0"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	pluginHandler := filepath.Join(pluginRoot, "handler.mjs")
+	if err := os.WriteFile(pluginHandler, []byte(`import { value } from '@kb-labs/sdk'; export { value };`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	id, err := versionroot.InstallationIDForPath(stage)
@@ -130,18 +168,18 @@ func TestManagedShimProvidesPlatformRootForPeerResolution(t *testing.T) {
 	if _, err := Ensure(launcher, platformRoot); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(Path(launcher))
+	cmd := exec.Command(Path(launcher), pluginHandler)
 	cmd.Env = withoutEnv(os.Environ(), "KB_PLATFORM_ROOT")
-	output, err := cmd.Output()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("managed launcher failed to load a peer-only SDK package: %v\n%s", err, output)
 	}
-	if got := string(output); got != platformRoot {
-		t.Fatalf("managed kb launcher passed KB_PLATFORM_ROOT %q, want %q", got, platformRoot)
+	if got := string(output); got != "sdk-from-platform" {
+		t.Fatalf("managed kb launcher could not resolve the platform SDK peer: got %q, want %q", got, "sdk-from-platform")
 	}
 
 	const explicitRoot = "/opt/another-kb-platform"
-	cmd = exec.Command(Path(launcher))
+	cmd = exec.Command(Path(launcher), "--print-root")
 	cmd.Env = append(withoutEnv(os.Environ(), "KB_PLATFORM_ROOT"), "KB_PLATFORM_ROOT="+explicitRoot)
 	output, err = cmd.Output()
 	if err != nil {
