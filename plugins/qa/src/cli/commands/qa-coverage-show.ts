@@ -63,7 +63,7 @@ async function verifyEvidenceArtifact(baseDirectory: string, reference: string |
   }
 }
 
-async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declaredClaims: Set<string>, artifactDirectory: string): Promise<QACaseEvidenceRunResult> {
+async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declaredClaims: Set<string>, artifactDirectory: string, recordPath: string): Promise<QACaseEvidenceRunResult> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('result must be an object');
   const record = value as Record<string, unknown>;
   const allowedFields = new Set(['schema', 'runId', 'mode', 'candidateId', 'profile', 'claims']);
@@ -93,9 +93,9 @@ async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, d
     for (const field of ['configRef', 'logRef']) if (claim[field] !== undefined && (typeof claim[field] !== 'string' || !claim[field].trim())) throw new Error(`claims[${index}].${field} must be a non-empty string`);
     for (const field of ['configDigest', 'logDigest']) if (claim[field] !== undefined && (typeof claim[field] !== 'string' || !claim[field].trim())) throw new Error(`claims[${index}].${field} must be a non-empty string`);
     const configRef = typeof claim.configRef === 'string' ? claim.configRef : undefined;
-    const configDigest = typeof claim.configDigest === 'string' ? claim.configDigest : undefined;
+    const configDigest = typeof claim.configDigest === 'string' ? claim.configDigest.toLowerCase() : undefined;
     const logRef = typeof claim.logRef === 'string' ? claim.logRef : undefined;
-    const logDigest = typeof claim.logDigest === 'string' ? claim.logDigest : undefined;
+    const logDigest = typeof claim.logDigest === 'string' ? claim.logDigest.toLowerCase() : undefined;
     return {
       claimId: claim.claimId,
       kind: claim.kind as QACaseClaimKind,
@@ -112,6 +112,7 @@ async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, d
     mode: record.mode,
     ...(typeof record.candidateId === 'string' && record.candidateId.trim() ? { candidateId: record.candidateId } : {}),
     ...(profile ? { profile } : {}),
+    recordPath,
     claims,
   };
 }
@@ -121,7 +122,7 @@ function parseEvidencePlan(value: unknown): QACaseEvidencePlan {
   const plan = value as Record<string, unknown>;
   const fields = new Set(['schema', 'mode', 'candidateId', 'profile']);
   for (const field of Object.keys(plan)) if (!fields.has(field)) throw new Error(`unexpected plan field ${field}`);
-  if (plan.schema !== 'kb.qa-evidence-plan/v1') throw new Error(`schema must be ${QA_CASE_EVIDENCE_PLAN_SCHEMA.$id}`);
+  if (plan.schema !== QA_CASE_EVIDENCE_PLAN_SCHEMA.properties.schema.const) throw new Error(`schema must be ${QA_CASE_EVIDENCE_PLAN_SCHEMA.properties.schema.const}`);
   if (plan.mode !== 'local' && plan.mode !== 'secured') throw new Error('plan mode must be local or secured');
   if (typeof plan.candidateId !== 'string' || !plan.candidateId.trim()) throw new Error('plan candidateId must be a non-empty string');
   if (typeof plan.profile !== 'object' || plan.profile === null || Array.isArray(plan.profile)
@@ -163,7 +164,13 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
         const candidate = typeof value === 'object' && value !== null && !Array.isArray(value) && 'case_run' in value ? value.case_run : value;
         const knownSteps = new Set(catalog.cases.flatMap(item => item.steps.map(step => step.id)));
         const declaredClaims = new Set(scanned.claims.map(claim => `${claim.stepId}:${claim.kind}`));
-        if (input.flags.evidence) evidenceRuns.push(await parseEvidenceRunResult(candidate, knownSteps, declaredClaims, dirname(resolve(cwd, path))));
+        if (input.flags.evidence) evidenceRuns.push(await parseEvidenceRunResult(
+          candidate,
+          knownSteps,
+          declaredClaims,
+          dirname(resolve(cwd, path)),
+          relative(cwd, resolve(cwd, path)),
+        ));
         else runs.push(parseRunResult(candidate, knownSteps, declaredClaims));
       } catch (error) {
         diagnostics.push({ file: path, line: 1, message: `cannot read case run result: ${error instanceof Error ? error.message : String(error)}` });
@@ -190,19 +197,35 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
         code: 'KB_RUNTIME_COMMAND_FAILED',
         message: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa coverage show --level release --mode ${mode} --run <results.json>\``,
         hint: `Run \`kb qa coverage show --level release --mode ${mode} --run <results.json>\` after completing the release case steps.`,
-        diagnostics: coverage.cases.flatMap(item => item.steps
-          .filter(step => step.status !== 'PASS' || ('evidenceStatus' in step && step.evidenceStatus !== 'COMPLETE'))
-          .map(step => {
-            const observedCandidates = 'observedCandidateIds' in step && Array.isArray(step.observedCandidateIds) ? step.observedCandidateIds.join(',') : '';
-            const configRefs = 'configRefs' in step && Array.isArray(step.configRefs) ? step.configRefs.join(',') : '';
-            const logRefs = 'logRefs' in step && Array.isArray(step.logRefs) ? step.logRefs.join(',') : '';
-            return {
-              code: step.status === 'FAIL' ? 'KB_QA_CASE_BEHAVIOR_FAILED' : 'KB_QA_CASE_EVIDENCE_INCOMPLETE',
+        diagnostics: input.flags.evidence
+          ? [
+            ...(!evidencePlan ? [{ code: 'KB_QA_EVIDENCE_PLAN_INCOMPLETE', severity: 'error', path: '<evidence-plan>', message: 'Evidence-backed release evaluation requires a valid independent evidence plan for the selected mode.' }] : []),
+            ...coverage.cases.flatMap(item => item.steps
+              .filter(step => step.status !== 'PASS' || ('evidenceStatus' in step && step.evidenceStatus !== 'COMPLETE'))
+              .map(step => {
+                const observedCandidates = 'observedCandidateIds' in step && Array.isArray(step.observedCandidateIds) ? step.observedCandidateIds.join(',') : '';
+                const configRefs = 'configRefs' in step && Array.isArray(step.configRefs) ? step.configRefs.map(ref => `${ref.runId}@${ref.runRoot}/${ref.path}#sha256=${ref.sha256}`).join(',') : '';
+                const logRefs = 'logRefs' in step && Array.isArray(step.logRefs) ? step.logRefs.map(ref => `${ref.runId}@${ref.runRoot}/${ref.path}#sha256=${ref.sha256}`).join(',') : '';
+                return {
+                  code: step.status === 'FAIL' ? 'KB_QA_CASE_BEHAVIOR_FAILED' : 'KB_QA_CASE_EVIDENCE_INCOMPLETE',
+                  severity: 'error',
+                  path: step.stepId,
+                  message: `${step.stepId}: result=${step.status}${'evidenceStatus' in step ? `, evidence=${step.evidenceStatus}` : ''}${'expectedCandidateId' in step && step.expectedCandidateId ? `, expectedCandidate=${step.expectedCandidateId}` : ''}${observedCandidates ? `, observedCandidates=${observedCandidates}` : ''}${configRefs ? `, config=${configRefs}` : ''}${logRefs ? `, logs=${logRefs}` : ''}${step.reason ? `; ${step.reason}` : ''}`,
+                };
+              })),
+            ...(coverage.cases.some(item => item.status === 'active' && item.release && item.statusResult !== 'NOT REQUIRED' && item.steps.length === 0)
+              || !coverage.cases.some(item => item.status === 'active' && item.release && item.statusResult !== 'NOT REQUIRED' && item.steps.length > 0)
+              ? [{ code: 'KB_QA_EVIDENCE_INCOMPLETE', severity: 'error', path: '<release-matrix>', message: `No applicable active release steps are present for ${mode}; the evidence matrix cannot pass.` }]
+              : []),
+          ]
+          : coverage.cases
+            .filter(item => item.statusResult !== 'PASS' && item.statusResult !== 'NOT REQUIRED')
+            .map(item => ({
+              code: 'KB_QA_CASE_COVERAGE_INCOMPLETE',
               severity: 'error',
-              path: step.stepId,
-              message: `${step.stepId}: result=${step.status}${'evidenceStatus' in step ? `, evidence=${step.evidenceStatus}` : ''}${'expectedCandidateId' in step && step.expectedCandidateId ? `, expectedCandidate=${step.expectedCandidateId}` : ''}${observedCandidates ? `, observedCandidates=${observedCandidates}` : ''}${configRefs ? `, config=${configRefs}` : ''}${logRefs ? `, logs=${logRefs}` : ''}${step.reason ? `; ${step.reason}` : ''}`,
-            };
-          })),
+              path: item.id,
+              message: `Case ${item.id} is ${item.statusResult}.`,
+            })),
       },
     };
   } },

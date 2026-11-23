@@ -56,6 +56,8 @@ export interface QACaseEvidenceRunResult {
   mode: QACaseMode;
   candidateId?: string;
   profile?: Record<string, string>;
+  /** Relative path identifying the run record that owns its artifact references. */
+  recordPath?: string;
   claims: Array<{
     claimId: string;
     kind: QACaseClaimKind;
@@ -69,6 +71,13 @@ export interface QACaseEvidenceRunResult {
     /** Set by the CLI after the referenced file passes digest verification. */
     logVerified?: boolean;
   }>;
+}
+
+export interface QACaseEvidenceArtifactRef {
+  runId: string;
+  runRoot: string;
+  path: string;
+  sha256: string;
 }
 
 export interface QACaseEvidencePlan {
@@ -165,8 +174,8 @@ export interface QACaseEvidenceCoverage {
       expectedCandidateId?: string;
       observedCandidateIds: string[];
       expectedProfile?: Record<string, string>;
-      configRefs: string[];
-      logRefs: string[];
+      configRefs: QACaseEvidenceArtifactRef[];
+      logRefs: QACaseEvidenceArtifactRef[];
     }>;
   }>;
   releasePassed: boolean;
@@ -210,8 +219,8 @@ export const QA_CASE_EVIDENCE_COVERAGE_JSON_SCHEMA = {
                 expectedCandidateId: { type: 'string' },
                 observedCandidateIds: { type: 'array', items: { type: 'string' } },
                 expectedProfile: { type: 'object', additionalProperties: { type: 'string' } },
-                configRefs: { type: 'array', items: { type: 'string' } },
-                logRefs: { type: 'array', items: { type: 'string' } },
+                configRefs: { type: 'array', items: { $ref: '#/$defs/artifactRef' } },
+                logRefs: { type: 'array', items: { $ref: '#/$defs/artifactRef' } },
                 claims: { type: 'array' },
               },
               additionalProperties: false,
@@ -220,6 +229,19 @@ export const QA_CASE_EVIDENCE_COVERAGE_JSON_SCHEMA = {
         },
         additionalProperties: false,
       },
+    },
+  },
+  $defs: {
+    artifactRef: {
+      type: 'object',
+      required: ['runId', 'runRoot', 'path', 'sha256'],
+      properties: {
+        runId: { type: 'string' },
+        runRoot: { type: 'string' },
+        path: { type: 'string' },
+        sha256: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+      },
+      additionalProperties: false,
     },
   },
   additionalProperties: false,
