@@ -2775,7 +2775,7 @@ def _main(*, update_variant_runner=None):
     elif outer_graph.selection_active and variant_gate != "BLOCKED":
         outer_graph.skip_unselected("platform update variant journey", "platform.update")
     add_installed_host_stop_case_step(
-        outer_graph.journey, PLATFORM, env,
+        outer_graph.journey, PLATFORM, env, executable=BIN / "kb-create",
         runner=lambda command, **options: run(
             command, env=options.get("env"), cwd=options.get("cwd"),
             timeout=options.get("timeout", 120),

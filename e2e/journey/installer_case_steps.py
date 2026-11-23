@@ -730,20 +730,21 @@ def _diagnostic(result: CompletedProcess, label: str) -> tuple[dict, dict]:
 
 
 def add_installed_host_stop_case_step(journey: Journey, platform_root: Path,
-                                     env: dict[str, str], *,
+                                     env: dict[str, str], *, executable: str | Path,
                                      runner: CommandRunner = evidence_run_command) -> None:
     """Claim the installed host stop lifecycle after the PC-002 start journey."""
     root = Path(platform_root).resolve()
+    launcher = str(executable)
 
     def stop_and_confirm() -> None:
-        stop_command = ["kb-create", "stop", "--platform-root", str(root), "--json"]
+        stop_command = [launcher, "stop", "--platform-root", str(root), "--json"]
         stopped = runner(stop_command, cwd=str(root), env=env, capture_output=True,
                          text=True, check=False, timeout=120)
         stop_data = _data(stopped, "kb-create stop")
         if stop_data.get("operation") != "stop":
             raise RuntimeError("kb-create stop JSON did not report operation stop")
 
-        status_command = ["kb-create", "status", "--platform-root", str(root), "--json"]
+        status_command = [launcher, "status", "--platform-root", str(root), "--json"]
         status = _data(runner(status_command, cwd=str(root), env=env, capture_output=True,
                               text=True, check=False, timeout=120), "status after kb-create stop")
         host = status.get("host")
