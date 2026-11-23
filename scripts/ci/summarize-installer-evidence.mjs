@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 export function summarizeInstallerEvidence(evaluation, manifest) {
   const records = Array.isArray(manifest?.records) ? manifest.records : [];
   const invalidRecords = Array.isArray(manifest?.invalid) ? manifest.invalid : [];
+  const orphanedEvidenceArtifacts = Array.isArray(manifest?.orphanedEvidence) ? manifest.orphanedEvidence : [];
   const coverage = evaluation?.data ?? evaluation;
   const targetCase = coverage?.cases?.find((item) => item.id === 'PC-001');
   const targetStep = targetCase?.steps?.find((step) => step.stepId === 'PC-001.2');
@@ -15,7 +16,13 @@ export function summarizeInstallerEvidence(evaluation, manifest) {
     .filter((status) => status === 'PASS' || status === 'FAIL'))];
   const behaviorStatus = targetStep?.status
     ?? (observedBehaviorStatuses.includes('FAIL') ? 'FAIL'
-      : observedBehaviorStatuses.includes('PASS') ? 'PASS' : 'NOT RUN');
+      : observedBehaviorStatuses.includes('PASS') ? 'PASS'
+        : orphanedEvidenceArtifacts.length > 0 ? 'NOT RECORDED' : 'NOT RUN');
+  const reason = records.length === 0 && orphanedEvidenceArtifacts.length > 0
+    ? 'PC-001.2 artifacts were retained without a valid case-run record; behavior cannot be determined from artifacts alone.'
+    : !coverage || coverage.schema !== 'kb.qa-case-coverage/v2'
+      ? 'Evidence evaluation output is missing or invalid.'
+      : targetStep?.reason;
   return {
     status: incomplete ? 'INCOMPLETE' : behaviorStatus,
     behaviorStatus,
@@ -24,9 +31,8 @@ export function summarizeInstallerEvidence(evaluation, manifest) {
     selectedRunRecords: records.map((record) => record.path),
     observedBehaviorStatuses,
     invalidRunRecords: invalidRecords,
-    ...(!coverage || coverage.schema !== 'kb.qa-case-coverage/v2'
-      ? { reason: 'Evidence evaluation output is missing or invalid.' } : {}),
-    ...(targetStep?.reason ? { reason: targetStep.reason } : {}),
+    orphanedEvidenceArtifacts,
+    ...(reason ? { reason } : {}),
   };
 }
 

@@ -50,7 +50,28 @@ export function selectLocalInstallerEvidence(reportDirectory) {
         invalid.push({ path, reason: error instanceof Error ? error.message : String(error) });
       }
   }
-  return { records, invalid };
+  const orphanedEvidence = records.length === 0 ? findUnboundPC001Evidence(reportDirectory) : [];
+  return { records, invalid, orphanedEvidence };
+}
+
+function findUnboundPC001Evidence(reportDirectory) {
+  const evidenceRoot = join(reportDirectory, 'qa-evidence');
+  const found = [];
+  const visit = (directory) => {
+    let entries;
+    try { entries = readdirSync(directory, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) visit(path);
+      else if (entry.isFile() && (entry.name === 'step-PC-001.2.log'
+        || entry.name === 'redacted-platform-config.jsonc'
+        || entry.name === 'redacted-config.jsonc')) {
+        found.push(path.slice(reportDirectory.length + 1));
+      }
+    }
+  };
+  visit(evidenceRoot);
+  return found.sort();
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
