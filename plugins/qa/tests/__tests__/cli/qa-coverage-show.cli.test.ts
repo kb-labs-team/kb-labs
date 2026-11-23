@@ -9,7 +9,7 @@ vi.mock('@kb-labs/sdk', async (importOriginal) => {
 });
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import command from '../../../src/cli/commands/qa-coverage-show.js';
@@ -176,5 +176,48 @@ describe('qa:coverage-show evidence mode', () => {
     expect(result.cases[0]?.steps[0]?.logRefs.map(ref => [ref.runId, ref.runRoot, ref.path])).toEqual([
       ['attempt-1', 'runs/one', 'step.log'], ['attempt-2', 'runs/two', 'step.log'],
     ]);
+  });
+
+  // case: S-315.2
+  it('reports lost restored journey artifacts as incomplete without changing the recorded behavior result', async () => {
+    const root = fixture();
+    const upload = join(root, 'upload');
+    const restored = join(root, 'restored');
+    const artifacts = join(upload, 'qa-evidence', 'pc001-2');
+    mkdirSync(artifacts, { recursive: true });
+    const configText = '{"generated":true,"credential":"[REDACTED]"}\n';
+    const logText = 'kb-create install completed\n';
+    writeFileSync(join(artifacts, 'redacted-config.jsonc'), configText);
+    writeFileSync(join(artifacts, 'step-PC-001.2.log'), logText);
+    const configDigest = createHash('sha256').update(configText).digest('hex');
+    const logDigest = createHash('sha256').update(logText).digest('hex');
+    writeFileSync(join(upload, 'installer-case-local-agent-commit-default.json'), JSON.stringify({
+      schema: 'kb.service-journey/v1',
+      case_run: {
+        schema: 'kb.qa-case-run/v3', runId: 'pc001-attempt-1', mode: 'local',
+        candidateId: 'candidate-approved',
+        profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+        claims: [{
+          claimId: 'S-010.1', kind: 'journey', status: 'PASS',
+          configRef: 'qa-evidence/pc001-2/redacted-config.jsonc', configDigest,
+          logRef: 'qa-evidence/pc001-2/step-PC-001.2.log', logDigest,
+        }],
+      },
+    }));
+    writeEvidence(root, { claimId: 'S-010.1', kind: 'journey', status: 'PASS' });
+
+    cpSync(upload, restored, { recursive: true });
+    rmSync(join(restored, 'qa-evidence', 'pc001-2', 'step-PC-001.2.log'));
+    const ui = { warn: vi.fn(), success: vi.fn() };
+    const result = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+      evidence: true, 'evidence-plan': join(root, 'plan.json'),
+      run: join(restored, 'installer-case-local-agent-commit-default.json'),
+      level: 'release', mode: 'local', json: false,
+    } } as never) as { ok: boolean; error: { diagnostics?: Array<{ message: string }> } };
+
+    expect(result.ok).toBe(false);
+    expect(result.error.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringContaining('result=PASS, evidence=INCOMPLETE') }),
+    ]));
   });
 });
