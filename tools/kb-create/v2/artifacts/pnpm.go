@@ -376,13 +376,468 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 	if err := p.mergeSealedArtifactOverrides(items); err != nil {
 		return err
 	}
-	if err := p.run("install"); err != nil {
+	restoreModules, finishRestore, err := p.prepareModulesRestore()
+	if err != nil {
+		return err
+	}
+	// Rollback must be able to repair a partial node_modules tree in a
+	// non-interactive supervisor. Rebuilding from the snapshot lockfile also
+	// avoids pnpm 11's stale "Already up to date" result when a link is missing.
+	installArgs := []string{"--config.confirmModulesPurge=false"}
+	if _, err := os.Stat(filepath.Join(p.config.Root, "pnpm-lock.yaml")); err == nil {
+		installArgs = append(installArgs, "--frozen-lockfile")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		if restoreModules {
+			return finishRestore(err)
+		}
+		return err
+	} else {
+		// Older snapshots can predate the lockfile. Preserve their existing
+		// restore behavior; a snapshot with a lockfile always uses it frozen.
+	}
+	if err := p.run("install", installArgs...); err != nil {
+		if restoreModules {
+			return finishRestore(err)
+		}
 		return err
 	}
 	if err := p.materializeManifests(items); err != nil {
+		if restoreModules {
+			return finishRestore(err)
+		}
 		return err
 	}
-	return p.verifyAndRecord(items)
+	if err := p.verifyAndRecord(items); err != nil {
+		if restoreModules {
+			return finishRestore(err)
+		}
+		return err
+	}
+	if restoreModules {
+		if err := finishRestore(nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type modulesRestoreJournal struct {
+	Version    int    `json:"version"`
+	State      string `json:"state"`
+	HadModules bool   `json:"hadModules"`
+}
+
+// prepareModulesRestore moves the generated modules tree aside before a
+// rollback install. pnpm 11 can report "Already up to date" without repairing
+// a missing dependency link when its installed-state metadata is stale, so a
+// rollback must materialize from the lockfile rather than trust that cache.
+// The journal remains outside the package tree being cleaned and recovers
+// interrupted transactions on the next rollback attempt.
+func (p Pnpm) prepareModulesRestore() (bool, func(error) error, error) {
+	modulesDir := filepath.Join(p.config.Root, "node_modules")
+	transactionsRoot := modulesRestoreTransactionsPath(p.config.Root)
+	if err := os.MkdirAll(transactionsRoot, 0o700); err != nil {
+		return false, nil, err
+	}
+	info, err := os.Lstat(transactionsRoot)
+	if err != nil {
+		return false, nil, err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false, nil, fmt.Errorf("package modules restore path is not a private directory")
+	}
+	if err := os.Chmod(transactionsRoot, 0o700); err != nil {
+		return false, nil, err
+	}
+	for _, directory := range []string{p.config.Root, filepath.Join(p.config.Root, ".kb"), filepath.Join(p.config.Root, ".kb", "v2"), transactionsRoot} {
+		if err := syncDirectory(directory); err != nil {
+			return false, nil, err
+		}
+	}
+	if err := recoverInterruptedModulesRestore(transactionsRoot, modulesDir); err != nil {
+		return false, nil, err
+	}
+	transactionDir, err := os.MkdirTemp(transactionsRoot, "txn-")
+	if err != nil {
+		return false, nil, err
+	}
+	if err := syncDirectory(transactionsRoot); err != nil {
+		_ = os.RemoveAll(transactionDir)
+		return false, nil, err
+	}
+	_, statErr := os.Lstat(modulesDir)
+	hadModules := statErr == nil
+	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		_ = os.Remove(transactionDir)
+		return false, nil, statErr
+	}
+	if hadModules {
+		info, err := os.Lstat(modulesDir)
+		if err != nil {
+			return false, nil, err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			_ = os.RemoveAll(transactionDir)
+			return false, nil, fmt.Errorf("package modules restore requires a real directory")
+		}
+	}
+	journal := modulesRestoreJournal{Version: 1, State: "prepared", HadModules: hadModules}
+	if err := writeModulesRestoreJournal(transactionDir, journal); err != nil {
+		_ = os.RemoveAll(transactionDir)
+		return false, nil, err
+	}
+	backupModules := filepath.Join(transactionDir, "prior-node-modules")
+	if hadModules {
+		if err := os.Rename(modulesDir, backupModules); err != nil {
+			_ = os.RemoveAll(transactionDir)
+			return false, nil, err
+		}
+		if err := syncDirectory(p.config.Root); err != nil {
+			return false, nil, err
+		}
+		if err := syncDirectory(transactionDir); err != nil {
+			return false, nil, err
+		}
+	}
+	finished := false
+	finish := func(installErr error) error {
+		if finished {
+			return installErr
+		}
+		finished = true
+		if installErr != nil {
+			if err := recoverOneModulesRestore(modulesDir, transactionDir); err != nil {
+				return fmt.Errorf("recover package modules after failed rollback install: %w (install error: %v)", err, installErr)
+			}
+			return installErr
+		}
+		journal.State = "committed"
+		if err := writeModulesRestoreJournal(transactionDir, journal); err != nil {
+			return fmt.Errorf("mark package modules restore committed: %w", err)
+		}
+		return cleanupCommittedModulesRestore(transactionsRoot, transactionDir)
+	}
+	return true, finish, nil
+}
+
+func modulesRestoreTransactionsPath(root string) string {
+	return filepath.Join(root, ".kb", "v2", "module-restore-transactions")
+}
+
+func writeModulesRestoreJournal(transactionDir string, journal modulesRestoreJournal) error {
+	data, err := json.Marshal(journal)
+	if err != nil {
+		return err
+	}
+	file, err := os.CreateTemp(transactionDir, ".journal-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := file.Name()
+	defer os.Remove(temporaryPath)
+	if _, err := file.Write(data); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, filepath.Join(transactionDir, "journal.json")); err != nil {
+		return err
+	}
+	return syncDirectory(transactionDir)
+}
+
+func decodeModulesRestoreJournal(data []byte) (modulesRestoreJournal, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return modulesRestoreJournal{}, err
+	}
+	if len(fields) != 3 {
+		return modulesRestoreJournal{}, fmt.Errorf("journal must contain exactly version, state, and hadModules")
+	}
+	var journal modulesRestoreJournal
+	if raw, ok := fields["version"]; !ok {
+		return journal, fmt.Errorf("journal version is required")
+	} else if err := json.Unmarshal(raw, &journal.Version); err != nil {
+		return journal, fmt.Errorf("journal version must be an integer: %w", err)
+	}
+	if raw, ok := fields["state"]; !ok {
+		return journal, fmt.Errorf("journal state is required")
+	} else if err := json.Unmarshal(raw, &journal.State); err != nil {
+		return journal, fmt.Errorf("journal state must be a string: %w", err)
+	}
+	raw, ok := fields["hadModules"]
+	if !ok {
+		return journal, fmt.Errorf("journal hadModules is required")
+	}
+	switch string(bytes.TrimSpace(raw)) {
+	case "true":
+		journal.HadModules = true
+	case "false":
+		journal.HadModules = false
+	default:
+		return journal, fmt.Errorf("journal hadModules must be a boolean")
+	}
+	return journal, nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
+}
+
+// recoverInterruptedModulesRestore treats only the private transaction
+// namespace as owned. Unknown, incomplete, or unsupported journals fail
+// closed so a retry cannot delete a user-created tree.
+func recoverInterruptedModulesRestore(transactionsRoot, modulesDir string) error {
+	entries, err := os.ReadDir(transactionsRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var transactions []string
+	var cleanupDirs []string
+	for _, entry := range entries {
+		path := filepath.Join(transactionsRoot, entry.Name())
+		switch {
+		case strings.HasPrefix(entry.Name(), "txn-"):
+			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("package restore transaction is not a directory")
+			}
+			transactions = append(transactions, path)
+		case strings.HasPrefix(entry.Name(), "cleanup-"):
+			cleanupDirs = append(cleanupDirs, path)
+		default:
+			return fmt.Errorf("unrecognized package restore transaction entry")
+		}
+	}
+	if len(transactions) > 1 {
+		return fmt.Errorf("multiple interrupted package modules restores need manual inspection")
+	}
+	if len(transactions) == 0 {
+		return removeModulesRestoreCleanupDirs(cleanupDirs)
+	}
+	transactionDir := transactions[0]
+	journalPath := filepath.Join(transactionDir, "journal.json")
+	data, err := os.ReadFile(journalPath)
+	if errors.Is(err, os.ErrNotExist) {
+		entries, readErr := os.ReadDir(transactionDir)
+		if readErr != nil {
+			return readErr
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), ".journal-") {
+				return fmt.Errorf("incomplete package restore journal has unrecognized contents")
+			}
+		}
+		if err := os.RemoveAll(transactionDir); err != nil {
+			return err
+		}
+		return syncDirectory(transactionsRoot)
+	}
+	if err != nil {
+		return err
+	}
+	journal, err := decodeModulesRestoreJournal(data)
+	if err != nil {
+		return fmt.Errorf("decode interrupted package modules restore journal: %w", err)
+	}
+	if journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
+		return fmt.Errorf("unsupported package modules restore journal")
+	}
+	if err := validateModulesRestoreContents(transactionDir, journal); err != nil {
+		return err
+	}
+	if journal.State == "committed" {
+		backupModules := filepath.Join(transactionDir, "prior-node-modules")
+		if _, err := os.Lstat(modulesDir); errors.Is(err, os.ErrNotExist) && journal.HadModules {
+			if _, backupErr := os.Lstat(backupModules); backupErr == nil {
+				if err := os.Rename(backupModules, modulesDir); err != nil {
+					return fmt.Errorf("restore prior package modules after committed tree disappeared: %w", err)
+				}
+				if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+					return err
+				}
+				if err := syncDirectory(transactionDir); err != nil {
+					return err
+				}
+			} else if !errors.Is(backupErr, os.ErrNotExist) {
+				return backupErr
+			} else {
+				cleanupPath := filepath.Join(transactionsRoot, "cleanup-"+strings.TrimPrefix(filepath.Base(transactionDir), "txn-"))
+				if cleanupInfo, cleanupErr := os.Lstat(cleanupPath); cleanupErr == nil {
+					if !cleanupInfo.IsDir() || cleanupInfo.Mode()&os.ModeSymlink != 0 {
+						return fmt.Errorf("prior package modules cleanup entry is not a directory")
+					}
+					if err := os.Rename(cleanupPath, modulesDir); err != nil {
+						return fmt.Errorf("restore prior package modules from cleanup after committed tree disappeared: %w", err)
+					}
+					if err := syncDirectory(transactionsRoot); err != nil {
+						return err
+					}
+					if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+						return err
+					}
+				} else if !errors.Is(cleanupErr, os.ErrNotExist) {
+					return cleanupErr
+				}
+			}
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := cleanupCommittedModulesRestore(transactionsRoot, transactionDir); err != nil {
+			return err
+		}
+		return removeModulesRestoreCleanupDirs(cleanupDirs)
+	}
+	if err := recoverOneModulesRestore(modulesDir, transactionDir); err != nil {
+		return err
+	}
+	return removeModulesRestoreCleanupDirs(cleanupDirs)
+}
+
+func removeModulesRestoreCleanupDirs(cleanupDirs []string) error {
+	for _, path := range cleanupDirs {
+		if err := removeOwnedCleanupPath(path); err != nil {
+			return fmt.Errorf("finish package modules backup cleanup: %w", err)
+		}
+	}
+	if len(cleanupDirs) == 0 {
+		return nil
+	}
+	return syncDirectory(filepath.Dir(cleanupDirs[0]))
+}
+
+func validateModulesRestoreContents(transactionDir string, journal modulesRestoreJournal) error {
+	entries, err := os.ReadDir(transactionDir)
+	if err != nil {
+		return err
+	}
+	allowed := map[string]bool{"journal.json": true}
+	if journal.HadModules {
+		allowed["prior-node-modules"] = true
+	}
+	for _, entry := range entries {
+		if !allowed[entry.Name()] && !strings.HasPrefix(entry.Name(), ".journal-") {
+			return fmt.Errorf("package modules restore journal has unrecognized contents")
+		}
+	}
+	if journal.HadModules {
+		priorPath := filepath.Join(transactionDir, "prior-node-modules")
+		if info, err := os.Lstat(priorPath); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("prior package modules backup is not a directory")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+}
+
+func recoverOneModulesRestore(modulesDir, transactionDir string) error {
+	data, err := os.ReadFile(filepath.Join(transactionDir, "journal.json"))
+	if err != nil {
+		return err
+	}
+	journal, err := decodeModulesRestoreJournal(data)
+	if err != nil {
+		return err
+	}
+	if journal.Version != 1 || journal.State != "prepared" {
+		return fmt.Errorf("cannot recover unsupported package modules restore state")
+	}
+	if err := validateModulesRestoreContents(transactionDir, journal); err != nil {
+		return err
+	}
+	backupModules := filepath.Join(transactionDir, "prior-node-modules")
+	if journal.HadModules {
+		if _, err := os.Lstat(backupModules); err == nil {
+			if err := os.RemoveAll(modulesDir); err != nil {
+				return fmt.Errorf("remove partial package modules after interrupted restore: %w", err)
+			}
+			if err := os.Rename(backupModules, modulesDir); err != nil {
+				return fmt.Errorf("restore package modules after interrupted restore: %w", err)
+			}
+			if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+				return err
+			}
+			if err := syncDirectory(transactionDir); err != nil {
+				return err
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else if err := os.RemoveAll(modulesDir); err != nil {
+		return fmt.Errorf("remove partial package modules after interrupted restore: %w", err)
+	} else if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(transactionDir); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(transactionDir))
+}
+
+func cleanupCommittedModulesRestore(transactionsRoot, transactionDir string) error {
+	backupModules := filepath.Join(transactionDir, "prior-node-modules")
+	if _, err := os.Lstat(backupModules); err == nil {
+		cleanupPath := filepath.Join(transactionsRoot, "cleanup-"+strings.TrimPrefix(filepath.Base(transactionDir), "txn-"))
+		if err := os.Rename(backupModules, cleanupPath); err != nil {
+			return fmt.Errorf("stage prior package modules for cleanup: %w", err)
+		}
+		if err := syncDirectory(transactionDir); err != nil {
+			return err
+		}
+		if err := syncDirectory(transactionsRoot); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.RemoveAll(transactionDir); err != nil {
+		return fmt.Errorf("remove committed package modules transaction: %w", err)
+	}
+	if err := syncDirectory(transactionsRoot); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(transactionsRoot)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), "cleanup-") {
+			if err := removeOwnedCleanupPath(filepath.Join(transactionsRoot, entry.Name())); err != nil {
+				return fmt.Errorf("remove prior package modules after successful rollback: %w", err)
+			}
+		}
+	}
+	return syncDirectory(transactionsRoot)
+}
+
+func removeOwnedCleanupPath(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return os.Remove(path)
+	}
+	return os.RemoveAll(path)
 }
 
 func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {
