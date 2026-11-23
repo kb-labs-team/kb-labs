@@ -21,6 +21,21 @@ The owner accepted the following scope boundary on 2026-11-23:
 
 This direction does not approve new product behavior, new supported profiles, or a release-scope change.
 
+## Parallel delivery model
+
+Run product and dogfood work in parallel with evidence and release infrastructure. They share the same accepted case IDs and step IDs, but produce separate results: product work proves that a promised user outcome works; evidence work proves that the run is attributable and trustworthy. A green infrastructure pilot cannot close a product gap, and a product pass without the required evidence remains incomplete for release.
+
+Keep each change reviewable as a small PR around one existing case step or a tightly related short flow. For user-visible behavior, update or add the product case first, then add the top-down journey/integration/unit claims, then change implementation. Link claims and retained run artifacts to the same stable case/step IDs. When discovery shows a missing product expectation, add that case before expanding its test or evidence matrix; do not widen the north-star plan into an implied release commitment.
+
+The product sequence below can advance while I1a is being wired to CI:
+
+1. **Public install and first start:** use `PC-001` and `PC-002` through the released `kb-create` path. Keep installer resolution/apply tests as supporting layers; the product exit requires the user-visible installed-host outcomes in those cases.
+2. **Update, rollback, and recovery:** work through `S-023`, `S-024`, and `S-025`, with any missing config-preservation or recovery expectation added to the case before implementation. Treat the evidence for those steps as a separate review outcome.
+3. **Daily-use continuity:** use the accepted project, workflow/schedule, history/log, and analytics cases (`S-043`, `S-044`, `S-056`, `S-121`, `S-191`) to compose the two-project dogfood path. Add a missing cross-feature step only when the existing cases do not already state its user-visible expectation.
+4. **Marketplace mutation safety:** keep route enablement behind the production-writer inventory, recovery and identity review, and a public-host journey. Split work by a single owner/route or invariant, and do not use helper-only tests as proof of platform-wide atomicity.
+
+No product milestone is complete solely because its cases have declarations or test claims; it needs the case's observable outcome on a supported public path. No evidence milestone is complete by borrowing that product result across a different candidate or profile.
+
 ## User-facing invariants
 
 These invariants are the proposed acceptance boundary for implementation. Where a current accepted case or ADR is stricter, that source remains authoritative.
