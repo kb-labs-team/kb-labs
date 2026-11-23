@@ -75,8 +75,12 @@ export interface InstallPackageRequest extends StoreEntryRef {
    * value or resolution fails with `KB_PLUGIN_INTEGRITY_MISMATCH`.
    */
   expectedIntegrity?: string;
-  /** Registry used to resolve this package's transitive dependencies. */
+  /** Explicit dependency registry for non-platform scopes. */
   registryUrl?: string;
+  /** Apply the installed platform's pnpm project config during this install. */
+  usePlatformNpmrc?: boolean;
+  /** Refuse a cold install unless the package source provided an explicit artifact spec. */
+  requireExplicitSpec?: boolean;
 }
 
 export interface PackageInstallResult {
@@ -93,8 +97,10 @@ export interface PackageInstallOptions {
   spec?: string;
   /** Registry integrity for a direct tarball URL. The installer verifies these bytes before installation. */
   expectedIntegrity?: string;
-  /** Registry used to resolve this package's transitive dependencies. */
+  /** Explicit dependency registry for non-platform scopes. */
   registryUrl?: string;
+  /** Apply the installed platform's pnpm project config during this install. */
+  usePlatformNpmrc?: boolean;
   /** Directory of the synthetic pnpm project the package is installed into. */
   projectDir: string;
   /** Dedicated pnpm content-addressed store directory (never the user's default store). */

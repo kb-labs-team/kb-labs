@@ -47,7 +47,7 @@ export class PnpmInstaller implements PackageInstaller {
   }
 
   async install(options: PackageInstallOptions): Promise<PackageInstallResult> {
-    const { name, version, projectDir, casDir, registryUrl } = options;
+    const { name, version, projectDir, casDir, registryUrl, usePlatformNpmrc } = options;
     const spec = options.spec ?? version;
 
     await fs.mkdir(projectDir, { recursive: true });
@@ -57,7 +57,9 @@ export class PnpmInstaller implements PackageInstaller {
     const platformRoot = options.platformRoot ?? this.platformRoot;
     const platformKbDir = platformRoot ? path.join(platformRoot, '.kb') : undefined;
     const syntheticKbDir = path.join(projectDir, '.kb');
+    const syntheticNpmrc = path.join(projectDir, '.npmrc');
     let linkedPlatformCache = false;
+    let linkedPlatformNpmrc = false;
     if (platformKbDir) {
       try {
         await fs.access(platformKbDir);
@@ -68,6 +70,21 @@ export class PnpmInstaller implements PackageInstaller {
       }
     }
 
+    if (usePlatformNpmrc && platformRoot) {
+      const platformNpmrc = path.join(platformRoot, '.npmrc');
+      try {
+        const config = await fs.stat(platformNpmrc);
+        if (config.isFile()) {
+          // A project-level symlink lets pnpm merge platform routing with the
+          // normal user config without copying credential-bearing config.
+          await fs.symlink(platformNpmrc, syntheticNpmrc, 'file');
+          linkedPlatformNpmrc = true;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') { throw error; }
+      }
+    }
+
     const installArgs = [
       'install',
       '--store-dir',
@@ -75,27 +92,35 @@ export class PnpmInstaller implements PackageInstaller {
       ...(registryUrl ? [`--registry=${registryUrl}`] : []),
     ];
     const { execa } = await import('execa');
+    const env: NodeJS.ProcessEnv = { ...process.env };
     try {
       await execa(this.pnpmPath, installArgs, {
         cwd: projectDir,
         timeout: this.timeoutMs,
+        env,
       });
     } catch (err) {
       if (this.pnpmPath === 'pnpm' && isMissingExecutable(err)) {
         try {
           await pinSyntheticProjectPackageManager(projectDir);
+          const corepackEnv = { ...env, COREPACK_HOME: path.join(casDir, '.corepack') };
           await execa(this.corepackPath, ['pnpm', ...installArgs], {
             cwd: projectDir,
             timeout: this.timeoutMs,
-            env: { ...process.env, COREPACK_HOME: path.join(casDir, '.corepack') },
+            env: corepackEnv,
           });
         } catch (corepackErr) {
-          const message = corepackErr instanceof Error ? corepackErr.message : String(corepackErr);
-          throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${message}`);
+          throw new StoreInstallError(
+            { plugin: `${name}@${version}` },
+            `pnpm install failed via Corepack: ${safeProcessFailure(corepackErr)}`,
+          );
         }
       } else {
-        const message = err instanceof Error ? err.message : String(err);
-        throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${message}`);
+        throw new StoreInstallError({ plugin: `${name}@${version}` }, `pnpm install failed: ${safeProcessFailure(err)}`);
+      }
+    } finally {
+      if (linkedPlatformNpmrc) {
+        await fs.unlink(syntheticNpmrc);
       }
     }
 
@@ -115,6 +140,18 @@ export class PnpmInstaller implements PackageInstaller {
 
 function isMissingExecutable(err: unknown): boolean {
   return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT';
+}
+
+function safeProcessFailure(err: unknown): string {
+  if (!err || typeof err !== 'object') { return 'package manager process failed'; }
+  const failure = err as { timedOut?: unknown; exitCode?: unknown; signal?: unknown; code?: unknown };
+  if (failure.timedOut === true) { return 'package manager timed out'; }
+  if (typeof failure.exitCode === 'number') { return `package manager exited with code ${failure.exitCode}`; }
+  if (typeof failure.signal === 'string' && /^[A-Z0-9]+$/.test(failure.signal)) {
+    return `package manager was interrupted by ${failure.signal}`;
+  }
+  if (failure.code === 'ENOENT') { return 'package manager executable was not found'; }
+  return 'package manager process failed';
 }
 
 async function pinSyntheticProjectPackageManager(projectDir: string): Promise<void> {
@@ -144,8 +181,8 @@ async function prepareVerifiedTarball(
   let response: Response;
   try {
     response = await fetch(url);
-  } catch (err) {
-    throw new StoreInstallError({ plugin: name }, err instanceof Error ? err.message : String(err));
+  } catch {
+    throw new StoreInstallError({ plugin: name }, 'Package tarball request failed before an HTTP response.');
   }
   if (!response.ok) {
     throw new StoreInstallError({ plugin: name }, `Package tarball request failed with HTTP ${response.status}.`);

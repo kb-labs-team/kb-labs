@@ -11,7 +11,7 @@ import * as os from 'node:os';
 import * as crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import type { PackageSource, MarketplaceSource, InstalledPackage, ResolvedPackage, MarketplaceEntryWithId } from '@kb-labs/marketplace-contracts';
-import type { IExtensionStore, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
+import type { IExtensionStore, InstallPackageRequest, ResolvedStoreEntry } from '@kb-labs/core-extension-store';
 import { IntegrityMismatchError } from '@kb-labs/core-extension-store';
 import { readMarketplaceLock, DiagnosticCollector, createMarketplaceEntry } from '@kb-labs/core-discovery';
 import { NoOpLogger } from '@kb-labs/core-platform/noop';
@@ -552,16 +552,24 @@ describe('MarketplaceService', () => {
       expect(result.installed[0]?.primaryKind).toBe('plugin');
     });
 
-    // case: S-010.8
-    it('passes the configured npm registry to the extension store for plugin dependencies', async () => {
+    // case: S-300.1
+    it('leaves dependency registry routing to the platform package manager config', async () => {
       const packageId = '@kb-labs/test-plugin';
-      const registryUrl = 'https://npm.fixture.example';
       const { dir, integrity } = await createPluginDir(tmpDir, 'registry-dependencies', packageId);
       const source = Object.assign(
         createMockSource(new Map([[packageId, { dir, version: '1.0.0', integrity }]])),
-        { dependencyRegistryUrl: registryUrl },
+        { dependencyRegistryUrl: 'https://marketplace-source-a.fixture' },
       );
-      const storeResolve = vi.fn(async () => ({
+      const marketplaceTarballUrl = 'https://marketplace-source-a.fixture/platform-plugin.tgz';
+      vi.spyOn(source, 'resolve').mockResolvedValue({
+        id: packageId,
+        version: '1.0.0',
+        integrity,
+        source: 'marketplace',
+        primaryKind: 'plugin',
+        downloadUrl: marketplaceTarballUrl,
+      });
+      const storeResolve = vi.fn(async (_request: InstallPackageRequest) => ({
         entry: {
           schema: 'kb.store-entry/1' as const,
           name: packageId,
@@ -585,7 +593,50 @@ describe('MarketplaceService', () => {
       await makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store })
         .install({ scope: 'platform' }, [packageId]);
 
+      expect(storeResolve).toHaveBeenCalledOnce();
+      expect(storeResolve).toHaveBeenCalledWith(expect.objectContaining({ spec: marketplaceTarballUrl }));
+      expect(storeResolve.mock.calls[0]?.[0]).not.toHaveProperty('registryUrl');
+      expect(storeResolve.mock.calls[0]?.[0]).toMatchObject({ usePlatformNpmrc: true, requireExplicitSpec: true });
+    });
+
+    // case: S-010.8
+    it('uses the configured npm source for project-scope plugin dependencies', async () => {
+      const packageId = '@kb-labs/test-project-plugin';
+      const registryUrl = 'https://npm.fixture.example';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'project-registry-dependencies', packageId);
+      const source = Object.assign(
+        createMockSource(new Map([[packageId, { dir, version: '1.0.0', integrity }]])),
+        { dependencyRegistryUrl: registryUrl },
+      );
+      const storeResolve = vi.fn(async (_request: InstallPackageRequest) => ({
+        entry: {
+          schema: 'kb.store-entry/1' as const,
+          name: packageId,
+          version: '1.0.0',
+          kind: 'plugin' as const,
+          integrity,
+          installedAt: new Date().toISOString(),
+        },
+        packageRoot: dir,
+        entryDir: path.join(tmpDir, 'store', 'entries', 'project-registry-dependencies'),
+      }));
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+      const projectRoot = path.join(tmpDir, 'project-registry-dependencies');
+      await fs.mkdir(projectRoot);
+
+      await makeMarketplaceService({ platformRoot: tmpDir, projectRoot, source, extensionStore: store })
+        .install({ scope: 'project', projectRoot }, [packageId]);
+
       expect(storeResolve).toHaveBeenCalledWith(expect.objectContaining({ registryUrl }));
+      expect(storeResolve.mock.calls[0]?.[0]).not.toHaveProperty('usePlatformNpmrc');
+      expect(storeResolve.mock.calls[0]?.[0]).not.toHaveProperty('requireExplicitSpec');
     });
 
     it('keeps platform adapters in the platform package graph', async () => {

@@ -14,7 +14,7 @@ import { STORE_ENTRY_SCHEMA, type StoreEntry, type InstallPackageRequest, type P
 import { readStoreEntry, serializeStoreEntry } from './entry.js';
 import { readStaticManifest } from './manifest.js';
 import { PnpmInstaller } from './pnpm-installer.js';
-import { IntegrityMismatchError } from './errors.js';
+import { IntegrityMismatchError, StoreInstallError } from './errors.js';
 import {
   entryPackagePath,
   resolveEntryDir,
@@ -28,6 +28,19 @@ import {
 
 /** How often the `.used` mtime marker is refreshed on a hit — at most once a day (ADR-0048 D2). */
 const USED_MARKER_REFRESH_MS = 24 * 60 * 60 * 1000;
+
+function isAbsoluteHttpArtifactURL(spec: string | undefined): boolean {
+  if (!spec || !/^https?:\/\//i.test(spec)) { return false; }
+  try {
+    const url = new URL(spec);
+    return (url.protocol === 'http:' || url.protocol === 'https:') &&
+      url.hostname.length > 0 &&
+      url.username.length === 0 &&
+      url.password.length === 0;
+  } catch {
+    return false;
+  }
+}
 
 export interface ExtensionStoreOptions extends StoreRootOptions {
   /** Installed platform root whose cached package artifacts may back local file dependencies. */
@@ -109,7 +122,13 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
   };
 
   const install = async (request: InstallPackageRequest): Promise<ResolvedStoreEntry> => {
-    const { name, version, kind, spec, expectedIntegrity, registryUrl } = request;
+    const { name, version, kind, spec, expectedIntegrity, registryUrl, usePlatformNpmrc, requireExplicitSpec } = request;
+    if (requireExplicitSpec && !isAbsoluteHttpArtifactURL(spec)) {
+      throw new StoreInstallError(
+        { plugin: `${name}@${version}` },
+        'Package source did not provide an absolute HTTP(S) artifact URL; refusing to fetch the package from a dependency registry.',
+      );
+    }
     const staging = join(tmpDir, randomUUID());
     try {
       const result = await installer.install({
@@ -118,6 +137,7 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
         spec,
         expectedIntegrity,
         registryUrl,
+        usePlatformNpmrc,
         projectDir: staging,
         casDir,
         ...(options.platformRoot ? { platformRoot: options.platformRoot } : {}),
