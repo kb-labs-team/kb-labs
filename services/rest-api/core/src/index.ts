@@ -6,6 +6,3 @@
 export { loadRestApiConfig } from './config/loader';
 export { restApiConfigSchema } from './config/schema';
 export type { RestApiConfig } from './config/schema';
-
-// Studio registry transformer
-export { manifestToRegistryEntry, combineManifestsToRegistry } from './studio-registry';

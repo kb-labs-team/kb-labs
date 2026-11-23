@@ -46,6 +46,25 @@ test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', a
   await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
 
+  const studioRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/studio/registry`)
+  expect(studioRegistryResponse.status()).toBe(200)
+  const studioRegistry = await studioRegistryResponse.json() as {
+    ok?: boolean
+    data?: { schema?: string; schemaVersion?: number; plugins?: unknown[] }
+  }
+  expect(studioRegistry.ok).toBe(true)
+  expect(studioRegistry.data).toMatchObject({ schema: 'kb.studio/2', schemaVersion: 2 })
+  expect(Array.isArray(studioRegistry.data?.plugins)).toBe(true)
+
+  const pluginRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/plugins/registry`)
+  expect(pluginRegistryResponse.status()).toBe(200)
+  const pluginRegistry = await pluginRegistryResponse.json() as {
+    ok?: boolean
+    data?: { manifests?: unknown[] }
+  }
+  expect(pluginRegistry.ok).toBe(true)
+  expect(Array.isArray(pluginRegistry.data?.manifests)).toBe(true)
+
   for (const [label, path, title] of [
     ['Projects', '/projects', 'Projects'],
     ['Analytics', '/analytics/overview', 'Analytics Overview'],

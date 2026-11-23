@@ -4044,6 +4044,9 @@ importers:
       '@kb-labs/project-runtime-app':
         specifier: workspace:*
         version: link:../../project-runtime/app
+      '@kb-labs/shared-http':
+        specifier: workspace:*
+        version: link:../../../shared/http
       '@kb-labs/shared-daemon':
         specifier: workspace:*
         version: link:../../../shared/daemon
@@ -5360,6 +5363,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../core/platform
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../core/plugin-contracts
       fastify-type-provider-zod:
         specifier: ^4.0.2
         version: 4.0.2(fastify@5.12.5)(zod@3.25.76)

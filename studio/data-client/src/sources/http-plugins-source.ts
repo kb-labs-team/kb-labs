@@ -15,7 +15,10 @@ export class HttpPluginsSource implements PluginsDataSource {
   constructor(private readonly client: HttpClient) {}
 
   async getPlugins(): Promise<PluginsRegistryResponse> {
-    return this.client.fetch<PluginsRegistryResponse>('/plugins/registry');
+    const response = await this.client.fetch<
+      PluginsRegistryResponse | { ok: true; data: PluginsRegistryResponse }
+    >('/plugins/registry');
+    return 'ok' in response && response.ok ? response.data : response;
   }
 
   async askAboutPlugin(pluginId: string, request: PluginAskRequest): Promise<PluginAskResponse> {

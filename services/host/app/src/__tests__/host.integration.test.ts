@@ -103,6 +103,26 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
     expect(direct.status).toBe(200);
   });
 
+  // case: S-120.1
+  it("serves the plugin catalog and Studio registry from the Gateway", async () => {
+    running = await startTestHost();
+
+    const studioResponse = await running.fetchGateway("/api/v1/studio/registry");
+    expect(studioResponse.status).toBe(200);
+    const studioRegistry = await readUxSuccessResult<{
+      schema: string;
+      schemaVersion: number;
+      plugins: unknown[];
+    }>(studioResponse);
+    expect(studioRegistry).toMatchObject({ schema: "kb.studio/2", schemaVersion: 2 });
+    expect(Array.isArray(studioRegistry.plugins)).toBe(true);
+
+    const pluginResponse = await running.fetchGateway("/api/v1/plugins/registry");
+    expect(pluginResponse.status).toBe(200);
+    const pluginRegistry = await readUxSuccessResult<{ manifests: unknown[] }>(pluginResponse);
+    expect(Array.isArray(pluginRegistry.manifests)).toBe(true);
+  });
+
   it("stops every module on SIGTERM, exits 0 and releases all ports", async () => {
     running = await startTestHost();
     const ports = [

@@ -49,6 +49,15 @@ export {
 export { getListenOptions } from "./listen.js";
 export { sendAuthError } from "./auth-error.js";
 export {
+  buildPluginRegistryResponse,
+  buildStudioRegistry,
+  manifestToStudioRegistryEntry,
+  registerPluginRegistryRoutes,
+  type PluginRegistryManifestEntry,
+  type PluginRegistryResponse,
+  type PluginRegistryRoutesOptions,
+} from './plugin-registry-routes.js';
+export {
   createDaemonServer,
   type ObservabilityCollectorLike,
   type DaemonServerOptions,
