@@ -37,6 +37,7 @@ test('hosted PC-001 diagnostic runs independently of the legacy release gate', (
   const legacyGate = coverage.steps.find(step => step.name === 'Enforce local and secured release case coverage');
   assert.deepEqual(diagnosticJob.needs, ['prepare', 'journey']);
   assert.match(diagnosticJob.if, /always\(\)/);
+  assert.equal(diagnosticJob['continue-on-error'], true);
   assert.equal(candidate['continue-on-error'], true);
   assert.equal(candidate.with.name, 'installer-journey-candidate');
   assert.equal(candidate.with.path, '.journey/candidate');
