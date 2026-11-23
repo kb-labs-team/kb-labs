@@ -162,3 +162,11 @@ test('journey case preflight uses the QA scanner to reject dynamic cases declara
     rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+test('journey evidence helper references do not create a second case claim', () => {
+  const result = validateJourneyCaseDeclarations(root);
+
+  assert.deepEqual(result.diagnostics, []);
+  assert.ok(result.caseCount > 0);
+  assert.ok(result.journeyClaimCount > 0);
+});
