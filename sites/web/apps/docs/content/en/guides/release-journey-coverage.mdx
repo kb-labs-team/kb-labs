@@ -21,6 +21,24 @@ case id followed by a stable number, such as `S-010.4`. Journey steps declare
 `cases=["S-010.4"]`, Playwright test titles include `@S-020.3`, and Go or
 Vitest tests put `// case: S-023.2` directly above the test.
 
+### Declare execution-model applicability
+
+When a step depends on a plugin execution model, declare only the relevant
+models in that case's optional `## Profile applicability` table:
+
+```md
+## Profile applicability
+
+| Step | Execution models |
+|---|---|
+| S-243.6 | in-process, subprocess, worker-pool |
+```
+
+`kb qa cases validate` checks the step IDs and model names. `kb qa cases
+inventory --json` reports the declaration as an expectation with
+`evaluation: NOT EVALUATED`; it does not prove that a test ran or passed. OS
+and runtime coverage remain separate profile dimensions.
+
 ## Generate coverage
 
 The JSON output is the machine-readable coverage source used by local release
