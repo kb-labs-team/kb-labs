@@ -76,6 +76,33 @@ test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', a
   }
 })
 
+test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.1 @S-273.1', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
+
+  let catalogAttempts = 0
+  await page.route('**/api/v1/plugins/registry', async (route) => {
+    catalogAttempts += 1
+    if (catalogAttempts === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { manifests: [], apiBasePath: '/api/v1', diagnostics: { total: 0, items: [] } } }),
+    })
+  })
+
+  await page.goto(`${GATEWAY}/`)
+  await page.getByRole('link', { name: 'Plugins', exact: true }).click()
+  await expect(page.getByText('Marketplace unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('No extensions found', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(page.getByText('No extensions found', { exact: true })).toBeVisible()
+  expect(catalogAttempts).toBe(2)
+})
+
 test('inspect, register, and safely unregister a project @S-046.4 @S-124.7', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)

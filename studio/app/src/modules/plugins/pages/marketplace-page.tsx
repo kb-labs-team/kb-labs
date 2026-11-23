@@ -4,7 +4,6 @@ import {
   UIInputSearch,
   UISkeleton,
   UIEmptyState,
-  UIMessage,
   UIRow,
   UICol,
   UIPage,
@@ -14,6 +13,7 @@ import {
 import { useDataSources } from '@/providers/data-sources-provider';
 import type { PluginManifestEntry } from '@kb-labs/studio-data-client';
 import { MarketplaceCard } from '../components/marketplace-card';
+import { EmptyState } from '@/components/empty-state';
 
 type SurfaceFilter = 'all' | 'cli' | 'studio' | 'rest';
 
@@ -22,6 +22,7 @@ export function PluginsPage() {
   const { plugins: pluginsSource } = useDataSources();
 
   const [loading, setLoading] = useState(true);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [plugins, setPlugins] = useState<PluginManifestEntry[]>([]);
   const [search, setSearch] = useState('');
   const [surfaceFilter, setSurfaceFilter] = useState<SurfaceFilter>('all');
@@ -29,10 +30,11 @@ export function PluginsPage() {
   const loadPlugins = useCallback(async () => {
     try {
       setLoading(true);
+      setLoadFailed(false);
       const result = await pluginsSource.getPlugins();
       setPlugins(result.manifests);
     } catch {
-      UIMessage.error('Failed to load marketplace');
+      setLoadFailed(true);
     } finally {
       setLoading(false);
     }
@@ -76,6 +78,20 @@ export function PluginsPage() {
     return (
       <UIPage width="full">
         <UISkeleton active avatar lines={6} />
+      </UIPage>
+    );
+  }
+
+  if (loadFailed) {
+    return (
+      <UIPage width="full">
+        <UIPageHeader title="Marketplace" description="Plugin catalog status" />
+        <EmptyState
+          kind="unavailable"
+          title="Marketplace unavailable"
+          description="The plugin catalog could not be loaded. Try again when the Gateway is available."
+          action={{ label: 'Retry', onClick: loadPlugins }}
+        />
       </UIPage>
     );
   }

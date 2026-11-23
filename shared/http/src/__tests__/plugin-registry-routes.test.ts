@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -50,6 +50,7 @@ describe('plugin registry routes', () => {
     const catalog = await app.inject({ method: 'GET', url: '/api/v1/plugins/registry' });
     expect(catalog.statusCode).toBe(200);
     expect(catalog.json()).toMatchObject({ manifests: [], apiBasePath: '/api/v1' });
+
   });
 
   it('projects a Studio manifest and serves its widget bundle through the registered URL', async () => {
@@ -101,5 +102,40 @@ describe('plugin registry routes', () => {
     expect(widget.statusCode).toBe(200);
     expect(widget.headers['content-type']).toContain('javascript');
     expect(widget.body).toContain('fixtureRemote');
+  });
+
+  it('rejects widget symlinks that resolve outside the bundle root', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kb-plugin-registry-'));
+    const pluginRoot = join(root, 'plugin');
+    const widgetsDir = join(pluginRoot, 'dist', 'widgets');
+    const secretPath = join(root, 'outside.js');
+    await mkdir(widgetsDir, { recursive: true });
+    await writeFile(secretPath, 'outside bundle');
+    await symlink(secretPath, join(widgetsDir, 'escape.js'));
+
+    const snapshot = emptySnapshot();
+    snapshot.manifests.push({
+      pluginId: '@kb-labs/test-plugin',
+      manifest: {
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/test-plugin',
+        version: '1.2.3',
+        studio: { version: 2, remoteName: 'testPlugin', pages: [], menus: [] },
+      },
+      pluginRoot,
+      source: { kind: 'local', path: pluginRoot },
+      packageName: '@kb-labs/test-plugin',
+      scope: 'platform',
+      origin: 'workspace',
+      manifestPath: join(pluginRoot, 'manifest.json'),
+      manifestKind: 'static',
+    });
+
+    app = Fastify();
+    await registerPluginRegistryRoutes(app, { apiBasePath: '/api/v1', getSnapshot: () => snapshot });
+
+    const response = await app.inject({ method: 'GET', url: '/plugins/@kb-labs/test-plugin/widgets/escape.js' });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).not.toContain('outside bundle');
   });
 });

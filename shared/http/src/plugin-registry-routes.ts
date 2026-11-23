@@ -1,5 +1,5 @@
 import { createReadStream, statSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import { extname, isAbsolute, join, relative, resolve } from 'node:path';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import type {
@@ -162,6 +162,105 @@ const MIME: Record<string, string> = {
   '.map': 'application/json',
 };
 
+const pluginRegistrySchema = {
+  type: 'object',
+  properties: {
+    manifests: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          pluginId: { type: 'string' },
+          manifest: { type: 'object', additionalProperties: true },
+          pluginRoot: { type: 'string' },
+          source: { type: 'object', additionalProperties: true },
+          discoveredAt: { type: 'string', format: 'date-time' },
+          buildTimestamp: { type: 'string', format: 'date-time' },
+          validation: {
+            type: 'object',
+            properties: { valid: { type: 'boolean' }, errors: { type: 'array', items: { type: 'string' } } },
+            required: ['valid', 'errors'],
+            additionalProperties: false,
+          },
+        },
+        required: ['pluginId', 'manifest', 'pluginRoot', 'source', 'discoveredAt', 'validation'],
+        additionalProperties: false,
+      },
+    },
+    apiBasePath: { type: 'string' },
+    diagnostics: {
+      type: 'object',
+      properties: {
+        total: { type: 'integer' },
+        items: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              severity: { type: 'string' },
+              code: { type: 'string' },
+              reasonCode: { type: 'string' },
+              message: { type: 'string' },
+              pluginId: { type: 'string' },
+              filePath: { type: 'string' },
+              remediation: { type: 'string' },
+              ts: { type: 'string', format: 'date-time' },
+            },
+            required: ['severity', 'code', 'reasonCode', 'message', 'ts'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['total', 'items'],
+      additionalProperties: false,
+    },
+  },
+  required: ['manifests', 'apiBasePath', 'diagnostics'],
+  additionalProperties: false,
+} as const;
+
+const studioRegistrySchema = {
+  type: 'object',
+  properties: {
+    schema: { const: 'kb.studio/2' },
+    schemaVersion: { const: 2 },
+    generatedAt: { type: 'string', format: 'date-time' },
+    plugins: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          pluginId: { type: 'string' },
+          displayName: { type: 'string' },
+          pluginVersion: { type: 'string' },
+          remoteName: { type: 'string' },
+          remoteEntryUrl: { type: 'string' },
+          pages: { type: 'array', items: { type: 'object', additionalProperties: true } },
+          menus: { type: 'array', items: { type: 'object', additionalProperties: true } },
+        },
+        required: ['pluginId', 'pluginVersion', 'remoteName', 'remoteEntryUrl', 'pages', 'menus'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['schema', 'schemaVersion', 'generatedAt', 'plugins'],
+  additionalProperties: false,
+} as const;
+
+function responseSchema(payload: object) {
+  return {
+    oneOf: [
+      payload,
+      {
+        type: 'object',
+        properties: { ok: { const: true }, data: payload },
+        required: ['ok', 'data'],
+        additionalProperties: false,
+      },
+    ],
+  };
+}
+
 export async function registerPluginRegistryRoutes(
   server: FastifyInstance,
   options: PluginRegistryRoutesOptions,
@@ -173,7 +272,12 @@ export async function registerPluginRegistryRoutes(
     message: error instanceof Error ? error.message : String(error),
   }));
 
-  server.get(routePath(options.apiBasePath, 'plugins/registry'), async (_request, reply) => {
+  server.get(routePath(options.apiBasePath, 'plugins/registry'), {
+    schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      response: { 200: responseSchema(pluginRegistrySchema), 500: { type: 'object', additionalProperties: true } },
+    },
+  }, async (_request, reply) => {
     try {
       const snapshot = await options.getSnapshot();
       const registry = await buildPluginRegistryResponse(snapshot, options.apiBasePath, options.validateManifest);
@@ -183,7 +287,12 @@ export async function registerPluginRegistryRoutes(
     }
   });
 
-  server.get(routePath(options.apiBasePath, 'studio/registry'), async (_request, reply) => {
+  server.get(routePath(options.apiBasePath, 'studio/registry'), {
+    schema: {
+      querystring: { type: 'object', additionalProperties: false },
+      response: { 200: responseSchema(studioRegistrySchema), 500: { type: 'object', additionalProperties: true } },
+    },
+  }, async (_request, reply) => {
     try {
       return sendSuccess(reply, buildStudioRegistry(await options.getSnapshot(), widgetsBasePath));
     } catch (error) {
@@ -232,18 +341,23 @@ export async function registerPluginRegistryRoutes(
         return reply.code(400).send({ error: 'Invalid path' });
       }
       try {
-        const fileStat = await stat(target);
+        const [realBundleRoot, realTarget] = await Promise.all([realpath(bundleRoot), realpath(target)]);
+        const realRelativePath = relative(realBundleRoot, realTarget);
+        if (!realRelativePath || realRelativePath.startsWith('..') || isAbsolute(realRelativePath)) {
+          return reply.code(400).send({ error: 'Invalid path' });
+        }
+        const fileStat = await stat(realTarget);
         if (!fileStat.isFile()) return reply.code(404).send({ error: 'Widget file not found' });
         const isEntry = filePath === 'remoteEntry.js';
         return reply
-          .type(MIME[extname(target)] ?? 'application/octet-stream')
+          .type(MIME[extname(realTarget)] ?? 'application/octet-stream')
           .header('Content-Length', fileStat.size)
           .header('Cache-Control', isEntry
             ? 'public, max-age=10, must-revalidate'
             : process.env.NODE_ENV === 'production'
               ? 'public, max-age=31536000, immutable'
               : 'no-cache')
-          .send(createReadStream(target));
+          .send(createReadStream(realTarget));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
           return reply.code(404).send({ error: `Widget file not found: ${pluginId}/widgets/${filePath}` });
