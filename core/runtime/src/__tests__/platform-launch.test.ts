@@ -1,8 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { registerProcessSensitiveValues } from "@kb-labs/core-platform";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+
+const launchFailureMock = vi.hoisted(() => ({
+  resolveDeploymentTopology: undefined as (() => never) | undefined,
+}));
+
+vi.mock("../config-schemas.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config-schemas.js")>();
+  return {
+    ...actual,
+    resolveDeploymentTopology: (raw: unknown) =>
+      launchFailureMock.resolveDeploymentTopology?.() ?? actual.resolveDeploymentTopology(raw),
+  };
+});
+
 import { platform } from "../container.js";
 import { launchPlatform, resetPlatformRuntime } from "../platform-launch.js";
 import { writeTestPlatformReceipt } from './platform-version-fixture.js';
@@ -39,6 +54,7 @@ describe("launchPlatform", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     resetPlatformRuntime();
     await rm(projectRoot, { recursive: true, force: true });
     await rm(kbHome, { recursive: true, force: true });
@@ -73,8 +89,13 @@ describe("launchPlatform", () => {
     expect(runtime.startupReport.applicationId).toBe("test-service");
   });
 
-  it('refuses service startup when the delivery producer omits topology', async () => {
-    await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: {} }));
+  // case: S-317.1
+  it('reports a safe startup failure when the delivery producer omits topology', async () => {
+    await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({
+      platform: {},
+      token: 'startup-secret-sentinel',
+    }));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     await expect(launchPlatform({
       applicationId: 'missing-topology-service',
       kind: 'service',
@@ -83,6 +104,57 @@ describe("launchPlatform", () => {
     })).rejects.toMatchObject({
       envelope: { code: 'KB_DEPLOYMENT_TOPOLOGY_REQUIRED' },
     });
+
+    const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(output).toContain('Platform startup failed');
+    expect(output).toContain('"event":"platform.failed"');
+    expect(output).toContain('"errorCode":"KB_DEPLOYMENT_TOPOLOGY_REQUIRED"');
+    expect(output).toContain('"failureMessage":"The platform deployment topology is missing from platform.deployment.topology."');
+    expect(output).toContain('"remediationHint":"Set platform.deployment.topology in the producer configuration: kb-create writes local, release images provide cloud, and Helm writes k8s."');
+    expect(output.match(/platform\.failed/g)).toHaveLength(1);
+    expect(output).not.toContain('stack');
+    expect(output).not.toContain('startup-secret-sentinel');
+  });
+
+  it('does not duplicate startup failures already reported by lifecycle hooks', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await expect(launchPlatform({
+      applicationId: 'assembly-failure-service',
+      kind: 'service',
+      startDir: projectRoot,
+      assemblyHook: () => {
+        throw new Error('assembly setup failed');
+      },
+    })).rejects.toThrow('assembly setup failed');
+
+    const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(output.match(/platform\.failed/g)).toHaveLength(1);
+  });
+
+  it('redacts unexpected startup causes and points to the process log', async () => {
+    const secret = 'startup-secret-sentinel';
+    registerProcessSensitiveValues([secret]);
+    launchFailureMock.resolveDeploymentTopology = () => {
+      throw new Error(`unexpected config failure: ${secret}`);
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(launchPlatform({
+        applicationId: 'unexpected-startup-failure-service',
+        kind: 'service',
+        startDir: projectRoot,
+        assemblyHook,
+      })).rejects.toThrow('unexpected config failure');
+    } finally {
+      launchFailureMock.resolveDeploymentTopology = undefined;
+    }
+
+    const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(output).toContain('"failureCause":"unexpected config failure: [REDACTED]"');
+    expect(output).toContain('Inspect the managed process log');
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain('stack');
   });
 
   it("is idempotent for one application identity", async () => {
