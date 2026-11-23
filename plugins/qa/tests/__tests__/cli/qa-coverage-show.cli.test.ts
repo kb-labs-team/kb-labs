@@ -221,5 +221,16 @@ describe('qa:coverage-show evidence mode', () => {
     expect(result.error.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.stringContaining('result=PASS, evidence=INCOMPLETE') }),
     ]));
+
+    writeFileSync(join(restored, 'qa-evidence', 'pc001-2', 'step-PC-001.2.log'), 'corrupted after restore\n');
+    const damaged = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+      evidence: true, 'evidence-plan': join(root, 'plan.json'),
+      run: join(restored, 'installer-case-local-agent-commit-default.json'),
+      level: 'release', mode: 'local', json: false,
+    } } as never) as { ok: boolean; error: { diagnostics?: Array<{ message: string }> } };
+    expect(damaged.ok).toBe(false);
+    expect(damaged.error.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringContaining('result=PASS, evidence=INCOMPLETE') }),
+    ]));
   });
 });

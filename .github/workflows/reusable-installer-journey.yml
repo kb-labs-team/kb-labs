@@ -230,7 +230,7 @@ jobs:
             .journey/reports > .journey/diagnostics/pc001-local-records.txt
           run_files=$(cat .journey/diagnostics/pc001-local-records.txt)
           if [ -z "$run_files" ]; then
-            printf '{"status":"NO_V3_PC001_RECORD"}\n' > .journey/diagnostics/pc001-local-evaluation.json
+            printf '{"status":"INCOMPLETE","reason":"No retained local v3 PC-001.2 evidence record."}\n' > .journey/diagnostics/pc001-local-evaluation.json
             exit 0
           fi
           node ./cli/bin/dist/bin.js qa coverage show --level release --mode local \

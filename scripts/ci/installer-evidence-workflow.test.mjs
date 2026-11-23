@@ -32,10 +32,15 @@ test('hosted PC-001 evidence uses an independent candidate plan and stays diagno
   const candidate = coverage.steps.find(step => step.name === 'Restore sealed candidate for independent evidence plan');
   const diagnostic = coverage.steps.find(step => step.name === 'Evaluate hosted PC-001.2 evidence diagnostically');
   const upload = coverage.steps.find(step => step.name === 'Upload diagnostic evidence evaluation');
+  const legacyGate = coverage.steps.find(step => step.name === 'Enforce local and secured release case coverage');
   assert.equal(candidate.with.name, 'installer-journey-candidate');
   assert.equal(candidate.with.path, '.journey/candidate');
   assert.match(diagnostic.run, /installer-evidence-plan\.mjs/);
   assert.match(diagnostic.run, /--evidence-plan/);
   assert.equal(diagnostic['continue-on-error'], true);
   assert.match(upload.if, /always\(\)/);
+  assert.ok(coverage.steps.indexOf(diagnostic) < coverage.steps.indexOf(legacyGate));
+  assert.match(legacyGate.run, /qa coverage show --level release --mode/);
+  assert.doesNotMatch(legacyGate.run, /--evidence/);
+  assert.match(diagnostic.run, /status.*INCOMPLETE/);
 });
