@@ -2,8 +2,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { QA_CASE_RUN_SCHEMA, type QACase, type QACaseClaim, type QACaseRunResult } from '@kb-labs/qa/contracts';
-import { computeQACaseCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../../src/core/index.js';
+import { QA_CASE_EVIDENCE_RUN_SCHEMA, QA_CASE_RUN_SCHEMA, type QACase, type QACaseClaim, type QACaseEvidenceRunResult, type QACaseRunResult } from '../../src/contracts/index.js';
+import { computeQACaseCoverage, computeQACaseEvidenceCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../../src/core/index.js';
 
 const temporaryDirectories: string[] = [];
 function fixture(): string {
@@ -256,5 +256,50 @@ describe('QA case coverage', () => {
     const complete = computeQACaseCoverage([testCase], claims, testCase.steps.map(step => run('local', step.id, 'PASS')), 'local');
     expect(complete.cases[0]?.statusResult).toBe('PASS');
     expect(complete.releasePassed).toBe(true);
+  });
+
+  // case: S-299.1
+  it('keeps product failure distinct from incomplete evidence and requires matching candidate, profile, config, and log references', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const claims: QACaseClaim[] = testCase.steps.map(step => ({ id: step.id, stepId: step.id, kind: 'journey', source: 'journey.py', line: 1 }));
+    const base = {
+      schema: QA_CASE_EVIDENCE_RUN_SCHEMA,
+      runId: 'run-a',
+      mode: 'local' as const,
+      candidateId: 'sha256:candidate-a',
+      profile: { os: 'linux', runtime: 'node-24', surface: 'cli' },
+    };
+    const runs: QACaseEvidenceRunResult[] = [{
+      ...base,
+      claims: [
+        { claimId: 'S-010.1', kind: 'journey', status: 'PASS', configRef: 'artifact://config-redacted', logRef: 'artifact://step-log' },
+        { claimId: 'S-010.2', kind: 'journey', status: 'FAIL', configRef: 'artifact://config-redacted', logRef: 'artifact://failed-step-log' },
+      ],
+    }];
+    const complete = computeQACaseEvidenceCoverage([testCase], claims, runs, 'local');
+    expect(complete.cases[0]?.steps.map(step => [step.status, step.evidenceStatus])).toEqual([['PASS', 'COMPLETE'], ['FAIL', 'COMPLETE']]);
+    expect(complete.cases[0]?.steps[0]).toMatchObject({ configRef: 'artifact://config-redacted', logRef: 'artifact://step-log', candidateId: 'sha256:candidate-a' });
+    expect(complete.releasePassed).toBe(false);
+
+    const missing = computeQACaseEvidenceCoverage([testCase], claims, [{ ...runs[0]!, claims: [runs[0]!.claims[0]!] }], 'local');
+    expect(missing.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'COMPLETE' });
+    expect(missing.cases[0]?.steps[1]).toMatchObject({ status: 'NOT RUN', evidenceStatus: 'INCOMPLETE' });
+    expect(missing.evidencePassed).toBe(false);
+    expect(missing.releasePassed).toBe(false);
+
+    const missingRefs = computeQACaseEvidenceCoverage([testCase], claims, [{ ...runs[0]!, claims: [
+      { claimId: 'S-010.1', kind: 'journey', status: 'PASS' },
+      runs[0]!.claims[1]!,
+    ] }], 'local');
+    expect(missingRefs.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(missingRefs.releasePassed).toBe(false);
+
+    const mismatched = computeQACaseEvidenceCoverage([testCase], claims, [runs[0]!, {
+      ...base, runId: 'run-b', candidateId: 'sha256:candidate-b',
+      claims: [{ claimId: 'S-010.2', kind: 'journey', status: 'PASS', configRef: 'artifact://config-redacted', logRef: 'artifact://step-log' }],
+    }], 'local');
+    expect(mismatched.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(mismatched.releasePassed).toBe(false);
   });
 });
