@@ -42,7 +42,17 @@ class ProjectIdentityStepsTest(unittest.TestCase):
             }))
             env = {"HOME": home, "KB_HOME": str(Path(home) / ".kb"), "KB_PLATFORM_ROOT": str(platform_root)}
             Path(env["KB_HOME"]).mkdir()
+            qa_package = (Path(env["KB_HOME"]) / "store" / "entries" / "@kb-labs+qa@2.120.1"
+                          / "node_modules" / "@kb-labs" / "qa")
+            qa_package.mkdir(parents=True)
+            (qa_package / "package.json").write_text(json.dumps({
+                "peerDependencies": {"@kb-labs/sdk": "^2.120.1"},
+            }))
+            sdk_package = platform_root / "node_modules" / "@kb-labs" / "sdk"
+            sdk_package.mkdir(parents=True)
+            (sdk_package / "package.json").write_text(json.dumps({"version": "2.120.1"}))
             calls = []
+            qa_platform_roots = []
             registrations = {}
             locks = {}
             project_configs = {}
@@ -111,30 +121,41 @@ class ProjectIdentityStepsTest(unittest.TestCase):
                     }}), "")
                 if args == ["--version"]:
                     return subprocess.CompletedProcess(command, 0, "2.120.1\n", "")
+                if args == ["qa", "cases", "list", "--json"]:
+                    qa_platform_roots.append(kwargs.get("env", {}).get("KB_PLATFORM_ROOT"))
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "ok": True, "data": {"cases": []},
+                    }), "")
                 return subprocess.CompletedProcess(command, 0, "command help\n", "")
 
             with patch("project_identity_steps._registry_version", return_value="2.120.1"):
-                with patch("project_identity_steps.run_with_runner", side_effect=lambda _runner, command, **opts: fake_runner(command, **opts)):
                     red = Journey("local", "project-registry-red")
                     def fail_add(command, **kwargs):
                         if command[1:3] == ["project", "add"]:
                             return subprocess.CompletedProcess(command, 1, "", "fake registration failure")
                         return fake_runner(command, **kwargs)
                     with patch("project_identity_steps.run_with_runner", side_effect=lambda _runner, command, **opts: fail_add(command, **opts)):
-                        run_project_registry_steps(red, "kb", env, "http://registry.test", runner=fake_runner)
+                        run_project_registry_steps(red, "kb", env, "http://registry.test", runner=fake_runner,
+                                                   include_sdk_peer_journey=False)
                     red_claims = {claim["claimId"]: claim["status"] for claim in red.result().case_run["claims"]}
                     self.assertEqual(red_claims["S-043.1"], "FAIL")
 
                     registrations.clear()
                     locks.clear()
                     green = Journey("local", "project-registry-green")
-                    run_project_registry_steps(green, "kb", env, "http://registry.test", runner=fake_runner)
+                    with patch("project_identity_steps.run_with_runner", side_effect=lambda _runner, command, **opts: fake_runner(command, **opts)), \
+                            patch("project_identity_steps.active_platform_root", side_effect=lambda path: Path(path)), \
+                            patch("project_identity_steps.run_command", return_value=subprocess.CompletedProcess(
+                                ["node", "--version"], 0, "v24.1.0\n", "")):
+                        run_project_registry_steps(green, "kb", env, "http://registry.test", runner=fake_runner)
 
         result = green.result()
         self.assertEqual(result.status, "PASS", result.first_failure)
         claims = {claim["claimId"] for claim in result.case_run["claims"]}
         self.assertTrue({"S-043.1", "S-043.2", "S-043.3", "S-043.4", "S-043.5", "S-043.6", "S-043.7",
-                         "S-196.1", "S-196.2", "S-196.3", "S-196.4", "S-199.1", "S-199.6"} <= claims)
+                         "S-196.1", "S-196.2", "S-196.3", "S-196.4", "S-199.1", "S-199.6",
+                         "S-320.1", "S-320.2"} <= claims)
+        self.assertEqual(qa_platform_roots, [None, str(platform_root)])
 
     # case: S-124.1-.6, S-124.8-.9, S-051.1
     def test_installed_project_registration_cases_claim_real_cli_actions(self):
