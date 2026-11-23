@@ -65,7 +65,8 @@ test('summary unwraps the real CLI data envelope and exposes PC-001.2 PASS besid
   }, { records: [{ path: 'installer-case-local-agent-commit-default.json', behaviorStatus: 'PASS' }], invalid: [] });
   assert.deepEqual(result, {
     status: 'PASS', behaviorStatus: 'PASS', evidenceStatus: 'COMPLETE', releasePassed: false,
-    selectedRunRecords: ['installer-case-local-agent-commit-default.json'], observedBehaviorStatuses: ['PASS'], invalidRunRecords: [],
+    selectedRunRecords: ['installer-case-local-agent-commit-default.json'], observedBehaviorStatuses: ['PASS'],
+    invalidRunRecords: [], orphanedEvidenceArtifacts: [],
   });
 });
 
@@ -95,4 +96,31 @@ test('summary preserves observed FAIL without a candidate and forces corrupted i
   assert.equal(corrupted.status, 'INCOMPLETE');
   assert.equal(corrupted.evidenceStatus, 'INCOMPLETE');
   assert.equal(corrupted.releasePassed, false);
+});
+
+test('orphaned PC-001.2 artifacts are reported as NOT RECORDED, never as a behavior result', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'qa-evidence-orphan-'));
+  try {
+    const evidenceDirectory = join(directory, 'qa-evidence', 'attempt-1');
+    mkdirSync(evidenceDirectory, { recursive: true });
+    writeFileSync(join(evidenceDirectory, 'step-PC-001.2.log'), 'installer step output\n');
+    writeFileSync(join(evidenceDirectory, 'redacted-platform-config.jsonc'), '{"safe":true}\n');
+    const selection = selectLocalInstallerEvidence(directory);
+    assert.deepEqual(selection.records, []);
+    assert.deepEqual(selection.orphanedEvidence, [
+      'qa-evidence/attempt-1/redacted-platform-config.jsonc',
+      'qa-evidence/attempt-1/step-PC-001.2.log',
+    ]);
+    const summary = summarizeInstallerEvidence(undefined, selection);
+    assert.deepEqual({
+      status: summary.status,
+      behaviorStatus: summary.behaviorStatus,
+      evidenceStatus: summary.evidenceStatus,
+      releasePassed: summary.releasePassed,
+    }, {
+      status: 'INCOMPLETE', behaviorStatus: 'NOT RECORDED',
+      evidenceStatus: 'INCOMPLETE', releasePassed: false,
+    });
+    assert.match(summary.reason, /without a valid case-run record/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
