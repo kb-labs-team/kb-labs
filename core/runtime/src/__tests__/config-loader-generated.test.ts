@@ -5,6 +5,7 @@ import os from 'node:os'
 
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { PlatformConfigError } from '@kb-labs/core-platform'
+import { loadEffectiveConfig } from '@kb-labs/core-config'
 import { loadPlatformConfig } from '../config-loader.js'
 import { writeTestPlatformReceipt } from './platform-version-fixture.js'
 
@@ -127,6 +128,64 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     expect(result.platformConfig.adapters?.cache).toBe('@kb-labs/adapters-state-broker@2.120.1')
     expect(result.platformConfig.adapterOptions?.storage).toEqual({ baseDir: 'storage' })
     expect(result.platformConfig.adapterOptions?.cache).toBeUndefined()
+  })
+
+  // case: S-316.2
+  it('keeps generated and platform user arrays consistent between structured and raw readers', async () => {
+    const platformRoot = path.join(tmpDir, 'reader-parity-platform')
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['generated'] } } },
+    })
+    write(platformRoot, '.kb/kb.config.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['user'] } } },
+    })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(raw?.data.platform).toMatchObject({
+      adapterOptions: { storage: { searchPaths: ['user'] } },
+    })
+    expect(structured.platformConfig.adapterOptions).toMatchObject({
+      storage: { searchPaths: ['user'] },
+    })
+  })
+
+  // case: S-316.2
+  it('keeps explicit array append behavior consistent between structured and raw readers', async () => {
+    const platformRoot = path.join(tmpDir, 'reader-parity-append-platform')
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['generated'] } } },
+    })
+    write(platformRoot, '.kb/kb.config.jsonc', {
+      platform: {
+        adapterOptions: {
+          storage: { searchPaths: ['user'], 'kb:merge': { searchPaths: 'append' } },
+        },
+      },
+    })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(raw?.data.platform).toMatchObject({
+      adapterOptions: { storage: { searchPaths: ['generated', 'user'] } },
+    })
+    expect(structured.platformConfig.adapterOptions).toMatchObject({
+      storage: { searchPaths: ['generated', 'user'] },
+    })
   })
 
   it('rejects a malformed generated config file', async () => {
