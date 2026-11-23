@@ -238,6 +238,11 @@ export const qaCasesListFlags = defineFlags({
 });
 export type QaCasesListFlags = typeof qaCasesListFlags.infer;
 
+export const qaCasesInventoryFlags = defineFlags({
+  json: { type: 'boolean', description: 'Output JSON', default: false },
+});
+export type QaCasesInventoryFlags = typeof qaCasesInventoryFlags.infer;
+
 export const qaCasesValidateFlags = defineFlags({
   json: { type: 'boolean', description: 'Output JSON', default: false },
 });
