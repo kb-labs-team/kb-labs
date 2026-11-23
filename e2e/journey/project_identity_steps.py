@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
-from installed_fixture import configure_hermetic_cli_fixture, layout_relative, layout_value
+from installed_fixture import (active_platform_root, configure_hermetic_cli_fixture,
+                               layout_relative, layout_value)
 
 from project_service_path import project_service_path
 
@@ -34,13 +35,15 @@ def _cli_error(result: CompletedProcess[str]):
 
 
 def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], registry: str,
-                               runner=run_command) -> None:
+                               runner=run_command, *, include_sdk_peer_journey: bool = True) -> None:
     """Register two disposable repositories and prove their CLI scope boundaries."""
     command_runner = runner
 
-    def run(cwd: Path, *args: str, step_id: str) -> CompletedProcess[str]:
+    def run(cwd: Path, *args: str, step_id: str,
+            invocation_env: dict[str, str] | None = None) -> CompletedProcess[str]:
         with invocation_context(step_id=step_id):
-            return run_with_runner(command_runner, kb_command([ *args], executable=cli), cwd=cwd, env=env, timeout=180)
+            return run_with_runner(command_runner, kb_command([ *args], executable=cli), cwd=cwd,
+                                   env=env if invocation_env is None else invocation_env, timeout=180)
 
     with tempfile.TemporaryDirectory(prefix="kb-project-registry-", dir=env.get("HOME")) as directory:
         fixture_root = Path(directory)
@@ -232,7 +235,8 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
             if install.returncode != 0:
                 return f"Platform-scope install of @kb-labs/qa failed: {(install.stderr or install.stdout).strip()}"
             project_lock_path = projects[0] / ".kb" / "marketplace.lock"
-            platform_lock_path = Path(env.get("KB_PLATFORM_ROOT", "")) / ".kb" / "marketplace.lock"
+            platform_root = Path(env["KB_PLATFORM_ROOT"])
+            platform_lock_path = platform_root / ".kb" / "marketplace.lock"
             try:
                 project_plugins = json.loads(project_lock_path.read_text()).get("plugins", {})
                 platform_plugins = json.loads(platform_lock_path.read_text()).get("plugins", {})
@@ -248,6 +252,66 @@ def run_project_registry_steps(journey: Journey, cli: str, env: dict[str, str], 
         journey.step("resolve platform plugin alongside project plugins", "plugins",
                      platform_plugin_is_available, cases=["S-043.7"],
                      requires=("step:register isolated project A and B",))
+
+        def peer_sdk_without_root() -> str | None:
+            platform_root = Path(env["KB_PLATFORM_ROOT"])
+            active_root = active_platform_root(platform_root)
+            try:
+                platform_plugins = json.loads((active_root / ".kb" / "marketplace.lock").read_text()).get("plugins", {})
+                qa_record = platform_plugins.get("@kb-labs/qa", {})
+                qa_version = qa_record.get("version")
+                if not isinstance(qa_version, str) or not qa_version:
+                    return "platform QA lock entry omitted its installed version"
+                qa_package = (Path(env["KB_HOME"]) / "store" / "entries"
+                              / f"@kb-labs+qa@{qa_version}" / "node_modules" / "@kb-labs" / "qa")
+                qa_manifest = json.loads((qa_package / "package.json").read_text(encoding="utf-8"))
+                sdk_manifest = json.loads((active_root / "node_modules" / "@kb-labs" / "sdk" / "package.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                return f"could not inspect installed QA peer and platform SDK manifests: {error}"
+            peer_sdk = qa_manifest.get("peerDependencies", {}).get("@kb-labs/sdk")
+            if (not peer_sdk or "@kb-labs/sdk" in qa_manifest.get("dependencies", {})
+                    or "@kb-labs/sdk" in qa_manifest.get("optionalDependencies", {})
+                    or (qa_package / "node_modules" / "@kb-labs" / "sdk").exists()
+                    or not sdk_manifest.get("version")):
+                return "installed QA does not have the expected peer-only SDK/platform SDK layout"
+            no_root_env = dict(env)
+            no_root_env.pop("KB_PLATFORM_ROOT", None)
+            node_version = run_command(["node", "--version"], cwd=projects[1], env=no_root_env, timeout=30)
+            if node_version.returncode != 0 or not node_version.stdout.strip().startswith("v24."):
+                return f"S-320 requires Node 24; got {node_version.stdout.strip() or node_version.stderr.strip()}"
+            result = run(projects[1], "qa", "cases", "list", "--json", step_id="S-320.1",
+                         invocation_env=no_root_env)
+            if result.returncode != 0:
+                return f"platform QA command failed without KB_PLATFORM_ROOT: {(result.stderr or result.stdout).strip()}"
+            try:
+                listing = _cli_success(result)
+            except ValueError as error:
+                return f"platform QA command returned invalid JSON without KB_PLATFORM_ROOT: {error}"
+            return None if isinstance(listing.get("cases"), list) else "platform QA cases list omitted its cases array"
+
+        if include_sdk_peer_journey:
+            journey.step("resolve peer SDK with no platform root environment variable", "plugins",
+                         peer_sdk_without_root, cases=["S-320.1"],
+                         requires=("step:resolve platform plugin alongside project plugins",))
+
+        def explicit_platform_root() -> str | None:
+            active_root = active_platform_root(Path(env["KB_PLATFORM_ROOT"]))
+            explicit_env = dict(env)
+            explicit_env["KB_PLATFORM_ROOT"] = str(active_root)
+            result = run(projects[1], "qa", "cases", "list", "--json", step_id="S-320.2",
+                         invocation_env=explicit_env)
+            if result.returncode != 0:
+                return f"platform QA command failed with explicit KB_PLATFORM_ROOT: {(result.stderr or result.stdout).strip()}"
+            try:
+                listing = _cli_success(result)
+            except ValueError as error:
+                return f"platform QA command returned invalid JSON with explicit KB_PLATFORM_ROOT: {error}"
+            return None if isinstance(listing.get("cases"), list) else "platform QA cases list omitted its cases array with explicit root"
+
+        if include_sdk_peer_journey:
+            journey.step("preserve explicit platform root override", "plugins", explicit_platform_root,
+                         cases=["S-320.2"],
+                         requires=("step:resolve platform plugin alongside project plugins",))
 
         def project_mcp_config() -> str | None:
             for project in projects:
