@@ -207,6 +207,7 @@ function publishConfigGlobals(
 
 async function launchRuntime(
   options: PlatformLaunchOptions,
+  onConfigLoaded: () => void,
 ): Promise<PlatformRuntime> {
   const {
     applicationId,
@@ -241,6 +242,7 @@ async function launchRuntime(
     projectId: options.projectId,
     executionHealth: options.executionHealth,
   });
+  onConfigLoaded();
   publishConfigGlobals(loadResult, storeRawConfig);
 
   const {
@@ -383,8 +385,11 @@ async function launchRuntime(
 }
 
 async function launch(options: PlatformLaunchOptions): Promise<PlatformRuntime> {
+  let configLoaded = false;
   try {
-    return await launchRuntime(options);
+    return await launchRuntime(options, () => {
+      configLoaded = true;
+    });
   } catch (error) {
     const alreadyReported =
       error !== null && typeof error === "object" && lifecycleReportedFailures.has(error);
@@ -397,6 +402,15 @@ async function launch(options: PlatformLaunchOptions): Promise<PlatformRuntime> 
           instanceId: `${hostname()}:${process.pid}`,
           layer: options.kind,
         });
+        const remediationHint = envelope.code === "KB_RUNTIME_UNEXPECTED"
+          ? options.kind === "service" || options.kind === "worker"
+            ? "Inspect the managed process log; central logging may not be ready before platform startup completes."
+            : "Inspect this command's stderr; central logging may not be ready before platform startup completes."
+          : envelope.hint;
+        const failureCause =
+          envelope.code === "KB_RUNTIME_UNEXPECTED" && configLoaded && error instanceof Error
+            ? logger.redactSensitiveValues(error.message)
+            : undefined;
         logger.event("error", {
           event: "platform.failed",
           message: "Platform startup failed",
@@ -404,8 +418,9 @@ async function launch(options: PlatformLaunchOptions): Promise<PlatformRuntime> 
             stage: "launch",
             errorCode: envelope.code,
             correlationId: envelope.correlationId,
-          failureMessage: envelope.message,
-          ...(envelope.hint ? { remediationHint: envelope.hint } : {}),
+            failureMessage: envelope.message,
+            ...(remediationHint ? { remediationHint } : {}),
+            ...(failureCause ? { failureCause } : {}),
           },
         });
       } catch {

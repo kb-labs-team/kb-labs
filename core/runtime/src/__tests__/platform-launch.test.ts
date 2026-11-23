@@ -2,7 +2,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { registerProcessSensitiveValues } from "@kb-labs/core-platform";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
+
+const launchFailureMock = vi.hoisted(() => ({
+  resolveDeploymentTopology: undefined as (() => never) | undefined,
+}));
+
+vi.mock("../config-schemas.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config-schemas.js")>();
+  return {
+    ...actual,
+    resolveDeploymentTopology: (raw: unknown) =>
+      launchFailureMock.resolveDeploymentTopology?.() ?? actual.resolveDeploymentTopology(raw),
+  };
+});
+
 import { platform } from "../container.js";
 import { launchPlatform, resetPlatformRuntime } from "../platform-launch.js";
 import { writeTestPlatformReceipt } from './platform-version-fixture.js';
@@ -114,6 +129,32 @@ describe("launchPlatform", () => {
 
     const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
     expect(output.match(/platform\.failed/g)).toHaveLength(1);
+  });
+
+  it('redacts unexpected startup causes and points to the process log', async () => {
+    const secret = 'startup-secret-sentinel';
+    registerProcessSensitiveValues([secret]);
+    launchFailureMock.resolveDeploymentTopology = () => {
+      throw new Error(`unexpected config failure: ${secret}`);
+    };
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    try {
+      await expect(launchPlatform({
+        applicationId: 'unexpected-startup-failure-service',
+        kind: 'service',
+        startDir: projectRoot,
+        assemblyHook,
+      })).rejects.toThrow('unexpected config failure');
+    } finally {
+      launchFailureMock.resolveDeploymentTopology = undefined;
+    }
+
+    const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(output).toContain('"failureCause":"unexpected config failure: [REDACTED]"');
+    expect(output).toContain('Inspect the managed process log');
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain('stack');
   });
 
   it("is idempotent for one application identity", async () => {
