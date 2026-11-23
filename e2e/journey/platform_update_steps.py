@@ -156,6 +156,7 @@ def run_platform_update_steps(
     pending_restart_services: list[dict] = []
     pending_restart_object: dict = {}
     config_checkpoints: dict[str, str | None] = {}
+    platform_user_config_before: bytes | None = None
     shared_file_fingerprints_before: tuple[str | None, ...] | None = None
     saved_user_session_established = False
     saved_session_succeeded_after_update = False
@@ -180,8 +181,30 @@ def run_platform_update_steps(
             raise RuntimeError(f"shared-state file fingerprints changed at {checkpoint}")
 
     def save_known_good_state() -> None:
-        nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan
+        nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan, platform_user_config_before
         nonlocal shared_file_fingerprints_before, running_tree_before, running_lock_before, running_config_before
+        config_command = kb_command(
+            ["config", "set", "--scope", "platform", "platform.adapterOptions.storage",
+             '{"baseDir":"case-storage"}', "--json"],
+            executable=kb_binary,
+        )
+        configured = run_command(config_command)
+        try:
+            config_envelope = read_ux_cli_result(configured)
+            if configured.returncode != 0:
+                failure = decode_ux_error_result(config_envelope)
+                raise RuntimeError(f"platform config set failed before update: {failure!r}")
+            config_result = decode_ux_success_result(config_envelope)
+        except ValueError as error:
+            raise RuntimeError(f"platform config set returned an invalid UX result: {error}") from error
+        if not isinstance(config_result, dict):
+            raise RuntimeError("platform config set did not confirm the user choice")
+        reported_config = config_result.get("file")
+        if not isinstance(reported_config, str) or Path(reported_config).resolve() != config_paths[0].resolve():
+            raise RuntimeError("platform config set did not identify the installed platform config file")
+        platform_user_config_before = config_paths[0].read_bytes()
+        if b'"case-storage"' not in platform_user_config_before:
+            raise RuntimeError("platform config file did not retain the user-selected storage path")
         shared_file_fingerprints_before = shared_runtime_file_fingerprints(platform_root)
         running_tree_before = active_platform_root(platform_root)
         running_lock_before = (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes()
@@ -373,6 +396,8 @@ def run_platform_update_steps(
         verified_hash = receipt.get("verification", {}).get("configSha256")
         if config_hash != config_checkpoints.get("beforeUpdate"):
             raise RuntimeError("generated config changed before the host restart")
+        if platform_user_config_before is None or config_paths[0].read_bytes() != platform_user_config_before:
+            raise RuntimeError("platform user config bytes changed during update")
         _json_command(run_command, kb_command(["adapter", "list", "--json"], executable=kb_binary),
                       "adapter list after update")
 

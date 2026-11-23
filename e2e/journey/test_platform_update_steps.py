@@ -16,6 +16,11 @@ from service_steps import FlowGraph, Journey
 
 
 class PlatformUpdateStepsTest(unittest.TestCase):
+    def expected_platform_user_config(self) -> bytes:
+        return (json.dumps({"stable": True, "platform": {"adapterOptions": {
+            "storage": {"baseDir": "case-storage"},
+        }}}) + "\n").encode()
+
     def test_outside_install_snapshot_reports_added_changed_and_removed_paths(self):
         before = {"/home/user/.local/share/kb-create/index.json": "sha256:old",
                   "/home/user/.local/bin/kb": "symlink:../old/kb",
@@ -155,7 +160,14 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.commands.append(args)
         stdout = ""
         code = 0
-        if args[1] == "plan":
+        if args[1] == "config":
+            value = json.loads(self.config.read_text())
+            value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = {
+                "baseDir": "case-storage",
+            }
+            self.config.write_text(json.dumps(value) + "\n")
+            stdout = json.dumps({"ok": True, "file": str(self.config), "value": value})
+        elif args[1] == "plan":
             stdout = json.dumps({"ok": True, "plan": self._plan("3.0.1"), "updateSummary": {
                 "components": [{"id": "platform", "package": "@kb/platform", "fromVersion": "3.0.0", "toVersion": "3.0.1"}],
                 "addedPackages": ["@kb/new"], "removedPackages": ["@kb/old"], "downloadBytes": 1234,
@@ -221,7 +233,6 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                 stdout = json.dumps({"ok": False, "error": {"code": "KB_UPDATE_NO_SNAPSHOT", "message": "Snapshot is unknown.", "hint": "restore a named snapshot", "correlationId": "c-missing"}})
                 code = 1
             else:
-                self.config.write_text('{"stable":true}\n')
                 self._write_receipt("3.0.0")
                 self.running_version = "3.0.0"
                 if "--json" not in args:
@@ -353,8 +364,10 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(steps["existing admin can log in after rollback"]["status"], "PASS")
         self.assertEqual(
             steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
-            hashlib.sha256(b'{"stable":true}\n').hexdigest(),
+            hashlib.sha256(self.expected_platform_user_config()).hexdigest(),
         )
+        self.assertEqual(self.config.read_bytes(), self.expected_platform_user_config())
+        self.assertEqual(self.commands[0][1:5], ["config", "set", "--scope", "platform"])
         self.assertEqual(self.state_file.read_bytes(), original_state)
         self.assertEqual(
             set(steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]),
@@ -371,7 +384,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11",
                          "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
-            "status", "project", "plan", "update", "status", "update", "status", "status", "status", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
+            "config", "status", "project", "plan", "update", "status", "update", "status", "status", "status", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
             "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter", "stop", "apply", "start", "update", "update",
             "stop", "apply", "status", "doctor", "update",
         ])
@@ -414,7 +427,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
                       steps["verify restored receipt, config, host, and project command"]["message"])
         self.assertEqual(
             steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
-            hashlib.sha256(b'{"stable":true}\n').hexdigest(),
+            hashlib.sha256(self.expected_platform_user_config()).hexdigest(),
         )
 
     def test_missing_baseline_blocks_s024_3_with_reason(self):
