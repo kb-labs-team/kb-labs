@@ -490,7 +490,12 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 	root := t.TempDir()
 	cacheRoot := t.TempDir()
 	workspace := filepath.Join(root, "pnpm-workspace.yaml")
-	if err := os.WriteFile(workspace, []byte("overrides:\n  lodash: 4.17.21\n"), 0o600); err != nil {
+	if err := os.WriteFile(workspace, []byte("autoInstallPeers: false\noverrides:\n  lodash: 4.17.21\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	packageJSON := filepath.Join(root, "package.json")
+	packageData := []byte("{\"name\":\"kb-platform\",\"dependencies\":{\"@kb-labs/extra-plugin\":\"file:plugins/extra-plugin\"}}\n")
+	if err := os.WriteFile(packageJSON, packageData, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sealed := sealedTestArtifacts(t,
@@ -524,7 +529,109 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 	if err := pm.Restore([]contracts.Artifact{old, oldRuntime}); err != nil {
 		t.Fatalf("rollback package restore: %v", err)
 	}
+	if got, err := os.ReadFile(packageJSON); err != nil || string(got) != string(packageData) {
+		t.Fatalf("rollback changed extra registered plugin specs: data=%q err=%v", got, err)
+	}
+	workspaceData, err := os.ReadFile(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workspaceConfig struct {
+		AutoInstallPeers *bool             `yaml:"autoInstallPeers"`
+		Overrides        map[string]string `yaml:"overrides"`
+	}
+	if err := yaml.Unmarshal(workspaceData, &workspaceConfig); err != nil || workspaceConfig.AutoInstallPeers == nil || *workspaceConfig.AutoInstallPeers || workspaceConfig.Overrides["lodash"] != "4.17.21" {
+		t.Fatalf("rollback lost unrelated workspace settings: config=%#v err=%v", workspaceConfig, err)
+	}
+	// case: S-023.19
+	got := runner.calls[len(runner.calls)-1]
+	containsPurgeConfirmation := false
+	for _, argument := range got.args {
+		if argument == "--config.confirmModulesPurge=false" {
+			containsPurgeConfirmation = true
+			break
+		}
+	}
+	if got.name != "pnpm" || !containsPurgeConfirmation {
+		t.Fatalf("rollback install args = %#v, want non-interactive pnpm modules purge confirmation", got)
+	}
 	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{old, oldRuntime})
+}
+
+// case: S-023.19
+func TestPnpmRestoreRebuildsModulesAndRestoresPriorTreeOnFailure(t *testing.T) {
+	root := t.TempDir()
+	modules := filepath.Join(root, "node_modules")
+	if err := os.MkdirAll(modules, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(modules, "preserve-on-failure")
+	if err := os.WriteFile(marker, []byte("previous graph"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{err: errors.New("pnpm fixture failure")}
+	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
+	pm := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})
+	if err := pm.Restore(items); err == nil || !strings.Contains(err.Error(), "pnpm fixture failure") {
+		t.Fatalf("restore error = %v, want fixture failure", err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "previous graph" {
+		t.Fatalf("prior package graph was not restored: data=%q err=%v", data, err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".kb-modules-restore-") {
+			t.Fatalf("restore left a backup directory after failure: %s", entry.Name())
+		}
+	}
+}
+
+// case: S-023.19
+func TestInterruptedPnpmModulesRestoreRecoversPreviousTreeUnlessCommitted(t *testing.T) {
+	for _, committed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("committed_%t", committed), func(t *testing.T) {
+			root := t.TempDir()
+			modules := filepath.Join(root, "node_modules")
+			if err := os.MkdirAll(modules, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			currentMarker := filepath.Join(modules, "state")
+			if err := os.WriteFile(currentMarker, []byte("partial"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			backup := filepath.Join(root, ".kb-modules-restore-crash")
+			backupModules := filepath.Join(backup, "node_modules")
+			if err := os.MkdirAll(backupModules, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(backup, "transaction.json"), []byte(`{"hadModules":true}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(backupModules, "state"), []byte("previous"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			want := "previous"
+			if committed {
+				if err := os.WriteFile(filepath.Join(backup, "committed"), []byte("ok\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				want = "partial"
+			}
+			if err := recoverInterruptedModulesRestore(root, modules); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(currentMarker)
+			if err != nil || string(data) != want {
+				t.Fatalf("recovered modules marker = %q, err=%v; want %q", data, err, want)
+			}
+			if _, err := os.Stat(backup); !os.IsNotExist(err) {
+				t.Fatalf("interrupted restore backup remains: %v", err)
+			}
+		})
+	}
 }
 
 func assertSealedArtifactOverrides(t *testing.T, workspace, cacheRoot string, artifacts []contracts.Artifact) {

@@ -314,13 +314,171 @@ func (p Pnpm) Restore(items []contracts.Artifact) error {
 	if err := p.mergeSealedArtifactOverrides(items); err != nil {
 		return err
 	}
-	if err := p.run("install"); err != nil {
+	restoreModules, finishRestore, err := p.prepareModulesRestore()
+	if err != nil {
+		return err
+	}
+	// Rollback must be able to repair a partial node_modules tree in a
+	// non-interactive supervisor. Rebuilding from the snapshot lockfile also
+	// avoids pnpm 11's stale "Already up to date" result when a link is missing.
+	// pnpm otherwise refuses to replace the modules directory when it cannot
+	// prompt for confirmation.
+	if err := p.run("install", "--config.confirmModulesPurge=false"); err != nil {
+		if restoreModules {
+			return finishRestore(err)
+		}
 		return err
 	}
 	if err := p.materializeManifests(items); err != nil {
+		if restoreModules {
+			return finishRestore(err)
+		}
 		return err
 	}
-	return p.verifyAndRecord(items)
+	if err := p.verifyAndRecord(items); err != nil {
+		if restoreModules {
+			return finishRestore(err)
+		}
+		return err
+	}
+	if restoreModules {
+		if err := finishRestore(nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// prepareModulesRestore moves the generated modules tree aside before a
+// rollback install. pnpm 11 can report "Already up to date" without repairing
+// a missing dependency link when its installed-state metadata is stale, so a
+// rollback must materialize from the lockfile rather than trust that cache.
+// On install failure, the prior tree is restored for diagnosis or retry.
+func (p Pnpm) prepareModulesRestore() (bool, func(error) error, error) {
+	modulesDir := filepath.Join(p.config.Root, "node_modules")
+	if err := recoverInterruptedModulesRestore(p.config.Root, modulesDir); err != nil {
+		return false, nil, err
+	}
+	if _, err := os.Lstat(modulesDir); errors.Is(err, os.ErrNotExist) {
+		return false, func(err error) error { return err }, nil
+	} else if err != nil {
+		return false, nil, err
+	}
+	backupRoot, err := os.MkdirTemp(p.config.Root, ".kb-modules-restore-")
+	if err != nil {
+		return false, nil, err
+	}
+	journal := struct {
+		HadModules bool `json:"hadModules"`
+	}{HadModules: true}
+	journalBytes, err := json.Marshal(journal)
+	if err != nil {
+		_ = os.RemoveAll(backupRoot)
+		return false, nil, err
+	}
+	journalPath := filepath.Join(backupRoot, "transaction.json")
+	if err := os.WriteFile(journalPath, journalBytes, 0o600); err != nil {
+		_ = os.RemoveAll(backupRoot)
+		return false, nil, err
+	}
+	backupModules := filepath.Join(backupRoot, "node_modules")
+	if err := os.Rename(modulesDir, backupModules); err != nil {
+		_ = os.RemoveAll(backupRoot)
+		return false, nil, err
+	}
+	finished := false
+	finish := func(installErr error) error {
+		if finished {
+			return installErr
+		}
+		finished = true
+		if installErr != nil {
+			if err := os.RemoveAll(modulesDir); err != nil {
+				return fmt.Errorf("restore package modules after failed rollback install: remove partial modules: %w (install error: %v)", err, installErr)
+			}
+			if err := os.Rename(backupModules, modulesDir); err != nil {
+				return fmt.Errorf("restore package modules after failed rollback install: restore prior modules: %w (install error: %v)", err, installErr)
+			}
+			if err := os.RemoveAll(backupRoot); err != nil {
+				return fmt.Errorf("restore package modules after failed rollback install: remove backup: %w (install error: %v)", err, installErr)
+			}
+			return installErr
+		}
+		if err := os.WriteFile(filepath.Join(backupRoot, "committed"), []byte("ok\n"), 0o600); err != nil {
+			return fmt.Errorf("mark package modules restore committed: %w", err)
+		}
+		if err := os.RemoveAll(backupRoot); err != nil {
+			return fmt.Errorf("remove prior package modules after successful rollback install: %w", err)
+		}
+		return nil
+	}
+	return true, finish, nil
+}
+
+// recoverInterruptedModulesRestore resolves same-filesystem backup folders
+// left by a process crash. An uncommitted transaction restores the old tree;
+// a committed one keeps the newly verified tree and only removes its backup.
+func recoverInterruptedModulesRestore(root, modulesDir string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	var backups []string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ".kb-modules-restore-") {
+			backups = append(backups, filepath.Join(root, entry.Name()))
+		}
+	}
+	if len(backups) > 1 {
+		return fmt.Errorf("multiple interrupted package modules restores need manual inspection")
+	}
+	if len(backups) == 0 {
+		return nil
+	}
+	backupRoot := backups[0]
+	if _, err := os.Lstat(filepath.Join(backupRoot, "committed")); err == nil {
+		if _, modulesErr := os.Lstat(modulesDir); errors.Is(modulesErr, os.ErrNotExist) {
+			backupModules := filepath.Join(backupRoot, "node_modules")
+			if _, backupErr := os.Lstat(backupModules); backupErr == nil {
+				if err := os.Rename(backupModules, modulesDir); err != nil {
+					return fmt.Errorf("restore package modules after committed tree disappeared: %w", err)
+				}
+			} else if !errors.Is(backupErr, os.ErrNotExist) {
+				return backupErr
+			}
+		} else if modulesErr != nil {
+			return modulesErr
+		}
+		return os.RemoveAll(backupRoot)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	data, err := os.ReadFile(filepath.Join(backupRoot, "transaction.json"))
+	if err != nil {
+		return fmt.Errorf("read interrupted package modules restore record: %w", err)
+	}
+	var journal struct {
+		HadModules bool `json:"hadModules"`
+	}
+	if err := json.Unmarshal(data, &journal); err != nil {
+		return fmt.Errorf("decode interrupted package modules restore record: %w", err)
+	}
+	backupModules := filepath.Join(backupRoot, "node_modules")
+	if journal.HadModules {
+		if _, err := os.Lstat(backupModules); err == nil {
+			if err := os.RemoveAll(modulesDir); err != nil {
+				return fmt.Errorf("remove partial package modules after interrupted restore: %w", err)
+			}
+			if err := os.Rename(backupModules, modulesDir); err != nil {
+				return fmt.Errorf("restore package modules after interrupted restore: %w", err)
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	} else if err := os.RemoveAll(modulesDir); err != nil {
+		return fmt.Errorf("remove partial package modules after interrupted restore: %w", err)
+	}
+	return os.RemoveAll(backupRoot)
 }
 
 func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {
