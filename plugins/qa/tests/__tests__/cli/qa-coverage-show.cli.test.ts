@@ -158,6 +158,7 @@ describe('qa:coverage-show evidence mode', () => {
       writeFileSync(join(runRoot, 'run.json'), JSON.stringify({
         schema: 'kb.qa-case-run/v3', runId, mode: 'local', candidateId: 'candidate-approved',
         profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+        selection: ['S-010.1'],
         claims: [{
           claimId: 'S-010.1', kind: 'journey', status: 'PASS',
           configRef: 'config.json', configDigest: createHash('sha256').update(configText).digest('hex'),
@@ -197,6 +198,7 @@ describe('qa:coverage-show evidence mode', () => {
         schema: 'kb.qa-case-run/v3', runId: 'pc001-attempt-1', mode: 'local',
         candidateId: 'candidate-approved',
         profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+        selection: ['PC-001.2'],
         claims: [{
           claimId: 'S-010.1', kind: 'journey', status: 'PASS',
           configRef: 'qa-evidence/pc001-2/redacted-config.jsonc', configDigest,

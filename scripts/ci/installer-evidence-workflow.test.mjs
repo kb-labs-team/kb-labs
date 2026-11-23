@@ -26,3 +26,16 @@ test('installer journey uploads v3 case records and relative evidence artifacts 
   assert.equal(restore.with.path, '.journey/reports');
   assert.equal(restore.with['merge-multiple'], true, 'restoration keeps report-relative evidence refs resolvable');
 });
+
+test('hosted PC-001 evidence uses an independent candidate plan and stays diagnostic', () => {
+  const coverage = workflow.jobs.coverage;
+  const candidate = coverage.steps.find(step => step.name === 'Restore sealed candidate for independent evidence plan');
+  const diagnostic = coverage.steps.find(step => step.name === 'Evaluate hosted PC-001.2 evidence diagnostically');
+  const upload = coverage.steps.find(step => step.name === 'Upload diagnostic evidence evaluation');
+  assert.equal(candidate.with.name, 'installer-journey-candidate');
+  assert.equal(candidate.with.path, '.journey/candidate');
+  assert.match(diagnostic.run, /installer-evidence-plan\.mjs/);
+  assert.match(diagnostic.run, /--evidence-plan/);
+  assert.equal(diagnostic['continue-on-error'], true);
+  assert.match(upload.if, /always\(\)/);
+});

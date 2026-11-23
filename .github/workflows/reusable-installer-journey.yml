@@ -209,11 +209,40 @@ jobs:
           pattern: service-journey-results-*
           path: .journey/reports
           merge-multiple: true
+      - name: Restore sealed candidate for independent evidence plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: installer-journey-candidate
+          path: .journey/candidate
       - name: Build the case coverage CLI
         run: |
           make build -C tools/kb-devkit
           e2e/journey/install-workspace-dependencies.sh
           ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
+      - name: Evaluate hosted PC-001.2 evidence diagnostically
+        continue-on-error: true
+        run: |
+          mkdir -p .journey/diagnostics
+          node scripts/ci/installer-evidence-plan.mjs \
+            .journey/candidate/.journey/release/release-index.json \
+            .journey/diagnostics/pc001-local-plan.json \
+            .journey/reports > .journey/diagnostics/pc001-local-records.txt
+          run_files=$(cat .journey/diagnostics/pc001-local-records.txt)
+          if [ -z "$run_files" ]; then
+            printf '{"status":"NO_V3_PC001_RECORD"}\n' > .journey/diagnostics/pc001-local-evaluation.json
+            exit 0
+          fi
+          node ./cli/bin/dist/bin.js qa coverage show --level release --mode local \
+            --evidence --evidence-plan .journey/diagnostics/pc001-local-plan.json \
+            --run "$run_files" --json > .journey/diagnostics/pc001-local-evaluation.json
+      - name: Upload diagnostic evidence evaluation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-evidence-diagnostic
+          path: .journey/diagnostics/**
+          if-no-files-found: warn
+          retention-days: 7
       - name: Enforce local and secured release case coverage
         run: |
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)

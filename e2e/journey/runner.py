@@ -87,7 +87,7 @@ from invocations import (
     write_report_json,
     write_report_text,
 )
-from journey_evidence import (apply_clean_install_case_evidence,
+from journey_evidence import (apply_clean_install_case_evidence, clean_install_evidence_profile,
                              capture_clean_install_artifacts)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
@@ -947,15 +947,7 @@ def human_text_is_clean(output: str):
 
 
 def _journey_evidence_profile() -> dict[str, str]:
-    machine = platform.machine().lower()
-    machine = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64"}.get(machine, machine)
-    profile = {"os": f"{platform.system().lower()}-{machine}"}
-    for key, field in (("KB_JOURNEY_RUNNER_SELECTOR", "runner"),
-                       ("KB_JOURNEY_SERVICE_PROFILE", "serviceProfile")):
-        value = BASE_ENV.get(key, "")
-        if value:
-            profile[field] = value
-    return profile
+    return clean_install_evidence_profile()
 
 
 def finalize_run(passed: bool) -> int:
