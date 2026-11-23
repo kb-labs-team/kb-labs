@@ -387,6 +387,11 @@ func (p Pnpm) prepareModulesRestore() (bool, func(error) error, error) {
 	if err := os.Chmod(transactionsRoot, 0o700); err != nil {
 		return false, nil, err
 	}
+	for _, directory := range []string{p.config.Root, filepath.Join(p.config.Root, ".kb"), filepath.Join(p.config.Root, ".kb", "v2"), transactionsRoot} {
+		if err := syncDirectory(directory); err != nil {
+			return false, nil, err
+		}
+	}
 	if err := recoverInterruptedModulesRestore(transactionsRoot, modulesDir); err != nil {
 		return false, nil, err
 	}
@@ -394,11 +399,25 @@ func (p Pnpm) prepareModulesRestore() (bool, func(error) error, error) {
 	if err != nil {
 		return false, nil, err
 	}
+	if err := syncDirectory(transactionsRoot); err != nil {
+		_ = os.RemoveAll(transactionDir)
+		return false, nil, err
+	}
 	_, statErr := os.Lstat(modulesDir)
 	hadModules := statErr == nil
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		_ = os.Remove(transactionDir)
 		return false, nil, statErr
+	}
+	if hadModules {
+		info, err := os.Lstat(modulesDir)
+		if err != nil {
+			return false, nil, err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			_ = os.RemoveAll(transactionDir)
+			return false, nil, fmt.Errorf("package modules restore requires a real directory")
+		}
 	}
 	journal := modulesRestoreJournal{Version: 1, State: "prepared", HadModules: hadModules}
 	if err := writeModulesRestoreJournal(transactionDir, journal); err != nil {
@@ -409,6 +428,12 @@ func (p Pnpm) prepareModulesRestore() (bool, func(error) error, error) {
 	if hadModules {
 		if err := os.Rename(modulesDir, backupModules); err != nil {
 			_ = os.RemoveAll(transactionDir)
+			return false, nil, err
+		}
+		if err := syncDirectory(p.config.Root); err != nil {
+			return false, nil, err
+		}
+		if err := syncDirectory(transactionDir); err != nil {
 			return false, nil, err
 		}
 	}
@@ -462,7 +487,50 @@ func writeModulesRestoreJournal(transactionDir string, journal modulesRestoreJou
 	if err := os.Rename(temporaryPath, filepath.Join(transactionDir, "journal.json")); err != nil {
 		return err
 	}
-	return nil
+	return syncDirectory(transactionDir)
+}
+
+func decodeModulesRestoreJournal(data []byte) (modulesRestoreJournal, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return modulesRestoreJournal{}, err
+	}
+	if len(fields) != 3 {
+		return modulesRestoreJournal{}, fmt.Errorf("journal must contain exactly version, state, and hadModules")
+	}
+	var journal modulesRestoreJournal
+	if raw, ok := fields["version"]; !ok {
+		return journal, fmt.Errorf("journal version is required")
+	} else if err := json.Unmarshal(raw, &journal.Version); err != nil {
+		return journal, fmt.Errorf("journal version must be an integer: %w", err)
+	}
+	if raw, ok := fields["state"]; !ok {
+		return journal, fmt.Errorf("journal state is required")
+	} else if err := json.Unmarshal(raw, &journal.State); err != nil {
+		return journal, fmt.Errorf("journal state must be a string: %w", err)
+	}
+	raw, ok := fields["hadModules"]
+	if !ok {
+		return journal, fmt.Errorf("journal hadModules is required")
+	}
+	switch string(bytes.TrimSpace(raw)) {
+	case "true":
+		journal.HadModules = true
+	case "false":
+		journal.HadModules = false
+	default:
+		return journal, fmt.Errorf("journal hadModules must be a boolean")
+	}
+	return journal, nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 // recoverInterruptedModulesRestore treats only the private transaction
@@ -479,12 +547,12 @@ func recoverInterruptedModulesRestore(transactionsRoot, modulesDir string) error
 	var transactions []string
 	var cleanupDirs []string
 	for _, entry := range entries {
-		if !entry.IsDir() {
-			return fmt.Errorf("unexpected entry in package restore transaction directory")
-		}
 		path := filepath.Join(transactionsRoot, entry.Name())
 		switch {
 		case strings.HasPrefix(entry.Name(), "txn-"):
+			if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				return fmt.Errorf("package restore transaction is not a directory")
+			}
 			transactions = append(transactions, path)
 		case strings.HasPrefix(entry.Name(), "cleanup-"):
 			cleanupDirs = append(cleanupDirs, path)
@@ -511,13 +579,16 @@ func recoverInterruptedModulesRestore(transactionsRoot, modulesDir string) error
 				return fmt.Errorf("incomplete package restore journal has unrecognized contents")
 			}
 		}
-		return os.RemoveAll(transactionDir)
+		if err := os.RemoveAll(transactionDir); err != nil {
+			return err
+		}
+		return syncDirectory(transactionsRoot)
 	}
 	if err != nil {
 		return err
 	}
-	var journal modulesRestoreJournal
-	if err := json.Unmarshal(data, &journal); err != nil {
+	journal, err := decodeModulesRestoreJournal(data)
+	if err != nil {
 		return fmt.Errorf("decode interrupted package modules restore journal: %w", err)
 	}
 	if journal.Version != 1 || (journal.State != "prepared" && journal.State != "committed") {
@@ -533,13 +604,28 @@ func recoverInterruptedModulesRestore(transactionsRoot, modulesDir string) error
 				if err := os.Rename(backupModules, modulesDir); err != nil {
 					return fmt.Errorf("restore prior package modules after committed tree disappeared: %w", err)
 				}
+				if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+					return err
+				}
+				if err := syncDirectory(transactionDir); err != nil {
+					return err
+				}
 			} else if !errors.Is(backupErr, os.ErrNotExist) {
 				return backupErr
 			} else {
 				cleanupPath := filepath.Join(transactionsRoot, "cleanup-"+strings.TrimPrefix(filepath.Base(transactionDir), "txn-"))
-				if _, cleanupErr := os.Lstat(cleanupPath); cleanupErr == nil {
+				if cleanupInfo, cleanupErr := os.Lstat(cleanupPath); cleanupErr == nil {
+					if !cleanupInfo.IsDir() || cleanupInfo.Mode()&os.ModeSymlink != 0 {
+						return fmt.Errorf("prior package modules cleanup entry is not a directory")
+					}
 					if err := os.Rename(cleanupPath, modulesDir); err != nil {
 						return fmt.Errorf("restore prior package modules from cleanup after committed tree disappeared: %w", err)
+					}
+					if err := syncDirectory(transactionsRoot); err != nil {
+						return err
+					}
+					if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+						return err
 					}
 				} else if !errors.Is(cleanupErr, os.ErrNotExist) {
 					return cleanupErr
@@ -561,11 +647,14 @@ func recoverInterruptedModulesRestore(transactionsRoot, modulesDir string) error
 
 func removeModulesRestoreCleanupDirs(cleanupDirs []string) error {
 	for _, path := range cleanupDirs {
-		if err := os.RemoveAll(path); err != nil {
+		if err := removeOwnedCleanupPath(path); err != nil {
 			return fmt.Errorf("finish package modules backup cleanup: %w", err)
 		}
 	}
-	return nil
+	if len(cleanupDirs) == 0 {
+		return nil
+	}
+	return syncDirectory(filepath.Dir(cleanupDirs[0]))
 }
 
 func validateModulesRestoreContents(transactionDir string, journal modulesRestoreJournal) error {
@@ -582,6 +671,16 @@ func validateModulesRestoreContents(transactionDir string, journal modulesRestor
 			return fmt.Errorf("package modules restore journal has unrecognized contents")
 		}
 	}
+	if journal.HadModules {
+		priorPath := filepath.Join(transactionDir, "prior-node-modules")
+		if info, err := os.Lstat(priorPath); err == nil {
+			if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("prior package modules backup is not a directory")
+			}
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -590,8 +689,8 @@ func recoverOneModulesRestore(modulesDir, transactionDir string) error {
 	if err != nil {
 		return err
 	}
-	var journal modulesRestoreJournal
-	if err := json.Unmarshal(data, &journal); err != nil {
+	journal, err := decodeModulesRestoreJournal(data)
+	if err != nil {
 		return err
 	}
 	if journal.Version != 1 || journal.State != "prepared" {
@@ -609,13 +708,24 @@ func recoverOneModulesRestore(modulesDir, transactionDir string) error {
 			if err := os.Rename(backupModules, modulesDir); err != nil {
 				return fmt.Errorf("restore package modules after interrupted restore: %w", err)
 			}
+			if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+				return err
+			}
+			if err := syncDirectory(transactionDir); err != nil {
+				return err
+			}
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
 	} else if err := os.RemoveAll(modulesDir); err != nil {
 		return fmt.Errorf("remove partial package modules after interrupted restore: %w", err)
+	} else if err := syncDirectory(filepath.Dir(modulesDir)); err != nil {
+		return err
 	}
-	return os.RemoveAll(transactionDir)
+	if err := os.RemoveAll(transactionDir); err != nil {
+		return err
+	}
+	return syncDirectory(filepath.Dir(transactionDir))
 }
 
 func cleanupCommittedModulesRestore(transactionsRoot, transactionDir string) error {
@@ -625,24 +735,47 @@ func cleanupCommittedModulesRestore(transactionsRoot, transactionDir string) err
 		if err := os.Rename(backupModules, cleanupPath); err != nil {
 			return fmt.Errorf("stage prior package modules for cleanup: %w", err)
 		}
+		if err := syncDirectory(transactionDir); err != nil {
+			return err
+		}
+		if err := syncDirectory(transactionsRoot); err != nil {
+			return err
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if err := os.RemoveAll(transactionDir); err != nil {
 		return fmt.Errorf("remove committed package modules transaction: %w", err)
 	}
+	if err := syncDirectory(transactionsRoot); err != nil {
+		return err
+	}
 	entries, err := os.ReadDir(transactionsRoot)
 	if err != nil {
 		return err
 	}
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "cleanup-") && entry.IsDir() {
-			if err := os.RemoveAll(filepath.Join(transactionsRoot, entry.Name())); err != nil {
+		if strings.HasPrefix(entry.Name(), "cleanup-") {
+			if err := removeOwnedCleanupPath(filepath.Join(transactionsRoot, entry.Name())); err != nil {
 				return fmt.Errorf("remove prior package modules after successful rollback: %w", err)
 			}
 		}
 	}
-	return nil
+	return syncDirectory(transactionsRoot)
+}
+
+func removeOwnedCleanupPath(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return os.Remove(path)
+	}
+	return os.RemoveAll(path)
 }
 
 func (p Pnpm) verifyAndRecord(items []contracts.Artifact) error {

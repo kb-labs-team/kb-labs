@@ -868,28 +868,87 @@ func TestInterruptedPnpmModulesRestoreRecoversPreviousTreeUnlessCommitted(t *tes
 
 // case: S-023.19
 func TestPnpmModulesRestoreRejectsUnknownJournalWithoutTouchingModules(t *testing.T) {
+	for _, journal := range []string{
+		`{}`,
+		`{"version":1,"state":"prepared"}`,
+		`{"version":1,"state":"prepared","hadModules":null}`,
+		`{"version":1,"state":"prepared","hadModules":"false"}`,
+	} {
+		t.Run(journal, func(t *testing.T) {
+			root := t.TempDir()
+			modules := filepath.Join(root, "node_modules")
+			if err := os.MkdirAll(modules, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(modules, "state")
+			if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			transactionsRoot := modulesRestoreTransactionsPath(root)
+			transactionDir := filepath.Join(transactionsRoot, "txn-unknown")
+			if err := os.MkdirAll(transactionDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(transactionDir, "journal.json"), []byte(journal), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := recoverInterruptedModulesRestore(transactionsRoot, modules); err == nil {
+				t.Fatal("unknown restore journal was accepted")
+			}
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "keep" {
+				t.Fatalf("unknown journal touched current modules: data=%q err=%v", data, err)
+			}
+		})
+	}
+}
+
+// case: S-023.19
+func TestPnpmRestoreRejectsNonDirectoryModulesWithoutFollowingSymlinks(t *testing.T) {
 	root := t.TempDir()
+	external := filepath.Join(t.TempDir(), "user-data")
+	if err := os.WriteFile(external, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	modules := filepath.Join(root, "node_modules")
-	if err := os.MkdirAll(modules, 0o700); err != nil {
+	if err := os.Symlink(external, modules); err != nil {
 		t.Fatal(err)
 	}
-	marker := filepath.Join(modules, "state")
-	if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
-		t.Fatal(err)
+	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
+	pm := mustPnpm(t, PnpmConfig{Root: root, Runner: &fakeRunner{}, ReleaseCatalog: testReleaseCatalog(t, items...)})
+	if err := pm.Restore(items); err == nil {
+		t.Fatal("restore accepted a symlinked modules path")
 	}
+	if target, err := os.Readlink(modules); err != nil || target != external {
+		t.Fatalf("modules symlink changed: target=%q err=%v", target, err)
+	}
+	if data, err := os.ReadFile(external); err != nil || string(data) != "keep" {
+		t.Fatalf("restore changed symlink target data: data=%q err=%v", data, err)
+	}
+}
+
+// case: S-023.19
+func TestModulesRestoreCleanupRemovesSymlinkAsLeaf(t *testing.T) {
+	root := t.TempDir()
 	transactionsRoot := modulesRestoreTransactionsPath(root)
-	transactionDir := filepath.Join(transactionsRoot, "txn-unknown")
-	if err := os.MkdirAll(transactionDir, 0o700); err != nil {
+	if err := os.MkdirAll(transactionsRoot, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(transactionDir, "journal.json"), []byte(`{}`), 0o600); err != nil {
+	external := filepath.Join(t.TempDir(), "user-data")
+	if err := os.WriteFile(external, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := recoverInterruptedModulesRestore(transactionsRoot, modules); err == nil {
-		t.Fatal("unknown restore journal was accepted")
+	cleanupLink := filepath.Join(transactionsRoot, "cleanup-old")
+	if err := os.Symlink(external, cleanupLink); err != nil {
+		t.Fatal(err)
 	}
-	if data, err := os.ReadFile(marker); err != nil || string(data) != "keep" {
-		t.Fatalf("unknown journal touched current modules: data=%q err=%v", data, err)
+	if err := recoverInterruptedModulesRestore(transactionsRoot, filepath.Join(root, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(cleanupLink); !os.IsNotExist(err) {
+		t.Fatalf("cleanup symlink remains: %v", err)
+	}
+	if data, err := os.ReadFile(external); err != nil || string(data) != "keep" {
+		t.Fatalf("cleanup followed symlink and changed target: data=%q err=%v", data, err)
 	}
 }
 
