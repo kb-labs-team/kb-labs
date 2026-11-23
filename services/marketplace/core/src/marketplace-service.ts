@@ -259,7 +259,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         (ctx.scope === 'project' || resolved.primaryKind === 'plugin');
       const marketplaceState = usesExtensionStore ? [] : await snapshotMarketplaceState(scopeRoot);
       const result = usesExtensionStore
-        ? await this.installInStore(resolved, ctx.scope, source.dependencyRegistryUrl)
+        ? await this.installInStore(
+          resolved,
+          ctx.scope,
+          ctx.scope === 'project' ? source.dependencyRegistryUrl : undefined,
+          ctx.scope === 'platform',
+        )
         : await source.install(resolved, scopeRoot, opts);
 
       let canonicalId: string | null | undefined;
@@ -571,6 +576,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     resolved: Awaited<ReturnType<PackageSource['resolve']>>,
     scope: MarketplaceScope,
     registryUrl?: string,
+    usePlatformNpmrc = false,
   ): Promise<InstalledPackage> {
     const store = this.extensionStore;
     if (!store) {
@@ -585,6 +591,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         ...(resolved.downloadUrl ? { spec: resolved.downloadUrl } : {}),
         ...(resolved.integrity ? { expectedIntegrity: resolved.integrity } : {}),
         ...(registryUrl ? { registryUrl } : {}),
+        ...(usePlatformNpmrc ? { usePlatformNpmrc: true } : {}),
+        ...(usePlatformNpmrc ? { requireExplicitSpec: true } : {}),
       });
     } catch (error) {
       if (error instanceof IntegrityMismatchError) {

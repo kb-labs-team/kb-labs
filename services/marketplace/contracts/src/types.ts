@@ -104,7 +104,7 @@ export type MarketplaceSourceResolution = MarketplaceIdentityResolution;
 
 export interface MarketplaceSource extends PackageSource {
   kind: MarketplaceSourceKind;
-  /** npm registry used to resolve dependencies for packages from this source. */
+  /** npm registry used for project-scope package dependency resolution. */
   dependencyRegistryUrl?: string;
   /** Public verification key resolved from this Registry source's config. */
   verificationKey?: string;

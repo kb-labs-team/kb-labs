@@ -174,6 +174,59 @@ describe('createExtensionStore (real pnpm, temp-dir store, no real HOME)', () =>
     INSTALL_TIMEOUT,
   );
 
+  // case: S-300.2
+  it('rejects a cold platform install without an explicit package source artifact', async () => {
+    let installCount = 0;
+    const installer: PackageInstaller = {
+      install: async () => {
+        installCount += 1;
+        throw new Error('package manager must not run');
+      },
+    };
+    const store = createExtensionStore({ root: kbHome, installer });
+
+    await expect(store.resolve({
+      name: '@fixture/plugin',
+      version: '1.0.0',
+      kind: 'plugin',
+      requireExplicitSpec: true,
+    })).rejects.toMatchObject({ code: 'KB_PLUGIN_INSTALL_FAILED' });
+    for (const spec of ['latest', '1.0.0', 'file:./plugin.tgz']) {
+      await expect(store.resolve({
+        name: '@fixture/plugin',
+        version: '1.0.0',
+        kind: 'plugin',
+        spec,
+        requireExplicitSpec: true,
+      })).rejects.toMatchObject({ code: 'KB_PLUGIN_INSTALL_FAILED' });
+    }
+    expect(installCount).toBe(0);
+  });
+
+  // case: S-300.2
+  it('reuses a warm immutable entry without resolving its package source again', async () => {
+    const fixture = await createFixturePackage({ name: 'sample-plugin', version: '1.0.0' });
+    let installCount = 0;
+    const installer: PackageInstaller = {
+      install: async (opts) => {
+        installCount += 1;
+        return new PnpmInstaller().install(opts);
+      },
+    };
+    const store = createExtensionStore({ root: kbHome, installer });
+    await store.resolve({ name: 'sample-plugin', version: '1.0.0', kind: 'plugin', spec: `file:${fixture}` });
+
+    const warm = await store.resolve({
+      name: 'sample-plugin',
+      version: '1.0.0',
+      kind: 'plugin',
+      requireExplicitSpec: true,
+    });
+
+    expect(warm.entry.name).toBe('sample-plugin');
+    expect(installCount).toBe(1);
+  }, INSTALL_TIMEOUT);
+
   it(
     'serializes two concurrent installs of the same version into a single install',
     async () => {
