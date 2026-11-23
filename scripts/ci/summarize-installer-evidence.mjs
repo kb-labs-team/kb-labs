@@ -14,8 +14,8 @@ export function summarizeInstallerEvidence(evaluation, manifest) {
   const observedBehaviorStatuses = [...new Set(records.map((record) => record.behaviorStatus)
     .filter((status) => status === 'PASS' || status === 'FAIL'))];
   const behaviorStatus = targetStep?.status
-    ?? (observedBehaviorStatuses.length === 1 ? observedBehaviorStatuses[0]
-      : observedBehaviorStatuses.length > 1 ? 'MULTIPLE' : 'NOT RUN');
+    ?? (observedBehaviorStatuses.includes('FAIL') ? 'FAIL'
+      : observedBehaviorStatuses.includes('PASS') ? 'PASS' : 'NOT RUN');
   return {
     status: incomplete ? 'INCOMPLETE' : behaviorStatus,
     behaviorStatus,

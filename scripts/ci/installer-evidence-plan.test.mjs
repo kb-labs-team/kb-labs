@@ -28,17 +28,25 @@ test('selector returns only local v3 PC-001.2 records', () => {
       schema: 'kb.qa-case-run/v3', mode: 'secured', claims: [{ claimId: 'PC-001.2' }],
     });
     write('installer-case-local-old.json', {
-      schema: 'kb.qa-case-run/v2', mode: 'local', claims: [{ claimId: 'PC-001.2' }],
+      schema: 'kb.qa-case-run/v2', mode: 'local', claims: [{ claimId: 'S-001.1', status: 'PASS' }],
     });
     write('installer-case-local-missing-claim.json', {
       schema: 'kb.qa-case-run/v3', mode: 'local', selection: ['PC-001.2'], claims: [],
     });
+    writeFileSync(join(directory, 'installer-case-local-empty.json'), '{}');
+    writeFileSync(join(directory, 'installer-case-local-null.json'), '{"case_run":null}');
+    writeFileSync(join(directory, 'installer-case-local-no-claims.json'), JSON.stringify({
+      case_run: { schema: 'kb.qa-case-run/v3', mode: 'local' },
+    }));
     writeFileSync(join(directory, 'installer-case-local-corrupt.json'), '{ invalid json');
     const selection = selectLocalInstallerEvidence(directory);
     assert.deepEqual(selection.records, [{ path: join(directory, 'installer-case-local-cli-default.json'), behaviorStatus: 'PASS' }]);
     assert.deepEqual(selection.invalid.map(({ path }) => path), [
       join(directory, 'installer-case-local-corrupt.json'),
+      join(directory, 'installer-case-local-empty.json'),
       join(directory, 'installer-case-local-missing-claim.json'),
+      join(directory, 'installer-case-local-no-claims.json'),
+      join(directory, 'installer-case-local-null.json'),
     ]);
     assert.match(selection.invalid[0].reason, /JSON/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
@@ -72,6 +80,14 @@ test('summary preserves observed FAIL without a candidate and forces corrupted i
   assert.equal(noCandidate.status, 'INCOMPLETE');
   assert.equal(noCandidate.behaviorStatus, 'FAIL');
   assert.equal(noCandidate.evidenceStatus, 'INCOMPLETE');
+  const conflictingAttempts = summarizeInstallerEvidence(undefined, {
+    records: [
+      { path: 'pass.json', behaviorStatus: 'PASS' },
+      { path: 'fail.json', behaviorStatus: 'FAIL' },
+    ], invalid: [],
+  });
+  assert.equal(conflictingAttempts.behaviorStatus, 'FAIL');
+  assert.deepEqual(conflictingAttempts.observedBehaviorStatuses, ['PASS', 'FAIL']);
 
   const corrupted = summarizeInstallerEvidence(evaluation, {
     records: [{ path: 'valid.json', behaviorStatus: 'PASS' }], invalid: [{ path: 'broken.json', reason: 'invalid JSON' }],

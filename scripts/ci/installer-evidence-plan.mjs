@@ -29,13 +29,21 @@ export function selectLocalInstallerEvidence(reportDirectory) {
       try {
         const wrapper = JSON.parse(readFileSync(path, 'utf8'));
         const run = wrapper?.case_run;
+        if (!wrapper || typeof wrapper !== 'object' || Array.isArray(wrapper)
+          || !run || typeof run !== 'object' || Array.isArray(run)
+          || run.mode !== 'local' || !Array.isArray(run.claims)
+          || (run.selection !== undefined && (!Array.isArray(run.selection)
+            || !run.selection.every((item) => typeof item === 'string')))) {
+          invalid.push({ path, reason: 'local installer wrapper has an invalid case_run envelope' });
+          continue;
+        }
         const claim = run?.claims?.find((item) => item.claimId === 'PC-001.2');
-        if (run?.schema === 'kb.qa-case-run/v3' && run.mode === 'local'
-          && (claim || run.selection?.includes('PC-001.2'))) {
-          if (claim?.status === 'PASS' || claim?.status === 'FAIL') {
+        const selectedTarget = claim || run.selection?.includes('PC-001.2');
+        if (selectedTarget) {
+          if (run.schema === 'kb.qa-case-run/v3' && (claim?.status === 'PASS' || claim?.status === 'FAIL')) {
             records.push({ path, behaviorStatus: claim.status });
           } else {
-            invalid.push({ path, reason: 'selected PC-001.2 claim is missing or has an invalid status' });
+            invalid.push({ path, reason: 'selected PC-001.2 evidence must be a v3 run with a PASS or FAIL claim' });
           }
         }
       } catch (error) {
