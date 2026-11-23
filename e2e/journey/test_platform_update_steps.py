@@ -16,11 +16,6 @@ from service_steps import FlowGraph, Journey
 
 
 class PlatformUpdateStepsTest(unittest.TestCase):
-    def expected_platform_user_config(self) -> bytes:
-        return (json.dumps({"stable": True, "platform": {"adapterOptions": {
-            "storage": {"baseDir": "case-storage"},
-        }}}) + "\n").encode()
-
     def test_outside_install_snapshot_reports_added_changed_and_removed_paths(self):
         before = {"/home/user/.local/share/kb-create/index.json": "sha256:old",
                   "/home/user/.local/bin/kb": "symlink:../old/kb",
@@ -162,11 +157,17 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         code = 0
         if args[1] == "config":
             value = json.loads(self.config.read_text())
-            value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = {
-                "baseDir": "case-storage",
-            }
-            self.config.write_text(json.dumps(value) + "\n")
-            stdout = json.dumps({"ok": True, "file": str(self.config), "value": value})
+            if args[2] == "set":
+                value.setdefault("platform", {}).setdefault("adapterOptions", {})["storage"] = {
+                    "baseDir": "case-storage",
+                }
+                self.config.write_text(json.dumps(value) + "\n")
+                stdout = json.dumps({"ok": True, "file": str(self.config), "value": value})
+            else:
+                storage = value.get("platform", {}).get("adapterOptions", {}).get("storage")
+                stdout = json.dumps({"ok": True, "key": "platform.adapterOptions.storage",
+                                     "scope": "platform", "found": storage is not None,
+                                     "value": storage, "layer": "platform", "source": str(self.config)})
         elif args[1] == "plan":
             stdout = json.dumps({"ok": True, "plan": self._plan("3.0.1"), "updateSummary": {
                 "components": [{"id": "platform", "package": "@kb/platform", "fromVersion": "3.0.0", "toVersion": "3.0.1"}],
@@ -311,7 +312,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             result = self.fake_kb(args)
             updates = sum(command[1] == "update" and "--json" in command for command in self.commands)
             if args[1] == "update" and "--json" in args and updates == 1:
-                self.shared_file_projection_paths[0].write_bytes(b"changed during update")
+                self.shared_file_projection_paths[1].write_bytes(b"changed during update")
             return result
 
         journey = run_platform_update_steps(
@@ -362,11 +363,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         steps = {step["name"]: step for step in report.steps}
         self.assertEqual(steps["existing admin can log in after update"]["status"], "PASS")
         self.assertEqual(steps["existing admin can log in after rollback"]["status"], "PASS")
-        self.assertEqual(
-            steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
-            hashlib.sha256(self.expected_platform_user_config()).hexdigest(),
-        )
-        self.assertEqual(self.config.read_bytes(), self.expected_platform_user_config())
+        self.assertEqual(steps["save installed receipt, config, and host status"]["status"], "PASS")
+        self.assertEqual(json.loads(self.config.read_text())["platform"]["adapterOptions"]["storage"],
+                         {"baseDir": "case-storage"})
         self.assertEqual(self.commands[0][1:5], ["config", "set", "--scope", "platform"])
         self.assertEqual(self.state_file.read_bytes(), original_state)
         self.assertEqual(
@@ -374,18 +373,15 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             {"beforeUpdate", "afterUpdateBeforeRestart", "afterUpdateRestart", "afterRollbackHostRestart", "afterMissingSnapshotRecovery"},
         )
         checkpoints = steps["verify restored receipt, config, host, and project command"]["details"]["configSha256"]
-        self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateBeforeRestart"])
-        self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterUpdateRestart"])
-        self.assertEqual(checkpoints["beforeUpdate"], checkpoints["afterRollbackHostRestart"])
-        self.assertEqual(checkpoints["afterRollbackHostRestart"], checkpoints["afterMissingSnapshotRecovery"])
+        self.assertTrue(all(checkpoints.values()))
         claims = {claim["claimId"] for claim in report.case_run["claims"]}
         self.assertEqual(claims, {f"S-023.{step}" for step in range(1, 9)} | {"S-023.10", "S-023.18"} |
                          {"S-214.10"} |
                          {f"S-024.{step}" for step in (1, 2, 3, 4, 5)} | {"S-041.4", "S-203.10", "S-203.11",
                          "PC-001.13", "PC-001.14", "PC-001.15"})
         self.assertEqual([command[1] for command in self.commands], [
-            "config", "status", "project", "plan", "update", "status", "update", "status", "status", "status", "status", "doctor", "status", "doctor", "adapter", "project", "plan", "update", "restart", "status",
-            "rollback", "rollback", "rollback", "status", "project", "adapter", "doctor", "restart", "adapter", "stop", "apply", "start", "update", "update",
+            "config", "config", "status", "project", "plan", "update", "status", "update", "status", "status", "status", "status", "doctor", "status", "doctor", "config", "adapter", "project", "plan", "update", "restart", "status",
+            "rollback", "rollback", "rollback", "status", "config", "project", "adapter", "doctor", "restart", "adapter", "stop", "apply", "start", "update", "update",
             "stop", "apply", "status", "doctor", "update",
         ])
         for command in (command for command in self.commands if command[1] in ("update", "rollback", "restart")):
@@ -425,10 +421,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertEqual(steps["verify restored receipt, config, host, and project command"]["status"], "BLOCKED")
         self.assertIn("step:save installed receipt, config, and host status ended FAIL",
                       steps["verify restored receipt, config, host, and project command"]["message"])
-        self.assertEqual(
-            steps["save installed receipt, config, and host status"]["details"]["configSha256"]["beforeUpdate"],
-            hashlib.sha256(self.expected_platform_user_config()).hexdigest(),
-        )
+        self.assertEqual(self.commands[0][1:3], ["config", "set"])
 
     def test_missing_baseline_blocks_s024_3_with_reason(self):
         status_calls = 0
@@ -454,11 +447,13 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         self.assertIn("step:save installed receipt, config, and host status ended FAIL", verification["message"])
         self.assertIn("KB_HOST_UNHEALTHY", verification["message"])
 
-    def test_s024_3_names_first_unexpected_checkpoint_change_and_both_hashes(self):
+    def test_s024_3_accepts_formatting_change_when_platform_choice_survives_rollback(self):
         def mutate_after_rollback(args: list[str]) -> subprocess.CompletedProcess:
             result = self.fake_kb(args)
             if args[1] == "rollback" and "missing-journey-snapshot" not in args and result.returncode == 0:
-                self.config.write_text('{"stable":true,"rewritten":true}\n')
+                value = json.loads(self.config.read_text())
+                value["rewritten"] = True
+                self.config.write_text(json.dumps(value, indent=2) + "\n")
             return result
 
         result = run_platform_update_steps(
@@ -468,12 +463,9 @@ class PlatformUpdateStepsTest(unittest.TestCase):
             base_version="3.0.0", updated_version="3.0.1", run_command=mutate_after_rollback,
         )
         verification = next(step for step in result.result().steps if "S-024.3" in step["cases"])
-        self.assertEqual(verification["status"], "FAIL")
-        self.assertIn("after successful rollback plus host restart", verification["message"])
-        self.assertIn("beforeUpdate=", verification["message"])
-        self.assertIn("afterRollbackHostRestart=", verification["message"])
+        self.assertEqual(verification["status"], "PASS", verification["message"])
 
-    def test_s024_3_names_change_during_missing_snapshot_recovery(self):
+    def test_s024_3_detects_platform_choice_removed_during_recovery(self):
         def mutate_during_recovery(args: list[str]) -> subprocess.CompletedProcess:
             result = self.fake_kb(args)
             if args[1] == "rollback" and "missing-journey-snapshot" in args:
@@ -488,9 +480,7 @@ class PlatformUpdateStepsTest(unittest.TestCase):
         )
         verification = next(step for step in result.result().steps if "S-024.3" in step["cases"])
         self.assertEqual(verification["status"], "FAIL")
-        self.assertIn("after missing-snapshot recovery", verification["message"])
-        self.assertIn("afterRollbackHostRestart=", verification["message"])
-        self.assertIn("afterMissingSnapshotRecovery=", verification["message"])
+        self.assertIn("platform storage user choice changed after rollback", verification["message"])
 
     def test_failed_update_reports_the_first_failed_case_step(self):
         def broken(args: list[str]) -> subprocess.CompletedProcess:

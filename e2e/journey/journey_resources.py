@@ -523,8 +523,12 @@ def _platform_layout() -> dict:
     return value
 
 
-def shared_runtime_file_fingerprints(install_root: Path) -> tuple[str | None, ...]:
-    """Return opaque fingerprints for every file projection in the layout contract."""
+def shared_runtime_file_fingerprints(
+    install_root: Path,
+    *,
+    exclude_state_paths: frozenset[str] = frozenset(),
+) -> tuple[str | None, ...]:
+    """Return opaque fingerprints for selected file projections in the layout contract."""
     projections = _platform_layout().get("sharedRuntimePaths")
     if not isinstance(projections, list):
         raise ValueError("platform layout contract omits shared runtime projections")
@@ -537,6 +541,8 @@ def shared_runtime_file_fingerprints(install_root: Path) -> tuple[str | None, ..
         state_path = projection.get("statePath")
         if not isinstance(state_path, str) or not state_path:
             raise ValueError("platform layout file projection omits its state path")
+        if state_path in exclude_state_paths:
+            continue
         try:
             contents = (Path(install_root) / state_path).read_bytes()
         except FileNotFoundError:
