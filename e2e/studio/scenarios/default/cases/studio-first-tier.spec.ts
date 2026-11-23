@@ -76,7 +76,7 @@ test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', a
   }
 })
 
-test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.1 @S-273.1', async ({ page }) => {
+test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.9', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
 
@@ -95,7 +95,7 @@ test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.
   })
 
   await page.goto(`${GATEWAY}/`)
-  await page.getByRole('link', { name: 'Plugins', exact: true }).click()
+  await page.getByRole('link', { name: 'Marketplace', exact: true }).click()
   await expect(page.getByText('Marketplace unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('No extensions found', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Retry', exact: true }).click()

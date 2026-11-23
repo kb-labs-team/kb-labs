@@ -58,6 +58,11 @@ function routePath(basePath: string, suffix: string): string {
   return `${basePath.replace(/\/$/, '')}/${suffix.replace(/^\//, '')}`;
 }
 
+function isContainedChild(root: string, candidate: string): boolean {
+  const pathFromRoot = relative(root, candidate);
+  return pathFromRoot.length > 0 && !pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot);
+}
+
 function diagnosticReasonCode(code: string): string {
   switch (code) {
     case 'MANIFEST_NOT_FOUND': return 'manifest_missing';
@@ -289,6 +294,8 @@ export async function registerPluginRegistryRoutes(
 
   server.get(routePath(options.apiBasePath, 'studio/registry'), {
     schema: {
+      tags: ['Studio'],
+      summary: 'Get Studio Registry V2 (plugin pages for Module Federation)',
       querystring: { type: 'object', additionalProperties: false },
       response: { 200: responseSchema(studioRegistrySchema), 500: { type: 'object', additionalProperties: true } },
     },
@@ -310,7 +317,14 @@ export async function registerPluginRegistryRoutes(
         if (!entry) return reply.code(404).send({ error: `Plugin not found: ${pluginId}` });
         const filePath = join(entry.pluginRoot, name === 'readme' ? 'README.md' : 'CHANGELOG.md');
         try {
-          const content = await readFile(filePath, 'utf8');
+          const [realPackageRoot, realFilePath] = await Promise.all([
+            realpath(entry.pluginRoot),
+            realpath(filePath),
+          ]);
+          if (!isContainedChild(realPackageRoot, realFilePath)) {
+            return reply.code(400).send({ error: 'Invalid path' });
+          }
+          const content = await readFile(realFilePath, 'utf8');
           return reply.type('text/plain; charset=utf-8').send(content);
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -341,9 +355,12 @@ export async function registerPluginRegistryRoutes(
         return reply.code(400).send({ error: 'Invalid path' });
       }
       try {
-        const [realBundleRoot, realTarget] = await Promise.all([realpath(bundleRoot), realpath(target)]);
-        const realRelativePath = relative(realBundleRoot, realTarget);
-        if (!realRelativePath || realRelativePath.startsWith('..') || isAbsolute(realRelativePath)) {
+        const [realPackageRoot, realBundleRoot, realTarget] = await Promise.all([
+          realpath(entry.pluginRoot),
+          realpath(bundleRoot),
+          realpath(target),
+        ]);
+        if (!isContainedChild(realPackageRoot, realBundleRoot) || !isContainedChild(realBundleRoot, realTarget)) {
           return reply.code(400).send({ error: 'Invalid path' });
         }
         const fileStat = await stat(realTarget);

@@ -138,4 +138,69 @@ describe('plugin registry routes', () => {
     expect(response.statusCode).toBe(400);
     expect(response.body).not.toContain('outside bundle');
   });
+
+  it('rejects a widget bundle root that resolves outside the plugin package', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kb-plugin-registry-'));
+    const pluginRoot = join(root, 'plugin');
+    const distDir = join(pluginRoot, 'dist');
+    const outsideWidgets = join(root, 'outside-widgets');
+    await mkdir(distDir, { recursive: true });
+    await mkdir(outsideWidgets, { recursive: true });
+    await writeFile(join(outsideWidgets, 'remoteEntry.js'), 'outside bundle');
+    await symlink(outsideWidgets, join(distDir, 'widgets'));
+
+    const snapshot = emptySnapshot();
+    snapshot.manifests.push({
+      pluginId: '@kb-labs/test-plugin',
+      manifest: {
+        schema: 'kb.plugin/3',
+        id: '@kb-labs/test-plugin',
+        version: '1.2.3',
+        studio: { version: 2, remoteName: 'testPlugin', pages: [], menus: [] },
+      },
+      pluginRoot,
+      source: { kind: 'local', path: pluginRoot },
+      packageName: '@kb-labs/test-plugin',
+      scope: 'platform',
+      origin: 'workspace',
+      manifestPath: join(pluginRoot, 'manifest.json'),
+      manifestKind: 'static',
+    });
+
+    app = Fastify();
+    await registerPluginRegistryRoutes(app, { apiBasePath: '/api/v1', getSnapshot: () => snapshot });
+
+    const response = await app.inject({ method: 'GET', url: '/plugins/@kb-labs/test-plugin/widgets/remoteEntry.js' });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).not.toContain('outside bundle');
+  });
+
+  it('rejects README symlinks that resolve outside the plugin package', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kb-plugin-registry-'));
+    const pluginRoot = join(root, 'plugin');
+    await mkdir(pluginRoot, { recursive: true });
+    const outsideReadme = join(root, 'outside.md');
+    await writeFile(outsideReadme, 'outside package');
+    await symlink(outsideReadme, join(pluginRoot, 'README.md'));
+
+    const snapshot = emptySnapshot();
+    snapshot.manifests.push({
+      pluginId: '@kb-labs/test-plugin',
+      manifest: { schema: 'kb.plugin/3', id: '@kb-labs/test-plugin', version: '1.2.3' },
+      pluginRoot,
+      source: { kind: 'local', path: pluginRoot },
+      packageName: '@kb-labs/test-plugin',
+      scope: 'platform',
+      origin: 'workspace',
+      manifestPath: join(pluginRoot, 'manifest.json'),
+      manifestKind: 'static',
+    });
+
+    app = Fastify();
+    await registerPluginRegistryRoutes(app, { apiBasePath: '/api/v1', getSnapshot: () => snapshot });
+
+    const response = await app.inject({ method: 'GET', url: '/api/v1/plugins/@kb-labs/test-plugin/readme' });
+    expect(response.statusCode).toBe(400);
+    expect(response.body).not.toContain('outside package');
+  });
 });
