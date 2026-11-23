@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/toolchain"
@@ -37,14 +38,19 @@ type CommandRunner struct {
 	corepackHome string
 	registry     string
 	offline      bool
+	redactions   []string
+	maxCapture   int
+	runTool      func(context.Context, toolchain.Invocation) (toolchain.Result, error)
 }
 
 const externalCommandStderrTailBytes = 4096
 
 type externalCommandFailure struct {
-	exitCode   int
-	stderrTail string
-	cause      error
+	exitCode      int
+	stderrTail    string
+	stdoutOmitted bool
+	stderrOmitted bool
+	cause         error
 }
 
 func (f *externalCommandFailure) Error() string { return f.cause.Error() }
@@ -71,19 +77,30 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 			source := "Corepack's default npm registry"
 			if !r.offline {
 				var provision toolchain.Result
-				provision, err = toolchain.Run(ctx, toolchain.Invocation{Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env, Operation: toolchain.OperationPackageManager})
-				if provision.Stdout != "" {
-					_, _ = io.WriteString(output, provision.Stdout)
-				}
-				if provision.Stderr != "" {
-					_, _ = io.WriteString(output, provision.Stderr)
-				}
+				provision, err = r.run(ctx, toolchain.Invocation{
+					Tool: "corepack", Executable: "corepack", Args: []string{"install", "-g", "pnpm@" + toolchain.SupportedPnpm}, Env: env,
+					Operation: toolchain.OperationPackageManager, SafeCaptureOutput: true, Redactions: r.redactions,
+					MaxCapturedOutputBytes: r.maxCapture,
+				})
+				writeCapturedOutput(output, provision)
 				if err == nil {
 					node, script, err = toolchain.PnpmExecutableAt(r.corepackHome)
 				}
 			}
 			if err != nil {
-				return contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
+				var diagnostic *diag.Diag
+				if errors.As(err, &diagnostic) {
+					return diagnostic
+				}
+				failure := contracts.NewDiag(contracts.CodeApplyFailed, fmt.Sprintf("Could not provision pnpm %s from %s.", toolchain.SupportedPnpm, source), "Check the default npm registry and rerun the install command.", err)
+				var commandFailure *toolchain.CommandError
+				if errors.As(err, &commandFailure) {
+					failure.Meta = map[string]any{
+						"packageManagerExitCode":   fmt.Sprint(commandFailure.ExitCode),
+						"packageManagerStderrTail": packageManagerStderrTail(commandFailure.StderrTail, commandFailure.StdoutOmitted, commandFailure.StderrOmitted),
+					}
+				}
+				return failure
 			}
 		}
 		executable = node
@@ -91,28 +108,74 @@ func (r CommandRunner) Run(ctx context.Context, output io.Writer, name string, a
 	} else {
 		executable = name
 	}
-	result, err := toolchain.Run(ctx, toolchain.Invocation{Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager})
-	if result.Stdout != "" {
-		_, _ = io.WriteString(output, result.Stdout)
-	}
-	if result.Stderr != "" {
-		_, _ = io.WriteString(output, result.Stderr)
-	}
+	result, err := r.run(ctx, toolchain.Invocation{
+		Tool: name, Executable: executable, Args: args, Env: env, Operation: toolchain.OperationPackageManager,
+		SafeCaptureOutput: true, Redactions: r.redactions, MaxCapturedOutputBytes: r.maxCapture,
+	})
+	writeCapturedOutput(output, result)
 	if err != nil {
 		var commandFailure *toolchain.CommandError
 		if errors.As(err, &commandFailure) {
-			return &externalCommandFailure{exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail, cause: err}
+			return &externalCommandFailure{
+				exitCode: commandFailure.ExitCode, stderrTail: commandFailure.StderrTail,
+				stdoutOmitted: commandFailure.StdoutOmitted, stderrOmitted: commandFailure.StderrOmitted, cause: err,
+			}
 		}
 		return err
 	}
 	return nil
 }
 
-func tailText(content []byte, limit int) string {
-	if len(content) > limit {
-		content = content[len(content)-limit:]
+func (r CommandRunner) run(ctx context.Context, invocation toolchain.Invocation) (toolchain.Result, error) {
+	if r.runTool != nil {
+		return r.runTool(ctx, invocation)
 	}
-	return strings.TrimRight(strings.ToValidUTF8(string(content), "�"), "\r\n")
+	return toolchain.Run(ctx, invocation)
+}
+
+func writeCapturedOutput(output io.Writer, result toolchain.Result) {
+	if output != nil {
+		_, _ = io.WriteString(output, result.Stdout)
+		_, _ = io.WriteString(output, result.Stderr)
+	}
+}
+
+func packageManagerStderrTail(stderr string, stdoutOmitted, stderrOmitted bool) string {
+	var notices []string
+	if stdoutOmitted {
+		notices = append(notices, "captured stdout omitted because it exceeded the safe limit")
+	}
+	if stderrOmitted {
+		notices = append(notices, "captured stderr omitted because it exceeded the safe limit")
+	}
+	if len(notices) == 0 {
+		return tailText([]byte(stderr), externalCommandStderrTailBytes)
+	}
+	notice := strings.Join(notices, "; ")
+	if len(notice) >= externalCommandStderrTailBytes {
+		return tailText([]byte(notice), externalCommandStderrTailBytes)
+	}
+	available := externalCommandStderrTailBytes - len(notice) - 1
+	if stderrOmitted {
+		stderr = ""
+	}
+	tail := tailText([]byte(stderr), available)
+	if tail == "" {
+		return notice
+	}
+	return tail + "\n" + notice
+}
+
+func tailText(content []byte, limit int) string {
+	value := strings.ToValidUTF8(diag.RedactText(string(content)), "�")
+	data := []byte(value)
+	if len(data) > limit {
+		data = data[len(data)-limit:]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+	}
+	return strings.TrimRight(string(data), "\r\n")
 }
 
 func packageManagerEnvironment(base, overrides []string) []string {
@@ -141,11 +204,10 @@ type PnpmConfig struct {
 	PreviousReleaseCatalog *catalog.Verified
 	MarketplaceRoot        string
 	Offline                bool
+	Redactions             []string
 	Client                 *http.Client
 	Runner                 Runner
-	// Log receives the complete package-manager transcript. It is deliberately
-	// file-oriented: raw package-manager output must never pollute human or JSON
-	// command output.
+	// Log receives package-manager output after bounded capture and redaction.
 	Log io.Writer
 }
 
@@ -377,7 +439,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 		if p.config.PackageManagerRoot == "" {
 			return fmt.Errorf("pnpm package-manager state root is required")
 		}
-		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline}
+		runner = CommandRunner{environment: p.packageManagerEnvironment(), corepackHome: p.corepackHome(), registry: p.config.Registry, offline: p.config.Offline, redactions: p.config.Redactions}
 	}
 	log := p.config.Log
 	if log == nil {
@@ -406,7 +468,7 @@ func (p Pnpm) run(command string, specs ...string) error {
 				cause)
 			failure.Meta = map[string]any{
 				"packageManagerExitCode":   fmt.Sprint(commandFailure.exitCode),
-				"packageManagerStderrTail": commandFailure.stderrTail,
+				"packageManagerStderrTail": packageManagerStderrTail(commandFailure.stderrTail, commandFailure.stdoutOmitted, commandFailure.stderrOmitted),
 			}
 			return failure
 		}

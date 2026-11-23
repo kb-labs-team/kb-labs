@@ -15,9 +15,10 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
-import { describe, it, expect } from 'vitest';
-import { createStdioChannel } from '@kb-labs/core-ipc';
+import { describe, it, expect, vi } from 'vitest';
+import { createStdioChannel, StdioChannel } from '@kb-labs/core-ipc';
 import { runInSubprocess } from '../sandbox/runner.js';
+import { withProcessSensitiveValues } from '@kb-labs/core-platform';
 import { wrapCliResult } from '../host/cli-wrapper.js';
 import type { PluginContextDescriptor, CommandResult } from '@kb-labs/plugin-contracts';
 import {
@@ -196,6 +197,200 @@ describe('Subprocess Integration Tests', () => {
       rmSync(testDir, { recursive: true, force: true });
     }
   }, 10000);
+
+  // case: S-203.26
+  it('redacts subprocess stderr secrets split across writes and frame boundaries', async () => {
+    const testDir = join(tmpdir(), `subprocess-stderr-redaction-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const secret = 'subprocess-secret-cross-lines';
+    try {
+      const handlerPath = join(testDir, 'stderr-handler.mjs');
+      writeFileSync(handlerPath, `export default { async execute() { process.stderr.write('subprocess-secret'); process.stderr.write('-cross-lines\\r'); return { ok: true }; } };`);
+      const descriptor: PluginContextDescriptor = {
+        hostType: 'cli', pluginId: '@kb-labs/test-subprocess', pluginVersion: '1.0.0',
+        requestId: 'subprocess-stderr-redaction', handlerId: 'test:stderr', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      };
+      const logs: string[] = [];
+      const result = await withProcessSensitiveValues([secret], () => runInSubprocess({
+        descriptor,
+        platform: createPlatform(),
+        handlerPath,
+        input: {},
+        timeoutMs: 5000,
+        cwd: testDir,
+        onLog: (entry) => logs.push(entry.message),
+      }));
+      expect(result.data).toEqual({ ok: true });
+      expect(logs.join('')).not.toContain(secret);
+      expect(logs.join('')).toContain('[REDACTED]');
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('loads the manifest-selected object export in subprocess mode', async () => {
+    const testDir = join(tmpdir(), `sandbox-named-export-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    try {
+      const modulePath = join(testDir, 'show-plan.mjs');
+      writeFileSync(modulePath, `export const showPlan = { async execute(ctx) { return { cwd: ctx.cwd, selected: 'showPlan' }; } };`);
+      const descriptor: PluginContextDescriptor = {
+        hostType: 'cli', pluginId: '@kb-labs/commit', pluginVersion: '1.0.0',
+        requestId: 'named-subprocess-export', handlerId: 'commit:plan:show', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      };
+      const result = await runInSubprocess({
+        descriptor,
+        platform: createPlatform(),
+        handlerPath: `${modulePath}#showPlan`,
+        input: {},
+        timeoutMs: 5_000,
+        cwd: testDir,
+      });
+      expect(result.data).toEqual({ cwd: testDir, selected: 'showPlan' });
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('reports a missing manifest-selected export as KB_PLUGIN_LOAD_FAILED', async () => {
+    const testDir = join(tmpdir(), `sandbox-missing-export-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    try {
+      const modulePath = join(testDir, 'show-plan.mjs');
+      writeFileSync(modulePath, `export const other = { async execute() { return { selected: 'other' }; } };`);
+      const descriptor: PluginContextDescriptor = {
+        hostType: 'cli', pluginId: '@kb-labs/commit', pluginVersion: '1.0.0',
+        requestId: 'missing-subprocess-export', handlerId: 'commit:plan:show', permissions: {},
+        hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+      };
+      let failure: unknown;
+      try {
+        await runInSubprocess({
+          descriptor,
+          platform: createPlatform(),
+          handlerPath: `${modulePath}#showPlan`,
+          input: {},
+          timeoutMs: 5_000,
+          cwd: testDir,
+        });
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(SerializedErrorEnvelopeError);
+      expect((failure as SerializedErrorEnvelopeError).envelope.code).toBe('KB_PLUGIN_LOAD_FAILED');
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  // case: S-030.3
+  it('aborts a live host RPC and completes channel cleanup when execution times out', async () => {
+    const testDir = join(tmpdir(), `subprocess-rpc-cleanup-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const handlerPath = join(testDir, 'host-rpc-handler.mjs');
+    writeFileSync(handlerPath, `export default { async execute(ctx) { await ctx.platform.llm.complete('long request'); } };`);
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli', pluginId: '@kb-labs/test-rpc-cleanup', pluginVersion: '1.0.0',
+      requestId: 'subprocess-rpc-cleanup', handlerId: 'test:rpc-cleanup', permissions: { platform: { llm: true } },
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+    };
+    let providerSignal: AbortSignal | undefined;
+    const platform = {
+      ...createPlatform(),
+      llm: {
+        complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
+          providerSignal = options?.signal;
+          return new Promise((_resolve, reject) => {
+            providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('closed', 'AbortError')), { once: true });
+          });
+        },
+      },
+    } as unknown as IPlatformAdapters;
+
+    try {
+      await expect(runInSubprocess({
+        descriptor, platform, handlerPath, input: {}, timeoutMs: 250, cwd: testDir,
+      })).rejects.toThrow(/timed out/);
+      expect(providerSignal).toBeDefined();
+      expect(providerSignal?.aborted).toBe(true);
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  it('handles Ctrl+C after the subprocess control pipe has closed without an unhandled rejection', async () => {
+    const testDir = join(tmpdir(), `subprocess-cancel-closed-stdio-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const handlerPath = join(testDir, 'closed-stdio-handler.mjs');
+    writeFileSync(handlerPath, `export default { async execute() { console.log('closed-stdio-ready'); await new Promise(() => {}); } };`);
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli', pluginId: '@kb-labs/test-closed-stdio', pluginVersion: '1.0.0',
+      requestId: 'subprocess-cancel-closed-stdio', handlerId: 'test:closed-stdio', permissions: {},
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+    };
+    const controller = new AbortController();
+    const unhandled: unknown[] = [];
+    let channel: StdioChannel | undefined;
+    const originalSend = StdioChannel.prototype.send;
+    const sendSpy = vi.spyOn(StdioChannel.prototype, 'send').mockImplementation(function (this: StdioChannel, frame) {
+      channel = this;
+      return originalSend.call(this, frame);
+    });
+    const onUnhandled = (error: unknown) => unhandled.push(error);
+    process.on('unhandledRejection', onUnhandled);
+
+    try {
+      await expect(runInSubprocess({
+        descriptor,
+        platform: createPlatform(),
+        handlerPath,
+        input: {},
+        signal: controller.signal,
+        timeoutMs: 5000,
+        cwd: testDir,
+        onLog: (entry) => {
+          if (entry.message.includes('closed-stdio-ready')) {
+            channel?.close();
+            setTimeout(() => controller.abort(), 50);
+          }
+        },
+      })).rejects.toMatchObject({ name: 'AbortError' });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(unhandled).toEqual([]);
+    } finally {
+      sendSpy.mockRestore();
+      process.off('unhandledRejection', onUnhandled);
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
+
+  // case: S-203.26
+  it('redacts messages across subprocess stdout IPC frames', async () => {
+    const testDir = join(tmpdir(), `subprocess-ui-redaction-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    const handlerPath = join(testDir, 'ui-redaction-handler.mjs');
+    writeFileSync(handlerPath, `export default { async execute() { process.stdout.write('prefix host-secret-'); process.stdout.write('split\\r'); return { ok: true }; } };`);
+    const descriptor: PluginContextDescriptor = {
+      hostType: 'cli', pluginId: '@kb-labs/test-ui-redaction', pluginVersion: '1.0.0',
+      requestId: 'subprocess-ui-redaction', handlerId: 'test:ui-redaction', permissions: {},
+      hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
+    };
+    const logs: string[] = [];
+
+    try {
+      const result = await withProcessSensitiveValues(['host-secret-split'], () => runInSubprocess({
+        descriptor, platform: createPlatform(), handlerPath, input: {}, timeoutMs: 5000, cwd: testDir,
+        onLog: (entry) => logs.push(entry.message),
+      }));
+      expect(result.data).toEqual({ ok: true });
+      expect(logs.join('')).toContain('[REDACTED]');
+      expect(logs.join('')).not.toContain('host-secret-split');
+    } finally {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  }, 10_000);
 
   // case: S-244.9
   it('multiplexes platform RPC and console logs without corrupting framed stdout', async () => {

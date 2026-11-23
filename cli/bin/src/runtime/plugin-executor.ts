@@ -5,6 +5,7 @@
  */
 
 import type { SystemContext } from "@kb-labs/cli-runtime";
+import { coerceCommandFlags } from "@kb-labs/cli-runtime";
 import { executeCommandV3 } from "@kb-labs/cli-runtime/v3";
 import type {
   UIFacade,
@@ -40,6 +41,8 @@ export interface PluginExecutionOptions {
   flags: Record<string, unknown>;
   manifestCmd?: RegisteredCommand;
   platform: PlatformContainer;
+  /** Host-only path used by runtime module resolution; never exposed as plugin env. */
+  platformRoot?: string;
   resultWriter?: CliResultWriter;
 }
 
@@ -52,7 +55,7 @@ export interface PluginExecutionOptions {
 export async function executePlugin(
   options: PluginExecutionOptions,
 ): Promise<number | undefined> {
-  const { context, env, commandId, argv, flags, manifestCmd, platform } = options;
+  const { context, env, commandId, argv, flags, manifestCmd, platform, platformRoot } = options;
   const resultWriter = options.resultWriter ?? missingCliResultWriter;
 
   // No manifest command info - can't execute
@@ -73,6 +76,7 @@ export async function executePlugin(
   if (!cliCommand) {
     return undefined;
   }
+  const typedFlags = coerceCommandFlags(flags, cliCommand.flags ?? []);
 
   // Resolve handler path from handler field
   const handlerRelativePath = cliCommand.handler.split("#")[0];
@@ -108,7 +112,7 @@ export async function executePlugin(
     const pluginVersion = pluginManifest.version || "0.0.0";
 
     // When --json is active, suppress all UI output except json() to keep stdout clean.
-    const jsonMode = Boolean(flags.json);
+    const jsonMode = Boolean(typedFlags.json);
     // context.presenter (PresenterV1) is a broader runtime object that is
     // structurally compatible with PresenterDelegate at runtime even though
     // the static types differ (PresenterV1 exposes write/info/warn/error/json,
@@ -138,7 +142,7 @@ export async function executePlugin(
           pluginRoot,
           handlerPath,
           argv,
-          flags,
+          flags: typedFlags,
           ui,
           platform: platformServices,
           platformContainer: platform,
@@ -148,6 +152,7 @@ export async function executePlugin(
           quotas,
           configSection: pluginManifest.configSection,
           ...(gatewayUrl ? { env: { KB_GATEWAY_URL: gatewayUrl } } : {}),
+          ...(platformRoot ? { platformRoot } : {}),
         });
 
       context.logger?.debug(

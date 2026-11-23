@@ -14,10 +14,12 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/kb-labs/clikit/diag"
 	"github.com/kb-labs/clikit/proc"
@@ -109,28 +111,38 @@ type Invocation struct {
 	Args, Env        []string
 	Dir              string
 	Operation        Operation
-	Stdout, Stderr   io.Writer
-	Stdin            io.Reader
+	// SafeCaptureOutput buffers each stream up to MaxCapturedOutputBytes,
+	// redacts the complete stream, then exposes only the sanitized result.
+	SafeCaptureOutput bool
+	// Redactions are known secret values replaced before pattern redaction.
+	Redactions []string
+	// MaxCapturedOutputBytes may lower the default safe capture limit; larger
+	// values are clamped to that default.
+	MaxCapturedOutputBytes int
+	Stdout, Stderr         io.Writer
+	Stdin                  io.Reader
 }
 
 type Result struct {
 	Stdout, Stderr string
 	ExitCode       int
 	Elapsed        time.Duration
+	StdoutOmitted  bool
+	StderrOmitted  bool
 }
 
 type CommandError struct {
-	ExitCode   int
-	StderrTail string
-	StdoutTail string
-	Err        error
+	ExitCode      int
+	StderrTail    string
+	StdoutTail    string
+	Err           error
+	StdoutOmitted bool
+	StderrOmitted bool
 }
 
 func (e *CommandError) Error() string {
 	tail := diag.RedactText(strings.Trim(strings.Join([]string{e.StdoutTail, e.StderrTail}, "\n"), "\n"))
-	if len(tail) > stderrTailLimit {
-		tail = tail[len(tail)-stderrTailLimit:]
-	}
+	tail = tailString(tail, stderrTailLimit)
 	if strings.TrimSpace(tail) == "" {
 		return e.Err.Error()
 	}
@@ -219,7 +231,12 @@ func run(ctx context.Context, invocation Invocation, operationTimeout time.Durat
 	if err != nil {
 		return Result{}, &CommandError{Err: err}
 	}
-	return running.finish(started, operationTimeout)
+	result, err := running.finish(started, operationTimeout)
+	if invocation.SafeCaptureOutput {
+		writeSanitized(invocation.Stdout, result.Stdout)
+		writeSanitized(invocation.Stderr, result.Stderr)
+	}
+	return result, err
 }
 
 // runningInvocation is a started external tool with its output captured but no
@@ -232,6 +249,8 @@ type runningInvocation struct {
 	invocation Invocation
 	stdout     bytes.Buffer
 	stderr     tailBuffer
+	safeStdout *boundedCapture
+	safeStderr *boundedCapture
 	waitDone   chan struct{}
 	waitErr    error
 }
@@ -247,12 +266,22 @@ func startInvocation(ctx context.Context, invocation Invocation) (*runningInvoca
 		command.Env = invocation.Env
 	}
 	running := &runningInvocation{ctx: ctx, command: command, invocation: invocation, waitDone: make(chan struct{})}
-	command.Stdout, command.Stderr = &running.stdout, &running.stderr
-	if invocation.Stdout != nil {
-		command.Stdout = io.MultiWriter(&running.stdout, invocation.Stdout)
-	}
-	if invocation.Stderr != nil {
-		command.Stderr = io.MultiWriter(&running.stderr, invocation.Stderr)
+	if invocation.SafeCaptureOutput {
+		limit := invocation.MaxCapturedOutputBytes
+		if limit <= 0 || limit > safeOutputCaptureLimitBytes {
+			limit = safeOutputCaptureLimitBytes
+		}
+		running.safeStdout = &boundedCapture{limit: limit, stream: "stdout"}
+		running.safeStderr = &boundedCapture{limit: limit, stream: "stderr"}
+		command.Stdout, command.Stderr = running.safeStdout, running.safeStderr
+	} else {
+		command.Stdout, command.Stderr = &running.stdout, &running.stderr
+		if invocation.Stdout != nil {
+			command.Stdout = io.MultiWriter(&running.stdout, invocation.Stdout)
+		}
+		if invocation.Stderr != nil {
+			command.Stderr = io.MultiWriter(&running.stderr, invocation.Stderr)
+		}
 	}
 	process, err := child.StartManaged(command, child.ProcessGroup, proc.ChildProcessObserver())
 	if err != nil {
@@ -280,6 +309,14 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 	<-r.waitDone
 	err := r.waitErr
 	result := Result{Stdout: r.stdout.String(), Stderr: r.stderr.String(), Elapsed: time.Since(started)}
+	if r.invocation.SafeCaptureOutput {
+		redactions := append([]string(nil), r.invocation.Redactions...)
+		sort.SliceStable(redactions, func(i, j int) bool { return len(redactions[i]) > len(redactions[j]) })
+		result.Stdout = r.safeStdout.String(redactions)
+		result.Stderr = r.safeStderr.String(redactions)
+		result.StdoutOmitted = r.safeStdout.exceeded
+		result.StderrOmitted = r.safeStderr.exceeded
+	}
 	if err == nil {
 		return result, nil
 	}
@@ -287,11 +324,13 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 		if callerBound {
 			return result, &TimeoutError{Bound: BoundCaller, Budget: callerDeadline.Sub(started), Elapsed: result.Elapsed}
 		}
+		stderrTail := tailString(strings.TrimRight(result.Stderr, "\r\n"), stderrTailLimit)
+		stderrTail = appendCaptureOmissionNotice(stderrTail, result.StdoutOmitted, result.StderrOmitted, stderrTailLimit)
 		values := map[string]string{
 			"tool":        diag.RedactText(r.invocation.Tool),
 			"argsSummary": summarizeArgs(r.invocation.Args),
 			"elapsed":     result.Elapsed.Round(time.Millisecond).String(),
-			"stderrTail":  diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")),
+			"stderrTail":  diag.RedactText(stderrTail),
 			"nextCommand": nextCommand(r.invocation),
 		}
 		diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
@@ -306,14 +345,108 @@ func (r *runningInvocation) finish(started time.Time, operationTimeout time.Dura
 	if errors.As(err, &exit) {
 		result.ExitCode = exit.ExitCode()
 	}
-	return result, &CommandError{ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")), StderrTail: diag.RedactText(strings.TrimRight(result.Stderr, "\r\n")), Err: err}
+	return result, &CommandError{
+		ExitCode: result.ExitCode, StdoutTail: diag.RedactText(strings.TrimRight(tailString(result.Stdout, stderrTailLimit), "\r\n")),
+		StderrTail: diag.RedactText(strings.TrimRight(tailString(result.Stderr, stderrTailLimit), "\r\n")), Err: err,
+		StdoutOmitted: result.StdoutOmitted, StderrOmitted: result.StderrOmitted,
+	}
+}
+
+func appendCaptureOmissionNotice(stderrTail string, stdoutOmitted, stderrOmitted bool, limit int) string {
+	var notices []string
+	if stdoutOmitted {
+		notices = append(notices, "captured stdout omitted because it exceeded the safe limit")
+	}
+	if stderrOmitted {
+		notices = append(notices, "captured stderr omitted because it exceeded the safe limit")
+	}
+	if len(notices) == 0 {
+		return tailString(stderrTail, limit)
+	}
+	notice := strings.Join(notices, "; ")
+	if len(notice) >= limit {
+		return tailString(notice, limit)
+	}
+	available := limit - len(notice) - 1
+	if !stderrOmitted {
+		stderrTail = tailString(stderrTail, available)
+	} else {
+		stderrTail = ""
+	}
+	if stderrTail == "" {
+		return notice
+	}
+	return stderrTail + "\n" + notice
+}
+
+const safeOutputCaptureLimitBytes = 1 << 20
+
+type boundedCapture struct {
+	data     []byte
+	limit    int
+	stream   string
+	exceeded bool
+}
+
+func (b *boundedCapture) omittedNotice() string {
+	return "captured " + b.stream + " omitted because it exceeded the safe limit"
+}
+
+func (b *boundedCapture) Write(data []byte) (int, error) {
+	if b.exceeded {
+		return len(data), nil
+	}
+	if len(data) > b.limit-len(b.data) {
+		clear(b.data)
+		b.data = nil
+		b.exceeded = true
+		return len(data), nil
+	}
+	b.data = append(b.data, data...)
+	return len(data), nil
+}
+
+func (b *boundedCapture) String(redactions []string) string {
+	if b.exceeded {
+		return b.omittedNotice()
+	}
+	defer func() {
+		clear(b.data)
+		b.data = nil
+	}()
+	value := string(b.data)
+	for _, secret := range redactions {
+		if secret != "" {
+			value = strings.ReplaceAll(value, secret, "[REDACTED]")
+		}
+	}
+	value = diag.RedactText(value)
+	value = strings.ToValidUTF8(value, "�")
+	if len(value) > b.limit {
+		clear(b.data)
+		b.data = nil
+		b.exceeded = true
+		return b.omittedNotice()
+	}
+	return value
+}
+
+func writeSanitized(writer io.Writer, value string) {
+	if writer != nil && value != "" {
+		_, _ = io.WriteString(writer, value)
+	}
 }
 
 func tailString(value string, limit int) string {
+	value = strings.ToValidUTF8(value, "�")
 	if len(value) > limit {
-		value = value[len(value)-limit:]
+		data := []byte(value[len(value)-limit:])
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+		value = string(data)
 	}
-	return strings.ToValidUTF8(value, "�")
+	return value
 }
 
 const stderrTailLimit = 4096
@@ -328,7 +461,14 @@ func (b *tailBuffer) Write(data []byte) (int, error) {
 	return len(data), nil
 }
 func (b *tailBuffer) String() string {
-	return strings.ToValidUTF8(string(b.data), "�")
+	data := []byte(strings.ToValidUTF8(string(b.data), "�"))
+	if len(data) > stderrTailLimit {
+		data = data[len(data)-stderrTailLimit:]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+	}
+	return string(data)
 }
 func summarizeArgs(args []string) string { return diag.RedactText(strings.Join(args, " ")) }
 func nextCommand(invocation Invocation) string {

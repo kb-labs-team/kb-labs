@@ -13,6 +13,7 @@ import { HttpServiceTransport } from "@kb-labs/adapters-service-transport-http";
 import type { IServiceTransport } from "@kb-labs/core-platform";
 import {
   collectProjectServiceDeclarations,
+  type RegisteredServiceCommandOperation,
   type ServiceManifest,
 } from "@kb-labs/plugin-contracts";
 import { requireProjectContext, type PlatformAssemblyHook } from "@kb-labs/core-runtime";
@@ -31,13 +32,16 @@ import {
   type ServiceContext,
 } from "@kb-labs/shared-daemon";
 import { setup as setupWorkflow } from "@kb-labs/workflow-daemon";
-import { setupProjectMcp } from "@kb-labs/mcp-app/project-module";
+import { workflowServiceOperations } from "@kb-labs/workflow-runtime";
+import { projectMcpUiProvider, setupProjectMcp } from "@kb-labs/mcp-app/project-module";
 import { manifest as restManifest } from "@kb-labs/rest-api-app/manifest";
 import { manifest as workflowManifest } from "@kb-labs/workflow-daemon/manifest";
 import { manifest as mcpManifest } from "@kb-labs/mcp-app/manifest";
 import type { RuntimeArgs } from "./args.js";
 import { createRuntimeGuard } from "./guard.js";
 import { RuntimeServiceTransport } from "./transport.js";
+import { collectProjectServiceOperations } from "./service-operations.js";
+export { collectProjectServiceOperations } from "./service-operations.js";
 
 export const PROJECT_RUNTIME_APP_ID = "kb-project-runtime";
 
@@ -49,13 +53,14 @@ type Teardown = () => Promise<void>;
 /** One project-scoped service the runtime runs. */
 export interface ProjectRuntimeModule {
   manifest: ServiceManifest;
-  setup: (ctx: ServiceContext, serviceManifests: readonly ServiceManifest[]) => Promise<Teardown>;
+  operations?: readonly RegisteredServiceCommandOperation[];
+  setup: (ctx: ServiceContext, serviceManifests: readonly ServiceManifest[], options?: { operations: readonly RegisteredServiceCommandOperation[] }) => Promise<Teardown>;
 }
 
 /** The project-scoped services composed into every project runtime. */
 export const DEFAULT_PROJECT_MODULES: readonly ProjectRuntimeModule[] = [
   { manifest: restManifest, setup: setupRest },
-  { manifest: workflowManifest, setup: setupWorkflow },
+  { manifest: workflowManifest, setup: setupWorkflow, operations: workflowServiceOperations },
   { manifest: mcpManifest, setup: setupProjectMcp },
 ];
 
@@ -134,6 +139,7 @@ export async function createProjectRuntimeConfig(
   }
 
   const modules = options.modules ?? DEFAULT_PROJECT_MODULES;
+  const serviceOperations = collectProjectServiceOperations(modules);
   const serviceDeclarations = collectProjectServiceDeclarations(
     modules.map((module) => module.manifest),
   );
@@ -192,6 +198,7 @@ export async function createProjectRuntimeConfig(
     defineHostModule({
       id: projectServiceId(spec),
       serviceId: projectServiceId(spec),
+      ...(projectServiceId(spec) === 'rest' ? { projectRuntimeToken: options.token } : {}),
       defaultPort: 0,
       portEnvVar: "KB_PROJECT_RUNTIME_UNUSED_PORT",
       // Project services never bind beyond loopback and take no env override.
@@ -206,6 +213,9 @@ export async function createProjectRuntimeConfig(
           const teardown = await spec.setup(
             { ...ctx, logger: ctx.logger.forComponent(spec.manifest.id) },
             modules.map((module) => module.manifest),
+            projectServiceId(spec) === 'mcp'
+              ? { operations: serviceOperations }
+              : undefined,
           );
           if (index === 0) {
             return async () => {
@@ -257,7 +267,7 @@ export async function createProjectRuntimeConfig(
     startDir: options.projectRoot,
     moduleUrl: options.moduleUrl,
     previousExitCause: options.previousExitCause,
-    platform: { assemblyHook },
+    platform: { assemblyHook, uiProvider: projectMcpUiProvider },
     modules: [...serviceModules, guard],
   };
 }

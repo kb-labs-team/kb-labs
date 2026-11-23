@@ -17,6 +17,14 @@ interface RegistryPackage {
   includeIntegrity: boolean;
 }
 
+function getCorepackHome(): string {
+  if (process.env.COREPACK_HOME) {
+    return process.env.COREPACK_HOME;
+  }
+  const cacheRoot = process.env.XDG_CACHE_HOME ?? path.join(os.homedir(), '.cache');
+  return path.join(cacheRoot, 'node', 'corepack');
+}
+
 async function createLocalRegistry(root: string): Promise<{
   url: string;
   publish: (name: string, options?: { dependencies?: Record<string, string>; includeIntegrity?: boolean; integrity?: string }) => Promise<void>;
@@ -101,6 +109,12 @@ describe('NpmPackageSource', () => {
     vi.unstubAllEnvs();
   });
 
+  it('exposes the configured registry for extension-store dependencies', () => {
+    const source = new NpmPackageSource({ registryUrl: 'https://user:token@npm.fixture.example/path/?token=secret#fragment' });
+
+    expect(source.dependencyRegistryUrl).toBe('https://npm.fixture.example/path');
+  });
+
   async function createInstallRoot(): Promise<{ root: string; home: string }> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-pnpm-install-'));
     const home = path.join(root, 'home');
@@ -122,7 +136,8 @@ describe('NpmPackageSource', () => {
 
   async function isolatePnpmEnvironment(home: string, registryUrl: string, store: string): Promise<void> {
     const binDirectory = path.join(path.dirname(home), 'bin');
-    const pnpmManager = path.join(os.homedir(), '.cache', 'node', 'corepack', 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
+    const corepackHome = getCorepackHome();
+    const pnpmManager = path.join(corepackHome, 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
     await fs.mkdir(binDirectory, { recursive: true });
     await fs.access(pnpmManager);
     const pnpmShim = path.join(binDirectory, 'pnpm');
@@ -403,7 +418,8 @@ describe('NpmPackageSource', () => {
       const packageId = '@kb-labs/postinstall-mismatch';
       await registry.publish(unrelatedId);
       await registry.publish(packageId);
-      const pnpmManager = path.join(os.homedir(), '.cache', 'node', 'corepack', 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
+      const corepackHome = getCorepackHome();
+      const pnpmManager = path.join(corepackHome, 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
       await isolatePnpmEnvironment(home, registry.url, path.join(root, 'pnpm-store'));
       const source = new NpmPackageSource({ registryUrl: registry.url });
       const unrelated = await source.resolve(unrelatedId);

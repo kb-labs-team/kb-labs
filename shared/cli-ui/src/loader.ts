@@ -5,8 +5,13 @@
  */
 
 import { safeColors, safeSymbols } from './colors';
+import { AsyncLocalStorage } from 'node:async_hooks';
+type LoaderOutputScope = { sink: (text: string) => void; jsonMode: boolean };
+const loaderOutputScope = new AsyncLocalStorage<LoaderOutputScope>();
 function writeOutput(text: string, jsonMode = false): void {
-  if (jsonMode) {return;}
+  const scope = loaderOutputScope.getStore();
+  if (jsonMode || scope?.jsonMode) {return;}
+  if (scope) { scope.sink(text); return; }
   process.stdout.write(text);
 }
 
@@ -17,7 +22,12 @@ export function setJsonMode(enabled: boolean): void {
 }
 
 export function isJsonMode(): boolean {
-  return _jsonMode;
+  return loaderOutputScope.getStore()?.jsonMode ?? _jsonMode;
+}
+
+/** Capture useLoader output for one async execution without intercepting other requests. */
+export function withLoaderOutputSink<T>(sink: (text: string) => void, run: () => T, jsonMode = false): T {
+  return loaderOutputScope.run({ sink, jsonMode }, run);
 }
 
 export interface LoaderOptions {
@@ -188,5 +198,5 @@ export function showError(text: string, jsonMode = false): void {
  * ```
  */
 export function useLoader(text: string, options?: Partial<LoaderOptions>): Loader {
-  return new Loader({ text, jsonMode: _jsonMode, ...options });
+  return new Loader({ text, jsonMode: isJsonMode(), ...options });
 }

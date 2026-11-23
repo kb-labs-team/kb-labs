@@ -24,14 +24,26 @@ async function signInIfSecured(page: import('@playwright/test').Page) {
   await expect(page).not.toHaveURL(/\/login$/)
 }
 
-test('dashboard frame and first-tier navigation @S-120.1 @S-020.6', async ({ page }) => {
+test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
 
+  const healthResponsePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/observability/health',
+  )
   await page.goto(`${GATEWAY}/`)
+  const healthResponse = await healthResponsePromise
+  expect(healthResponse.status()).toBe(200)
+  expect(await healthResponse.json()).toMatchObject({
+    ok: true,
+    data: { serviceId: 'gateway', status: 'healthy', checks: expect.any(Array) },
+  })
   await expect(page.getByText('Intelligence Dashboard', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
   await expect(page.getByText('Gateway health', { exact: true })).toBeVisible()
+  await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
 
   for (const [label, path, title] of [
@@ -155,11 +167,12 @@ test('unavailable analytics service names its source and recovery command @S-125
 test('unavailable gateway keeps Dashboard visible with recovery commands @S-120.7 @S-125.4', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
+  let ready = false
   await page.route('**/api/observability/health', async (route) => {
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'gateway offline' }) })
   })
   await page.route('**/api/ready', async (route) => {
-    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ready: false, reason: 'gateway unavailable' }) })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: ready ? { ready: true } : { ready: false, reason: 'gateway unavailable' } }) })
   })
 
   await page.goto(`${GATEWAY}/`)
@@ -170,6 +183,12 @@ test('unavailable gateway keeps Dashboard visible with recovery commands @S-120.
   await expect(page.getByText('kb-create status --platform-root <platform-root>', { exact: false }).first()).toBeVisible()
   await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false }).first()).toBeVisible()
   await expect(page.getByRole('progressbar')).toHaveCount(0)
+
+  ready = true
+  await page.reload()
+  await expect(page.getByText('Gateway health details unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('Could not load health details from /api/observability/health.', { exact: false })).toBeVisible()
+  await expect(page.getByText('Not ready at /api/ready', { exact: false })).toHaveCount(0)
 })
 
 test('S-122.2 and S-122.3: failed workflow detail carries its project and run to Logs', async ({ page }) => {

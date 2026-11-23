@@ -61,6 +61,18 @@ describe('workflow project gateway address', () => {
     expect(fetch.mock.calls[0]?.[1]?.headers).toBeInstanceOf(Headers);
   });
 
+  it('unwraps the gateway success envelope from the health endpoint', async () => {
+    const healthData = { status: 'ok', service: 'workflow', ts: 123 };
+    const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      ok: true,
+      data: healthData,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetch);
+    const client = new WorkflowDaemonClient({ url: 'http://127.0.0.1:4312/workflow' });
+
+    await expect(client.health()).resolves.toEqual(healthData);
+  });
+
   it('lists cron schedules through the daemon plural route', async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       ok: true,

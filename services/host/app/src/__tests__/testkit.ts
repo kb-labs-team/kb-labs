@@ -107,6 +107,8 @@ export interface FakeRuntimeReply {
   stateDaemonUrl?: string | null;
   gatewayUrl?: string | null;
   firstLeaseStatus?: number | null;
+  tokenInEnvironment?: boolean;
+  tokenInProcEnviron?: boolean;
   received: {
     tokenHeader: string | null;
     projectHeader: string | null;

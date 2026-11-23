@@ -7,9 +7,51 @@ import shlex
 import shutil
 import sys
 from pathlib import Path, PurePosixPath
-from typing import Callable, NamedTuple
+from typing import Callable, Iterable, NamedTuple
 
 from journey_values import journey_value
+
+
+PRESERVED_FIXTURE_ROOTS: set[Path] = set()
+
+
+def register_preserved_fixture_root(path: Path) -> None:
+    """Retain a failed disposable install root until teardown evidence is inspected."""
+    PRESERVED_FIXTURE_ROOTS.add(Path(path).resolve())
+
+
+def preserved_fixture_roots() -> frozenset[Path]:
+    return frozenset(PRESERVED_FIXTURE_ROOTS)
+
+
+def remove_tree_preserving(root: Path, preserve_paths: Iterable[Path]) -> None:
+    """Delete a temporary tree while retaining selected descendants and parents."""
+    base = Path(root).resolve()
+    preserved = {Path(path).resolve() for path in preserve_paths}
+    for path in preserved:
+        try:
+            path.relative_to(base)
+        except ValueError as error:
+            raise ValueError(f"preserved fixture path {path} is outside temporary root {base}") from error
+    if base in preserved:
+        return
+
+    def remove_contents(directory: Path) -> None:
+        for child in directory.iterdir():
+            target = child.resolve()
+            if target in preserved:
+                continue
+            if any(path.is_relative_to(target) for path in preserved):
+                if child.is_symlink() or not child.is_dir():
+                    raise ValueError(f"preserved fixture path crosses non-directory {child}")
+                remove_contents(child)
+            elif child.is_symlink() or child.is_file():
+                child.unlink()
+            else:
+                shutil.rmtree(child)
+
+    if base.exists():
+        remove_contents(base)
 
 
 class RunnerImageResource(NamedTuple):
@@ -481,8 +523,12 @@ def _platform_layout() -> dict:
     return value
 
 
-def shared_runtime_file_fingerprints(install_root: Path) -> tuple[str | None, ...]:
-    """Return opaque fingerprints for every file projection in the layout contract."""
+def shared_runtime_file_fingerprints(
+    install_root: Path,
+    *,
+    exclude_state_paths: frozenset[str] = frozenset(),
+) -> tuple[str | None, ...]:
+    """Return opaque fingerprints for selected file projections in the layout contract."""
     projections = _platform_layout().get("sharedRuntimePaths")
     if not isinstance(projections, list):
         raise ValueError("platform layout contract omits shared runtime projections")
@@ -495,6 +541,8 @@ def shared_runtime_file_fingerprints(install_root: Path) -> tuple[str | None, ..
         state_path = projection.get("statePath")
         if not isinstance(state_path, str) or not state_path:
             raise ValueError("platform layout file projection omits its state path")
+        if state_path in exclude_state_paths:
+            continue
         try:
             contents = (Path(install_root) / state_path).read_bytes()
         except FileNotFoundError:

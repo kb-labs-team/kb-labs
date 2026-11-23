@@ -13,6 +13,11 @@
 
 set -eu
 
+# The CI workflow calls this script from the repository root; Helm resolves
+# `.` relative to the caller's working directory, so run the chart checks from
+# the chart directory regardless of where the script was invoked.
+cd "$(dirname "$0")"
+
 PASS=0
 FAIL=0
 STEPS=""

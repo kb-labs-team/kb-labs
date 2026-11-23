@@ -33,3 +33,4 @@ A project user creates a schedule for an existing workflow, observes its schedul
 | S-044.6 | Replace the schedule with an invalid expression, then run `kb workflow crons list --json` | Discovery reports `.kb/crons/journey-cron.yml` and a reason identifying the invalid cron expression. |
 | S-044.7 | Restore a valid expression, change the target to an unknown workflow, then run `kb workflow crons list --json` | Discovery reports `.kb/crons/journey-cron.yml` and a reason identifying the unknown workflow. |
 | S-044.8 | Run `kb workflow crons enable <plugin-cron-id>` for a listed plugin cron | The command is refused with a typed read-only/plugin-cron error; the plugin cron remains unchanged. |
+| S-044.9 | Set the user cron schedule to `0 9 * * 1-5`, then run `kb workflow crons list --json` | The weekday range expression is accepted and listed without a cron validation error. |

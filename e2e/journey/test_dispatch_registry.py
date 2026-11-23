@@ -28,7 +28,7 @@ from select_from_cases import (coverage_results, read_coverage_result, selection
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
-from journey_selection import SELECTION_KEYS
+from journey_selection import JourneySelection, SELECTION_KEYS
 from service_steps import FlowGraph, Journey
 
 
@@ -911,8 +911,20 @@ class DispatchRegistryTests(unittest.TestCase):
                   run_missing_project_request_steps)
         declarations = fixture_group_declarations(groups, "agent:commit", root)
         self.assertIn("PC-001.4", declarations[run_installer_case_steps.__name__]["cases"])
+        self.assertIn("S-181.7", declarations[run_installer_case_steps.__name__]["cases"])
         self.assertEqual(declarations[run_apply_scenario_step.__name__]["cases"], ("S-039.1",))
         self.assertIn("run_installer_case_steps", declarations)
+
+        selection = JourneySelection(
+            requested=("S-181.7",), claims=frozenset({"S-181.7"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="agent:commit", requested_runners="",
+        )
+        graph_groups = {f"isolated-fixture:{name}": spec for name, spec in declarations.items()}
+        graph = FlowGraph(Journey("local", "s181-installer-fixture-selection", selection=selection),
+                          {name: spec.get("depends_on", ()) for name, spec in graph_groups.items()},
+                          groups=graph_groups)
+        self.assertTrue(graph.group_selected(f"isolated-fixture:{run_installer_case_steps.__name__}"))
 
     def test_fixture_claim_prerequisites_use_the_shared_resolver_steps(self):
         from tempfile import TemporaryDirectory
@@ -1264,6 +1276,52 @@ class DispatchRegistryTests(unittest.TestCase):
             "step:verify restored receipt, config, host, and project command",
         ])
 
+    # case: S-010.8
+    def test_s0108_selects_marketplace_lifecycle_runner_in_both_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        line, declaration = next(
+            (line, item) for line, item in _case_declarations(source, root).items()
+            if item.get("name") == "install npm plugin with dependency from configured npm source")
+        self.assertEqual(declaration["runners"], ["service-local:explore", "service-secured:explore"])
+        claim = {"source": source, "kind": "journey", "line": line}
+        coverage = [{
+            "mode": mode,
+            "cases": [{
+                "id": "S-010",
+                "status": "active",
+                "release": True,
+                "steps": [{"stepId": "S-010.8", "claims": [claim]}],
+            }],
+        } for mode in ("local", "secured")]
+
+        for mode, selector in (("local", "service-local:explore"),
+                               ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                resolved = selection_from_coverage(coverage, "S-010.8", mode=mode)
+                self.assertEqual(resolved["runners"], [selector])
+                self.assertEqual(resolved["selectedOwningSteps"], {
+                    "install npm plugin with dependency from configured npm source": ["S-010.8"]
+                })
+
+    # case: S-262.19
+    def test_marketplace_lifecycle_source_routes_to_service_runners(self):
+        self.assertEqual(runners_for_source("e2e/journey/marketplace_steps.py", "local"),
+                         {"service-local:explore"})
+        self.assertEqual(runners_for_source("e2e/journey/marketplace_steps.py", "secured"),
+                         {"service-secured:explore"})
+
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        line, _declaration = next(
+            (line, item) for line, item in _case_declarations(source, root).items()
+            if item.get("name") == "install exact marketplace plugin into both scopes")
+        coverage = [{"mode": "local", "cases": [{"id": "S-010", "status": "active", "steps": [{
+            "stepId": "S-010.1", "claims": [{"source": source, "kind": "journey", "line": line}],
+        }]}]}]
+        resolved = selection_from_coverage(coverage, "S-010.1", mode="local")
+        self.assertEqual(resolved["runners"], ["service-local:explore"])
+
     def test_s181_3_selects_the_supplied_password_install_file_scan(self):
         resolved = selection_from_coverage(self._coverage(), "S-181.3")
         self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
@@ -1287,6 +1345,21 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(refusal["cases"], ["S-181.6"])
         self.assertEqual(refusal["runners"], ["service-local:explore", "service-secured:explore"])
         self.assertIn("step:apply a secret through an environment reference", refusal["requires"])
+
+    def test_real_case_selection_resolves_s181_installer_and_mcp_capability(self):
+        coverage = self._coverage()
+        for mode in ("local", "secured"):
+            with self.subTest(case="S-181.7", mode=mode):
+                resolved = selection_from_coverage(coverage, "S-181.7", mode=mode)
+                self.assertEqual(resolved["steps"], ["S-181.7"])
+                self.assertIn("e2e/journey/installer_case_steps.py", resolved["stepSources"])
+                self.assertIn("install and reapply generated secrets from the offline artifact cache",
+                              resolved["selectedOwningSteps"])
+            with self.subTest(case="S-140.5", mode=mode):
+                resolved = selection_from_coverage(coverage, "S-140.5", mode=mode)
+                self.assertIn("mcp", resolved["capabilities"])
+                self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
+                self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
 
     def test_every_active_journey_claim_resolves_its_runner_and_prerequisites(self):
         root = Path(__file__).resolve().parents[2]
@@ -1404,6 +1477,32 @@ class DispatchRegistryTests(unittest.TestCase):
             "candidate provenance": ["S-023.2"],
             "plan the newer sealed release": ["S-023.2"],
         })
+        self.assertEqual(resolved["selectedClaimOwners"], {
+            "plan the newer sealed release": ["S-023.2"],
+        })
+
+    # case: S-262.19
+    def test_resolver_assigns_each_prerequisite_only_to_dependent_claims(self):
+        resolved = resolve_selection(
+            ["S-010.1", "S-047.1"],
+            {"S-010.1": {"e2e/journey/marketplace_steps.py"},
+             "S-047.1": {"e2e/journey/marketplace_steps.py"}},
+            {
+                "S-010.1": [{"kind": "step", "name": "install Commit", "requires": []}],
+                "S-047.1": [{"kind": "step", "name": "uninstall Commit",
+                             "requires": ["step:GET Commit status"]}],
+            },
+            {"step:GET Commit status": {"sources": {"e2e/journey/marketplace_steps.py"},
+                                         "requires": ["step:install Commit"]},
+             "step:install Commit": {"sources": {"e2e/journey/marketplace_steps.py"},
+                                     "requires": []}},
+            {"S-010.1": {"service-local:explore": {"S-010.1"}},
+             "S-047.1": {"service-local:explore": {"S-047.1"}}},
+            "",
+        )
+
+        self.assertEqual(resolved["selectedOwningSteps"]["GET Commit status"], ["S-047.1"])
+        self.assertEqual(resolved["selectedOwningSteps"]["install Commit"], ["S-010.1", "S-047.1"])
 
     def test_flow_graph_uses_resolved_step_names_to_select_update_journey(self):
         with patch.dict(os.environ, {

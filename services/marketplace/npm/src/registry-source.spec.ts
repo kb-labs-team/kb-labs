@@ -20,15 +20,93 @@ describe('RegistryPackageSource', () => {
     expect(resolved).toMatchObject({ status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', primaryKind: 'plugin' } });
   });
 
+  // case: S-268.1
+  it('resolves Registry path-reference tarball URLs before handing packages to the extension store', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      status: 'found',
+      package: {
+        id: '@kb-labs/commit', version: '2.120.2', integrity: 'sha512-fixture', primaryKind: 'plugin',
+        downloadUrl: '/api/v1/marketplace-registry/api/v1/packages/journey/%40kb-labs%2Fcommit/2.120.2/tarball',
+      },
+    }), { status: 200 })));
+
+    const resolved = await new RegistryPackageSource({
+      registryUrl: 'http://127.0.0.1:4317/api/v1/marketplace-registry', signingPublicKey: 'test-key',
+    }).resolveIdentity('@kb-labs/commit');
+
+    expect(resolved).toMatchObject({
+      status: 'found',
+      package: {
+        downloadUrl: 'http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1/packages/journey/%40kb-labs%2Fcommit/2.120.2/tarball',
+      },
+    });
+  });
+
+  it('rejects a cross-origin Registry tarball URL during resolution', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      status: 'found',
+      package: {
+        id: '@kb-labs/commit', version: '2.120.2', integrity: 'sha512-fixture', primaryKind: 'plugin',
+        downloadUrl: 'https://attacker.test/commit.tgz',
+      },
+    }), { status: 200 })));
+
+    await expect(new RegistryPackageSource({
+      registryUrl: 'https://registry.test/api/v1/marketplace-registry', signingPublicKey: 'test-key',
+    }).resolveIdentity('@kb-labs/commit')).rejects.toMatchObject({
+      code: 'RESOLUTION_FAILED',
+      message: 'Registry tarball URL must use the configured source origin',
+    });
+  });
+
+  // case: S-268.21
+  it('sends an explicit Marketplace version pin to Registry resolution', async () => {
+    let requestedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({
+        status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', integrity: 'sha256-fixture', primaryKind: 'plugin' },
+      }), { status: 200 });
+    }));
+
+    await new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' })
+      .resolveIdentity('@kb-labs/test@1.0.0');
+
+    expect(requestedUrl).toBe('https://registry.test/api/v1/resolve?identity=%40kb-labs%2Ftest&version=1.0.0');
+  });
+
   it('classifies Registry authentication and transport failures without returning not-found', async () => {
     const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
     vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 401 })));
     await expect(source.resolveIdentity('@kb-labs/private'))
       .rejects.toMatchObject({ code: 'AUTH_FAILED' });
 
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 503 })));
+    await expect(source.resolveIdentity('@kb-labs/private'))
+      .rejects.toMatchObject({ code: 'TRANSPORT_FAILED' });
+
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('network unavailable'); }));
     await expect(source.resolveIdentity('@kb-labs/private'))
       .rejects.toMatchObject({ code: 'TRANSPORT_FAILED' });
+  });
+
+  // case: S-268.1
+  it('refuses redirects without forwarding Registry credentials', async () => {
+    const request = vi.fn(async (_input: string | URL | Request, init?: RequestInit) =>
+      new Response('', { status: 302, headers: { Location: 'https://attacker.test/collect' } }));
+    vi.stubGlobal('fetch', request);
+    const source = new RegistryPackageSource({
+      registryUrl: 'https://registry.test', signingPublicKey: 'test-key', shareToken: 'share-sentinel',
+    });
+
+    await expect(source.resolveIdentity('@kb-labs/private')).rejects.toMatchObject({
+      code: 'TRANSPORT_FAILED', message: 'Registry redirects are not followed for authenticated requests',
+    });
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(request.mock.calls[0][1]).toMatchObject({
+      redirect: 'manual', headers: { 'X-Share-Token': 'share-sentinel' },
+    });
+    expect(JSON.stringify(request.mock.calls)).not.toContain('attacker.test');
   });
 
   it('checks tarball integrity before extracting any package bytes', async () => {
@@ -45,6 +123,41 @@ describe('RegistryPackageSource', () => {
         primaryKind: 'plugin', downloadUrl: 'https://registry.test/plugin.tgz',
       }, root)).rejects.toMatchObject({ name: 'RegistryPackageError', code: 'INTEGRITY_MISMATCH' });
       await expect(fs.access(packageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-268.1
+  it('resolves Registry path references against its source and rejects cross-origin absolute URLs', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-gateway-tarball-'));
+    let requestedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      requestedUrl = String(input);
+      return new Response('tampered bytes', { status: 200 });
+    }));
+    const source = new RegistryPackageSource({
+      registryUrl: 'http://127.0.0.1:4317/api/v1/marketplace-registry',
+      signingPublicKey: 'test-key',
+    });
+
+    try {
+      await expect(source.install({
+        id: 'author/plugin', version: '1.0.0', integrity: 'sha256-not-the-tarball', source: 'marketplace',
+        primaryKind: 'plugin', downloadUrl: '/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+      }, root)).rejects.toMatchObject({ code: 'INTEGRITY_MISMATCH' });
+      expect(requestedUrl).toBe(
+        'http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+      );
+
+      await expect(source.install({
+        id: 'author/plugin', version: '1.0.0', integrity: 'sha256-not-the-tarball', source: 'marketplace',
+        primaryKind: 'plugin', downloadUrl: 'http://marketplace-tamper:8081/api/v1/packages/author/plugin/1.0.0/tarball',
+      }, root)).rejects.toMatchObject({ code: 'RESOLUTION_FAILED' });
+      expect(requestedUrl).toBe(
+        'http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+      );
+      expect(fetch).toHaveBeenCalledTimes(1);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

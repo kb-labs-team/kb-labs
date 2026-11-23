@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 from plugin_author_steps import (
+    _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
     _validate_plugin_route_help,
     preflight_installed_plugin_command,
     run_commit_case_steps,
@@ -35,7 +36,7 @@ from pathlib import Path
 
 args = sys.argv[1:]
 root = Path.cwd()
-declared_plugin_commands = {("commit", "commit"), ("review", "run")}
+declared_plugin_commands = {("commit", "commit"), ("commit", "plan", "delete"), ("review", "run")}
 help_args = args[:-2] if args[-2:] == ["--help", "--json"] else args[:-1]
 is_help = args[-2:] == ["--help", "--json"] or args[-1:] == ["--help"]
 if is_help and tuple(help_args) in declared_plugin_commands:
@@ -120,6 +121,10 @@ elif args[:3] == ["adapter", "unbind", "llm"]:
 elif args[:3] == ["adapter", "bind", "llm"]:
     (root / ".kb/llm-unbound").unlink(missing_ok=True)
     print(json.dumps({"ok": True, "data": {}}))
+elif args[:3] == ["commit", "plan", "delete"] and "--json" in args:
+    print(json.dumps({"ok": True, "data": {"success": True}, "meta": {"execution": {
+        "owner": "project-runtime", "projectId": "prj_fixture", "mode": "worker-pool"
+    }}}))
 elif args[:3] == ["commit", "commit", "--dry-run"]:
     staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
                             capture_output=True, text=True, check=True).stdout
@@ -127,6 +132,12 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print(json.dumps({"ok": False, "error": {"code": "KB_ADAPTER_UNAVAILABLE",
             "message": "Adapter llm is not configured.", "hint": "kb adapter bind llm @kb-labs/adapters-openai"}}))
         raise SystemExit(1)
+    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False},
+                      "meta": {"execution": {"owner": "project-runtime", "projectId": "prj_fixture",
+                                               "mode": "worker-pool"}}}))
+elif args[:2] == ["commit", "commit"]:
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"], cwd=root,
+                            capture_output=True, text=True, check=True).stdout
     if "s030-cancel.ts" in staged:
         tty.setraw(sys.stdin.fileno())
         print("⠋ Analyzing changes...", flush=True)
@@ -139,9 +150,10 @@ elif args[:3] == ["commit", "commit", "--dry-run"]:
         print("⠙ Analyzing with native tools...", flush=True)
         print("Re-analyzing with diff context (Phase 2)...", flush=True)
         print("Plan generated", flush=True)
+        subprocess.run(["git", "commit", "-m", "feat(journey): apply streamed commit plan"],
+                       cwd=root, capture_output=True, text=True, check=True)
+        print("Commits created successfully", flush=True)
         raise SystemExit(0)
-    print(json.dumps({"ok": True, "data": {"plan": {"metadata": {"llmUsed": True}}, "applied": False}}))
-elif args[:2] == ["commit", "commit"]:
     changes = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
                              cwd=root, capture_output=True, text=True, check=True).stdout
     if not changes:
@@ -237,6 +249,44 @@ class PluginAuthorJourneyTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _create_pnpm_extension_store_tree(self, active: Path) -> Path:
+        pnpm = active / "node_modules/.pnpm"
+        runtime = pnpm / "@kb-labs+core-runtime@candidate/node_modules/@kb-labs/core-runtime"
+        discovery = pnpm / "@kb-labs+core-discovery@candidate/node_modules/@kb-labs/core-discovery"
+        extension_store = pnpm / (
+            "@kb-labs+core-extension-store@candidate/node_modules/@kb-labs/core-extension-store")
+        runtime_entry = runtime / "dist/index.cjs"
+        discovery_entry = discovery / "dist/index.cjs"
+        extension_store_entry = extension_store / "dist/index.js"
+        runtime_entry.parent.mkdir(parents=True)
+        discovery_entry.parent.mkdir(parents=True)
+        extension_store_entry.parent.mkdir(parents=True)
+        runtime_entry.write_text("module.exports = {};\n", encoding="utf-8")
+        discovery_entry.write_text("module.exports = {};\n", encoding="utf-8")
+        extension_store_entry.write_text(
+            "export const createExtensionStore = () => ({ lookup: async () => null });\n",
+            encoding="utf-8",
+        )
+        for package, name, main in (
+            (runtime, "@kb-labs/core-runtime", "./dist/index.cjs"),
+            (discovery, "@kb-labs/core-discovery", "./dist/index.cjs"),
+            (extension_store, "@kb-labs/core-extension-store", "./dist/index.js"),
+        ):
+            (package / "package.json").write_text(
+                json.dumps({"name": name, "version": "candidate-version", "main": main}),
+                encoding="utf-8",
+            )
+
+        def link(parent: Path, name: str, target: Path) -> None:
+            link_path = parent / name
+            link_path.parent.mkdir(parents=True, exist_ok=True)
+            link_path.symlink_to(Path(os.path.relpath(target, link_path.parent)), target_is_directory=True)
+
+        link(active / "node_modules/@kb-labs", "core-runtime", runtime)
+        link(runtime / "node_modules/@kb-labs", "core-discovery", discovery)
+        link(discovery / "node_modules/@kb-labs", "core-extension-store", extension_store)
+        return extension_store_entry
+
     def test_fake_cli_rejects_unregistered_nested_plugin_routes(self):
         result = subprocess.run([str(self.kb), "commit", "bogus", "--help"],
                                 cwd=self.project, env=self.env, capture_output=True, text=True)
@@ -272,16 +322,95 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                          "journey command 'commit bogus' is absent from the live CLI registry: "
                          '{"ok": false, "error": {"code": "KB_RUNTIME_UNKNOWN_COMMAND"}}')
 
+    # case: S-010.8
+    def test_preflight_skips_store_entries_without_static_manifests(self):
+        lock = self.root / "marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {
+            "@kb-labs/commit": {
+                "package": "@kb-labs/commit", "version": "1.0.0", "integrity": "sha512-commit",
+                "enabled": True,
+            },
+            "@kb-labs/with-manifest": {
+                "package": "@kb-labs/with-manifest", "version": "1.0.0", "integrity": "sha512-manifest",
+                "enabled": True,
+            },
+        }}), encoding="utf-8")
+        extension_store = self.root / "extension-store.mjs"
+        extension_store.write_text(
+            "export function createExtensionStore() { return { lookup: async ({ name }) => ({ entry: {"
+            "manifest: name === '@kb-labs/commit' ? undefined : { cli: { commands: [{ path: 'known command' }] } }"
+            "} }) }; }\n",
+            encoding="utf-8",
+        )
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
+             str(lock), str(extension_store)],
+            cwd=self.root,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), ["known command"])
+
+    # case: S-010.8
+    def test_plugin_preflight_resolves_the_active_candidate_extension_store_through_pnpm(self):
+        platform = self.root / "platform"
+        active = platform / "versions" / "candidate"
+        active.mkdir(parents=True)
+        (platform / "current").symlink_to(Path("versions/candidate"))
+        module = self._create_pnpm_extension_store_tree(active)
+        self.assertFalse((active / "node_modules/@kb-labs/core-extension-store").exists())
+        workspace_source = self.root / "workspace/core/extension-store"
+        workspace_source.mkdir(parents=True)
+        self.assertFalse((workspace_source / "dist/index.js").exists())
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {}}))
+        env = {
+            **self.env,
+            "KB_JOURNEY_PLATFORM_ROOT": str(platform),
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root / "workspace"),
+        }
+        commands = []
+
+        def run(_runner, command, **_kwargs):
+            commands.append(command)
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                if "store.lookup" in command[3]:
+                    return subprocess.CompletedProcess(command, 0, "[]", "")
+                return subprocess.run(command, capture_output=True, text=True, **_kwargs)
+            return subprocess.CompletedProcess(command, 0, "help", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=run):
+            preflight_installed_plugin_command(
+                ["commit", "--help"], self.project, env, subprocess.run, self.kb,
+            )
+
+        self.assertEqual(len(commands), 2)
+        self.assertEqual(Path(commands[-1][-1]), module.resolve())
+        self.assertIn(str(active.resolve()), commands[-1][-1])
+
     def test_group_preflight_rejects_a_missing_manifest_declared_child_route(self):
         routes = ["commit", "commit commit", "commit plan show"]
         missing_route = next(route for route in routes if route.startswith("commit ") and route != "commit commit")
         lock = self.project / ".kb/marketplace.lock"
         lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"enabled": True}}}))
-        env = {**self.env, "KB_JOURNEY_WORKSPACE_ROOT": str(self.root)}
+        platform = self.root / "platform"
+        active = platform / "versions" / "candidate"
+        self._create_pnpm_extension_store_tree(active)
+        (platform / "current").symlink_to(Path("versions/candidate"))
+        env = {
+            **self.env,
+            "KB_JOURNEY_PLATFORM_ROOT": str(platform),
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root),
+        }
 
         def command_runner(_runner, command, **kwargs):
             if command[:3] == ["node", "--input-type=module", "-e"]:
-                return subprocess.CompletedProcess(command, 0, json.dumps(routes), "")
+                if "store.lookup" in command[3]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(routes), "")
+                return subprocess.run(command, capture_output=True, text=True, **kwargs)
             invoked_route = command[1:-2]
             if invoked_route == missing_route.split():
                 return subprocess.CompletedProcess(
@@ -332,16 +461,17 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                 "package": "@kb-labs/commit",
             }},
         }))
-        journey = Journey("local", "commit-case-fixture")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore"}):
+            journey = Journey("secured", "commit-case-fixture")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
         result = journey.result()
         expected = {
             *(f"S-014.{step}" for step in range(1, 4)),
             *(f"S-015.{step}" for step in range(1, 5)),
             "S-203.1",
             *(f"S-030.{step}" for step in range(1, 5)),
-            *(f"S-160.{step}" for step in range(1, 5)),
+            *(f"S-160.{step}" for step in range(1, 6)),
         }
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
         self.assertTrue(expected.issubset(claims))
@@ -355,6 +485,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual({step: claims[step] for step in ("S-160.1", "S-160.2", "S-160.3", "S-160.4")}, {
             "S-160.1": "PASS", "S-160.2": "PASS", "S-160.3": "PASS", "S-160.4": "PASS",
         }, result.steps)
+        self.assertEqual(claims["S-160.5"], "PASS", result.steps)
         self.assertEqual({step: claims[step] for step in ("S-030.1", "S-030.2", "S-030.3", "S-030.4")}, {
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })
@@ -371,9 +502,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             }},
         }))
 
-        journey = Journey("local", "commit-case-clean-worktree")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-clean-worktree")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
 
         status = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"],
                                 cwd=self.project, capture_output=True, text=True, check=True)
@@ -392,9 +524,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             }},
         }))
 
-        journey = Journey("local", "commit-case-headless-repository")
-        run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
-                              subprocess.run, self.env)
+        with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
+            journey = Journey("local", "commit-case-headless-repository")
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
 
         result = journey.result()
         head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=self.project,
@@ -402,7 +535,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertTrue(head.stdout.strip())
         self.assertEqual(result.steps[0]["status"], "PASS", result.steps)
 
-    # case: S-003.1
+    # case: S-003.1, S-003.9
     # case: S-003.7, S-003.8, S-041.10
     # case: S-210.1
     def test_scaffold_add_edit_invoke_and_remove_records_all_case_steps(self):
@@ -411,7 +544,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.status, "PASS")
         self.assertEqual(
             [step["cases"] for step in result.steps],
-            [["S-003.1"], ["S-003.2"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
+            [["S-003.1"], ["S-003.2", "S-003.9"], ["S-003.3"], ["S-041.10"], ["S-003.7"],
              ["S-003.8"], ["S-003.4", "S-210.1"], ["S-003.5"], ["S-003.6"]],
         )
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
@@ -422,6 +555,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             {claim["claimId"]: (claim["kind"], claim["status"])
              for claim in result.case_run["claims"]},
             {f"S-003.{step}": ("journey", "PASS") for step in range(1, 9)}
+            | {"S-003.9": ("journey", "PASS")}
             | {"S-041.10": ("journey", "PASS"), "S-210.1": ("journey", "PASS")},
         )
         self.assertEqual(json.loads((self.project / ".kb/marketplace.lock").read_text())["plugins"], {})
@@ -469,6 +603,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         claims = {claim["claimId"]: claim["status"] for claim in result.case_run["claims"]}
         self.assertEqual(claims["S-003.3"], "PASS")
 
+    # case: S-003.9
     def test_build_failure_is_reported_and_generated_files_are_cleaned(self):
         result = self.run_flow(fail_build=True)
 
@@ -478,6 +613,7 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(result.case_run["claims"], [
             {"claimId": "S-003.1", "kind": "journey", "status": "PASS"},
             {"claimId": "S-003.2", "kind": "journey", "status": "FAIL"},
+            {"claimId": "S-003.9", "kind": "journey", "status": "FAIL"},
         ])
         self.assertFalse((self.project / ".kb/plugins/demo").exists())
 

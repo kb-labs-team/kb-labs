@@ -1,10 +1,16 @@
+import base64
 import json
 import ast
+import contextlib
+import io
 import os
 import subprocess
 import sys
 import tempfile
+import tarfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 import urllib.request
 from unittest.mock import patch
@@ -13,8 +19,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               marketplace_platform_config_path,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
+                               _prepare_registry_commit_publish_package,
+                               _publish_npm_fixture_package,
                                _publish_fixture_command,
                                _assert_catalogued_marketplace_failure,
                                prepare_commit_project_fixture,
@@ -22,17 +31,48 @@ from marketplace_steps import (_output, _platform_snapshot, authenticate_secured
                                publish_commit_update_fixture,
                                run_ordered_source_journey_steps,
                                run_plugin_policy_diagnostic_step,
+                               register_transitive_npm_dependency_step,
+                               _transitive_npm_fixture_ids,
+                               _transitive_npm_fixture_dependencies,
                                run_marketplace_steps, validate_commit_status_response,
                                validate_shared_failure, validate_unmounted_commit_response,
                                wait_for_marketplace_ready)
 from service_steps import FlowGraph, Journey
-from marketplace_tamper_proxy import tamper_tarball
+from installed_fixture import installed_path, layout_value
+from journey_selection import JourneySelection
+from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
 import service_runner
 from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
 import jsonl
 from commit_fixture import commit_fixture_source_version
+
+
+def _workspace_pack_result(command, cwd):
+    package_root = Path(cwd)
+    output_dir = Path(command[command.index("--pack-destination") + 1])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    package = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+    for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        values = package.get(section)
+        if isinstance(values, dict):
+            package[section] = {
+                name: ("2.120.1" if isinstance(spec, str) and spec.startswith("workspace:") else spec)
+                for name, spec in values.items()
+            }
+    version = package["version"]
+    tarball = output_dir / f"kb-labs-commit-{version}.tgz"
+    with tarfile.open(tarball, "w:gz") as archive:
+        package_bytes = json.dumps(package).encode("utf-8")
+        info = tarfile.TarInfo("package/package.json")
+        info.size = len(package_bytes)
+        archive.addfile(info, io.BytesIO(package_bytes))
+        for name in ("README.md", "LICENSE", "dist"):
+            source = package_root / name
+            if source.exists():
+                archive.add(source, arcname=f"package/{name}", recursive=True)
+    return subprocess.CompletedProcess(command, 0, f"{tarball}\n", "")
 
 
 def _release_entity(identity: str) -> dict:
@@ -43,6 +83,185 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_npm_fixture_publish_registers_a_local_user_and_uses_scoped_credentials(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / "fixture"
+            package.mkdir()
+            calls = []
+
+            class Response:
+                status = 201
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *_args):
+                    return None
+
+            def opener(request, timeout):
+                calls.append((request, timeout))
+                return Response()
+
+            def runner(command, *, cwd, env, timeout):
+                calls.append((command, cwd, env, timeout))
+                return subprocess.CompletedProcess(command, 0, "{}", "")
+
+            _publish_npm_fixture_package(package, "http://verdaccio:4873", root,
+                                         {"PATH": "/usr/bin"}, runner, http_opener=opener)
+
+            request, request_timeout = calls[0]
+            self.assertEqual(request.method, "PUT")
+            self.assertEqual(request.full_url,
+                             "http://verdaccio:4873/-/user/org.couchdb.user:kb-journey")
+            self.assertEqual(request_timeout, 10)
+            command, cwd, publish_env, timeout = calls[1]
+            self.assertEqual(command, ["npm", "publish", str(package), "--json",
+                                       "--registry=http://verdaccio:4873"])
+            self.assertEqual(Path(cwd), root)
+            self.assertEqual(timeout, 300)
+            self.assertEqual(publish_env["PATH"], "/usr/bin")
+            npmrc = Path(publish_env["npm_config_userconfig"])
+            auth = base64.b64encode(b"kb-journey:kb-journey").decode()
+            self.assertEqual(npmrc.read_text(),
+                             f"//verdaccio:4873/:_auth={auth}\n"
+                             "//verdaccio:4873/:always-auth=true\n"
+                             "registry=http://verdaccio:4873/\n")
+
+    def test_npm_fixture_publish_stops_when_verdaccio_user_registration_fails(self):
+        class Response:
+            status = 500
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+        with tempfile.TemporaryDirectory() as temp:
+            package = Path(temp) / "fixture"
+            package.mkdir()
+            with self.assertRaisesRegex(RuntimeError, "user registration failed \(status 500\)"):
+                _publish_npm_fixture_package(
+                    package, "http://verdaccio:4873", Path(temp), {},
+                    lambda *_args, **_kwargs: self.fail("npm publish must not run"),
+                    http_opener=lambda *_args, **_kwargs: Response())
+    # case: S-268.6
+    def test_marketplace_update_config_resolves_through_active_version(self):
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-config-layout-") as directory:
+            platform = Path(directory) / "platform"
+            active = platform / "versions" / "1.0.0"
+            (active / ".kb").parent.mkdir(parents=True)
+            (platform / "state").mkdir(parents=True)
+            config = platform / "state" / "kb.config.jsonc"
+            config.write_text('{"marketplace":{"sources":[]}}\n', encoding="utf-8")
+            (active / ".kb").symlink_to("../../state", target_is_directory=True)
+            (platform / "current").symlink_to("versions/1.0.0", target_is_directory=True)
+
+            resolved = marketplace_platform_config_path(platform)
+
+            self.assertEqual(resolved.read_text(encoding="utf-8"), config.read_text(encoding="utf-8"))
+            self.assertNotEqual(resolved, platform / ".kb" / "kb.config.jsonc")
+
+    # case: S-010.8
+    def test_transitive_npm_fixture_dependency_is_not_platform_scoped(self):
+        plugin_id, dependency_id = _transitive_npm_fixture_ids("test")
+
+        self.assertEqual(plugin_id, "@kb-labs/journey-transitive-plugin-test")
+        self.assertEqual(dependency_id, "journey-transitive-dependency-test")
+        self.assertFalse(dependency_id.startswith("@kb-labs/"))
+
+    # case: S-010.8
+    def test_transitive_npm_fixture_declares_sdk_as_platform_peer(self):
+        dependencies = _transitive_npm_fixture_dependencies("journey-transitive-dependency-test", "2.120.1")
+
+        self.assertEqual(dependencies["dependencies"], {"journey-transitive-dependency-test": "1.0.0"})
+        self.assertNotIn("@kb-labs/sdk", dependencies["dependencies"])
+        self.assertEqual(dependencies["peerDependencies"], {"@kb-labs/sdk": "2.120.1"})
+
+    # case: S-010.8
+    def test_unselected_commit_update_fixture_does_not_require_a_missing_prerequisite(self):
+        selector = "service-local:explore"
+        selection = JourneySelection(
+            requested=("S-010.8",),
+            claims=frozenset({"S-010.8"}),
+            owning_steps={},
+            prerequisite_steps=frozenset(),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"marketplace"}),
+            runner_selector=selector,
+            requested_runners=selector,
+        )
+        journey = Journey("local", "s0108-unselected-update-fixture", selection=selection)
+
+        result = journey.step(
+            "publish next-major Commit update fixture",
+            "marketplace-fixtures",
+            lambda: self.fail("must be skipped"),
+            requires=("step:install Commit into the project for the route lifecycle",),
+        )
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(result.message, "not selected")
+
+    # case: S-012.1
+    def test_commit_update_fixture_runs_when_its_case_is_selected(self):
+        selector = "service-local:explore"
+        selection = JourneySelection(
+            requested=("S-012.1",),
+            claims=frozenset({"S-012.1"}),
+            owning_steps={"S-012.1": "publish next-major Commit update fixture"},
+            prerequisite_steps=frozenset({
+                "install Commit into the project for the route lifecycle",
+                "publish next-major Commit update fixture",
+            }),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"marketplace"}),
+            runner_selector=selector,
+            requested_runners=selector,
+        )
+        journey = Journey("local", "s0121-update-fixture", selection=selection)
+        prerequisite = journey.step(
+            "install Commit into the project for the route lifecycle",
+            "marketplace",
+            lambda: None,
+            cases=["S-192.2"],
+        )
+
+        result = journey.step(
+            "publish next-major Commit update fixture",
+            "marketplace-fixtures",
+            lambda: None,
+            requires=("step:install Commit into the project for the route lifecycle",),
+        )
+
+        self.assertEqual(prerequisite.status, "PASS")
+        self.assertEqual(result.status, "PASS")
+
+    # case: S-010.8
+    def test_transitive_dependency_install_step_runs_for_local_and_secured_service_owners(self):
+        for mode, selector in (("local", "service-local:explore"),
+                               ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                selection = JourneySelection(
+                    requested=("S-010.8",),
+                    claims=frozenset({"S-010.8"}),
+                    owning_steps={},
+                    prerequisite_steps=frozenset(),
+                    prerequisite_flows=frozenset(),
+                    capabilities=frozenset({"marketplace"}),
+                    runner_selector=selector,
+                    requested_runners=selector,
+                )
+                journey = Journey(mode, f"s0108-{mode}", selection=selection)
+                invoked = []
+
+                result = register_transitive_npm_dependency_step(
+                    journey, lambda: invoked.append(mode))
+
+                self.assertEqual(result.status, "PASS")
+                self.assertEqual(invoked, [mode])
+                self.assertEqual(result.cases, ["S-010.8"])
+
     def test_not_found_source_expectations_come_from_kb_create_status(self):
         self.assertEqual(configured_marketplace_source_kinds({"marketplaceSources": [
             {"kind": "registry", "url": "https://registry.example"}, {"kind": "npm"},
@@ -162,9 +381,20 @@ class MarketplaceStepTests(unittest.TestCase):
             }}))
             rendered = {"ok": True, "data": {
                 "installed": [{"id": "journey-npm-only-fixture", "source": "npm", "signatureStatus": "unsigned"}],
-                "marketplaceSources": [{"kind": "registry", "url": "http://registry.test"}],
+                "marketplaceSources": [{"kind": "registry", "url": "http://127.0.0.1:4317/api/v1/marketplace-registry"}],
             }}
+            observed_tokens = []
+            integrity_publish_calls = []
+            catalogued_failures = []
+            def publish_integrity_package(_workspace, package_path, publish_env, _runner):
+                integrity_publish_calls.append((package_path, publish_env.get("KB_REGISTRY_URL")))
+                return subprocess.CompletedProcess([], 0, json.dumps({
+                    "ok": True, "data": {"version": "2.120.3"},
+                }), "")
+
             def runner(command, **_kwargs):
+                if command[:1] == ["kb"] or command[0].endswith("kb-create"):
+                    observed_tokens.append((command[1:3], _kwargs.get("env", {}).get("KB_JOURNEY_MARKETPLACE_TOKEN")))
                 if command[0].endswith("kb-create") and command[1] == "update":
                     return subprocess.CompletedProcess(command, 0, json.dumps(rendered), "")
                 if command[0].endswith("kb-create"):
@@ -187,11 +417,23 @@ class MarketplaceStepTests(unittest.TestCase):
                    "KB_JOURNEY_REGISTRY": "http://verdaccio.test",
                    "KB_JOURNEY_MARKETPLACE_REGISTRY_URL": "http://registry.test",
                    "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY": "journey-public-key",
-                   "KB_JOURNEY_MARKETPLACE_TOKEN": "journey-token-secret-value",
+                   "KB_JOURNEY_MARKETPLACE_TOKEN": "",
                    "KB_JOURNEY_KB_CREATE_PATH": str(project / "kb-create")}
             with patch("marketplace_steps._set_marketplace_proxy_faults"), \
-                    patch("marketplace_steps._assert_catalogued_marketplace_failure"), \
-                    patch("marketplace_steps._json", return_value=rendered["data"]), \
+                    patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
+                    patch("marketplace_steps.active_platform_root", side_effect=lambda path: Path(path)), \
+                    patch("marketplace_steps._assert_catalogued_marketplace_failure",
+                          side_effect=lambda _project, _env, _runner, package, code:
+                          catalogued_failures.append((package, code))), \
+                    patch("marketplace_steps._prepare_registry_commit_publish_package",
+                          return_value=(project / "fresh-commit", "2.120.3")), \
+                    patch("marketplace_steps._publish_workspace_fixture",
+                          side_effect=publish_integrity_package), \
+                    patch("marketplace_steps._registry_resolve_exact_commit_version",
+                          return_value={"id": "@kb-labs/commit", "version": "2.120.3",
+                                        "integrity": "sha512-integrity-test"}), \
+                    patch("marketplace_steps._json", side_effect=lambda _result, command:
+                          {"version": "2.120.3"} if command[:2] == ["hub", "publish"] else rendered["data"]), \
                     patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
                 journey = Journey("local", "s268-wiring")
                 journey.step("publish and install Commit through Registry", "marketplace-fixtures", lambda: None,
@@ -201,6 +443,22 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertEqual(claims, {f"S-268.{number}" for number in range(2, 9)})
             self.assertTrue(all(step.status == "PASS" for step in journey.steps),
                             [(step.name, step.status, step.message) for step in journey.steps])
+            self.assertEqual(integrity_publish_calls, [
+                (str(project / "fresh-commit"),
+                 "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"),
+            ])
+            self.assertEqual(catalogued_failures[2:4], [
+                ("@kb-labs/commit", "KB_MARKETPLACE_SIGNATURE_INVALID"),
+                ("@kb-labs/commit", "KB_MARKETPLACE_INTEGRITY_MISMATCH"),
+            ])
+            self.assertTrue(observed_tokens)
+            self.assertTrue(all(token == "" for command, token in observed_tokens
+                                if command[:2] == ["update", "--json"]))
+            self.assertTrue(all(token == "journey-registry-token-reference-test-value"
+                                for command, token in observed_tokens
+                                if command[:1] in (["status"], ["doctor"])))
+            self.assertTrue(all(token == "" for command, token in observed_tokens
+                                if command[:2] == ["marketplace", "install"]))
 
     def test_s268_failure_assertion_reads_catalogue_message_and_hint(self):
         with tempfile.TemporaryDirectory(prefix="kb-s268-error-catalog-") as directory:
@@ -223,59 +481,331 @@ class MarketplaceStepTests(unittest.TestCase):
         self.assertNotEqual(tamper_tarball("/api/v1/packages/acme/plugin/1.0.0/tarball", body), body)
         self.assertEqual(tamper_tarball("/api/v1/packages/acme/plugin", body), body)
 
+    def test_tamper_proxy_forwards_authenticated_registry_publish_post_without_logging_secrets(self):
+        observed = {}
+
+        class Upstream(BaseHTTPRequestHandler):
+            def do_POST(self):
+                observed["path"] = self.path
+                observed["body"] = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                observed["headers"] = {key.lower(): value for key, value in self.headers.items()}
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"published":true}')
+
+            def log_message(self, _format, *_args):
+                return
+
+        upstream = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        proxy = ThreadingHTTPServer(("127.0.0.1", 0), MarketplaceProxyHandler)
+        threads = [threading.Thread(target=server.serve_forever, daemon=True)
+                   for server in (upstream, proxy)]
+        for thread in threads:
+            thread.start()
+        payload = b"multipart fixture body"
+        secret_headers = {
+            "Authorization": "Bearer auth-sentinel",
+            "X-Internal-Secret": "internal-secret-sentinel",
+            "X-Kb-Auth-Type": "user",
+            "Content-Type": "multipart/form-data; boundary=fixture",
+        }
+        try:
+            with patch.dict(os.environ, {"MARKETPLACE_TAMPER_UPSTREAM":
+                                         f"http://127.0.0.1:{upstream.server_port}"}), \
+                    contextlib.redirect_stderr(io.StringIO()) as logs:
+                request = urllib.request.Request(
+                    f"http://127.0.0.1:{proxy.server_port}/api/v1/packages/publish?fixture=1",
+                    data=payload, headers=secret_headers, method="POST")
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    self.assertEqual(response.status, 201)
+                    self.assertEqual(response.read(), b'{"published":true}')
+            self.assertEqual(observed["path"], "/api/v1/packages/publish?fixture=1")
+            self.assertEqual(observed["body"], payload)
+            for name, value in secret_headers.items():
+                self.assertEqual(observed["headers"].get(name.lower()), value)
+            self.assertNotIn("auth-sentinel", logs.getvalue())
+            self.assertNotIn("internal-secret-sentinel", logs.getvalue())
+        finally:
+            for server in (proxy, upstream):
+                server.shutdown()
+                server.server_close()
+            for thread in threads:
+                thread.join(timeout=2)
+
     def test_commit_fixture_publisher_uses_the_real_hub_publish_request(self):
-        self.assertEqual(commit_publish_command("/workspace"), [
-            "hub", "publish", "--path", "/workspace/plugins/commit", "--json",
+        self.assertEqual(commit_publish_command("/tmp/registry-commit"), [
+            "hub", "publish", "--path", "/tmp/registry-commit", "--json",
         ])
         self.assertEqual(_publish_fixture_command("/workspace", "plugins/qa"), [
             "hub", "publish", "--path", "/workspace/plugins/qa", "--json",
         ])
 
-    def test_registry_commit_fixture_publishes_in_workspace_and_installs_in_lane_project(self):
+    def test_registry_commit_publish_fixture_uses_a_free_higher_version_without_mutating_source(self):
+        with tempfile.TemporaryDirectory(prefix="kb-registry-commit-version-") as directory:
+            root = Path(directory)
+            workspace = root / "workspace"
+            source = workspace / "plugins" / "commit"
+            (source / "dist").mkdir(parents=True)
+            (source / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+                "kb": {"manifest": "./dist/manifest.js"},
+                "devDependencies": {"@kb-labs/devkit": "workspace:*"},
+            }))
+            (source / "README.md").write_text("Commit fixture\n")
+            (source / "dist" / "manifest.js").write_text("export const manifest = {};\n")
+            (source / "dist" / "manifest.json").write_text(json.dumps({
+                "id": "@kb-labs/commit", "version": "0.1.0",
+            }))
+            platform = root / "platform"
+            (platform / "node_modules" / "@kb-labs" / "sdk").mkdir(parents=True)
+            lock_path = platform / ".kb" / "marketplace.lock"
+            lock_path.parent.mkdir(parents=True)
+            lock_path.write_text(json.dumps({"plugins": {
+                "@kb-labs/commit": {"package": "@kb-labs/commit", "version": "2.120.1"},
+            }}))
+            entries = root / "kb-home" / "store" / "entries"
+            for version in ("2.120.1", "2.120.2"):
+                (entries / f"@kb-labs+commit@{version}").mkdir(parents=True)
+            env = {"HOME": str(root), "KB_HOME": str(root / "kb-home"),
+                   "KB_JOURNEY_PLATFORM_ROOT": str(platform)}
+            registry_versions = []
+
+            def pack_runner(command, *, cwd, capture_output, text, timeout, env=None):
+                self.assertEqual(command[:2], ["pnpm", "pack"])
+                self.assertEqual(Path(cwd), source)
+                return _workspace_pack_result(command, cwd)
+
+            def resolve_registry(_opener, request, **_kwargs):
+                from urllib.parse import parse_qs, urlparse
+                version = parse_qs(urlparse(request.full_url).query)["version"][0]
+                registry_versions.append(version)
+                if version == "2.120.3":
+                    return 200, json.dumps({"status": "found", "package": {
+                        "id": "@kb-labs/commit", "version": version, "integrity": "sha256-used",
+                    }}).encode(), {}
+                return 200, json.dumps({"status": "not-found-owned"}).encode(), {}
+
+            with patch("marketplace_steps._installed_gateway_url", return_value="http://gateway.test"), \
+                    patch("marketplace_steps.open_http", side_effect=resolve_registry):
+                fixture, version = _prepare_registry_commit_publish_package(
+                    workspace, root / "publish", platform, env, pack_runner)
+
+            original = json.loads((source / "package.json").read_text())
+            fixture_package = json.loads((fixture / "package.json").read_text())
+            self.assertEqual(version, "2.120.4")
+            self.assertEqual(fixture_package["name"], original["name"])
+            self.assertEqual(fixture_package["version"], version)
+            self.assertEqual(fixture_package["kb"], original["kb"])
+            self.assertEqual(fixture_package["devDependencies"], {"@kb-labs/devkit": "2.120.1"})
+            self.assertNotIn("workspace:", json.dumps(fixture_package))
+            self.assertEqual(original["version"], "2.120.1")
+            self.assertEqual((fixture / "dist" / "manifest.js").read_bytes(),
+                             (source / "dist" / "manifest.js").read_bytes())
+            self.assertEqual(json.loads((fixture / "dist" / "manifest.json").read_text())["id"],
+                             "@kb-labs/commit")
+            self.assertTrue((fixture / "node_modules").is_symlink())
+            self.assertEqual((fixture / "node_modules").resolve(),
+                             (platform / "node_modules").resolve())
+            self.assertEqual(registry_versions, ["2.120.3", "2.120.4"])
+
+    def test_workspace_pack_materializes_workspace_dev_dependencies_for_registry_fixture(self):
+        with tempfile.TemporaryDirectory(prefix="kb-registry-workspace-pack-") as directory:
+            root = Path(directory)
+            (root / "package.json").write_text(json.dumps({
+                "name": "registry-pack-fixture", "private": True, "packageManager": "pnpm@11.4.0",
+            }))
+            (root / "pnpm-workspace.yaml").write_text("packages:\n  - plugins/*\n", encoding="utf-8")
+            commit = root / "plugins" / "commit"
+            devkit = root / "plugins" / "devkit"
+            commit.mkdir(parents=True)
+            devkit.mkdir(parents=True)
+            (devkit / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/devkit", "version": "2.120.1",
+            }))
+            (commit / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+                "devDependencies": {"@kb-labs/devkit": "workspace:*"},
+            }))
+            install = subprocess.run(["pnpm", "install", "--offline"], cwd=root,
+                                     capture_output=True, text=True, timeout=90)
+            self.assertEqual(install.returncode, 0, install.stderr[-1000:])
+            output = root / "packed"
+            output.mkdir()
+            packed = subprocess.run(["pnpm", "pack", "--pack-destination", str(output)], cwd=commit,
+                                    capture_output=True, text=True, timeout=90)
+            self.assertEqual(packed.returncode, 0, packed.stderr[-1000:])
+            tarball = Path(packed.stdout.strip().splitlines()[-1])
+            if not tarball.is_absolute():
+                tarball = commit / tarball
+            with tarfile.open(tarball, "r:gz") as archive:
+                package = json.loads(archive.extractfile("package/package.json").read())
+            self.assertEqual(package["devDependencies"]["@kb-labs/devkit"], "2.120.1")
+
+
+    def test_registry_commit_fixture_publishes_higher_package_copy_and_installs_verified_integrity(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-registry-fixture-") as directory:
             root = Path(directory)
             project = root / "project"
             (project / ".kb").mkdir(parents=True)
             (project / ".kb" / "kb.config.json").write_text("{}\n")
             workspace = root / "workspace"
+            (workspace / "cli" / "bin" / "dist").mkdir(parents=True)
+            (workspace / "cli" / "bin" / "dist" / "bin.js").write_text("// mocked CLI entry\n")
+            (workspace / ".kb").mkdir()
+            (workspace / ".kb" / "marketplace.lock").write_text(
+                json.dumps({"schema": "kb.marketplace/3", "plugins": {}}))
+            (workspace / "plugins" / "commit" / "dist").mkdir(parents=True)
+            (workspace / "plugins" / "commit" / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/commit", "version": "2.120.1",
+                "kb": {"manifest": "./dist/manifest.js"},
+            }))
+            (workspace / "plugins" / "commit" / "README.md").write_text("Commit fixture\n")
+            (workspace / "plugins" / "commit" / "dist" / "manifest.js").write_text("export const manifest = {};\n")
+            (workspace / "plugins" / "commit" / "dist" / "manifest.json").write_text(json.dumps({
+                "id": "@kb-labs/commit", "version": "0.1.0",
+            }))
+            analytics = workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+            analytics.mkdir(parents=True)
+            (analytics / "package.json").write_text(json.dumps({"name": "@kb-labs/analytics-emitter", "version": "1.0.0"}))
+            qa_plugin = workspace / "plugins" / "qa"
+            qa_plugin.mkdir(parents=True)
+            (qa_plugin / "package.json").write_text(json.dumps({"name": "@kb-labs/qa", "version": "1.0.0"}))
+            platform_install_root = root / "installed-root"
+            installed_platform = installed_path(platform_install_root, "versionRoots.path") / "2.120.1"
+            current_link = installed_path(platform_install_root, "currentLink")
+            installed_platform.mkdir(parents=True)
+            current_link.parent.mkdir(parents=True, exist_ok=True)
+            current_link.symlink_to(installed_platform.relative_to(platform_install_root))
+            installed_adapter = installed_platform / "node_modules" / "@kb-labs" / "adapters-pino"
+            installed_adapter.mkdir(parents=True)
+            (installed_adapter / "package.json").write_text(json.dumps({
+                "name": "@kb-labs/adapters-pino", "version": "2.120.1",
+            }))
+            (installed_platform / ".kb" / "v2").mkdir(parents=True)
+            (installed_platform / ".kb" / "v2" / "installed-provenance.json").write_text(json.dumps({
+                "schema": "kb.create.installed-provenance/v1", "packages": [{
+                    "name": "@kb-labs/adapters-pino", "version": "2.120.1",
+                    "installedPath": "node_modules/@kb-labs/adapters-pino",
+                }],
+            }))
+            (installed_platform / ".kb" / "marketplace.lock").write_text(json.dumps({"plugins": {
+                "@kb-labs/commit": {"package": "@kb-labs/commit", "version": "2.120.1"},
+            }, "adapters": {"pino": {"resolvedPath": "node_modules/@kb-labs/adapters-pino", "version": "2.120.1"}}}))
             calls = []
+            published_versions = []
+            registry_integrity = "sha256-registry-integrity"
 
-            def runner(command, *, cwd, env, capture_output, text, timeout):
-                calls.append((tuple(command), cwd, env.copy()))
+            def runner(command, *, cwd, env, capture_output, text, timeout, input=None):
+                calls.append((tuple(command), cwd, env.copy(), input))
+                if command[:2] == ["pnpm", "pack"]:
+                    return _workspace_pack_result(command, cwd)
+                if command[0] == "node" and command[2:4] == ["auth", "login"]:
+                    self.assertEqual(input, "fixture-admin-password\n")
+                    session_path = Path(env["KB_HOME"]) / "session.json"
+                    session_path.parent.mkdir(parents=True, exist_ok=True)
+                    gateway_url = command[command.index("--gateway-url") + 1]
+                    session_path.write_text(json.dumps({"version": 1, "sessions": [{
+                        "gatewayUrl": gateway_url, "accessToken": "fixture-access-token",
+                        "refreshToken": "fixture-refresh-token", "expiresAt": 4102444800000,
+                    }]}))
+                    session_path.chmod(0o600)
+                    return subprocess.CompletedProcess(command, 0, "Logged in.\n", "")
                 if command[0] == "node":
-                    return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "data": {"version": "2.120.1"},
-                    }), "")
-                if command[0] == "kb":
+                    self.assertTrue((Path(env["KB_HOME"]) / "session.json").is_file())
+                    self.assertEqual((Path(env["KB_PLATFORM_ROOT"]) / "plugins").resolve(),
+                                     (workspace / "plugins").resolve())
+                    self.assertTrue((Path(env["KB_PLATFORM_ROOT"]) / ".kb" / "marketplace.lock").is_file())
+                    staged_adapter = Path(env["KB_PLATFORM_ROOT"]) / "node_modules" / "@kb-labs" / "adapters-pino"
+                    self.assertTrue(staged_adapter.is_symlink())
+                    self.assertEqual(staged_adapter.resolve(), installed_adapter.resolve())
+                    if "hub" in command:
+                        package_root = Path(command[command.index("--path") + 1])
+                        package = json.loads((package_root / "package.json").read_text())
+                        package_version = package.get("version", "1.0.0")
+                        if package.get("name") == "@kb-labs/commit":
+                            self.assertTrue((package_root / "node_modules").is_symlink())
+                            self.assertEqual(package_version, "2.120.2")
+                            published_versions.append(package_version)
+                        return subprocess.CompletedProcess(command, 0, json.dumps({
+                            "ok": True, "data": {"version": package_version},
+                        }), "")
+                if command[:3] == ["kb", "config", "set"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "nextCommand": "kb-create restart --platform-root /platform",
+                    }}), "")
+                if command[:2] == ["kb-create", "restart"]:
+                    return subprocess.CompletedProcess(command, 0, "restarted", "")
+                if command[:3] == ["kb", "marketplace", "install"]:
                     lock = {"schema": "kb.marketplace/3", "plugins": {
-                        "@kb-labs/commit": {"version": "2.120.1", "package": "@kb-labs/commit",
+                        "@kb-labs/commit": {"version": "2.120.2", "package": "@kb-labs/commit",
                             "source": "marketplace", "marketplaceSource": "registry",
-                            "signatureStatus": "verified", "integrity": "sha512-registry", "enabled": True},
+                            "signatureStatus": "verified", "integrity": registry_integrity, "enabled": True},
                     }}
                     (project / ".kb" / "marketplace.lock").write_text(json.dumps(lock))
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
-                        "scope": "project", "installed": [{"id": "@kb-labs/commit", "version": "2.120.1",
+                        "scope": "project", "installed": [{"id": "@kb-labs/commit", "version": "2.120.2",
                             "source": "registry", "signatureStatus": "verified"}],
                     }}), "")
                 self.fail(f"unexpected Registry fixture command: {command}")
 
             env = {"HOME": str(root), "KB_JOURNEY_WORKSPACE_ROOT": str(workspace),
                    "KB_JOURNEY_MARKETPLACE_PUBLISH_URL": "http://registry.test/api/v1",
-                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey"}
+                   "KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE": "journey",
+                   "KB_JOURNEY_PLATFORM_ROOT": str(platform_install_root),
+                   "KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured",
+                   "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+                   "KB_JOURNEY_ADMIN_PASSWORD": "fixture-admin-password"}
+            def fake_open_http(_opener, request, **_kwargs):
+                if request.full_url.endswith("/ready"):
+                    return 200, json.dumps({"ok": True, "data": {"ready": True, "components": {
+                        "upstream:marketplaceRegistry": {"ready": True, "status": "up"}}}}).encode(), {}
+                if "/resolve?" in request.full_url and "version=" in request.full_url:
+                    from urllib.parse import parse_qs, urlparse
+                    version = parse_qs(urlparse(request.full_url).query)["version"][0]
+                    payload = ({"status": "found", "package": {"id": "@kb-labs/commit",
+                                "version": version, "integrity": registry_integrity}}
+                               if version in published_versions else {"status": "not-found-owned"})
+                    return 200, json.dumps(payload).encode(), {}
+                return 401, json.dumps({"ok": False, "error": {
+                    "code": "KB_AUTH_REQUIRED", "message": "Authentication is required.",
+                    "hint": "Log in and retry."}}).encode(), {}
+
             with patch("marketplace_steps.wait_for_marketplace_ready"), \
-                    patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:local"}):
+                    patch("marketplace_steps._installed_gateway_url", return_value="http://127.0.0.1:4317"), \
+                    patch("marketplace_steps._assert_registry_gateway_config"), \
+                    patch("marketplace_steps.open_http", side_effect=fake_open_http), \
+                    patch("installed_fixture.write_local_access_mode", side_effect=lambda platform_root, _source_config: platform_root), \
+                    patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-marketplace-registry:secured"}):
                 journey = Journey("local", "registry-commit-fixture")
                 entry = prepare_registry_commit_project_fixture(journey, project, "http://verdaccio.test",
                                                                  env, runner)
 
+            self.assertIsNotNone(entry, [(step.name, step.status, step.message) for step in journey.steps])
+            self.assertIn("S-268.23", {case for step in journey.steps for case in step.cases})
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
             workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
-            self.assertEqual([call[0] for call in calls if call[0][0] == "node"], [
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/commit"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"),
-                ("node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"),
-            ])
+            publish_calls = [call for call in calls if call[0][0] == "node" and "hub" in call[0]]
+            self.assertEqual(len(publish_calls), 3)
+            commit_path = Path(publish_calls[0][0][publish_calls[0][0].index("--path") + 1])
+            self.assertEqual(publish_calls[0][0][0:4], ("node", workspace_cli, "hub", "publish"))
+            self.assertNotEqual(commit_path, workspace / "plugins/commit")
+            self.assertEqual(published_versions, ["2.120.2"])
+            self.assertEqual(publish_calls[1][0], (
+                "node", workspace_cli, "hub", "publish", "--path",
+                str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"))
+            self.assertEqual(publish_calls[2][0], (
+                "node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"))
+            self.assertTrue(all(call[2].get("KB_REGISTRY_URL") ==
+                                "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"
+                                for call in publish_calls))
+            self.assertEqual(entry["integrity"], registry_integrity)
+            login_calls = [call for call in calls if call[0][0] == "node" and call[0][2:4] == ("auth", "login")]
+            self.assertEqual(len(login_calls), 3)
+            self.assertTrue(all(login[2]["HOME"] == publish[2]["HOME"]
+                                and login[2]["KB_HOME"] == publish[2]["KB_HOME"]
+                                for login, publish in zip(login_calls, publish_calls)))
             self.assertEqual(journey.result().status, "PASS")
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
@@ -525,9 +1055,17 @@ class MarketplaceStepTests(unittest.TestCase):
             root = Path(directory)
             project = root / "project"
             project.mkdir()
+            platform_root = root / "kb-platform"
+            active_platform = create_test_install_container(platform_root)
+            receipt = active_platform / ".kb" / "v2" / "receipt.json"
+            receipt.parent.mkdir(parents=True)
+            receipt.write_text(json.dumps({
+                "verification": {"hostHealthUrl": "http://127.0.0.1:4317/health"},
+            }))
             env = {
                 "HOME": str(root),
-                "KB_JOURNEY_BASE_URL": "http://gateway.test",
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+                "GATEWAY_PORT": "4317",
                 "KB_JOURNEY_ADMIN_EMAIL": "admin@example.test",
                 "KB_JOURNEY_ADMIN_PASSWORD": "fixture-password",
             }
@@ -551,7 +1089,8 @@ class MarketplaceStepTests(unittest.TestCase):
                         "error": {
                             "code": "KB_AUTH_REQUIRED",
                             "message": catalogued_error_message("KB_AUTH_REQUIRED"),
-                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://gateway.test"),
+                            "hint": catalogued_error_hint("KB_AUTH_REQUIRED", gatewayUrl="http://127.0.0.1:4317"),
+                            "details": {"gatewayUrl": "http://127.0.0.1:4317"},
                         },
                     }), "")
                 if args[:2] == ["auth", "login"]:
@@ -559,7 +1098,10 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, '{"ok":true}', "")
                 if args[:2] == ["auth", "status"]:
                     return subprocess.CompletedProcess(command, 0, json.dumps({
-                        "ok": True, "data": {"session": {"authenticated": session_saved}},
+                        "ok": True, "data": {
+                            "authenticated": False,
+                            "sessions": [{"authenticated": session_saved}],
+                        },
                     }), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
 
@@ -571,10 +1113,13 @@ class MarketplaceStepTests(unittest.TestCase):
                 {"claimId": "S-010.6", "kind": "journey", "status": "PASS"},
                 {"claimId": "S-041.7", "kind": "journey", "status": "PASS"},
             ])
+            self.assertIn(("kb", "marketplace", "plugins", "list", "--json"), calls)
             self.assertIn(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"), calls)
+            marketplace_lists = [call for call in calls if call[:3] == ("kb", "marketplace", "plugins")]
+            self.assertEqual(len(marketplace_lists), 4, marketplace_lists)
             self.assertLess(calls.index(("kb", "auth", "logout", "--json")),
                             calls.index(("kb", "marketplace", "plugins", "list", "--scope", "platform", "--json")))
-            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://gateway.test",
+            self.assertIn(("kb", "auth", "login", "--gateway-url", "http://127.0.0.1:4317",
                            "--email", "admin@example.test", "--password-stdin", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)
 
@@ -633,6 +1178,10 @@ class MarketplaceStepTests(unittest.TestCase):
                 if command[0] == "kb-create":
                     if command[1] in ("start", "stop"):
                         host_running = command[1] == "start"
+                    if command[1] == "status":
+                        return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                            "marketplaceSources": [{"kind": "registry"}, {"kind": "npm"}],
+                        }}), "")
                     return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True}), "")
                 if command[0] == "npm":
                     package_id = command[2]
@@ -918,7 +1467,11 @@ class MarketplaceStepTests(unittest.TestCase):
                              lambda: "replayed j54 S-203.25 failure", cases=["S-203.25"])
             def fail_unrelated_error_claim(*_args, **_kwargs):
                 raise AssertionError("independent S-051 envelope assertion failed")
-            with patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
+            with patch("marketplace_steps.preflight_installed_plugin_command"), \
+                    patch("marketplace_steps.project_service_path",
+                          side_effect=lambda project_id, service_id, path="":
+                          f"/api/v1/projects/{project_id}/{service_id}/{path}".rstrip("/")), \
+                    patch("marketplace_steps.run_plugin_policy_diagnostic_step", side_effect=fail_unrelated_policy_claim), \
                     patch("marketplace_steps.validate_shared_failure", side_effect=fail_unrelated_error_claim), \
                     patch("marketplace_steps.publish_commit_update_fixture", return_value="3.0.0"):
                 run_marketplace_steps(journey, project, "prj_marketplace_fixture", "http://registry.test", env, fake_run, fake_http,
@@ -1006,6 +1559,7 @@ class MarketplaceStepTests(unittest.TestCase):
             lifecycle_assertions = [
                 step.name for step in journey.steps
                 if step.capability == "marketplace"
+                and step.status != "SKIPPED"
                 and step.name != "restore Commit project fixture after marketplace lifecycle"
             ]
             self.assertGreater(len(lifecycle_assertions), 20)
@@ -1051,7 +1605,11 @@ class MarketplaceStepTests(unittest.TestCase):
                         return check()
 
                     trial.step_guard = inject_selected_failure
-                    with patch("marketplace_steps.run_plugin_policy_diagnostic_step",
+                    with patch("marketplace_steps.preflight_installed_plugin_command"), \
+                            patch("marketplace_steps.project_service_path",
+                                  side_effect=lambda project_id, service_id, path="":
+                                  f"/api/v1/projects/{project_id}/{service_id}/{path}".rstrip("/")), \
+                            patch("marketplace_steps.run_plugin_policy_diagnostic_step",
                                side_effect=fail_unrelated_policy_claim), \
                             patch("marketplace_steps.validate_shared_failure",
                                   side_effect=fail_unrelated_error_claim), \

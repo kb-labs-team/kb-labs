@@ -10,6 +10,7 @@ const tempDirs: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   await Promise.all(tempDirs.splice(0).map(dir => fs.rm(dir, { recursive: true, force: true })));
 });
 
@@ -17,11 +18,51 @@ async function createInstallerFixture(): Promise<{ dir: string; pnpmPath: string
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'extension-store-pnpm-'));
   tempDirs.push(dir);
   const pnpmPath = path.join(dir, 'pnpm.mjs');
-  await fs.writeFile(pnpmPath, `#!${process.execPath}\nimport fs from 'node:fs';\nimport path from 'node:path';\nconst project = process.cwd();\nconst manifest = JSON.parse(fs.readFileSync(path.join(project, 'package.json'), 'utf8'));\nconst name = Object.keys(manifest.dependencies)[0];\nconst target = path.join(project, 'node_modules', ...name.split('/'));\nfs.mkdirSync(target, { recursive: true });\nfs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name, version: '1.2.3' }));\nfs.writeFileSync(path.join(project, 'observed-spec.txt'), manifest.dependencies[name]);\n`, { mode: 0o755 });
+  await fs.writeFile(pnpmPath, `#!${process.execPath}\nimport fs from 'node:fs';\nimport path from 'node:path';\nconst project = process.cwd();\nconst manifest = JSON.parse(fs.readFileSync(path.join(project, 'package.json'), 'utf8'));\nconst name = Object.keys(manifest.dependencies)[0];\nconst target = path.join(project, 'node_modules', ...name.split('/'));\nfs.mkdirSync(target, { recursive: true });\nfs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name, version: '1.2.3' }));\nfs.writeFileSync(path.join(project, 'observed-spec.txt'), manifest.dependencies[name]);\nfs.writeFileSync(path.join(project, 'observed-args.txt'), process.argv.slice(2).join(' '));\nfs.writeFileSync(path.join(project, 'observed-args.json'), JSON.stringify(process.argv.slice(2)));\nfs.writeFileSync(path.join(project, 'observed-corepack-home.txt'), process.env.COREPACK_HOME ?? '');\nfs.writeFileSync(path.join(project, 'observed-package-manager.txt'), manifest.packageManager ?? '');\n`, { mode: 0o755 });
   return { dir, pnpmPath };
 }
 
+// case: S-298.1
+it('uses the release-pinned Corepack pnpm when no standalone pnpm is on PATH', async () => {
+  const { dir, pnpmPath: fakeCorepackPath } = await createInstallerFixture();
+  vi.stubEnv('PATH', dir);
+  const projectDir = path.join(dir, 'project');
+  const casDir = path.join(dir, 'store', 'cas');
+  const installer = new PnpmInstaller({
+    corepackPath: fakeCorepackPath,
+  });
+
+  const installed = await installer.install({
+    name: '@kb-labs/demo',
+    version: '1.2.3',
+    projectDir,
+    casDir,
+  });
+
+  expect(await fs.realpath(installed.packageRoot)).toContain('@kb-labs/demo');
+  await expect(fs.readFile(path.join(projectDir, 'observed-args.txt'), 'utf8')).resolves.toBe('pnpm install --store-dir ' + casDir);
+  await expect(fs.readFile(path.join(projectDir, 'observed-corepack-home.txt'), 'utf8')).resolves.toBe(path.join(casDir, '.corepack'));
+  await expect(fs.readFile(path.join(projectDir, 'observed-package-manager.txt'), 'utf8')).resolves.toBe('pnpm@11.4.0');
+});
+
 describe('PnpmInstaller registry tarball integrity', () => {
+  it('uses the configured npm source when installing transitive dependencies', async () => {
+    const { dir, pnpmPath } = await createInstallerFixture();
+    const projectDir = path.join(dir, 'project');
+
+    await new PnpmInstaller({ pnpmPath }).install({
+      name: '@kb-labs/demo',
+      version: '1.2.3',
+      spec: 'https://npm.fixture.example/demo-1.2.3.tgz',
+      registryUrl: 'https://npm.fixture.example',
+      projectDir,
+      casDir: path.join(dir, 'store'),
+    });
+
+    const args = JSON.parse(await fs.readFile(path.join(projectDir, 'observed-args.json'), 'utf8')) as string[];
+    expect(args).toContain('--registry=https://npm.fixture.example');
+  });
+
   it('verifies the registry bytes and preserves their integrity for direct tarball specs', async () => {
     const { dir, pnpmPath } = await createInstallerFixture();
     const packageDir = path.join(dir, 'package');

@@ -1253,44 +1253,167 @@ func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 	}
 }
 
-func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
+// case: S-285.18
+func TestPnpmDiagnosticKeepsExitCodeAndStderrEvidence(t *testing.T) {
 	root := t.TempDir()
 	var transcript strings.Builder
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode: 47, stderrTail: "ERR_PNPM_FETCH_404 registry unavailable", cause: errors.New("exit status 47"),
+	}}
 	manager := mustPnpm(t, PnpmConfig{
 		Root:               root,
 		PackageManagerRoot: filepath.Join(root, "state", "package-manager"),
 		Log:                &transcript,
+		Runner:             runner,
 	})
-	err := manager.run("command-that-does-not-exist")
+	err := manager.run("install")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] == "" {
-		t.Fatalf("pnpm diagnostic = code %q details %#v; want exit code and stderr tail", failure.Code, failure.Meta)
+	stderr := fmt.Sprint(failure.Meta["packageManagerStderrTail"])
+	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] != "47" ||
+		!strings.Contains(stderr, "ERR_PNPM_FETCH_404 registry unavailable") || strings.Contains(stderr, "omitted") {
+		t.Fatalf("pnpm diagnostic = code %q details %#v; want useful bounded stderr", failure.Code, failure.Meta)
 	}
-	if transcript.Len() == 0 {
-		t.Fatalf("installer transcript dropped pnpm output: %s", transcript.String())
+	if transcript.Len() != 0 {
+		t.Fatalf("fake runner unexpectedly wrote to transcript: %q", transcript.String())
+	}
+}
+
+// case: S-285.18
+func TestPnpmDiagnosticKeepsStdoutOverflowNoticeAlongsideFullStderr(t *testing.T) {
+	const stderr = "ERR_PNPM_FETCH_404 " + "useful stderr evidence " + "tail marker"
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode: 47, stderrTail: strings.Repeat("E", externalCommandStderrTailBytes-len(stderr)) + stderr,
+		stdoutOmitted: true, cause: errors.New("exit status 47"),
+	}}
+	manager := mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
+	err := manager.run("install")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
+	}
+	tail, _ := failure.Meta["packageManagerStderrTail"].(string)
+	if len(tail) > externalCommandStderrTailBytes || !strings.Contains(tail, "captured stdout omitted") ||
+		!strings.Contains(tail, "tail marker") || !strings.Contains(tail, strings.Repeat("E", 10)) {
+		t.Fatalf("diagnostic lost stdout omission marker or stderr evidence: len=%d tail=%q", len(tail), tail)
+	}
+}
+
+// case: S-285.18
+func TestCorepackTimeoutPreservesToolchainDiagnosticAndCapturedEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	bin := t.TempDir()
+	corepack := filepath.Join(bin, "corepack")
+	if err := os.WriteFile(corepack, []byte("#!/bin/sh\nprintf '%s\\n' 'corepack registry stalled' >&2\nexec sleep 10\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cache := t.TempDir() // No pinned pnpm is cached, so the real Corepack fallback runs.
+	var transcript bytes.Buffer
+	runner := CommandRunner{
+		corepackHome: cache,
+		runTool: func(_ context.Context, invocation toolchain.Invocation) (toolchain.Result, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			result, err := toolchain.Run(ctx, invocation)
+			var timeout *toolchain.TimeoutError
+			if !errors.As(err, &timeout) {
+				return result, err
+			}
+			values := map[string]string{
+				"tool": "corepack", "argsSummary": "install -g pnpm", "elapsed": timeout.Elapsed.Round(time.Millisecond).String(),
+				"stderrTail": strings.TrimSpace(result.Stderr), "nextCommand": "kb-create install",
+			}
+			diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
+				"tool": values["tool"], "argsSummary": values["argsSummary"], "elapsed": values["elapsed"],
+				"stderrTail": values["stderrTail"], "nextCommand": values["nextCommand"],
+			}))
+			if diagErr != nil {
+				return result, diagErr
+			}
+			return result, diagnostic
+		},
+	}
+	err := runner.Run(context.Background(), &transcript, "pnpm", "install")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("Corepack provisioning failure = %v, want catalogued diagnostic", err)
+	}
+	if failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" || failure.Meta["tool"] != "corepack" ||
+		failure.Meta["stderrTail"] != "corepack registry stalled" || !strings.Contains(transcript.String(), "corepack registry stalled") {
+		t.Fatalf("Corepack timeout diagnostic = code %q meta %#v transcript %q", failure.Code, failure.Meta, transcript.String())
+	}
+}
+
+// case: S-285.18
+func TestCommandRunnerRedactsSplitCredentialsFromTranscript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	const patternValue = "split-pattern-value"
+	const knownValue = "known value crossing chunk boundary"
+	fixture := filepath.Join(t.TempDir(), "failing-tool")
+	script := "#!/bin/sh\nprintf '%s' '{\"access_' >&1\nsleep 0.02\nprintf '%s' 'token\":\"" + patternValue + "\"}' >&1\nprintf '%s' 'prefix known secret ' >&2\nsleep 0.02\nprintf '%s\\n' 'with spaces suffix' >&2\nexit 47\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript bytes.Buffer
+	runner := CommandRunner{redactions: []string{knownValue}}
+	err := runner.Run(context.Background(), &transcript, fixture)
+	if err == nil {
+		t.Fatal("command unexpectedly succeeded")
+	}
+	for _, secret := range []string{patternValue, knownValue} {
+		if strings.Contains(transcript.String(), secret) {
+			t.Fatalf("captured package-manager transcript leaked %q: %q", secret, transcript.String())
+		}
+	}
+	for _, evidence := range []string{"access_token", "prefix ", "suffix", "[REDACTED]"} {
+		if !strings.Contains(transcript.String(), evidence) {
+			t.Fatalf("transcript lost safe package-manager evidence %q: %q", evidence, transcript.String())
+		}
+	}
+}
+
+// case: S-285.18
+func TestCommandRunnerDropsWholeOversizedStreamsFromTranscript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	fixture := filepath.Join(t.TempDir(), "oversized-tool")
+	script := "#!/bin/sh\nprintf '%s' '" + strings.Repeat("X", 256) + "' >&1\nprintf '%s' '" + strings.Repeat("Y", 256) + "' >&2\nexit 47\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript bytes.Buffer
+	err := (CommandRunner{maxCapture: 128}).Run(context.Background(), &transcript, fixture)
+	var failure *externalCommandFailure
+	if !errors.As(err, &failure) || failure.exitCode != 47 || !failure.stdoutOmitted || !failure.stderrOmitted {
+		t.Fatalf("failure = %#v, want exit code 47", err)
+	}
+	if !strings.Contains(failure.stderrTail, "omitted") || !strings.Contains(transcript.String(), "omitted") ||
+		strings.Contains(transcript.String(), strings.Repeat("X", 10)) || strings.Contains(transcript.String(), strings.Repeat("Y", 10)) {
+		t.Fatalf("oversized raw stream escaped capture: tail=%q transcript=%q", failure.stderrTail, transcript.String())
 	}
 }
 
 func TestPnpmDiagnosticCauseRetainsPackageManagerRegistryFailure(t *testing.T) {
 	root := t.TempDir()
-	runner := &fakeRunner{err: &externalCommandFailure{
-		exitCode:   1,
-		stderrTail: "ERR_PNPM_FETCH_404 GET http://127.0.0.1:4873/@kb-labs%2fcli-commands: Not Found - 404",
-		cause:      errors.New("exit status 1"),
-	}}
+	const stderr = "ERR_PNPM_FETCH_404 GET https://registry.test/@kb-labs%2fcli-commands: Not Found - 404"
+	runner := &fakeRunner{err: &externalCommandFailure{exitCode: 1, stderrTail: stderr, cause: errors.New("exit status 1")}}
 	manager := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
 	err := manager.run("add", "@kb-labs/cli-bin@2.120.1")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	for _, expected := range []string{"@kb-labs%2fcli-commands", "http://127.0.0.1:4873"} {
-		if !strings.Contains(failure.Cause, expected) {
-			t.Fatalf("typed cause %q does not retain %q", failure.Cause, expected)
-		}
+	if failure.Meta["packageManagerExitCode"] != "1" || failure.Meta["packageManagerStderrTail"] != stderr ||
+		!strings.Contains(failure.Cause, "ERR_PNPM_FETCH_404") {
+		t.Fatalf("package-manager diagnostic = %#v", failure)
 	}
 }
 func TestPnpmSkipsReleaseManagedBinary(t *testing.T) {

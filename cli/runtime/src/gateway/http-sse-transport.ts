@@ -9,10 +9,13 @@
  */
 
 import type { ExecutionEvent } from '@kb-labs/core-contracts';
+import { randomUUID } from 'node:crypto';
+import { createErrorEnvelope, ErrorEnvelopeError } from '@kb-labs/core-platform';
 import type {
   IGatewayClient,
   GatewayClientConfig,
   GatewayExecuteRequest,
+  GatewayProjectCommandRequest,
 } from '@kb-labs/sdk/gateway';
 import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
 import { authRequiredForGateway } from '@kb-labs/sdk/gateway';
@@ -21,6 +24,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
   private readonly config: GatewayClientConfig;
   private readonly auth = new AuthSessionOwner();
   private abortControllers = new Map<string, AbortController>();
+  private projectRuntimeExecutions = new Set<string>();
 
   constructor(config: GatewayClientConfig) {
     this.config = config;
@@ -72,13 +76,52 @@ export class HttpSseGatewayTransport implements IGatewayClient {
     yield* this.readNdjsonStream(response, controller);
   }
 
+  async *executeProject(projectId: string, request: GatewayProjectCommandRequest): AsyncIterable<ExecutionEvent> {
+    const controller = new AbortController();
+    const requestId = request.requestId;
+    this.abortControllers.set(requestId, controller);
+    this.projectRuntimeExecutions.add(requestId);
+    try {
+    const creds = await this.getValidCredentials();
+    const url = `${this.config.gatewayUrl}/api/v1/projects/${encodeURIComponent(projectId)}/rest/commands/execute`;
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${creds.accessToken}`,
+          'Accept': 'application/x-ndjson',
+        },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+    } catch {
+      if (controller.signal.aborted) { throw new DOMException('Request aborted', 'AbortError'); }
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_HOST_UNREACHABLE', {
+        details: { address: new URL(this.config.gatewayUrl).origin },
+        correlationId: randomUUID(),
+      }));
+    }
+    if (!response.ok) {
+      throw await this.auth.decodeFailure('Project runtime execution', response, this.config.gatewayUrl);
+    }
+    yield* this.readNdjsonStream(response, controller, true, requestId);
+    } finally {
+      this.abortControllers.delete(requestId);
+      this.projectRuntimeExecutions.delete(requestId);
+    }
+  }
+
   async cancel(executionId: string, reason?: string): Promise<void> {
-    // Abort local stream if tracked
+    // Aborting a project-service stream closes the Gateway-to-runtime request;
+    // the project runtime maps that disconnect to its backend AbortSignal.
     const controller = this.abortControllers.get(executionId);
     if (controller) {
       controller.abort();
       this.abortControllers.delete(executionId);
     }
+    if (this.projectRuntimeExecutions.delete(executionId)) { return; }
 
     // Send cancel request to Gateway
     const creds = await this.getValidCredentials();
@@ -151,6 +194,8 @@ export class HttpSseGatewayTransport implements IGatewayClient {
   private async *readNdjsonStream(
     response: Response,
     controller: AbortController,
+    projectRuntime = false,
+    requestId?: string,
   ): AsyncIterable<ExecutionEvent> {
     const body = response.body;
     if (!body) {
@@ -182,6 +227,7 @@ export class HttpSseGatewayTransport implements IGatewayClient {
           if (!executionId && 'executionId' in event) {
             executionId = event.executionId;
             this.abortControllers.set(executionId, controller);
+            if (projectRuntime) { this.projectRuntimeExecutions.add(executionId); }
           }
 
           yield event;
@@ -196,6 +242,11 @@ export class HttpSseGatewayTransport implements IGatewayClient {
       reader.releaseLock();
       if (executionId) {
         this.abortControllers.delete(executionId);
+        this.projectRuntimeExecutions.delete(executionId);
+      }
+      if (requestId) {
+        this.abortControllers.delete(requestId);
+        this.projectRuntimeExecutions.delete(requestId);
       }
     }
   }

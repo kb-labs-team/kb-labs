@@ -25,9 +25,12 @@ on:
       - 'pnpm-lock.yaml'
       - 'pnpm-workspace.yaml'
 
+# GitHub keeps one pending run per group, so isolate each PR and each dispatch.
 concurrency:
-  group: journey-batch
-  cancel-in-progress: true
+  # A newer run for the same PR can replace its pending predecessor, but PRs,
+  # manual dispatches, and batch pushes cannot replace one another.
+  group: journey-batch-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -65,14 +68,34 @@ jobs:
       - id: go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - id: dependencies
         name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
+      - name: Run journey static preflight
+        run: bash e2e/journey/static-preflight.sh
+      - id: devkit-cas
+        name: Restore kb-devkit content-addressed cache
+        uses: ./.github/actions/devkit-cas
+        with:
+          mode: ${{ github.ref == 'refs/heads/master' && 'off' || 'read-write' }}
+          namespace: journey
+      - id: tgz-cache
+        name: Restore packed package cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: e2e/packages/
+          key: journey-batch-tgz-v2-${{ runner.os }}-${{ github.sha }}
       - uses: ./.github/actions/install-goreleaser
       - id: batch
         name: Produce shared build and candidate
+        env:
+          BATCH_SELECTION: ${{ steps.selection.outputs.selection }}
+          KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
+          DEVKIT_CACHE_HIT: ${{ steps.devkit-cas.outputs.cache-hit }}
+          DEVKIT_CACHE_MODE: ${{ steps.devkit-cas.outputs.cache-mode }}
+          DEVKIT_CACHE_STORE_PATH: ${{ steps.devkit-cas.outputs.store-path }}
         run: node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
@@ -107,7 +130,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -150,7 +173,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Install workspace dependencies
         run: corepack pnpm install --frozen-lockfile
@@ -179,6 +202,7 @@ jobs:
       BATCH_PRODUCER_INPUT: .journey/batch-input/producer
       BATCH_LOCAL_INPUT: .journey/batch-input/local
       BATCH_SECURED_INPUT: .journey/batch-input/secured
+      BATCH_SELECTION: ${{ needs.producer.outputs.selection }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
@@ -201,7 +225,9 @@ jobs:
           path: ${{ env.BATCH_SECURED_INPUT }}
       - name: Assemble shared artifact and stage durations
         id: summarize
-        run: e2e/journey/batch.sh summarize "$BATCH_OUTPUT" "$BATCH_PRODUCER_INPUT" "$BATCH_LOCAL_INPUT" "$BATCH_SECURED_INPUT"
+        run: |
+          selection_ids="$(node scripts/ci/journey-batch-selection.mjs ids "$BATCH_SELECTION")"
+          e2e/journey/batch.sh summarize "$BATCH_OUTPUT" "$BATCH_PRODUCER_INPUT" "$BATCH_LOCAL_INPUT" "$BATCH_SECURED_INPUT" --selection "$selection_ids"
       - name: Add batch summary
         if: always()
         run: |

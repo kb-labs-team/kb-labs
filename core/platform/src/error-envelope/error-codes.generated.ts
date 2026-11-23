@@ -679,7 +679,7 @@ export interface CatalogProducerInputFor {
   "KB_INSTALL_NODE_MISSING": CatalogProducerCommon & ({ details: { "requirement": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "requirement": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "requirement"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "requirement"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_NO_DISK_SPACE": CatalogProducerCommon & ({ details: { "available": string; "needed": string; "path": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "available": string; "needed": string; "path": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "available"?: string; "needed"?: string; "path"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "available"?: string; "needed"?: string; "path"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_NO_WRITE_ACCESS": CatalogProducerCommon & ({ details: { "path": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "path": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "path"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "path"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
-  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": CatalogProducerCommon & ({ details: { "artifact": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "artifact": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "artifact"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "artifact"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": CatalogProducerCommon & ({ details: { "artifact": string; "cachePath": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "artifact": string; "cachePath": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details: { "artifact"?: string; "cachePath": string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details: { "artifact"?: string; "cachePath": string }; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_OPERATION_CANCELLED": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_OPERATION_FAILED": CatalogProducerCommon & ({ details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: Record<string, never>; templateValues?: Record<string, never>; message: string; hint: string });
   "KB_INSTALL_OPERATION_IN_PROGRESS": CatalogProducerCommon & ({ details: { "pid": string }; templateValues?: Record<string, never>; message?: never; hint?: never } | { details: { "pid": string }; templateValues?: Record<string, never>; message?: never; hint: string } | { details?: { "pid"?: string }; templateValues?: Record<string, never>; message: string; hint?: never } | { details?: { "pid"?: string }; templateValues?: Record<string, never>; message: string; hint: string });
@@ -971,7 +971,7 @@ export interface CatalogDetailsFor {
   "KB_INSTALL_NODE_MISSING": { "requirement": string };
   "KB_INSTALL_NO_DISK_SPACE": { "available": string; "needed": string; "path": string };
   "KB_INSTALL_NO_WRITE_ACCESS": { "path": string };
-  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": { "artifact": string };
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": { "artifact": string; "cachePath": string };
   "KB_INSTALL_OPERATION_CANCELLED": Record<string, never>;
   "KB_INSTALL_OPERATION_FAILED": Record<string, never>;
   "KB_INSTALL_OPERATION_IN_PROGRESS": { "pid": string };
@@ -1181,6 +1181,7 @@ export const catalogEnvironmentVariables = {
   "KB_ENV_SHELL": "KB_ENV_SHELL",
   "KB_HOME": "KB_HOME",
   "KB_HOST_CONTROL_TOKEN": "KB_HOST_CONTROL_TOKEN",
+  "KB_INSTALLATION_ID": "KB_INSTALLATION_ID",
   "KB_LOG_FILE": "KB_LOG_FILE",
   "KB_NET_OFFSET": "KB_NET_OFFSET",
   "KB_PLATFORM_ROOT": "KB_PLATFORM_ROOT",
@@ -3029,7 +3030,7 @@ export const catalogStructuredDetailFields: Readonly<Record<CatalogErrorCode, re
   "KB_INSTALL_NODE_MISSING": [],
   "KB_INSTALL_NO_DISK_SPACE": [],
   "KB_INSTALL_NO_WRITE_ACCESS": [],
-  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": [],
+  "KB_INSTALL_OFFLINE_ARTIFACT_MISSING": ["cachePath"],
   "KB_INSTALL_OPERATION_CANCELLED": [],
   "KB_INSTALL_OPERATION_FAILED": [],
   "KB_INSTALL_OPERATION_IN_PROGRESS": [],

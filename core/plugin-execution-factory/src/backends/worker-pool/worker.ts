@@ -30,7 +30,7 @@ interface WithMiddlewareDecls {
 import type { ExecutionRequest, ExecutionResult, PlatformTransportFactory, PlatformTransportServer } from '../../types.js';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { InteractiveInputRequiredError } from '@kb-labs/plugin-contracts';
-import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { createSensitiveTextStream, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import { normalizeExecutionFailure } from '../../utils.js';
 import { AbortError, WorkerCrashedError, TimeoutError } from '../../errors.js';
 import { terminateProcessTree, systemProcessTable, type ProcessTableSource, type ProcessTreeResult } from './process-tree.js';
@@ -112,6 +112,9 @@ export class Worker extends EventEmitter<WorkerEvents> {
      * instead of nothing at all. See execute()'s timeout handler.
      */
     lastActivity?: { message: string; stream: 'stdout' | 'stderr'; at: number };
+    logRedactors: Record<'stdout' | 'stderr', ReturnType<typeof createSensitiveTextStream>>;
+    logLineNo: number;
+    flushLogs: () => void;
   }>();
 
   // Health check tracking
@@ -191,6 +194,10 @@ export class Worker extends EventEmitter<WorkerEvents> {
           ...process.env,
           KB_WORKER_ID: this.id,
         };
+        // Defense in depth: this credential belongs only to the runtime guard
+        // and must never cross the worker boundary, even if the launcher has
+        // not yet removed it from its own environment.
+        delete childEnv.KB_PROJECT_RUNTIME_TOKEN;
         if (this.options.platformTransport) {
           childEnv.KB_PLATFORM_TRANSPORT = this.options.platformTransport.type;
           const extraEnv = this.options.platformTransport.getChildEnv?.();
@@ -360,9 +367,29 @@ export class Worker extends EventEmitter<WorkerEvents> {
         this.kill();
       }, timeoutMs);
 
+      // Redact complete IPC log streams at the host boundary before callbacks.
+      const sensitiveValues = Array.isArray(request.context?.sensitiveValues)
+        ? request.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
+        : [];
+      const logRedactors = {
+        stdout: createSensitiveTextStream(sensitiveValues),
+        stderr: createSensitiveTextStream(sensitiveValues),
+      };
+      const flushLogs = () => {
+        for (const stream of ['stdout', 'stderr'] as const) {
+          const message = logRedactors[stream].flush();
+          if (!message) { continue; }
+          const pending = this.pendingRequests.get(executionId);
+          if (!pending) { continue; }
+          const entry = { level: stream === 'stderr' ? 'warn' : 'info', message, stream, lineNo: ++pending.logLineNo, timestamp: new Date().toISOString() };
+          pending.lastActivity = { message, stream, at: Date.now() };
+          pending.onLog?.(entry);
+        }
+      };
       // Store pending request
       this.pendingRequests.set(executionId, {
         resolve: (result) => {
+          flushLogs();
           clearTimeout(timeoutId);
           const pending = this.pendingRequests.get(executionId);
           if (pending?.abortHandler) { signal?.removeEventListener('abort', pending.abortHandler); }
@@ -373,6 +400,7 @@ export class Worker extends EventEmitter<WorkerEvents> {
           resolve(result);
         },
         reject: (error) => {
+          flushLogs();
           clearTimeout(timeoutId);
           const pending = this.pendingRequests.get(executionId);
           if (pending?.abortHandler) { signal?.removeEventListener('abort', pending.abortHandler); }
@@ -390,6 +418,9 @@ export class Worker extends EventEmitter<WorkerEvents> {
         request,
         startedAt,
         signal,
+        logRedactors,
+        logLineNo: 0,
+        flushLogs,
         ...(signal ? { abortHandler: () => {
           const pending = this.pendingRequests.get(executionId);
           pending?.reject(new AbortError('Execution aborted'));
@@ -622,8 +653,12 @@ export class Worker extends EventEmitter<WorkerEvents> {
           // an execution-timeout error has something real to report even
           // when nothing downstream is consuming live log streaming — see
           // execute()'s timeout handler.
-          pending.lastActivity = { message: msg.entry.message, stream: msg.entry.stream, at: Date.now() };
-          pending.onLog?.(msg.entry);
+          const safeMessage = pending.logRedactors[msg.entry.stream].write(msg.entry.message);
+          if (safeMessage) {
+            const entry = { ...msg.entry, message: safeMessage, lineNo: ++pending.logLineNo };
+            pending.lastActivity = { message: safeMessage, stream: msg.entry.stream, at: Date.now() };
+            pending.onLog?.(entry);
+          }
         }
         break;
       }

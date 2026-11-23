@@ -59,11 +59,18 @@ export class PackageInstallError extends Error {
 
 export class NpmPackageSource implements MarketplaceSource {
   readonly kind = 'npm' as const;
+  readonly dependencyRegistryUrl: string;
   private readonly registryUrl: string;
   private readonly pendingInstalls = new Map<string, PackageManagerFileSnapshot[]>();
 
   constructor(options: NpmPackageSourceOptions) {
     this.registryUrl = options.registryUrl.replace(/\/$/, '');
+    const dependencyRegistry = new URL(this.registryUrl);
+    dependencyRegistry.username = '';
+    dependencyRegistry.password = '';
+    dependencyRegistry.search = '';
+    dependencyRegistry.hash = '';
+    this.dependencyRegistryUrl = dependencyRegistry.toString().replace(/\/$/, '');
   }
 
   async resolveIdentity(identity: string) {

@@ -5,10 +5,12 @@
  */
 
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import type { IProjectRegistry } from "@kb-labs/core-project-registry";
@@ -25,7 +27,7 @@ import {
 } from "./testkit.js";
 import type { HostOptions } from "../host.js";
 import { createChildProcessLauncher } from "../project-runtime/launcher.js";
-import type { RuntimeLauncher, RuntimeProject } from "../project-runtime/manager.js";
+import type { RuntimeLauncher, RuntimeProcess, RuntimeProject } from "../project-runtime/manager.js";
 
 interface ErrorBody {
   error: { code: string; message: string; hint: string; cause?: string; stack?: string; details?: Record<string, unknown> };
@@ -69,6 +71,23 @@ function csrfCookie(response: Response): string {
   const csrf = cookieHeader(response).split("; ").find((cookie) => cookie.startsWith("kb_csrf="));
   if (!csrf) { throw new Error("Auth route did not set a CSRF cookie"); }
   return decodeURIComponent(csrf.slice("kb_csrf=".length));
+}
+
+function runtimeModulePort(outputTail: string, moduleId: string): number | undefined {
+  for (const line of outputTail.split(/\r?\n/u)) {
+    try {
+      const metadataStart = line.indexOf("{");
+      if (metadataStart < 0) continue;
+      const record = JSON.parse(line.slice(metadataStart)) as { event?: unknown; moduleId?: unknown; port?: unknown };
+      if (record.event === "service.starting" && record.moduleId === moduleId
+          && typeof record.port === "number" && Number.isInteger(record.port)) {
+        return record.port;
+      }
+    } catch {
+      // Runtime output also includes non-JSON adapter messages.
+    }
+  }
+  return undefined;
 }
 
 async function configureInstalledPlatformDataRoot(platformRoot: string, stateDataRoot: string, workspaceRoot: string): Promise<void> {
@@ -248,23 +267,28 @@ describe("kb-host project routing", () => {
     }));
     const previousKbHome = process.env.KB_HOME;
     process.env.KB_HOME = kbHome;
+    let projectRuntime: RuntimeProcess | undefined;
     try {
       const probe = createChildProcessLauncher({
         entry: PROJECT_RUNTIME_ENTRY,
         stopTimeoutMs: 1500,
       });
       const launcher: RuntimeLauncher = {
-        launch: (runtimeProject) => createChildProcessLauncher({
-          entry: PROJECT_RUNTIME_ENTRY,
-          env: {
-            KB_PLATFORM_ROOT: installedPlatformRoot,
-            KB_HOME: kbHome,
-            KB_MCP_AUTH_MODE: "local",
-            KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
-            KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+          launch: async runtimeProject => {
+            const runtime = await createChildProcessLauncher({
+              entry: PROJECT_RUNTIME_ENTRY,
+              env: {
+                KB_PLATFORM_ROOT: installedPlatformRoot,
+                KB_HOME: kbHome,
+                KB_MCP_AUTH_MODE: "local",
+                KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
+                KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+              },
+              stopTimeoutMs: 1500,
+            }).launch(runtimeProject);
+            projectRuntime = runtime;
+            return runtime;
           },
-          stopTimeoutMs: 1500,
-        }).launch(runtimeProject),
         probe: probe.probe,
       };
       running = await startTestHost(
@@ -357,6 +381,45 @@ describe("kb-host project routing", () => {
       expect(reinstalledRoute.status, JSON.stringify(reinstalledBody)).toBe(200);
       expect(reinstalledBody).toMatchObject({ ok: true, data: { scope: "root" } });
 
+      const directRestPort = runtimeModulePort(projectRuntime?.outputTail() ?? "", "rest");
+      expect(directRestPort, "the live child runtime must report its REST listener").toBeDefined();
+      const directCommand = await fetch(`http://127.0.0.1:${directRestPort}/api/v1/commands/execute`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-kb-project-id": project.id },
+        body: JSON.stringify({
+          requestId: "direct-rest-without-guard-proof",
+          pluginId: "@kb-labs/commit",
+          commandPath: "commit plan delete",
+          input: { argv: [], flags: { json: true } },
+        }),
+      });
+      expect(directCommand.status).toBe(403);
+      expect(await directCommand.json()).toMatchObject({
+        ok: false,
+        error: { code: "KB_AUTH_FORBIDDEN" },
+      });
+
+      // case: S-312.1 — direct REST-listener calls without runtime guard proof
+      // are rejected at the integration boundary.
+      // case: S-160.5 — exercise token delivery through the real child runtime,
+      // runtime guard proof, REST setup closure, and CLI executor.
+      const commandExecution = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/commands/execute`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            requestId: "runtime-guard-command-proof",
+            pluginId: "@kb-labs/commit",
+            commandPath: "commit plan delete",
+            input: { argv: [], flags: { json: true } },
+          }),
+        },
+      );
+      expect(commandExecution.status).toBe(200);
+      const commandEvents = (await commandExecution.text()).trim().split("\n").map((line) => JSON.parse(line) as { type: string; exitCode?: number });
+      expect(commandEvents).toContainEqual(expect.objectContaining({ type: "execution:done", exitCode: 0 }));
+
       const health = await readUxSuccessResult<HealthBody>(await running.fetchGateway("/health"));
       expect(health.projectRuntimes.runtimes).toContainEqual(
         expect.objectContaining({ projectId: project.id, state: "ready", restarts: 3 }),
@@ -372,6 +435,221 @@ describe("kb-host project routing", () => {
       }
     }
   }, 25_000);
+
+  // case: S-311.1
+  it("executes the Marketplace-installed Commit tarball through the host-owned project runtime", async () => {
+    const project = await registered();
+    execFileSync("git", ["init", "--quiet"], { cwd: project.root });
+    await writeFile(join(project.root, "package.json"), JSON.stringify({
+      name: "marketplace-tarball-execution-fixture",
+      version: "1.0.0",
+      private: true,
+    }));
+    await writeFile(join(project.root, ".kb", "kb.config.jsonc"), JSON.stringify({
+      plugins: { commit: { enabled: true } },
+    }));
+    const projectLockPath = join(project.root, ".kb", "marketplace.lock");
+    await writeFile(projectLockPath, JSON.stringify({ schema: "kb.marketplace/3", plugins: {} }));
+
+    const installedPlatformRoot = join(kbHome, "installed-platform");
+    const workspaceRoot = join(process.cwd(), "../../..");
+    await configureInstalledPlatformDataRoot(
+      installedPlatformRoot,
+      join(kbHome, "installed-platform-state", "data"),
+      workspaceRoot,
+    );
+    await mkdir(join(installedPlatformRoot, "node_modules", "@kb-labs"), { recursive: true });
+    await symlink(join(workspaceRoot, "sdk/sdk"), join(installedPlatformRoot, "node_modules", "@kb-labs", "sdk"), "dir");
+    const installedAdapters = {
+      storage: "@kb-labs/adapters-fs",
+      cache: "@kb-labs/adapters-state-broker",
+      eventBus: "@kb-labs/adapters-eventbus-cache",
+      documentDatabase: "@kb-labs/adapters-sqlite",
+      kvStore: "@kb-labs/adapters-sqlite/kv",
+      logger: "@kb-labs/adapters-pino",
+      logRingBuffer: "@kb-labs/adapters-log-ringbuffer",
+      logPersistence: "@kb-labs/adapters-log-document",
+      analytics: "@kb-labs/adapters-analytics-sqlite",
+      embeddings: "@kb-labs/adapters-openai/embeddings",
+      serviceTransport: "@kb-labs/adapters-service-transport-http",
+    };
+    await writeFile(join(installedPlatformRoot, ".kb", "kb.config.json"), JSON.stringify({
+      platform: {
+        deployment: { topology: "local" },
+        adapters: installedAdapters,
+        adapterOptions: {
+          storage: { baseDir: "storage" },
+          documentDatabase: { filename: "database/kb.sqlite" },
+          kvStore: { filename: "database/kb.sqlite" },
+          analytics: { dbPath: "analytics/analytics.sqlite" },
+          serviceTransport: { services: {} },
+        },
+      },
+    }));
+    const adapterPackages = [...new Set(Object.values(installedAdapters)
+      .map(value => value.split("/").slice(0, 2).join("/")))];
+    const lockedAdapters = await installWorkspaceAdapters(installedPlatformRoot, workspaceRoot, adapterPackages);
+    await writeFile(join(installedPlatformRoot, ".kb", "marketplace.lock"), JSON.stringify({
+      schema: "kb.marketplace/3",
+      plugins: {},
+      adapters: lockedAdapters,
+    }));
+
+    const previousKbHome = process.env.KB_HOME;
+    const packedRoot = await mkdtemp(join(tmpdir(), "kb-commit-host-tarball-"));
+    let tarballServer: ReturnType<typeof createServer> | undefined;
+    try {
+      process.env.KB_HOME = kbHome;
+
+      const packedJson = execFileSync("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", packedRoot], {
+        cwd: join(workspaceRoot, "plugins/commit"),
+        encoding: "utf8",
+      });
+      const [packed] = JSON.parse(packedJson) as Array<{ filename: string }>;
+      if (!packed) {throw new Error("npm pack did not produce the Commit package");}
+      const packageJson = JSON.parse(await readFile(join(workspaceRoot, "plugins/commit/package.json"), "utf8")) as {
+        version: string;
+      };
+      const tarball = await readFile(join(packedRoot, packed.filename));
+      const tarballIntegrity = `sha512-${createHash("sha512").update(tarball).digest("base64")}`;
+      tarballServer = createServer((_request, response) => {
+        response.writeHead(200, { "content-type": "application/octet-stream" });
+        response.end(tarball);
+      });
+      await new Promise<void>((resolve, reject) => {
+        tarballServer!.once("error", reject);
+        tarballServer!.listen(0, "127.0.0.1", resolve);
+      });
+      const address = tarballServer.address();
+      if (!address || typeof address === "string") {throw new Error("Tarball fixture server did not bind a TCP port");}
+
+      const extensionStorePath = join(workspaceRoot, "core/extension-store/dist/index.js");
+      const extensionStore = await import(pathToFileURL(extensionStorePath).href) as {
+        createExtensionStore(options: { root: string; platformRoot?: string }): {
+          resolve(request: { name: string; version: string; kind: "plugin"; spec: string; expectedIntegrity?: string }): Promise<{
+            entry: { integrity: string };
+            entryDir: string;
+            packageRoot: string;
+          }>;
+        };
+      };
+      const store = extensionStore.createExtensionStore({ root: kbHome, platformRoot: installedPlatformRoot });
+      const installRequest = {
+        name: "@kb-labs/commit",
+        version: packageJson.version,
+        kind: "plugin" as const,
+        spec: `http://127.0.0.1:${address.port}/commit.tgz`,
+        expectedIntegrity: tarballIntegrity,
+      };
+      const coldStartedAt = performance.now();
+      const installed = await store.resolve(installRequest);
+      const coldInstallMs = Math.round(performance.now() - coldStartedAt);
+      const warmStartedAt = performance.now();
+      const warmResolved = await store.resolve(installRequest);
+      const warmResolveMs = Math.round(performance.now() - warmStartedAt);
+      expect(warmResolved.entryDir).toBe(installed.entryDir);
+      expect(installed.packageRoot).toContain(join("store", "entries", "@kb-labs+commit@"));
+      console.info(`[S-311.1] isolated extension-store resolution: cold=${coldInstallMs}ms warm=${warmResolveMs}ms`);
+
+      const discoveryPath = join(workspaceRoot, "core/discovery/dist/index.js");
+      const discovery = await import(pathToFileURL(discoveryPath).href) as {
+        createEmptyLock(): { plugins: Record<string, unknown> };
+        createMarketplaceEntry(options: {
+          version: string;
+          integrity: string;
+          source: "marketplace";
+          package: string;
+          primaryKind: "plugin";
+          provides: ["plugin", "cli-command"];
+          marketplaceSource: "npm";
+          signatureStatus: "unsigned";
+        }): unknown;
+        DiscoveryManager: new (options: { root: string; platformRoot: string }) => {
+          discover(): Promise<{ plugins: Array<{ id: string }>; diagnostics: unknown[] }>;
+        };
+        writeMarketplaceLock(root: string, lock: unknown, scope: "project"): Promise<void>;
+      };
+      const lock = discovery.createEmptyLock();
+      lock.plugins["@kb-labs/commit"] = discovery.createMarketplaceEntry({
+        version: packageJson.version,
+        integrity: installed.entry.integrity,
+        source: "marketplace",
+        package: "@kb-labs/commit",
+        primaryKind: "plugin",
+        provides: ["plugin", "cli-command"],
+        marketplaceSource: "npm",
+        signatureStatus: "unsigned",
+      });
+      await discovery.writeMarketplaceLock(project.root, lock, "project");
+
+      const preflightDiscovery = await new discovery.DiscoveryManager({
+        root: project.root,
+        platformRoot: installedPlatformRoot,
+      }).discover();
+      expect(preflightDiscovery.plugins.map(plugin => plugin.id), JSON.stringify(preflightDiscovery.diagnostics)).toContain("@kb-labs/commit");
+
+      const probe = createChildProcessLauncher({ entry: PROJECT_RUNTIME_ENTRY, stopTimeoutMs: 1500 });
+      const launcher: RuntimeLauncher = {
+        launch: runtimeProject => createChildProcessLauncher({
+          entry: PROJECT_RUNTIME_ENTRY,
+          env: {
+            KB_PLATFORM_ROOT: installedPlatformRoot,
+            KB_HOME: kbHome,
+            KB_MCP_AUTH_MODE: "local",
+            KB_GATEWAY_URL: `http://127.0.0.1:${running!.gatewayPort}`,
+            KB_STATE_DAEMON_URL: running!.internalUrl("state-daemon"),
+          },
+          stopTimeoutMs: 1500,
+        }).launch(runtimeProject),
+        probe: probe.probe,
+      };
+      running = await startTestHost(
+        { host: {} },
+        { projectRegistry: registry, projectRuntime: { launcher, startTimeoutMs: 10_000 } },
+      );
+
+      const routePath = `/api/v1/projects/${project.id}/rest/plugins/commit/status`;
+      const installedRoute = await running.fetchGateway(routePath);
+      const installedBody = await installedRoute.json();
+      expect(installedRoute.status, JSON.stringify(installedBody)).toBe(200);
+      expect(installedBody).toMatchObject({ ok: true, data: { scope: "root" } });
+
+      const commandExecution = await running.fetchGateway(
+        `/api/v1/projects/${project.id}/rest/commands/execute`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            requestId: "marketplace-tarball-host-command",
+            pluginId: "@kb-labs/commit",
+            commandPath: "commit plan delete",
+            input: { argv: [], flags: { json: true } },
+          }),
+        },
+      );
+      expect(commandExecution.status).toBe(200);
+      const commandEvents = (await commandExecution.text()).trim().split("\n")
+        .map(line => JSON.parse(line) as { type: string; exitCode?: number });
+      expect(commandEvents).toContainEqual(expect.objectContaining({ type: "execution:done", exitCode: 0 }));
+    } finally {
+      try {
+        await running?.stop();
+        running = undefined;
+      } finally {
+        try {
+          if (tarballServer?.listening) {
+            await new Promise<void>((resolve, reject) => {
+              tarballServer!.close(error => error ? reject(error) : resolve());
+            });
+          }
+        } finally {
+          if (previousKbHome === undefined) {delete process.env.KB_HOME;}
+          else {process.env.KB_HOME = previousKbHome;}
+          await rm(packedRoot, { recursive: true, force: true });
+        }
+      }
+    }
+  }, 300_000);
 
   // case: S-045.6, S-045.7, S-045.8, S-140.7
   it("forwards a real secured user access token to the project MCP runtime", async () => {
@@ -755,7 +1033,7 @@ describe("kb-host project routing", () => {
     const a = await registered();
     const subject = await host();
     expect(process.env.KB_STATE_DAEMON_URL).toBeUndefined();
-    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus } = await reply(subject, a.id, "/rest/__host-services");
+    const { stateDaemonUrl: stateUrl, gatewayUrl, firstLeaseStatus, tokenInEnvironment, tokenInProcEnviron } = await reply(subject, a.id, "/rest/__host-services");
 
     if (typeof stateUrl !== "string" || typeof gatewayUrl !== "string" || typeof firstLeaseStatus !== "number") {
       throw new Error("project runtime did not receive usable host service addresses");
@@ -764,6 +1042,8 @@ describe("kb-host project routing", () => {
     expect(stateUrl).not.toBe("http://127.0.0.1:7777");
     expect(gatewayUrl).toBe(`http://127.0.0.1:${subject.gatewayPort}`);
     expect(firstLeaseStatus).toBe(404);
+    expect(tokenInEnvironment).toBe(false);
+    expect(tokenInProcEnviron).toBe(false);
   });
 
   // case: S-203.15

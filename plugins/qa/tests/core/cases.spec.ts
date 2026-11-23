@@ -59,6 +59,19 @@ describe('QA case catalog diagnostics', () => {
     expect(parsed.cases.find(item => item.id === 'S-011')).toMatchObject({ supersededBy: 'S-010', steps: [] });
   });
 
+  it('recognizes the native macOS installer entrypoint as a journey claim source', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory, 'S-298');
+    const entrypoint = join(directory, 'e2e', 'journey', 'native-macos-install.mjs');
+    mkdirSync(join(directory, 'e2e', 'journey'), { recursive: true });
+    writeFileSync(entrypoint, 'export const cases = ["S-298.1"];\n');
+
+    const result = scanQACaseClaims(directory, [testCase]);
+
+    expect(result.diagnostics).toEqual([]);
+    expect(result.claims).toEqual([expect.objectContaining({ id: 'S-298.1', kind: 'journey' })]);
+  });
+
   it('parses draft cases as non-release product proposals', () => {
     const directory = fixture();
     writeFileSync(join(directory, 'S-269.md'), caseDocument('S-269', '', 'draft').replace('release: true', 'release: false'));
@@ -117,6 +130,24 @@ describe('QA case claim scanning', () => {
     expect(scanned.claims.map(claim => claim.kind).sort()).toEqual(['e2e', 'e2e', 'journey', 'unit', 'unit']);
     expect(scanned.claims.map(claim => claim.stepId).sort()).toEqual(['S-010.1', 'S-010.1', 'S-010.2', 'S-010.2', `S-${'999'}.1`]);
     expect(scanned.diagnostics).toEqual([expect.objectContaining({ file: expect.stringContaining('invalid.spec.ts'), message: 'claim references unknown case S-999' })]);
+  });
+
+  it('scans adjacent claims above parameterized Vitest declarations', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const unitSource = join(directory, 'claims');
+    mkdirSync(unitSource);
+    writeFileSync(join(unitSource, 'parameterized.test.ts'), [
+      '// case: S-010.1',
+      "it.each(['a', 'b'])('accepts %s', () => {})",
+    ].join('\n'));
+
+    const scanned = scanQACaseClaims(directory, [testCase]);
+
+    expect(scanned.diagnostics).toEqual([]);
+    expect(scanned.claims).toEqual([
+      expect.objectContaining({ stepId: 'S-010.1', kind: 'unit', testName: 'accepts %s' }),
+    ]);
   });
 
   // case: S-262.1

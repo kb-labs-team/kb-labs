@@ -3,7 +3,7 @@
  * Single git log traversal with streaming parse
  */
 
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import type { Change, CommitType, BreakingChange, Reference, Author, ParseOptions } from './types';
 
 /**

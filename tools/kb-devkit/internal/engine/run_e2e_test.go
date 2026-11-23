@@ -233,6 +233,61 @@ func TestAffectedSelectionAndTaskKeysShareTrackedFileOwnership(t *testing.T) {
 	}
 }
 
+// case: S-310.2, S-310.3
+func TestManualOnlyTaskIsSkippedOnlyForAffectedRuns(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"tools/*"})
+	writePkg(t, filepath.Join(root, "tools", "runner"), `{"name":"github.com/kb-labs/kb-runner"}`)
+	writeEngineFile(t, filepath.Join(root, "tools", "runner", "go.mod"), "module github.com/kb-labs/kb-runner\n\ngo 1.22\n")
+	writeEngineFile(t, filepath.Join(root, "tools", "runner", "runner.go"), "package runner\n")
+	writePkg(t, filepath.Join(root, "tools", "active"), `{"name":"github.com/kb-labs/kb-active-tool"}`)
+	writeEngineFile(t, filepath.Join(root, "tools", "active", "go.mod"), "module github.com/kb-labs/kb-active-tool\n\ngo 1.22\n")
+	writeEngineFile(t, filepath.Join(root, "tools", "active", "active.go"), "package active\n")
+	cfg := testConfig([]config.NamedCategory{{Name: "internal-tool", Category: config.CategoryConfig{Match: []string{"tools/runner"}, Preset: "go-binary"}}})
+	cfg.Workspace.Categories[0].Category.Match = []string{"tools/*"}
+	cfg.Tasks = map[string]config.TaskConfig{"test": {
+		{Categories: []string{"internal-tool"}, Packages: []string{"github.com/kb-labs/kb-runner"}, Command: "true", ManualOnly: true},
+		{Categories: []string{"internal-tool"}, Command: "true"},
+	}}
+	ws := mustWorkspace(t, root, cfg)
+	var runner, active workspace.Package
+	for _, pkg := range ws.Packages {
+		if pkg.Name == "github.com/kb-labs/kb-runner" {
+			runner = pkg
+		} else {
+			active = pkg
+		}
+	}
+	common := RunOptions{Tasks: []string{"test"}, Packages: []workspace.Package{runner, active}, WSRoot: root, CacheRoot: filepath.Join(root, ".kb", "devkit"), Concurrency: 1}
+
+	affected := common
+	affected.Affected = true
+	affectedResult, err := Run(ws, cfg, affected)
+	if err != nil {
+		t.Fatalf("affected run: %v", err)
+	}
+	if len(affectedResult.Results) != 1 || affectedResult.Results[0].Package != "github.com/kb-labs/kb-active-tool" {
+		t.Fatalf("affected results = %+v, want active tool test to run", affectedResult.Results)
+	}
+	affectedSummary, err := affectedResult.Summary()
+	if err != nil {
+		t.Fatalf("affected summary: %v", err)
+	}
+	if affectedSummary.SkippedManual != 1 || affectedSummary.Passed != 1 || affectedSummary.Failed != 0 {
+		t.Fatalf("affected summary = %+v, want one active pass and one manual skip", affectedSummary)
+	}
+
+	explicit := common
+	explicit.Packages = []workspace.Package{runner}
+	explicitResult, err := Run(ws, cfg, explicit)
+	if err != nil {
+		t.Fatalf("explicit package run: %v", err)
+	}
+	if len(explicitResult.Results) != 1 || !explicitResult.Results[0].OK {
+		t.Fatalf("explicit results = %+v, want executed passing task", explicitResult.Results)
+	}
+}
+
 func propertyTaskKeys(t *testing.T, ws *workspace.Workspace, tasks []TaskDef) map[string]map[string]string {
 	t.Helper()
 	global, owned, dependencies, err := workspaceInputDigests(ws)
@@ -882,6 +937,67 @@ func TestRunAffectedDependencyChainCompletesBeforeDependentTasks(t *testing.T) {
 	for i := range want {
 		if completed[i] != want[i] {
 			t.Fatalf("completed task order = %v, want %v", completed, want)
+		}
+	}
+}
+
+// case: S-262.14
+func TestRunBuildFromGitAffectedSelectionBuildsUpstreamClosureOnCleanCheckout(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	coreDir := filepath.Join(root, "packages", "core")
+	runtimeDir := filepath.Join(root, "packages", "runtime")
+	appDir := filepath.Join(root, "packages", "app")
+	writePkg(t, coreDir, `{"name":"@fixture/core"}`)
+	writePkg(t, runtimeDir, `{"name":"@fixture/runtime","dependencies":{"@fixture/core":"workspace:*"}}`)
+	writePkg(t, appDir, `{"name":"@fixture/app","dependencies":{"@fixture/runtime":"workspace:*"}}`)
+	for _, dir := range []string{coreDir, runtimeDir, appDir} {
+		writeEngineFile(t, filepath.Join(dir, "src", "input.txt"), "ready\n")
+	}
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("**/dist/\n.kb/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "-b", "main"}, {"config", "user.email", "devkit@example.test"}, {"config", "user.name", "kb-devkit test"}, {"add", "."}, {"commit", "-m", "initial workspace"}} {
+		runGitCommand(t, root, args...)
+	}
+	if err := os.WriteFile(filepath.Join(appDir, "src", "input.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "core", Category: config.CategoryConfig{Match: []string{"packages/core"}, Preset: "node-lib"}},
+		{Name: "runtime", Category: config.CategoryConfig{Match: []string{"packages/runtime"}, Preset: "node-lib"}},
+		{Name: "app", Category: config.CategoryConfig{Match: []string{"packages/app"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{"build": {
+		{Categories: []string{"core"}, Command: `sh -c "mkdir -p dist && printf core > dist/ready"`, Outputs: []string{"dist/**"}},
+		{Categories: []string{"runtime"}, Command: `sh -c "test -f ../core/dist/ready && mkdir -p dist && printf runtime > dist/ready"`, Deps: []string{"^build"}, Outputs: []string{"dist/**"}},
+		{Categories: []string{"app"}, Command: `sh -c "test -f ../runtime/dist/ready && mkdir -p dist && printf app > dist/ready"`, Deps: []string{"^build"}, Outputs: []string{"dist/**"}},
+	}}
+	ws := mustWorkspace(t, root, cfg)
+	affected, err := AffectedPackages(ws, cfg)
+	if err != nil {
+		t.Fatalf("select packages from Git changes: %v", err)
+	}
+	if got := packageNames(affected.Packages); len(got) != 1 || got[0] != "@fixture/app" {
+		t.Fatalf("affected package selection = %v, want only @fixture/app", got)
+	}
+	var built []string
+	result, err := Run(ws, cfg, RunOptions{
+		Tasks: []string{"build"}, Packages: affected.Packages, WSRoot: root,
+		CacheRoot: filepath.Join(root, ".kb", "devkit"), Concurrency: 1,
+		OnResult: func(result TaskResult, _, _ int) { built = append(built, result.Package) },
+	})
+	if err != nil || !result.OK {
+		t.Fatalf("build from git affected selection = %+v, error = %v", result, err)
+	}
+	wantOrder := []string{"@fixture/core", "@fixture/runtime", "@fixture/app"}
+	if strings.Join(built, "\x00") != strings.Join(wantOrder, "\x00") {
+		t.Fatalf("built packages = %v, want dependency order %v", built, wantOrder)
+	}
+	for _, name := range wantOrder {
+		relative := strings.TrimPrefix(name, "@fixture/")
+		if _, err := os.Stat(filepath.Join(root, "packages", relative, "dist", "ready")); err != nil {
+			t.Errorf("%s build artifact missing: %v", name, err)
 		}
 	}
 }

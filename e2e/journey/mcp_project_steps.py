@@ -8,10 +8,12 @@ from project_service_path import project_service_path
 import json
 import os
 import re
+import time
 from pathlib import Path
 from urllib.parse import quote
 
-from invocations import catalogued_error_hint, invocation_context, run_command
+from invocations import catalogued_error_hint, invocation_context, read_ux_cli_result, run_command
+from kb_invocation import kb_command, kb_login_shell
 from journey_resources import read_installed_platform_resource
 from journey_values import journey_value
 from service_steps import Journey
@@ -188,6 +190,134 @@ def mcp_call(project_id: str, request_id: int, name: str, arguments: dict, token
     return status, body
 
 
+def workflow_cron_invocation_parity(project_id: str, token: str, project_root: str,
+                                    env: dict[str, str], case_id: str) -> str | None:
+    """Exercise both public command surfaces against one installed workflow state."""
+    tool_name = "workflow__workflow_crons_enable"
+    project = Path(project_root)
+
+    def cli_result(args: list[str]):
+        cli_path = env.get("KB_JOURNEY_CLI_PATH")
+        command = kb_login_shell(args) if not cli_path else kb_command(args, executable=cli_path)
+        return run_command(command, cwd=project, env=env, timeout=120)
+
+    # Confirm the prepared fixture is visible through the public workflow API
+    # before toggling it through either command surface.
+    cron = None
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        with invocation_context(step_id=case_id):
+            listing = cli_result(["workflow", "crons", "list", "--json"])
+        if listing.returncode == 0:
+            try:
+                data = read_ux_cli_result(listing).get("data")
+            except Exception as error:
+                return f"initial CLI cron list returned invalid UX JSON: {error}"
+            crons = data.get("crons", []) if isinstance(data, dict) else []
+            cron = next((item for item in crons if isinstance(item, dict) and item.get("id") == "journey-cron"), None)
+            target = cron.get("target") if isinstance(cron, dict) else None
+            if (isinstance(cron, dict) and cron.get("source") == "user"
+                    and isinstance(target, dict) and target.get("workflow") == "journey-cron-target"
+                    and cron.get("enabled") is False):
+                break
+        time.sleep(1)
+    else:
+        return "prepared journey-cron fixture did not appear as a disabled user cron through the workflow API"
+
+    status, catalog, _ = _request(
+        project_service_path(project_id, "mcp"), method="POST", token=token,
+        step=f"{case_id} MCP tools/list", accept="application/json, text/event-stream",
+        payload={"jsonrpc": "2.0", "id": 4512, "method": "tools/list", "params": {}},
+    )
+    tools = catalog.get("result", {}).get("tools", []) if isinstance(catalog, dict) else []
+    tool = next((item for item in tools if isinstance(item, dict) and item.get("name") == tool_name), None)
+    schema = tool.get("inputSchema", {}) if isinstance(tool, dict) else {}
+    if not isinstance(schema, dict):
+        return "workflow cron MCP tool omitted its input schema"
+    properties = schema.get("properties", {})
+    id_schema = properties.get("id", {}) if isinstance(properties, dict) else {}
+    if status != 200 or "id" not in schema.get("required", []) or not isinstance(id_schema, dict) or id_schema.get("minLength") != 1:
+        return "workflow cron MCP tool does not expose the required non-empty id schema"
+
+    def cli_invalid(argv: list[str]) -> str | None:
+        with invocation_context(step_id=case_id):
+            result = cli_result(argv)
+        try:
+            payload = read_ux_cli_result(result)
+        except Exception as error:
+            return f"CLI invalid cron input returned invalid UX JSON: {error}"
+        return None if payload.get("ok") is False and payload.get("error", {}).get("code") == "KB_RUNTIME_INPUT_INVALID" else "CLI accepted missing or empty cron ID"
+
+    for argv in (["workflow", "crons", "enable", "--json"],
+                 ["workflow", "crons", "enable", "", "--json"]):
+        failure = cli_invalid(argv)
+        if failure:
+            return failure
+
+    for request_id, arguments in ((4515, {}), (4516, {"id": ""})):
+        status, body = mcp_call(project_id, request_id, "workflow__workflow_crons_enable", arguments, token)
+        result = body.get("result") if isinstance(body, dict) else None
+        envelope = result.get("structuredContent", {}).get("error") if isinstance(result, dict) else None
+        if status != 200 or not isinstance(result, dict) or result.get("isError") is not True or not isinstance(envelope, dict) or envelope.get("code") != "KB_RUNTIME_INPUT_INVALID":
+            return "MCP accepted missing or empty cron ID instead of returning KB_RUNTIME_INPUT_INVALID"
+
+    with invocation_context(step_id=case_id):
+        unchanged = cli_result(["workflow", "crons", "list", "--json"])
+    try:
+        unchanged_data = read_ux_cli_result(unchanged).get("data")
+    except Exception as error:
+        return f"cron state after invalid-argument checks could not be read: {error}"
+    unchanged_crons = unchanged_data.get("crons", []) if isinstance(unchanged_data, dict) else []
+    unchanged_cron = next((item for item in unchanged_crons if isinstance(item, dict) and item.get("id") == "journey-cron"), None)
+    if not isinstance(unchanged_cron, dict) or unchanged_cron.get("enabled") is not False:
+        return "missing or empty cron ID changed the fixture state"
+
+    def cli(action: str) -> str | None:
+        result = cli_result(["workflow", "crons", action, "journey-cron", "--json"])
+        if result.returncode != 0:
+            return f"CLI cron {action} exited {result.returncode}"
+        try:
+            payload = read_ux_cli_result(result)
+        except Exception as error:
+            return f"CLI cron {action} returned invalid UX JSON: {error}"
+        expected = action == "enable"
+        if payload.get("ok") is not True or payload.get("data") != {"id": "journey-cron", "enabled": expected}:
+            return f"CLI cron {action} returned an unexpected result payload"
+        return None
+
+    def mcp(action: str, request_id: int) -> str | None:
+        name = f"workflow__workflow_crons_{action}"
+        status, body = mcp_call(project_id, request_id, name, {"id": "journey-cron"}, token)
+        result = body.get("result") if isinstance(body, dict) else None
+        expected = action == "enable"
+        expected_data = {"id": "journey-cron", "enabled": expected}
+        if status != 200 or not isinstance(result, dict) or result.get("isError") is not False:
+            return f"MCP cron {action} did not return a successful tool result"
+        if result.get("structuredContent", {}).get("data") != expected_data:
+            return f"MCP cron {action} returned an unexpected result payload"
+        return None
+
+    for action, invoke in (("enable", lambda: cli("enable")),
+                           ("disable", lambda: mcp("disable", 4513)),
+                           ("enable", lambda: mcp("enable", 4514)),
+                           ("disable", lambda: cli("disable"))):
+        failure = invoke()
+        if failure:
+            return failure
+
+    with invocation_context(step_id=case_id):
+        listing = cli_result(["workflow", "crons", "list", "--json"])
+    if listing.returncode != 0:
+        return "final CLI cron list failed after the shared CLI/MCP mutations"
+    try:
+        data = read_ux_cli_result(listing).get("data")
+    except Exception as error:
+        return f"final CLI cron list returned invalid UX JSON: {error}"
+    crons = data.get("crons", []) if isinstance(data, dict) else []
+    cron = next((item for item in crons if isinstance(item, dict) and item.get("id") == "journey-cron"), None)
+    return None if isinstance(cron, dict) and cron.get("enabled") is False else "final cron listing did not reflect disabled state"
+
+
 def _check_error_result(body: object, expected_code: str, *, argument: str | None = None) -> str | None:
     result = body.get("result") if isinstance(body, dict) else None
     machine_result = result.get("structuredContent") if isinstance(result, dict) else None
@@ -210,8 +340,8 @@ def _check_error_result(body: object, expected_code: str, *, argument: str | Non
     return None
 
 
-def unknown_tool(project_id: str, token: str = "") -> str | None:
-    status, body = mcp_call(project_id, 1403, "tool-that-does-not-exist", {}, token)
+def unknown_tool(project_id: str, token: str = "", tool_name: str = "tool-that-does-not-exist") -> str | None:
+    status, body = mcp_call(project_id, 1403, tool_name, {}, token)
     if status != 200:
         return f"unknown tool returned HTTP {status}, expected HTTP 200 tool error result"
     failure = _check_error_result(body, "KB_RUNTIME_MCP_UNKNOWN_TOOL")
@@ -464,6 +594,54 @@ def apply_commit_plan(project_id: str, token: str, project_root: str) -> str | N
     return None
 
 
+def cli_mcp_read_parity(project_id: str, token: str, project_root: str) -> str | None:
+    """Compare the same read-only manifest command through CLI and MCP."""
+    cli = run_command(["kb", "commit", "plan", "show", "--json"],
+                      cwd=project_root, env=os.environ, timeout=30)
+    if cli.returncode != 0 or not cli.stdout.strip():
+        return f"CLI commit plan show returned exit {cli.returncode} without JSON output: {cli.stderr[:1000]}"
+    try:
+        cli_result = json.loads(cli.stdout)
+    except json.JSONDecodeError as error:
+        return f"CLI commit plan show did not return JSON: {error}"
+    if not isinstance(cli_result, dict) or cli_result.get("ok") is not True or not cli_result.get("data"):
+        return "CLI commit plan show did not return a successful non-empty result envelope"
+    cli_data = cli_result["data"]
+    if not isinstance(cli_data, dict) or cli_data.get("hasPlan") is not True:
+        return "CLI commit plan show did not report the prepared plan as present"
+    prepared_plan = cli_data.get("plan")
+    if not isinstance(prepared_plan, dict):
+        return "CLI commit plan show did not return the prepared plan"
+    fixture_path = journey_value("KB_JOURNEY_PROJECT_FIXTURES_FILE", "")
+    preparation_result = None
+    if fixture_path and Path(fixture_path).is_file():
+        handoff = json.loads(Path(fixture_path).read_text(encoding="utf-8"))
+        preparation_result = handoff.get("commitPlanPreparationResult")
+    if not isinstance(preparation_result, dict):
+        return "project fixture handoff did not identify the prepared commit plan"
+    prepared_ids = [item.get("id") for item in prepared_plan.get("commits", []) if isinstance(item, dict)]
+    if preparation_result.get("planId") not in prepared_ids:
+        return "CLI result did not contain the commit plan id from the fixture handoff"
+    if cli_data.get("planPath") != preparation_result.get("path"):
+        return "CLI result path did not match the prepared plan path from the fixture handoff"
+
+    status, body = mcp_call(project_id, 1408, commit_tool("commit plan show"), {"json": True}, token)
+    if status != 200:
+        return f"MCP commit plan show returned HTTP {status}"
+    result = body.get("result") if isinstance(body, dict) else None
+    content = result.get("content", []) if isinstance(result, dict) else []
+    text = next((item.get("text", "") for item in content if isinstance(item, dict)), "")
+    if not isinstance(result, dict) or result.get("isError") or not text:
+        return "MCP commit plan show did not return a successful non-empty result"
+    try:
+        mcp_result = json.loads(text)
+    except json.JSONDecodeError as error:
+        return f"MCP commit plan show did not return JSON data like the CLI: {error}"
+    if not isinstance(mcp_result, dict) or mcp_result.get("ok") is not True or mcp_result.get("data") != cli_result["data"]:
+        return "MCP commit plan show result data did not match the CLI result data"
+    return None
+
+
 def project_isolation(project_a: str, project_b: str, project_b_root: str, token: str) -> str | None:
     if project_a == project_b:
         return "project A and project B must be distinct registered projects"
@@ -471,25 +649,34 @@ def project_isolation(project_a: str, project_b: str, project_b_root: str, token
     if (not registered_root.is_dir() or not registered_root.is_absolute()
             or str(registered_root.resolve()) != project_b_root):
         return "project B registry root must be an existing canonical directory"
-    status, body, _ = _request(
-        project_service_path(project_b, "mcp"),
-        method="POST",
-        token=token,
-        step="project B MCP tools/list isolation",
-        accept="application/json, text/event-stream",
-        payload={"jsonrpc": "2.0", "id": 1405, "method": "tools/list", "params": {}},
-    )
-    if status != 200:
-        return f"project B tools/list returned HTTP {status}"
-    result = body.get("result") if isinstance(body, dict) else None
-    tools = result.get("tools", []) if isinstance(result, dict) else []
-    if any(isinstance(tool, dict) and tool.get("name") == commit_tool("commit plan apply") for tool in tools):
-        return "project B listed project A's project-scoped commit tool"
-    return unknown_tool(project_b, token)
+    project_only_tool = "kb-labs-review__review_run"
+    catalogs: dict[str, set[str]] = {}
+    for project_id in (project_a, project_b):
+        status, body, _ = _request(
+            project_service_path(project_id, "mcp"),
+            method="POST",
+            token=token,
+            step=f"project {project_id} MCP tools/list isolation",
+            accept="application/json, text/event-stream",
+            payload={"jsonrpc": "2.0", "id": 1405, "method": "tools/list", "params": {}},
+        )
+        if status != 200:
+            return f"project {project_id} tools/list returned HTTP {status}"
+        result = body.get("result") if isinstance(body, dict) else None
+        tools = result.get("tools", []) if isinstance(result, dict) else []
+        if not isinstance(tools, list):
+            return f"project {project_id} tools/list returned no tool catalog"
+        catalogs[project_id] = {tool["name"] for tool in tools
+                                if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
+    if project_only_tool not in catalogs[project_a]:
+        return "project A omitted its project-only Review tool"
+    if project_only_tool in catalogs[project_b]:
+        return "project B listed project A's project-only Review tool"
+    return unknown_tool(project_b, token, project_only_tool)
 
 
 def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str) -> str | None:
-    """Check that a project-only Commit tool appears in A's catalog, not B's."""
+    """Check that a project-only Review tool appears in A's catalog, not B's."""
     catalogs: dict[str, set[str]] = {}
     for project_id in (project_a, project_b):
         with invocation_context(step_id="mcp.project-catalog"):
@@ -507,11 +694,11 @@ def project_plugin_catalog_isolation(project_a: str, project_b: str, token: str)
             return f"project {project_id} tools/list returned no tool catalog"
         catalogs[project_id] = {tool["name"] for tool in tools
                                 if isinstance(tool, dict) and isinstance(tool.get("name"), str)}
-    project_only_tool = commit_tool("commit plan apply")
+    project_only_tool = "kb-labs-review__review_run"
     if project_only_tool not in catalogs[project_a]:
-        return "Project A's catalog omitted its project-only Commit tool"
+        return "Project A's catalog omitted its project-only Review tool"
     if project_only_tool in catalogs[project_b]:
-        return "Project B's catalog included Project A's Commit tool"
+        return "Project B's catalog included Project A's Review tool"
     return None
 
 

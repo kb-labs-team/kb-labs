@@ -15,6 +15,7 @@ import type {
   WorkflowListResponse,
   WorkflowHealthResponse,
 } from '@kb-labs/workflow-contracts';
+import type { ServiceCommandRequestCapability } from '@kb-labs/plugin-contracts';
 import { deriveProjectId, getHostServiceAddress, useEnv } from '@kb-labs/sdk';
 import { gatewayApiFetch } from '@kb-labs/sdk/gateway';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
@@ -259,7 +260,7 @@ export class WorkflowDaemonClient {
     if (!response.ok) {
       throw new Error(`Health check failed: ${response.statusText}`);
     }
-    return this.parseJsonResponse<WorkflowHealthResponse>(response);
+    return this.unwrapData<WorkflowHealthResponse>(await this.parseJsonResponse<unknown>(response));
   }
 
   /**
@@ -362,6 +363,19 @@ export class WorkflowDaemonClient {
       throw new Error(`Failed to ${action} cron: ${response.statusText}`);
     }
     return this.unwrapData<{ enabled: boolean }>(data);
+  }
+
+  /** HTTP-backed request capability for host-neutral service operations. */
+  async requestServiceOperation(request: Parameters<ServiceCommandRequestCapability>[0]): Promise<Awaited<ReturnType<ServiceCommandRequestCapability>>> {
+    const response = await this.authorizedFetch(`${this.baseUrl}${request.path}`, {
+      method: request.method,
+      ...(request.payload === undefined ? {} : {
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request.payload),
+      }),
+    });
+    const payload = await response.json().catch(() => undefined) as unknown;
+    return { ok: response.ok, statusCode: response.status, payload, gatewayUrl: new URL(this.baseUrl).origin };
   }
 
   /**

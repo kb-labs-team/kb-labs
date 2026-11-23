@@ -24,7 +24,7 @@ and receive a stable exit result.
 
 | # | Action | Expected |
 |---|---|---|
-| S-243.1 | Run `kb fixture execution healthy --json` | The CLI prints its JSON success result and exits with code `0`; the child and its IPC server close. |
+| S-243.1 | Run `kb fixture execution healthy --json` | The CLI writes exactly one parseable JSON success envelope to stdout and exits with code `0`; subprocess startup emits no `Usage: node node-engine.mjs` diagnostic; the child and its IPC server close. |
 | S-243.2 | Run `kb fixture execution typed-failure --json` | The CLI prints the catalogued error envelope and exits with code `1`. |
 | S-243.3 | Run `kb fixture execution hold --json` and press Ctrl+C | The CLI reports the catalogued cancellation code, exits nonzero, and the child process and descendants exit. |
 | S-243.4 | Start workflow `plugin-execution-cancel` and run `kb workflow runs cancel RUN_ID --json` | The step is cancelled with the same catalogued cancellation code as CLI cancellation; the subprocess and descendants exit. |
@@ -32,6 +32,7 @@ and receive a stable exit result.
 | S-243.6 | In each real plugin execution backend, run a fixture handler that returns an error object without a valid hint | The shared boundary returns `KB_PLUGIN_CONTRACT_VIOLATION`; flat string details preserve the source code when present, source error class, bounded message, and `failureMode: "returned"`. Exactly one structured log entry with the same correlation ID contains those source details plus plugin ID/version and command. The response contains no stack. |
 | S-243.7 | In each real plugin execution backend, run a fixture handler that throws a plain `Error` without a hint | The shared boundary returns catalogued `KB_PLUGIN_COMMAND_FAILED`; flat string details preserve the source error class, bounded message, and `failureMode: "thrown"`. Exactly one structured log entry with the same correlation ID contains those source details plus plugin ID/version and command. The response contains no stack. |
 | S-243.8 | Pass a serialized module-resolution failure from handler import through the shared plugin failure normalizer | The boundary returns catalogued `KB_PLUGIN_LOAD_FAILED` with structured `plugin`, `command`, and missing `specifier` details, and uses the catalogue-owned next-step hint for plugin diagnosis. It does not classify the module-load exception as `KB_PLUGIN_CONTRACT_VIOLATION`. |
+| S-243.9 | While a subprocess platform RPC is pending, close the receiving side of its stdio or IPC control channel | The pending call rejects with a transport error; the caller and child shut down without an uncaught stream/process error. IPC backpressure does not retry or duplicate the request. |
 
 ## Decision notes
 

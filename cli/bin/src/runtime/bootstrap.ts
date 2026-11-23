@@ -5,6 +5,7 @@ import {
   createTextPresenter,
   createContext,
   parseArgs,
+  coerceCommandFlags,
   registerSecretFlagValues,
   type ExecutionLimits,
 } from "@kb-labs/cli-runtime";
@@ -32,7 +33,8 @@ import {
 import { handleLimitFlag } from "./limits";
 import { getDefaultMiddlewares } from "./middlewares";
 import { executePlugin, createSystemCommandContext } from "./plugin-executor";
-import { tryResolveGateway, executeViaGateway, pluginCommandUnavailable } from "./gateway-executor";
+import { tryResolveGateway, resolveProjectRuntimeGateway, executeViaGateway, pluginCommandUnavailable } from "./gateway-executor";
+import { createProjectRegistry } from '@kb-labs/core-project-registry';
 import { loadEnvFile } from "./env-loader";
 import { initializePlatform, loadPlatformConfiguration, resolveProjectConfig } from "./platform-init";
 import { shouldShowLimits } from "./helpers/flags";
@@ -44,6 +46,7 @@ import { hasUsablePlatformAuth, resolveActiveGateway, resolveActiveGatewayAddres
 import { dispatchWithPlatformAuthGate } from "./platform-auth-gate";
 import { isPlatformAuthExemptFlag } from "./platform-auth-policy";
 import { resolveProjectScope } from "./command-scope";
+import { shouldUseInstalledProjectRuntime } from './project-runtime-routing.js';
 import { handleExecutionError } from "./execution-error";
 import { runtimeContext } from "@kb-labs/plugin-contracts";
 import type { IEntityRegistry } from "@kb-labs/plugin-contracts";
@@ -251,6 +254,24 @@ export async function executeCli(
   if (projectScope === "required") {
     try {
       loadedConfig = await resolveProjectConfig(cwd, options.moduleUrl);
+    } catch (error) {
+      return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
+    }
+  }
+  let registeredProjectId: string | undefined;
+  const verifiedInstalledProjectRoute = shouldUseInstalledProjectRuntime({
+    accessMode,
+    projectScope,
+    installationId: gatewayTarget?.installationId,
+    explicitGatewayUrl: global.gatewayUrl,
+  });
+  if (verifiedInstalledProjectRoute) {
+    try {
+      const registered = await createProjectRegistry({ env }).findContainingPath(cwd);
+      if (!registered || registered.project.status !== 'active' || !registered.pathExists) {
+        throw new Error('Current project is not registered with the installed host.');
+      }
+      registeredProjectId = registered.project.id;
     } catch (error) {
       return reportInitializationError(error, global, jsonPresenterFactory, textPresenterFactory, correlationId);
     }
@@ -651,12 +672,15 @@ export async function executeCli(
       try {
         return await dispatchPlugin({
           manifestCmd,
+          ...(verifiedInstalledProjectRoute && registeredProjectId ? { projectId: registeredProjectId } : {}),
+          ...(verifiedInstalledProjectRoute ? { installedGatewayUrl: gatewayTarget?.gatewayUrl } : {}),
           actualRest,
           env: commandEnv,
           global,
           flagsObj,
           cliContext,
           platform,
+          platformRoot,
           presenter,
           resultWriter,
           runWithMiddleware: async (run) => {
@@ -673,12 +697,15 @@ export async function executeCli(
 
 interface DispatchPluginParams {
   manifestCmd: RegisteredCommand;
+  projectId?: string;
+  installedGatewayUrl?: string;
   actualRest: string[];
   env: CliCommandEnv;
   global: ReturnType<typeof parseArgs>["global"];
   flagsObj: ReturnType<typeof parseArgs>["flagsObj"];
   cliContext: CliExecutionContext;
   platform: PlatformContainer;
+  platformRoot?: string;
   presenter: Presenter;
   resultWriter: CliResultWriter;
   runWithMiddleware: (run: () => Promise<number>) => Promise<number>;
@@ -695,6 +722,10 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   const accessMode = resolveCliAccessMode();
   const { gatewayUrl: _gatewayUrl, ...commandGlobalFlags } = p.global;
   const commandFlags: Record<string, unknown> = { ...commandGlobalFlags, ...p.flagsObj };
+  const declaredCommandFlags = p.manifestCmd.manifest.v3Manifest?.cli?.commands?.find(
+    (command) => command.path === commandPath,
+  )?.flags ?? [];
+  const typedCommandFlags = coerceCommandFlags(commandFlags, declaredCommandFlags);
   if (p.global.gatewayUrl) {
     for (const flag of p.manifestCmd.manifest.flags ?? []) {
       if (flag.name === 'gateway-url' || flag.name === 'gatewayUrl') {
@@ -718,13 +749,25 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
   }
 
   return p.runWithMiddleware(async () => {
+    if (p.projectId && p.installedGatewayUrl) {
+      const gatewayClient = resolveProjectRuntimeGateway(p.installedGatewayUrl);
+      return executeViaGateway(gatewayClient, {
+        commandId,
+        projectId: p.projectId,
+        argv: p.actualRest,
+        flags: typedCommandFlags,
+        manifestCmd: p.manifestCmd,
+        resultWriter: p.resultWriter,
+      });
+    }
+
     if (executionMode !== "in-process" && accessMode !== 'local') {
       const gatewayClient = await tryResolveGateway(p.env.KB_GATEWAY_URL);
       if (gatewayClient) {
         return executeViaGateway(gatewayClient, {
           commandId,
           argv: p.actualRest,
-          flags: commandFlags,
+          flags: typedCommandFlags,
           manifestCmd: p.manifestCmd,
           resultWriter: p.resultWriter,
         });
@@ -736,9 +779,10 @@ async function dispatchPlugin(p: DispatchPluginParams): Promise<number> {
       env: p.env,
       commandId,
       argv: p.actualRest,
-      flags: commandFlags,
+      flags: typedCommandFlags,
       manifestCmd: p.manifestCmd,
       platform: p.platform,
+      platformRoot: p.platformRoot,
       resultWriter: p.resultWriter,
     });
 

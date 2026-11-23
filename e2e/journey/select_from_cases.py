@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import ast
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -203,6 +204,23 @@ def fixture_group_declarations(groups, selector: str, root: Path) -> dict[str, d
             runners = declaration_runners(declaration, source)
             if owner.lineno <= line <= owner.end_lineno and (not selector or selector in runners):
                 claims.update(declaration.get("cases") or ())
+        for node in ast.walk(owner):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            call = function.id if isinstance(function, ast.Name) else (
+                function.attr if isinstance(function, ast.Attribute) else "")
+            if call != "run_fixture_group":
+                continue
+            cases_node = next((keyword.value for keyword in node.keywords if keyword.arg == "cases"), None)
+            if cases_node is None:
+                continue
+            if not isinstance(cases_node, (ast.Tuple, ast.List)) or any(
+                    not isinstance(item, ast.Constant) or not isinstance(item.value, str)
+                    for item in cases_node.elts):
+                raise ValueError(
+                    f"{source}:{node.lineno}: fixture claim declaration is not statically resolvable")
+            claims.update(item.value for item in cases_node.elts)
         declarations_by_group[group.__name__] = {"cases": claims, "steps": steps}
 
     result = {}
@@ -223,7 +241,10 @@ def journey_source_group_declaration(source: str, root: Path,
                                      selector: str = "") -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
     sources = _imported_journey_sources({source}, root)
-    registrations = _source_step_declarations(sources, root)
+    # Keep this declaration scoped to the source's import closure. The broader
+    # registry also scans every runner entry point, which can assign an unrelated
+    # lane's step names to this group and make that flow run for the wrong cases.
+    registrations = _source_step_declarations_cached(tuple(sorted(sources)), root)
     cases: set[str] = set()
     steps: set[str] = set()
     mode = RUNNERS[selector].mode if selector else ""
@@ -874,7 +895,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     names: set[str] = set()
     sources: set[str] = set()
     capabilities: set[str] = set()
-    pending: list[str] = []
+    pending: list[tuple[str, str]] = []
     for step_id in selected:
         sources.update(sources_by_step.get(step_id, set()))
         for declaration in declarations_by_step.get(step_id, []):
@@ -883,21 +904,26 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
                 capabilities.add(capability)
             name = declaration.get("name") or step_id
             names.add(str(Dependency(declaration.get("kind", "step"), name)))
-            pending.extend(declaration.get("requires", []))
+            pending.extend((dependency, step_id) for dependency in declaration.get("requires", []))
     prerequisites: set[str] = set()
+    prerequisite_claims: dict[str, set[str]] = {}
+    visited_dependencies: set[tuple[str, str]] = set()
     while pending:
-        name = pending.pop()
-        dependency = Dependency.parse(name)
+        reference, claim_id = pending.pop()
+        dependency = Dependency.parse(reference)
         if dependency.kind == "state":
             continue
         key = str(dependency)
-        if key in names:
+        if (key, claim_id) in visited_dependencies:
             continue
+        visited_dependencies.add((key, claim_id))
         names.add(key)
         prerequisites.add(key)
+        if dependency.kind == "step":
+            prerequisite_claims.setdefault(dependency.name, set()).add(claim_id)
         declaration = declarations_by_name.get(key, {})
         sources.update(declaration.get("sources", set()))
-        pending.extend(declaration.get("requires", []))
+        pending.extend((child, claim_id) for child in declaration.get("requires", []))
     owners: dict[str, set[str]] = {}
     for step_id in selected:
         for runner, claims in owners_by_step.get(step_id, {}).items():
@@ -949,18 +975,22 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     flow_prerequisites = sorted(Dependency.parse(item).name for item in prerequisites
                                 if Dependency.parse(item).kind == "flow")
     selected_owners: dict[str, set[str]] = {}
+    selected_claim_owners: dict[str, set[str]] = {}
     for step_id in selected:
         for declaration in declarations_by_step.get(step_id, []):
             if declaration.get("kind", "step") == "step":
-                selected_owners.setdefault(str(declaration.get("name") or step_id), set()).add(step_id)
+                owner_name = str(declaration.get("name") or step_id)
+                selected_owners.setdefault(owner_name, set()).add(step_id)
+                selected_claim_owners.setdefault(owner_name, set()).add(step_id)
     for name in step_prerequisites:
-        selected_owners.setdefault(name, set()).update(selected)
+        selected_owners.setdefault(name, set()).update(prerequisite_claims.get(name, set()))
     return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
             "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
             "stepSources": sorted(sources), "capabilities": sorted(capabilities),
             "composeProfiles": lanes_for_runners(runners),
-            "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())}}
+            "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())},
+            "selectedClaimOwners": {key: sorted(value) for key, value in sorted(selected_claim_owners.items())}}
 
 
 def read_coverage_result(result: CompletedProcess[str]) -> dict:
@@ -985,6 +1015,64 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
                         continue
                     selected.update(runners_for_source(str(claim.get("source", "")), mode))
     return sorted(selected)
+
+
+def _area_step_groups(results: list[dict], area: str, mode: str | None = None) -> tuple[list[str], list[str]]:
+    """Split active area step IDs by whether each has a journey claim."""
+    if mode is not None and mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported QA coverage mode: {mode!r}")
+    if not isinstance(area, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", area):
+        raise ValueError(f"invalid product area {area!r}; use a lowercase QA area slug")
+    area_by_id: dict[str, str] = {}
+    steps_by_id: dict[str, set[str]] = {}
+    journey_steps_by_id: dict[str, set[str]] = {}
+    for coverage in results:
+        if mode is not None and coverage.get("mode") != mode:
+            continue
+        for case in coverage.get("cases", []):
+            case_id = case.get("id")
+            case_area = case.get("area")
+            if case.get("status") != "active":
+                continue
+            if not isinstance(case_id, str) or not isinstance(case_area, str) or not case_area:
+                raise ValueError("QA coverage omitted active case area metadata")
+            previous = area_by_id.setdefault(case_id, case_area)
+            if previous != case_area:
+                raise ValueError(f"QA coverage reports inconsistent product areas for {case_id}")
+            if case_area != area:
+                continue
+            for step in case.get("steps", []):
+                step_id = step.get("stepId")
+                if not isinstance(step_id, str):
+                    continue
+                steps_by_id.setdefault(case_id, set()).add(step_id)
+                if any(
+                    isinstance(claim, dict)
+                    and claim.get("kind") in {"journey", "e2e"}
+                    and str(claim.get("source", "")).startswith(("e2e/journey/", "e2e/studio/", "e2e/"))
+                    for claim in step.get("claims", [])
+                ):
+                    journey_steps_by_id.setdefault(case_id, set()).add(step_id)
+    active_area = sorted(case_id for case_id, case_area in area_by_id.items() if case_area == area)
+    if not active_area:
+        available = ", ".join(sorted(set(area_by_id.values()))) or "none"
+        raise ValueError(f"unknown or empty product area {area!r}; active QA areas: {available}")
+    selected = sorted(set().union(*(journey_steps_by_id.get(case_id, set())
+                                    for case_id in active_area)))
+    uncovered = sorted(set().union(*(steps_by_id.get(case_id, set())
+                                     - journey_steps_by_id.get(case_id, set())
+                                     for case_id in active_area)))
+    return selected, uncovered
+
+
+def claim_step_ids_for_area(results: list[dict], area: str, mode: str | None = None) -> list[str]:
+    """Resolve active area steps that have journey claims."""
+    return _area_step_groups(results, area, mode)[0]
+
+
+def uncovered_step_ids_for_area(results: list[dict], area: str, mode: str | None = None) -> list[str]:
+    """Return active area step IDs without a journey claim."""
+    return _area_step_groups(results, area, mode)[1]
 
 
 def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
@@ -1086,7 +1174,8 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
             else:
                 return {"selection": sorted(set(tokens)), "steps": [], "owners": {}, "runners": [],
                         "prerequisiteSteps": [], "prerequisiteFlows": [], "stepSources": [],
-                        "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {}}
+                        "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {},
+                        "selectedClaimOwners": {}}
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)
     resolved = resolve_selection(sorted(selected), sources_by_step, declarations_by_step, declarations_by_name,
@@ -1114,6 +1203,14 @@ def main() -> int:
         results = coverage_results()
         print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
         return 0
+    if len(sys.argv) in {3, 4} and sys.argv[1] == "--claim-step-ids-for-area":
+        mode = sys.argv[3] if len(sys.argv) == 4 else None
+        print_report_text(",".join(claim_step_ids_for_area(coverage_results(), sys.argv[2], mode)), flush=True)
+        return 0
+    if len(sys.argv) in {3, 4} and sys.argv[1] == "--uncovered-step-ids-for-area":
+        mode = sys.argv[3] if len(sys.argv) == 4 else None
+        print_report_text(",".join(uncovered_step_ids_for_area(coverage_results(), sys.argv[2], mode)), flush=True)
+        return 0
     results = coverage_results()
     requested = ",".join(read_requested_cases(os.environ))
     if requested:
@@ -1126,8 +1223,18 @@ def main() -> int:
 
 
 def coverage_results(root: Path | None = None) -> list[dict]:
-    """Read the QA coverage of both modes from the workspace CLI; a failed run names its typed error."""
+    """Read mode coverage and attach area metadata from the same QA case catalog."""
     root = Path.cwd() if root is None else root
+    list_command = ["node", "./cli/bin/dist/bin.js", "qa", "cases", "list", "--json"]
+    with invocation_context(step_id="journey.case-selection"):
+        catalog_result = run_hermetic_cli(list_command, cwd=root, env=os.environ, timeout=120,
+                                          workspace_root=root)
+    catalog = decode_ux_success_result(read_ux_cli_result(catalog_result))
+    if not isinstance(catalog, dict) or not isinstance(catalog.get("cases"), list):
+        raise ValueError("QA case catalog result has no cases array")
+    catalog_cases = {item["id"]: item for item in catalog["cases"]
+                     if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    areas = {case_id: item.get("area") for case_id, item in catalog_cases.items()}
     results = []
     for mode in ("local", "secured"):
         command = ["node", "./cli/bin/dist/bin.js", "qa", "coverage", "show",
@@ -1137,7 +1244,21 @@ def coverage_results(root: Path | None = None) -> list[dict]:
                                       workspace_root=root)
         if result.returncode != 0:
             raise ValueError(describe_cli_failure(" ".join(command), result.stdout, result.stderr, result.returncode))
-        results.append(read_coverage_result(result))
+        coverage = read_coverage_result(result)
+        coverage_case_ids = set()
+        for case in coverage.get("cases", []):
+            if isinstance(case, dict) and case.get("id") in areas:
+                case["area"] = areas[case["id"]]
+                coverage_case_ids.add(case["id"])
+        for case_id, catalog_case in catalog_cases.items():
+            if case_id not in coverage_case_ids:
+                coverage.setdefault("cases", []).append({
+                    "id": case_id,
+                    "area": catalog_case.get("area"),
+                    "status": catalog_case.get("status"),
+                    "steps": [],
+                })
+        results.append(coverage)
     return results
 
 

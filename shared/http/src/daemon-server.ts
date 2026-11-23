@@ -33,6 +33,8 @@ export interface DaemonServerOptions {
   openapi?: Pick<OpenAPIOptions, "title" | "description">;
   /** Route metadata for the standard observability and OpenAPI routes. */
   standardRouteConfig?: FastifyContextConfig;
+  /** Optional auth config for /health only; other operational routes use standardRouteConfig. */
+  healthRouteConfig?: FastifyContextConfig;
   setErrorHandler?: (server: FastifyInstance) => void;
   registerRoutes?: (server: FastifyInstance) => Promise<void>;
   /** Called AFTER correlation hook — request.kbLogger is already set */
@@ -109,7 +111,10 @@ export async function createDaemonServer(
     const standardRouteOptions = () => ({
       config: { ...opts.standardRouteConfig, kbRequestKind: "probe" as const },
     });
-    server.get("/health", standardRouteOptions(), async () =>
+    const healthRouteOptions = () => ({
+      config: { ...opts.standardRouteConfig, ...opts.healthRouteConfig, kbRequestKind: "probe" as const },
+    });
+    server.get("/health", healthRouteOptions(), async () =>
       opts.healthResponse
         ? opts.healthResponse()
         : opts.observability.buildHealth(),

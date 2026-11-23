@@ -51,12 +51,17 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
 export async function setup({
   platform,
   runtime,
+  projectId,
   host,
   projectRoot: repoRoot,
   platformRoot,
+  projectRuntimeToken,
   logger: serviceLogger,
 }: ServiceContext): Promise<() => Promise<void>> {
   const projectRoot = requireProjectContext(repoRoot);
+  // Keep the runtime guard credential in the route's closure only. Plugins,
+  // workers, subprocesses, and ordinary process logs must not inherit it.
+  const runtimeToken = projectRuntimeToken;
   // Platform launch has already loaded the layered environment.
   const { config, diagnostics } = await loadRestApiConfig(projectRoot);
 
@@ -120,7 +125,12 @@ export async function setup({
     });
   });
 
-  const server = await createServer(config, projectRoot, registry);
+  const server = await createServer(config, projectRoot, registry, undefined, runtimeToken ? {
+    projectId,
+    projectRoot,
+    platformRoot,
+    runtimeToken,
+  } : undefined);
 
   // Start system metrics collector
   bootstrapLogger.info("Starting system metrics collector");

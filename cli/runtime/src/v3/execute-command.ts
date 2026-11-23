@@ -23,6 +23,8 @@ export interface ExecuteCommandV3Options {
   binaryName: string;
   /** Explicit plugin environment values for this invocation. */
   env?: Record<string, string | undefined>;
+  /** Host-only platform root for resolving platform peers from store plugins. */
+  platformRoot?: string;
   /**
    * Plugin ID (e.g., "@kb-labs/my-plugin")
    */
@@ -36,6 +38,8 @@ export interface ExecuteCommandV3Options {
   /** Registered CLI path used in actionable unexpected-failure messages. */
   commandPath: string;
   onError?: (error: ErrorEnvelope) => void;
+  /** Receives the normalized successful CLI result once, regardless of JSON mode. */
+  onResult?: (result: { ok: true; data: unknown; meta?: unknown }) => void;
 
   /**
    * Path to command handler file
@@ -217,6 +221,7 @@ export async function executeCommandV3(
       handlerRef: handlerPath,
       input,
       env,
+      platformRoot: options.platformRoot,
       timeoutMs: quotas?.timeoutMs,
       // Pass cwd so worker-pool backend sets ctx.cwd to the invocation directory,
       // not the platform installation directory (worker-script.ts reads workspace.cwd)
@@ -266,8 +271,14 @@ export async function executeCommandV3(
     if (!cliResult.ok) {
       throw new Error('Execution factory returned a successful result containing a command failure.');
     }
+    const machineResult = {
+      ok: true as const,
+      data: cliResult.result ?? null,
+      ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }),
+    };
+    options.onResult?.(machineResult);
     if (flags.json) {
-      ui.json({ ok: true, data: cliResult.result ?? null, ...(cliResult.meta === undefined ? {} : { meta: cliResult.meta }) });
+      ui.json(machineResult);
     }
 
     // Return exit code from wrapped result

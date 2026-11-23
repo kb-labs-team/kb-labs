@@ -17,6 +17,7 @@ export type { QACatalogDiagnostic, QACatalogResult } from './cases/catalog.js';
 export { scanQACaseClaims } from './cases/claims.js';
 export { RELEASE_CASE_CLAIM_BASELINE, validateReleaseCaseClaims } from './cases/release-claim-baseline.js';
 export { computeQACaseCoverage, computeQACaseEvidenceCoverage } from './cases/coverage.js';
+export { buildQACaseEvidenceInventory } from './cases/inventory.js';
 
 // Analysis
 export { analyzeTrends } from './analysis/trend-analyzer.js';

@@ -26,11 +26,13 @@
   },
   "dependencies": {
     "@kb-labs/core-platform": "workspace:*",
+    "@kb-labs/marketplace-registry-contracts": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
-    "@kb-labs/marketplace-registry-contracts": "workspace:*"
+    "semver": "^7.8.5"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",
+    "@types/semver": "^7.7.1",
     "tsup": "^8.5.0",
     "typescript": "^5",
     "vitest": "^4.1.11"

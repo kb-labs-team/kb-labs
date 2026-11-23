@@ -60,6 +60,8 @@ export function HealthBanner() {
   const isDegraded =
     (healthStatus === 'degraded' || healthSnapshot?.state === 'partial_observability') && readyStatus;
   const isDown = !!error || !readyStatus;
+  const isNotReady = !readyStatus;
+  const isHealthUnavailable = !!error && readyStatus;
   const isMockMode =
     studioConfig.dataSourceMode === 'mock' ||
     (studioConfig.dataSourceMode === 'http' && !healthSnapshot && error);
@@ -78,13 +80,17 @@ export function HealthBanner() {
   const iconSize = 14;
 
   const message = isDown
-    ? 'Gateway unavailable'
+    ? isNotReady ? 'Gateway unavailable' : 'Gateway health details unavailable'
     : isDegraded
     ? 'Gateway degraded'
     : 'Mock mode';
 
   const description = isDown
-    ? `Source: gateway. Not ready at /api/ready${readyReason ? ` — ${readyReason}` : ''}. Run kb-create status --platform-root <platform-root> or kb-create doctor --platform-root <platform-root>.`
+    ? isNotReady
+      ? `Source: gateway. Not ready at /api/ready${readyReason ? ` — ${readyReason}` : ''}. Run kb-create status --platform-root <platform-root> or kb-create doctor --platform-root <platform-root>.`
+      : isHealthUnavailable
+        ? 'Could not load health details from /api/observability/health. Retry the request or check Gateway logs.'
+        : 'Gateway health details are unavailable.'
     : isDegraded
     ? `Some services may be unavailable${pluginMetrics?.failed ? ` · ${pluginMetrics.failed} plugin mount(s) failed` : ''}`
     : 'Using mock data for development';

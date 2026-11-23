@@ -82,6 +82,7 @@ kb qa baseline status                  # show current baseline snapshot
 
 ```bash
 kb qa cases list
+kb qa cases inventory --json
 kb qa cases validate
 kb qa coverage show --json
 kb qa coverage show --level release --mode local --run .journey/reports/service-local.json
@@ -107,6 +108,7 @@ comma-separated paths to `--run`.
 | `kb qa baseline update` | Save current results as baseline |
 | `kb qa baseline status` | Show baseline snapshot |
 | `kb qa cases list` | List cases in the configured catalog |
+| `kb qa cases inventory` | Inventory case-step claims and undeclared runtime evidence dimensions |
 | `kb qa cases validate` | Validate catalog metadata, step ids, and test claims |
 | `kb qa coverage show` | Generate per-step coverage from claims and run results |
 

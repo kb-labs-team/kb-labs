@@ -108,6 +108,27 @@ describe("registerProjectRoutes", () => {
     expect(released).toBe(1);
   });
 
+  it("mounts a service-relative workflow operation under the declared API prefix exactly once", async () => {
+    const seen = await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: '',
+        headers: {},
+        release: () => undefined,
+      }),
+    }), { statusCode: 200, body: '{"ok":true,"data":{"enabled":true}}' }, [
+      { serviceId: 'workflow', rewritePrefix: '/api/v1', healthCheck: '/health' },
+    ]);
+
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/api/v1/projects/prj_a/workflow/crons/journey-cron/enable',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(seen[0]?.url).toBe('/api/v1/crons/journey-cron/enable');
+  });
+
   it("routes the MCP service root without requiring a trailing slash", async () => {
     const seen = await setup((port) => ({
       resolveProjectService: async () => ({

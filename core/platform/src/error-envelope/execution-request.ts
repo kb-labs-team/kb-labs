@@ -121,6 +121,12 @@ export interface ExecutionRequest<TDescriptor = unknown> {
   /** Explicit environment values for this execution. */
   env?: Record<string, string | undefined>;
 
+  /**
+   * Host-only installed platform root used for runtime module resolution.
+   * Remote backends use their own host root, not a caller-local filesystem path.
+   */
+  platformRoot?: string;
+
   /** Workspace strategy (default local) */
   workspace?: WorkspaceConfig;
 

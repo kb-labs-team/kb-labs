@@ -8,5 +8,7 @@ export interface ExecuteMessage {
   input: unknown;
   cwd: string;
   strictFilesystemPermissions: boolean;
+  /** Host-only root for runtime module resolution; excluded from plugin env. */
+  platformRoot?: string;
   outdir?: string;
 }

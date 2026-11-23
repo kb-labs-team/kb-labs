@@ -164,7 +164,6 @@ def run_platform_update_steps(
     initial_plan: dict = {}
     running_tree_before: Path | None = None
     running_lock_before: bytes | None = None
-    running_config_before: bytes | None = None
 
     def checkpoint_details() -> dict[str, dict[str, str | None]]:
         return {"configSha256": dict(config_checkpoints)}
@@ -176,16 +175,61 @@ def run_platform_update_steps(
     def assert_shared_file_fingerprints(checkpoint: str) -> None:
         if shared_file_fingerprints_before is None:
             raise RuntimeError("shared-state file fingerprint is unavailable before update")
-        if shared_runtime_file_fingerprints(platform_root) != shared_file_fingerprints_before:
+        config_state_path = layout_value('sharedRuntimePaths.kb_kb_config_jsonc.statePath')
+        if shared_runtime_file_fingerprints(
+            platform_root, exclude_state_paths=frozenset({config_state_path}),
+        ) != shared_file_fingerprints_before:
             raise RuntimeError(f"shared-state file fingerprints changed at {checkpoint}")
+
+    def assert_platform_storage_choice(stage: str) -> None:
+        command = kb_command(
+            ["config", "get", "--scope", "platform", "platform.adapterOptions.storage", "--json"],
+            executable=kb_binary,
+        )
+        result = run_command(command)
+        try:
+            envelope = read_ux_cli_result(result)
+            if result.returncode != 0:
+                failure = decode_ux_error_result(envelope)
+                raise RuntimeError(f"platform storage config could not be read {stage}: {failure!r}")
+            payload = decode_ux_success_result(envelope)
+        except ValueError as error:
+            raise RuntimeError(f"platform config get returned an invalid UX result {stage}: {error}") from error
+        if (not isinstance(payload, dict) or payload.get("scope") != "platform"
+                or payload.get("found") is not True
+                or payload.get("value") != {"baseDir": "case-storage"}
+                or payload.get("layer") != "platform"):
+            raise RuntimeError(f"platform storage user choice changed {stage}: {payload!r}")
 
     def save_known_good_state() -> None:
         nonlocal saved_user_session_established, installation_id, gateway_url, initial_plan
-        nonlocal shared_file_fingerprints_before, running_tree_before, running_lock_before, running_config_before
-        shared_file_fingerprints_before = shared_runtime_file_fingerprints(platform_root)
+        nonlocal shared_file_fingerprints_before, running_tree_before, running_lock_before
+        config_command = kb_command(
+            ["config", "set", "--scope", "platform", "platform.adapterOptions.storage",
+             '{"baseDir":"case-storage"}', "--json"],
+            executable=kb_binary,
+        )
+        configured = run_command(config_command)
+        try:
+            config_envelope = read_ux_cli_result(configured)
+            if configured.returncode != 0:
+                failure = decode_ux_error_result(config_envelope)
+                raise RuntimeError(f"platform config set failed before update: {failure!r}")
+            config_result = decode_ux_success_result(config_envelope)
+        except ValueError as error:
+            raise RuntimeError(f"platform config set returned an invalid UX result: {error}") from error
+        if not isinstance(config_result, dict):
+            raise RuntimeError("platform config set did not confirm the user choice")
+        reported_config = config_result.get("file")
+        if not isinstance(reported_config, str) or Path(reported_config).resolve() != config_paths[0].resolve():
+            raise RuntimeError("platform config set did not identify the installed platform config file")
+        assert_platform_storage_choice("after config set")
+        config_state_path = layout_value('sharedRuntimePaths.kb_kb_config_jsonc.statePath')
+        shared_file_fingerprints_before = shared_runtime_file_fingerprints(
+            platform_root, exclude_state_paths=frozenset({config_state_path}),
+        )
         running_tree_before = active_platform_root(platform_root)
         running_lock_before = (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes()
-        running_config_before = (running_tree_before / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_bytes()
         receipt = json.loads(receipt_path.read_text())
         installation_id = str(receipt.get("installationId") or "")
         gateway_url = str(receipt.get("verification", {}).get("hostHealthUrl") or "")
@@ -307,8 +351,6 @@ def run_platform_update_steps(
         assert_shared_file_fingerprints("successful update before restart")
         if running_tree_before is None or (running_tree_before / layout_value('versionStatePaths.kb_marketplace_lock')).read_bytes() != running_lock_before:
             raise RuntimeError("successful update changed the still-running version's marketplace lock")
-        if running_tree_before is None or (running_tree_before / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_bytes() != running_config_before:
-            raise RuntimeError("successful update changed the still-running version's config view")
         post_update_status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
                                            "status after update before restart")
         if post_update_status.get("runningVersion") != base_version or post_update_status.get("installedVersion") != updated_version:
@@ -369,10 +411,7 @@ def run_platform_update_steps(
             for service in pending_restart_services:
                 if service["id"] not in human_output:
                     raise RuntimeError(f"human {label} output omitted service {service['id']!r}")
-        config_hash = _hash(config_paths[0])
-        verified_hash = receipt.get("verification", {}).get("configSha256")
-        if config_hash != config_checkpoints.get("beforeUpdate"):
-            raise RuntimeError("generated config changed before the host restart")
+        assert_platform_storage_choice("after update")
         _json_command(run_command, kb_command(["adapter", "list", "--json"], executable=kb_binary),
                       "adapter list after update")
 
@@ -531,25 +570,7 @@ def run_platform_update_steps(
         if status.get("running") is not True or status.get("reachable") is not True:
             raise RuntimeError("kb-create status did not confirm the restored host")
         assert_shared_file_fingerprints("restored platform verification")
-        before_update = config_checkpoints.get("beforeUpdate")
-        after_rollback = config_checkpoints.get("afterRollbackHostRestart")
-        after_recovery = config_checkpoints.get("afterMissingSnapshotRecovery")
-        if before_update is None:
-            return "BLOCKED: before-update config SHA-256 is unavailable because the initial config/status checkpoint failed"
-        if after_rollback is None:
-            return "BLOCKED: post-rollback config SHA-256 is unavailable because rollback or its host restart did not complete"
-        if after_rollback != before_update:
-            raise RuntimeError(
-                "generated config first differed at after successful rollback plus host restart: "
-                f"beforeUpdate={before_update}, afterRollbackHostRestart={after_rollback}"
-            )
-        if after_recovery is None:
-            return "BLOCKED: post-recovery config SHA-256 is unavailable because missing-snapshot recovery did not complete"
-        if after_recovery != after_rollback:
-            raise RuntimeError(
-                "generated config first differed at after missing-snapshot recovery: "
-                f"afterRollbackHostRestart={after_rollback}, afterMissingSnapshotRecovery={after_recovery}"
-            )
+        assert_platform_storage_choice("after rollback")
         if verify_user is not None:
             if not saved_user_session_established:
                 raise RuntimeError("saved user session was not established before update")

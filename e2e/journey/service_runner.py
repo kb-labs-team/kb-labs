@@ -21,6 +21,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import traceback
+from typing import MutableMapping
 import urllib.error
 import urllib.request
 import uuid
@@ -64,6 +65,7 @@ from unexpected_error_steps import run_unexpected_error_steps
 from mcp_project_steps import (
     apply_commit_plan,
     commit_tool_schema,
+    cli_mcp_read_parity,
     invalid_arguments,
     local_auth,
     mcp_ux_result_contract,
@@ -75,9 +77,11 @@ from mcp_project_steps import (
     secured_auth,
     secured_project_catalog_isolation,
     unknown_tool,
+    workflow_cron_invocation_parity,
 )
 from platform_state_dump import archive_service_logs
 from journey_resources import journey_module, active_platform_root
+from workflow_steps import prepare_workflow_fixtures
 
 
 BASE_URL = journey_value("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
@@ -523,6 +527,14 @@ def service_check(name, capability, check, *, cases=(), requires=(), runners=())
     return name, capability, check, list(cases), tuple(requires), tuple(runners)
 
 
+def _workflow_cron_parity(project_id: str, token: str | None, project_root: str) -> str | None:
+    """Prepare only the disposable journey project, then exercise both public surfaces."""
+    prepare_workflow_fixtures(Path(project_root))
+    return workflow_cron_invocation_parity(
+        project_id, token or "", project_root, os.environ.copy(), case_id="S-045.12",
+    )
+
+
 def _checks(mode: str, graph: FlowGraph | None = None):
     def project_data() -> dict:
         value = graph.state_value_if_passed("project-registered") if graph is not None else None
@@ -621,15 +633,37 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         yield service_check("project MCP refuses host-registration credentials", "mcp",
                             lambda: opaque_host_credential_mcp_rejection(pid(), auth_token()),
                             cases=["S-045.10"], runners=("service-secured:explore",))
-    yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid(), auth_token()),
-                        cases=["S-140.1"])
     project_root = (service_project(graph)["root"]
                     if graph is not None and graph.states.get("project-registered", {}).get("passed") is True
                     else "")
+    yield service_check("project MCP commit schema", "mcp", lambda: commit_tool_schema(pid(), auth_token()),
+                        cases=["S-140.1"])
     if project_root:
+        yield service_check("project MCP and CLI read parity", "mcp",
+                            lambda: cli_mcp_read_parity(pid(), auth_token(), project_root), cases=["S-140.8"])
+    else:
+        yield service_check("project MCP and CLI read parity", "mcp",
+                            lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
+                            cases=["S-140.8"])
+    if project_root:
+        if mode == "local":
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: _workflow_cron_parity(pid(), auth_token(), project_root),
+                                cases=["S-045.12"], runners=("service-local:explore",))
+        else:
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: _workflow_cron_parity(pid(), auth_token(), project_root), cases=[])
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: apply_commit_plan(pid(), auth_token(), project_root), cases=["S-140.2"])
     else:
+        if mode == "local":
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: "BLOCKED: project-registered state must provide the isolated workflow fixture root",
+                                cases=["S-045.12"], runners=("service-local:explore",))
+        else:
+            yield service_check("workflow cron CLI and MCP state parity", "workflow",
+                                lambda: "BLOCKED: project-registered state must provide the isolated workflow fixture root",
+                                cases=[])
         yield service_check("project MCP commit mutation", "mcp",
                             lambda: "BLOCKED: project-registered state must provide the disposable commit fixture root",
                             cases=["S-140.2"])
@@ -728,23 +762,27 @@ def export_project_state_to_child_environment(graph: FlowGraph) -> None:
     )
 
 
-def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
+def prepare_service_api_session(graph: FlowGraph, mode: str,
+                                env: MutableMapping[str, str] | None = None) -> None:
     """Probe the independent HTTP credential used by service-runner API requests.
 
     The CLI session is restored separately because auth journey steps can log the CLI out;
     this state is the runner's HTTP bearer credential and has its own lifetime.
     """
+    session_env = env if env is not None else os.environ
+    admin_email = session_env.get("KB_JOURNEY_ADMIN_EMAIL", ADMIN_EMAIL)
+    admin_password = session_env.get("KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD)
     acquired: dict[str, str | None] = {"token": None}
 
     def acquire() -> str | None:
         if mode == "local":
             return None
-        if not ADMIN_PASSWORD:
+        if not admin_password:
             return "secured profile needs KB_JOURNEY_ADMIN_PASSWORD; provide test credentials in the isolated journey container"
-        store_report_secret(os.environ, "KB_JOURNEY_ADMIN_PASSWORD", ADMIN_PASSWORD,
+        store_report_secret(session_env, "KB_JOURNEY_ADMIN_PASSWORD", admin_password,
                             "service runner admin password")
         status, body, _ = request("/auth/login/cli", method="POST",
-                                  payload={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+                                  payload={"email": admin_email, "password": admin_password})
         if status not in {200, 201}:
             return f"POST /auth/login/cli returned HTTP {status}; check the isolated secured install credentials"
         if not isinstance(body, dict):
@@ -753,7 +791,7 @@ def prepare_service_api_session(graph: FlowGraph, mode: str) -> None:
         if not token:
             return "POST /auth/login/cli returned no access token"
         token = str(token)
-        store_report_secret(os.environ, "KB_JOURNEY_SERVICE_TOKEN", token,
+        store_report_secret(session_env, "KB_JOURNEY_SERVICE_TOKEN", token,
                             "secured service admin access token")
         acquired["token"] = token
         me_status, _, _ = request("/auth/me", token=token)
@@ -871,7 +909,7 @@ SERVICE_GROUPS = {
                                      "produces": ("marketplace-available",)},
     "marketplace": {"capabilities": {"marketplace"},
                      "depends_on": ("host-running", "project-registered", "service-api-session")},
-    "marketplace-lifecycle": {"capabilities": set(),
+    "marketplace-lifecycle": {"capabilities": {"commit-plugin"},
                               "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session")},
     "marketplace-registry": {"capabilities": {"marketplace-registry"},
                              "depends_on": ("host-running", "project-registered", "service-api-session")},
@@ -899,7 +937,7 @@ SERVICE_GROUPS = {
 
 
 def service_selection_groups(root: Path | None = None, runner_selector: str = "") -> dict[str, dict]:
-    """Attach resolver-owned marketplace registrations to the service graph."""
+    """Attach resolver-owned journey registrations to their service graph groups."""
     groups = {name: dict(spec) for name, spec in SERVICE_GROUPS.items()}
     source_root = root or resource_root()
     declaration = journey_source_group_declaration(
@@ -909,8 +947,17 @@ def service_selection_groups(root: Path | None = None, runner_selector: str = ""
                   else "marketplace-lifecycle")
     group = dict(groups[group_name])
     group["cases"] = tuple(sorted(set(group.get("cases", ())) | set(declaration["cases"])))
-    group["steps"] = tuple(sorted(set(group.get("steps", ())) | set(declaration["steps"])))
+    # The imported source closure includes unrelated runner owners. Case IDs identify
+    # marketplace flows without making those cross-module step names select this group.
     groups[group_name] = group
+    adapter_declaration = journey_source_group_declaration(
+        "e2e/journey/adapter_defaults_steps.py", source_root, runner_selector)
+    adapter_group = dict(groups["adapters"])
+    adapter_group["cases"] = tuple(sorted(
+        set(adapter_group.get("cases", ())) | set(adapter_declaration["cases"])))
+    adapter_group["steps"] = tuple(sorted(
+        set(adapter_group.get("steps", ())) | set(adapter_declaration["steps"])))
+    groups["adapters"] = adapter_group
     return groups
 STATE_PRODUCERS = {
     state: group for group, spec in SERVICE_GROUPS.items()
@@ -1092,6 +1139,66 @@ def _find_project_registration(payload: object) -> tuple[str, str]:
     return "", ""
 
 
+def prepare_registry_install_project(env: dict[str, str], runner=run_command) -> tuple[str, str]:
+    """Register a clean journey project for the Registry install and provenance checks."""
+    home_value = env.get("HOME")
+    if not home_value:
+        raise RuntimeError("Registry fixture requires an isolated journey HOME")
+    project = (Path(home_value) / "registry-marketplace-project").resolve()
+    export_project_identity_to_child_environment(
+        env, project_id="", project_root="", project_b_id="", project_b_root="")
+    project.mkdir(parents=True, exist_ok=False)
+    init = ["git", "init", "-q", str(project)]
+    result = run_with_runner(runner, init, cwd=project.parent, env=env, timeout=30)
+    if result.returncode != 0:
+        raise CalledProcessError(result.returncode, init, output=result.stdout, stderr=result.stderr)
+    register = kb_command(["project", "add", str(project), "--json"])
+    result = run_with_runner(runner, register, cwd=project, env=env, timeout=120)
+    _output(result, register)
+    try:
+        payload = decode_ux_success_result(read_ux_cli_result(result))
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError("registering the Registry fixture project returned invalid JSON") from error
+    project_id, registered_root = _find_project_registration(payload)
+    if not project_id or registered_root != str(project):
+        raise RuntimeError("registering the Registry fixture project returned no canonical project identity")
+    lock_path = Path(registered_root) / ".kb" / "marketplace.lock"
+    if lock_path.exists():
+        try:
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("new Registry fixture project has an unreadable Marketplace lock") from error
+        if "@kb-labs/commit" in lock.get("plugins", {}):
+            raise RuntimeError("new Registry fixture project already has a Commit pin")
+    export_project_identity_to_child_environment(
+        env, project_id=project_id, project_root=registered_root)
+    return project_id, registered_root
+
+
+def cleanup_registry_install_project(project_id: str, project_root: str,
+                                     preserved_project_root: str, env: dict[str, str],
+                                     runner=run_command) -> None:
+    """Unregister and remove only the isolated Registry fixture project."""
+    home_value = env.get("HOME")
+    if not home_value:
+        raise RuntimeError("Registry fixture cleanup requires an isolated journey HOME")
+    expected_root = (Path(home_value) / "registry-marketplace-project").resolve()
+    target_input = Path(project_root)
+    target = target_input.resolve()
+    preserved = Path(preserved_project_root).resolve()
+    if target != expected_root or target == preserved or target_input.is_symlink():
+        raise RuntimeError("refusing to clean up a project outside the isolated Registry fixture root")
+    remove = kb_command(["project", "remove", project_id, "--yes", "--json"])
+    result = run_with_runner(runner, remove, cwd=target, env=env, timeout=120)
+    _output(result, remove)
+    try:
+        decode_ux_success_result(read_ux_cli_result(result))
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError("removing the Registry fixture project returned invalid JSON") from error
+    if target.exists():
+        shutil.rmtree(target)
+
+
 def _write_mcp_commit_plan(project_root: Path, env: dict[str, str]) -> dict[str, object]:
     """Prepare the staged note commit required by S-140.2 in the isolated KB state."""
     def git(*args: str) -> CompletedProcess[str]:
@@ -1156,11 +1263,29 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
         return run_with_runner(command_runner, command, timeout=timeout, **options)
     project_a = Path(project_root).resolve()
     package = "@kb-labs/commit"
-    install = kb_command([ "marketplace", "install", package, "--json"])
+    install = kb_command(["marketplace", "install", package, "--scope", "project", "--json"])
     installed = runner(install, cwd=str(project_a), env=env, capture_output=True,
                        text=True, timeout=300)
     _output(installed, install)
     plan_preparation_result = _write_mcp_commit_plan(project_a, env)
+
+    review_package = "@kb-labs/review"
+    review_version = _registry_version(review_package, registry, project_a, env, runner)
+    review_install = kb_command(["marketplace", "install", f"{review_package}@{review_version}",
+                                 "--scope", "project", "--json"])
+    review_installed = runner(review_install, cwd=str(project_a), env=env, capture_output=True,
+                              text=True, timeout=300)
+    _output(review_installed, review_install)
+
+    platform_list = kb_command(["marketplace", "plugins", "list", "--scope", "platform", "--json"])
+    platform_list_result = runner(platform_list, cwd=str(project_a), env=env, capture_output=True,
+                                  text=True, timeout=120)
+    platform_plugins = decode_ux_success_result(read_ux_cli_result(platform_list_result))
+    platform_entries = platform_plugins.get("entries") if isinstance(platform_plugins, dict) else None
+    if not isinstance(platform_entries, list):
+        raise RuntimeError("platform plugin list returned no entries while preparing MCP isolation fixture")
+    if any(isinstance(entry, dict) and entry.get("id") == review_package for entry in platform_entries):
+        raise RuntimeError("MCP isolation fixture Review plugin is installed at platform scope")
 
     home = Path(env["HOME"])
     project_b = home / "project-b-mcp"
@@ -1182,19 +1307,20 @@ def prepare_mcp_projects(project_root: str, registry: str, env: dict[str, str],
     project_b_id, project_b_root = _find_project_registration(payload)
     if not project_b_id or not project_b_root:
         raise RuntimeError("registering MCP isolation project B returned no project ID and canonical path")
-    review_package = "@kb-labs/review"
-    review_version = _registry_version(review_package, registry, project_b, env, runner)
-    review_install = kb_command([ "marketplace", "install", f"{review_package}@{review_version}", "--json"])
-    review_installed = runner(review_install, cwd=str(project_b), env=env, capture_output=True,
-                              text=True, timeout=300)
-    _output(review_installed, review_install)
+    project_list = kb_command(["marketplace", "plugins", "list", "--scope", "project", "--json"])
+    project_list_result = runner(project_list, cwd=str(project_b), env=env, capture_output=True,
+                                 text=True, timeout=120)
+    project_plugins = decode_ux_success_result(read_ux_cli_result(project_list_result))
+    project_entries = project_plugins.get("entries") if isinstance(project_plugins, dict) else None
+    if not isinstance(project_entries, list):
+        raise RuntimeError("project B plugin list returned no entries while preparing MCP isolation fixture")
+    if any(isinstance(entry, dict) and entry.get("id") == review_package for entry in project_entries):
+        raise RuntimeError("MCP isolation fixture Review plugin is installed in project B")
     lock_path = project_b / ".kb" / "marketplace.lock"
     if lock_path.exists():
         lock = json.loads(lock_path.read_text())
         if "@kb-labs/commit" in lock.get("plugins", {}):
             raise RuntimeError("MCP isolation project B unexpectedly has the Commit plugin installed")
-        if "@kb-labs/review" not in lock.get("plugins", {}):
-            raise RuntimeError("MCP isolation project B does not have its Review fixture plugin installed")
     return project_b_id, project_b_root, plan_preparation_result
 
 
@@ -1345,15 +1471,39 @@ def main() -> int:
                                     "Registry Marketplace lane service API bearer")
             flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
             flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
-            # This runner has its own installed project/platform lifecycle; its Marketplace lock is not the shared npm fixture lock.
-            entry = prepare_registry_commit_project_fixture(journey, project_root, registry, flow_env, run_command)
-            if entry is None:
-                return "Registry lane did not capture the verified Commit provenance entry"
-            run_ordered_source_journey_steps(journey, project_root, flow_env, run_command)
-            return None
+            # Registry checks use a separate registered project so a prior npm pin
+            # cannot be mistaken for an immutable Registry version.
+            registry_env = flow_env.copy()
+            registry_project_id, registry_project_root = prepare_registry_install_project(registry_env, run_command)
+            failure: Exception | str | None = None
+            try:
+                entry = prepare_registry_commit_project_fixture(
+                    journey, registry_project_root, registry, registry_env, run_command)
+                if entry is None:
+                    failure = "Registry lane did not capture the verified Commit provenance entry"
+                else:
+                    run_ordered_source_journey_steps(
+                        journey, registry_project_root, registry_env, run_command)
+            except Exception as error:
+                failure = error
+            try:
+                cleanup_registry_install_project(
+                    registry_project_id, registry_project_root, project_root, registry_env, run_command)
+            except Exception as cleanup_error:
+                if isinstance(failure, Exception):
+                    raise RuntimeError(
+                        f"Registry lane failed ({failure}); its isolated project cleanup also failed ({cleanup_error})"
+                    ) from failure
+                if failure:
+                    return f"{failure}; Registry fixture cleanup failed: {cleanup_error}"
+                raise
+            if isinstance(failure, Exception):
+                raise failure
+            return failure
 
         graph.flow("Registry ordered-source Marketplace assertions", "marketplace-registry",
-                   "marketplace-registry", registry_marketplace_lane, record_empty_success=False)
+                   "marketplace-registry", registry_marketplace_lane, record_empty_success=False,
+                   runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
         export_project_state_to_child_environment(graph)
         declared_steps = list(checks(args.mode, graph))
         run_service_steps(journey, declared_steps, args.mode, graph=graph)

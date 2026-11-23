@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import semver from 'semver';
 import globby from 'globby';
 import { discoverSubRepoPaths } from '@kb-labs/sdk';

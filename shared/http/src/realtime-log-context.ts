@@ -4,6 +4,7 @@ import {
   type ILogger,
 } from "@kb-labs/core-platform";
 import { resolveObservabilityInstanceId } from "./log-context.js";
+import { redactHttpUrl } from "./redact-http-url.js";
 
 export type RealtimeTransport = "websocket" | "sse";
 
@@ -43,7 +44,7 @@ export function createRealtimeLogger(
     pluginId: input.pluginId,
     "network.transport": input.transport,
     "network.connection_id": input.connectionId,
-    ...(input.route ? { "http.route": input.route } : {}),
+    ...(input.route ? { "http.route": redactHttpUrl(input.route) } : {}),
     ...(input.channelPath ? { "websocket.channel": input.channelPath } : {}),
     ...(input.fields ?? {}),
   });

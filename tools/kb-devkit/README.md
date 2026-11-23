@@ -278,7 +278,20 @@ workspace:
 
 ### Task variants
 
-Each task can have multiple variants — selected by package category. The scheduler picks the first variant whose `categories` list includes the package's category. Packages with no matching variant are silently skipped for that task.
+Each task can have multiple variants — selected by package category. The scheduler picks the first variant whose `categories` list includes the package's category. A variant may instead scope an override to exact package names with `packages`; that override takes precedence for those packages. Packages with no matching variant are silently skipped for that task.
+
+Use `manualOnly: true` for an exceptional task that should be omitted from `--affected` runs. DevKit reports it under `skippedManualTasks` with a reason, and an explicit package target still runs it. For example:
+
+```yaml
+tasks:
+  test:
+    - categories: [internal-tool]
+      packages: [github.com/acme/frozen-tool]
+      command: make test
+      manualOnly: true
+    - categories: [internal-tool]
+      command: make test
+```
 
 ```yaml
 tasks:

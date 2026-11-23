@@ -299,7 +299,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatalf("install receipt request root = %q, read error=%v, canonicalize error=%v; want canonical install root %q", installedReceipt.Plan.Request.PlatformRoot, err, canonicalErr, canonicalRoot)
 	}
 	expectedMarketplaceInstall := contracts.MarketplaceInstallRecord{
-		ID: "@kb-labs/commit", Spec: "@kb-labs/commit@1.0.0", Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+		ID: "@kb-labs/commit", Spec: "@kb-labs/commit", Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
 	}
 	if len(installedReceipt.MarketplaceInstalls) != 1 {
 		t.Fatalf("install receipt Marketplace results = %#v; want []contracts.MarketplaceInstallRecord{%#v}", installedReceipt.MarketplaceInstalls, expectedMarketplaceInstall)

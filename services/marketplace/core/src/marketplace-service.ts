@@ -259,7 +259,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         (ctx.scope === 'project' || resolved.primaryKind === 'plugin');
       const marketplaceState = usesExtensionStore ? [] : await snapshotMarketplaceState(scopeRoot);
       const result = usesExtensionStore
-        ? await this.installInStore(resolved)
+        ? await this.installInStore(resolved, ctx.scope, source.dependencyRegistryUrl)
         : await source.install(resolved, scopeRoot, opts);
 
       let canonicalId: string | null | undefined;
@@ -569,18 +569,31 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   private async installInStore(
     resolved: Awaited<ReturnType<PackageSource['resolve']>>,
+    scope: MarketplaceScope,
+    registryUrl?: string,
   ): Promise<InstalledPackage> {
     const store = this.extensionStore;
     if (!store) {
       throw new Error('Extension store is not configured. Restart the platform with `kb-create start`.');
     }
-    const entry = await store.resolve({
-      name: resolved.id,
-      version: resolved.version,
-      kind: 'plugin',
-      ...(resolved.downloadUrl ? { spec: resolved.downloadUrl } : {}),
-      ...(resolved.integrity ? { expectedIntegrity: resolved.integrity } : {}),
-    });
+    let entry: Awaited<ReturnType<typeof store.resolve>>;
+    try {
+      entry = await store.resolve({
+        name: resolved.id,
+        version: resolved.version,
+        kind: 'plugin',
+        ...(resolved.downloadUrl ? { spec: resolved.downloadUrl } : {}),
+        ...(resolved.integrity ? { expectedIntegrity: resolved.integrity } : {}),
+        ...(registryUrl ? { registryUrl } : {}),
+      });
+    } catch (error) {
+      if (error instanceof IntegrityMismatchError) {
+        throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_INTEGRITY_MISMATCH', {
+          details: { package: resolved.id, scope },
+        }));
+      }
+      throw error;
+    }
     return {
       id: entry.entry.name,
       version: entry.entry.version,

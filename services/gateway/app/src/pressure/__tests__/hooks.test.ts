@@ -112,6 +112,27 @@ describe('createPressureOnRequest', () => {
     }));
   });
 
+  // case: S-252.2
+  it('redacts share credentials in rate limit logs while preserving diagnostics', async () => {
+    const b = broker();
+    b.registerLimit('gateway:service:rest', { requestsPerSecond: 1, safetyMargin: 1 });
+    const hook = createPressureOnRequest({
+      broker: b,
+      logger: log,
+      config: baseConfig({
+        upstreams: { rest: { serviceId: 'rest', prefix: '/api/v1/rest' } },
+        pressure: { enabled: true, perService: { rest: { requestsPerSecond: 1, safetyMargin: 1 } }, perRoute: [] },
+      }),
+    });
+    await hook.call(undefined as never, makeRequest(), makeReply(), () => {});
+    const rejected = makeRequest({ url: '/api/v1/rest/packages?token=share-token-test-only&version=1.2.3' });
+    await hook.call(undefined as never, rejected, makeReply(), () => {});
+
+    expect(log.warn).toHaveBeenCalledWith('pressure.rejected', expect.objectContaining({
+      url: '/api/v1/rest/packages?token=[REDACTED]&version=1.2.3',
+    }));
+  });
+
   it('skips WS upgrade requests', async () => {
     const b = broker();
     const tryAcquireSpy = vi.spyOn(b, 'tryAcquire');

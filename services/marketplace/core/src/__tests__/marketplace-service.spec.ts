@@ -357,6 +357,39 @@ describe('MarketplaceService', () => {
       expect(await fs.readdir(path.join(projectRoot, '.kb'))).toEqual(['kb.config.json', 'marketplace.lock']);
     });
 
+    // case: S-268.4
+    it('renders extension-store integrity failures as Marketplace integrity errors for Registry installs', async () => {
+      const projectRoot = path.join(tmpDir, 'registry-integrity-project');
+      await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+      await fs.writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), '{}');
+      const packageId = '@kb-labs/registry-integrity';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'registry-integrity', packageId);
+      const source = createMockSource(new Map([
+        [packageId, { dir, version: '1.0.1', integrity }],
+      ]));
+      const actual = computeIntegrity('tampered Registry tarball');
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        async resolve() {
+          throw new IntegrityMismatchError({ plugin: packageId, expected: integrity, actual });
+        },
+        async listEntries() { return []; },
+      };
+      const service = makeMarketplaceService({
+        platformRoot: tmpDir, projectRoot, registrySource: source, extensionStore: store,
+      });
+
+      await expect(service.install({ scope: 'project', projectRoot }, [packageId]))
+        .rejects.toMatchObject({ envelope: {
+          code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH', details: { package: packageId, scope: 'project' },
+        } });
+      await expect(fs.access(path.join(projectRoot, '.kb', 'marketplace.lock')))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
     it('installs a plugin and writes to marketplace.lock', async () => {
       const { dir, integrity } = await createPluginDir(tmpDir, 'test-plugin', '@kb-labs/test-plugin');
       const source = createMockSource(
@@ -517,6 +550,42 @@ describe('MarketplaceService', () => {
       expect(sourceInstall).not.toHaveBeenCalled();
       expect(storeResolve).toHaveBeenCalledOnce();
       expect(result.installed[0]?.primaryKind).toBe('plugin');
+    });
+
+    // case: S-010.8
+    it('passes the configured npm registry to the extension store for plugin dependencies', async () => {
+      const packageId = '@kb-labs/test-plugin';
+      const registryUrl = 'https://npm.fixture.example';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'registry-dependencies', packageId);
+      const source = Object.assign(
+        createMockSource(new Map([[packageId, { dir, version: '1.0.0', integrity }]])),
+        { dependencyRegistryUrl: registryUrl },
+      );
+      const storeResolve = vi.fn(async () => ({
+        entry: {
+          schema: 'kb.store-entry/1' as const,
+          name: packageId,
+          version: '1.0.0',
+          kind: 'plugin' as const,
+          integrity,
+          installedAt: new Date().toISOString(),
+        },
+        packageRoot: dir,
+        entryDir: path.join(tmpDir, 'store', 'entries', 'registry-dependencies'),
+      }));
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+
+      await makeMarketplaceService({ platformRoot: tmpDir, source, extensionStore: store })
+        .install({ scope: 'platform' }, [packageId]);
+
+      expect(storeResolve).toHaveBeenCalledWith(expect.objectContaining({ registryUrl }));
     });
 
     it('keeps platform adapters in the platform package graph', async () => {

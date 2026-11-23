@@ -3,9 +3,6 @@ version: 1.0.0
 description: Collect GitHub CI evidence and publish an agent-ready weekly reliability brief
 
 on:
-  schedule:
-    cron: "0 9 * * 1"
-    timezone: Europe/Moscow
   manual: true
 
 phases:

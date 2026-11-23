@@ -357,7 +357,7 @@ func runUpdateCommand(ctx context.Context, input updateCommandInput, installRoot
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeReleaseIndexInvalid, "the previous release index could not be verified", updateActivationRetryHint(input), err)
 	}
 	installer, err := newArtifactExecutor(layout, stage, plan.Registry, offline, transcript, input.ArtifactRunner,
-		verifiedRelease, &previousRelease, activeRoot)
+		verifiedRelease, &previousRelease, activeRoot, redactions)
 	if err != nil {
 		return updateCommandResult{}, contracts.NewDiag(contracts.CodeInstallLayoutUnsupported, "the shared artifact cache path could not be resolved", "run `"+contracts.ShellCommand("kb-create", "doctor", "--platform-root", installRoot)+"` before retrying the update", err)
 	}

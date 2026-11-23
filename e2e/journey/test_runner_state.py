@@ -7,12 +7,31 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from service_runner import main as service_main, service_check
+from runner import missing_service_report_detail
 
 
 class RunnerStateBoundaryTests(unittest.TestCase):
+    def test_missing_service_report_diagnostic_includes_both_redacted_streams(self):
+        secret = "service-token-value-12345"
+        result = SimpleNamespace(
+            returncode=0,
+            stdout=f"runner started token={secret}",
+            stderr="failed before report write",
+        )
+
+        detail = missing_service_report_detail(
+            result, Path("/summary/service-local.json"), {"KB_JOURNEY_SERVICE_TOKEN": secret})
+
+        self.assertIn("exited 0", detail)
+        self.assertIn("/summary/service-local.json", detail)
+        self.assertIn("runner started token=[REDACTED]", detail)
+        self.assertIn("failed before report write", detail)
+        self.assertNotIn(secret, detail)
+
     def test_service_runner_blocks_failed_project_state_and_keeps_independent_checks(self):
         with tempfile.TemporaryDirectory(prefix="service-runner-failed-project-state-") as directory:
             output = Path(directory) / "service-local.json"

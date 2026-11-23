@@ -36,6 +36,18 @@ describe('OpenAILLM credentials', () => {
     expect(adapter.getProtocolCapabilities().stream.supported).toBe(true);
   });
 
+
+  it('passes execution cancellation to the actual OpenAI request', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key');
+    const adapter = new OpenAILLM();
+    const client = Reflect.get(adapter, 'client') as { chat: { completions: { create: (...args: unknown[]) => Promise<unknown> } } };
+    const create = vi.spyOn(client.chat.completions, 'create').mockRejectedValue(new DOMException('cancelled', 'AbortError'));
+    const controller = new AbortController();
+
+    await expect(adapter.complete('cancel this request', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
+    expect(create).toHaveBeenCalledWith(expect.objectContaining({ model: expect.any(String) }), { signal: controller.signal });
+  });
+
   // case: S-054.1
   it('uses the manifest model as the constructor default', async () => {
     const { manifest } = await import('./manifest.js');

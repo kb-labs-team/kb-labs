@@ -20,6 +20,7 @@ import { registerHealthRoutes } from './health';
 import { registerOpenAPIRoutes } from './openapi';
 import { registerMetricsRoutes } from './metrics';
 import { registerPluginRoutes, registerPluginSnapshotRoutes } from './plugins';
+import { registerProjectCommandExecutionRoute } from './command-execution.js';
 import { registerWorkflowRoutes } from './workflows';
 import { registerJobsRoutes } from './jobs';
 import { registerCacheRoutes } from './cache';
@@ -49,11 +50,16 @@ export async function registerRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
   repoRoot: string,
-  registry: IEntityRegistry
+  registry: IEntityRegistry,
+  projectExecution?: { projectId?: string; projectRoot: string; platformRoot: string; runtimeToken?: string },
 ): Promise<void> {
   // Register route collector hook FIRST, before any routes are registered
   // This allows us to collect all routes for the /routes endpoint
   registerRouteCollector(server);
+
+  if (projectExecution) {
+    await registerProjectCommandExecutionRoute(server, { registry, ...projectExecution });
+  }
 
   const initialSnapshot = registry.snapshot();
   const initialRedisStatus = ('getRedisStatus' in registry && typeof (registry as { getRedisStatus?: () => RedisStatus }).getRedisStatus === 'function')

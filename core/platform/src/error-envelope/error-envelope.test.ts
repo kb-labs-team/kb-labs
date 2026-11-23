@@ -8,7 +8,7 @@ import type { CatalogRuntimeTemplateParameters, CatalogTemplateParameters } from
 import type { ErrorCode, ProductErrorCode } from './index.js';
 import { AdapterConfigError, AdapterCredentialsMissingError, AdapterOperationError, AdapterProjectScopeError, AdapterUnavailableError, PlatformConfigError } from '../errors.js';
 import { HostServiceAddressError } from '../host-service-address.js';
-import { registerProcessSensitiveValues } from '../logging/context.js';
+import { registerProcessSensitiveValues, withProcessSensitiveValues } from '../logging/context.js';
 import {
   ERROR_AREAS,
   ERROR_STAGES,
@@ -764,6 +764,21 @@ describe('toErrorEnvelope (platform errors)', () => {
     expect(preview).not.toContain(secret);
     expect(typeof preview).toBe('string');
     expect((preview as string).length).toBeLessThanOrEqual(256);
+  });
+
+  // case: S-203.26
+  it('redacts request-scoped values from error previews without retaining them globally', async () => {
+    const secret = 'request-preview-secret-7391';
+    const malformed = Object.assign(new Error('Review failed.'), {
+      code: 'REVIEW_FAILED',
+      hint: { nested: { token: secret } },
+    });
+
+    const envelope = await withProcessSensitiveValues([secret], () => toErrorEnvelope(malformed));
+    const preview = envelope.details?.observedValuePreview ?? '';
+
+    expect(preview).toContain('[REDACTED]');
+    expect(preview).not.toContain(secret);
   });
 
   // case: S-054.19
