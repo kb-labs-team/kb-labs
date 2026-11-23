@@ -895,7 +895,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
     names: set[str] = set()
     sources: set[str] = set()
     capabilities: set[str] = set()
-    pending: list[str] = []
+    pending: list[tuple[str, str]] = []
     for step_id in selected:
         sources.update(sources_by_step.get(step_id, set()))
         for declaration in declarations_by_step.get(step_id, []):
@@ -904,21 +904,26 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
                 capabilities.add(capability)
             name = declaration.get("name") or step_id
             names.add(str(Dependency(declaration.get("kind", "step"), name)))
-            pending.extend(declaration.get("requires", []))
+            pending.extend((dependency, step_id) for dependency in declaration.get("requires", []))
     prerequisites: set[str] = set()
+    prerequisite_claims: dict[str, set[str]] = {}
+    visited_dependencies: set[tuple[str, str]] = set()
     while pending:
-        name = pending.pop()
-        dependency = Dependency.parse(name)
+        reference, claim_id = pending.pop()
+        dependency = Dependency.parse(reference)
         if dependency.kind == "state":
             continue
         key = str(dependency)
-        if key in names:
+        if (key, claim_id) in visited_dependencies:
             continue
+        visited_dependencies.add((key, claim_id))
         names.add(key)
         prerequisites.add(key)
+        if dependency.kind == "step":
+            prerequisite_claims.setdefault(dependency.name, set()).add(claim_id)
         declaration = declarations_by_name.get(key, {})
         sources.update(declaration.get("sources", set()))
-        pending.extend(declaration.get("requires", []))
+        pending.extend((child, claim_id) for child in declaration.get("requires", []))
     owners: dict[str, set[str]] = {}
     for step_id in selected:
         for runner, claims in owners_by_step.get(step_id, {}).items():
@@ -978,7 +983,7 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
                 selected_owners.setdefault(owner_name, set()).add(step_id)
                 selected_claim_owners.setdefault(owner_name, set()).add(step_id)
     for name in step_prerequisites:
-        selected_owners.setdefault(name, set()).update(selected)
+        selected_owners.setdefault(name, set()).update(prerequisite_claims.get(name, set()))
     return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
             "steps": sorted(selected),
             "prerequisiteSteps": step_prerequisites, "prerequisiteFlows": flow_prerequisites,
@@ -1012,14 +1017,18 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
-def _area_case_groups(results: list[dict], area: str) -> tuple[list[str], list[str]]:
-    """Split active area cases by whether every step has a journey claim."""
+def _area_step_groups(results: list[dict], area: str, mode: str | None = None) -> tuple[list[str], list[str]]:
+    """Split active area step IDs by whether each has a journey claim."""
+    if mode is not None and mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported QA coverage mode: {mode!r}")
     if not isinstance(area, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", area):
         raise ValueError(f"invalid product area {area!r}; use a lowercase QA area slug")
     area_by_id: dict[str, str] = {}
     steps_by_id: dict[str, set[str]] = {}
     journey_steps_by_id: dict[str, set[str]] = {}
     for coverage in results:
+        if mode is not None and coverage.get("mode") != mode:
+            continue
         for case in coverage.get("cases", []):
             case_id = case.get("id")
             case_area = case.get("area")
@@ -1048,25 +1057,22 @@ def _area_case_groups(results: list[dict], area: str) -> tuple[list[str], list[s
     if not active_area:
         available = ", ".join(sorted(set(area_by_id.values()))) or "none"
         raise ValueError(f"unknown or empty product area {area!r}; active QA areas: {available}")
-    selected = []
-    uncovered = []
-    for case_id in active_area:
-        steps = steps_by_id.get(case_id, set())
-        if steps and steps <= journey_steps_by_id.get(case_id, set()):
-            selected.append(case_id)
-        else:
-            uncovered.append(case_id)
+    selected = sorted(set().union(*(journey_steps_by_id.get(case_id, set())
+                                    for case_id in active_area)))
+    uncovered = sorted(set().union(*(steps_by_id.get(case_id, set())
+                                     - journey_steps_by_id.get(case_id, set())
+                                     for case_id in active_area)))
     return selected, uncovered
 
 
-def case_ids_for_area(results: list[dict], area: str) -> list[str]:
-    """Resolve active area cases with complete journey claims."""
-    return _area_case_groups(results, area)[0]
+def claim_step_ids_for_area(results: list[dict], area: str, mode: str | None = None) -> list[str]:
+    """Resolve active area steps that have journey claims."""
+    return _area_step_groups(results, area, mode)[0]
 
 
-def uncovered_case_ids_for_area(results: list[dict], area: str) -> list[str]:
-    """Return active area cases that have no journey claim for at least one step."""
-    return _area_case_groups(results, area)[1]
+def uncovered_step_ids_for_area(results: list[dict], area: str, mode: str | None = None) -> list[str]:
+    """Return active area step IDs without a journey claim."""
+    return _area_step_groups(results, area, mode)[1]
 
 
 def selection_from_coverage(results: list[dict], requested: str, *, mode: str | None = None,
@@ -1197,11 +1203,13 @@ def main() -> int:
         results = coverage_results()
         print_report_text(json.dumps(runners_for_case_selection(results, sys.argv[3], sys.argv[2])), flush=True)
         return 0
-    if len(sys.argv) == 3 and sys.argv[1] == "--case-ids-for-area":
-        print_report_text(",".join(case_ids_for_area(coverage_results(), sys.argv[2])), flush=True)
+    if len(sys.argv) in {3, 4} and sys.argv[1] == "--claim-step-ids-for-area":
+        mode = sys.argv[3] if len(sys.argv) == 4 else None
+        print_report_text(",".join(claim_step_ids_for_area(coverage_results(), sys.argv[2], mode)), flush=True)
         return 0
-    if len(sys.argv) == 3 and sys.argv[1] == "--uncovered-case-ids-for-area":
-        print_report_text(",".join(uncovered_case_ids_for_area(coverage_results(), sys.argv[2])), flush=True)
+    if len(sys.argv) in {3, 4} and sys.argv[1] == "--uncovered-step-ids-for-area":
+        mode = sys.argv[3] if len(sys.argv) == 4 else None
+        print_report_text(",".join(uncovered_step_ids_for_area(coverage_results(), sys.argv[2], mode)), flush=True)
         return 0
     results = coverage_results()
     requested = ",".join(read_requested_cases(os.environ))

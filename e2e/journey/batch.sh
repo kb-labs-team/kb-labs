@@ -172,12 +172,12 @@ run_mode() {
     return 1
   fi
   if [ -n "$selected_area" ]; then
-    selected_cases=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --case-ids-for-area "$selected_area") || {
-      echo "journey product area could not resolve active QA cases: $selected_area" >&2
+    selected_cases=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --claim-step-ids-for-area "$selected_area" "$mode") || {
+      echo "journey product area could not resolve claimable QA steps: $selected_area" >&2
       return 1
     }
-    selected_area_uncovered=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --uncovered-case-ids-for-area "$selected_area") || {
-      echo "journey product area could not resolve uncovered QA cases: $selected_area" >&2
+    selected_area_uncovered=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --uncovered-step-ids-for-area "$selected_area" "$mode") || {
+      echo "journey product area could not resolve uncovered QA steps: $selected_area" >&2
       return 1
     }
   fi
@@ -197,8 +197,8 @@ run_mode() {
   fi
   run_started=$(date +%s)
   if [ -n "$selected_area" ] && [ -z "$selected_cases" ]; then
-    printf 'product area has no cases with complete journey claims\n'
-    printf 'product area has no cases with complete journey claims\nexit=0\n' > "$mode_dir/batch.log"
+    printf 'product area has no claimable steps in %s mode\n' "$mode"
+    printf 'product area has no claimable steps in %s mode\nexit=0\n' "$mode" > "$mode_dir/batch.log"
     duration=$(($(date +%s) - run_started))
     "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
       "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS \
@@ -212,6 +212,9 @@ run_mode() {
       return 1
     }
     printf '%s\n' "$selection_plan" > "$mode_dir/selection-plan.json"
+    if [ -n "$selected_area" ]; then
+      selected_cases=$(printf '%s' "$selection_plan" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))')
+    fi
     runner_selectors=$(printf '%s' "$selection_plan" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)["runners"]))')
     if [ -z "$runner_selectors" ]; then
       printf 'no selected claims in this mode\n'

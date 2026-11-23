@@ -476,11 +476,24 @@ class FlowGraph:
         self._state_producer_actions: dict[str, Callable[[], object]] = {}
         self._state_producers_running: set[str] = set()
         self.resources: list[Any] = []
+        # A prerequisite can appear in every group's imported source closure
+        # (for example, shared runner provenance). Only a uniquely declared
+        # group step may select a flow; otherwise one global prerequisite would
+        # accidentally activate unrelated groups.
+        step_groups: dict[str, set[str]] = {}
+        for group, spec in self.groups.items():
+            for step in spec.get("steps", ()):
+                step_groups.setdefault(step, set()).add(group)
+        self.unique_group_steps = {
+            group: {step for step in spec.get("steps", ())
+                    if step_groups.get(step) == {group}}
+            for group, spec in self.groups.items()
+        }
         self.selected_groups = {
             group for group, spec in self.groups.items()
             if (self.journey.selected_capabilities.intersection(spec.get("capabilities", ()))
                 or self.journey.selected_claims.intersection(spec.get("cases", ()))
-                or self.journey.prerequisite_steps.intersection(spec.get("steps", ())))
+                or self.journey.prerequisite_steps.intersection(self.unique_group_steps[group]))
         }
         self.needed_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
         for group in self.selected_groups:
@@ -554,7 +567,7 @@ class FlowGraph:
         if self.journey.selected_claims.intersection(cases):
             return True
         selected_names = set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps
-        declared_steps = set(self.groups.get(group, {}).get("steps", ()))
+        declared_steps = self.unique_group_steps.get(group, set())
         return bool(selected_names.intersection(declared_steps))
 
     def state_value(self, state: str) -> Any:
