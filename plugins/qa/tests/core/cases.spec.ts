@@ -59,7 +59,7 @@ describe('QA case catalog diagnostics', () => {
     expect(parsed.cases.find(item => item.id === 'S-011')).toMatchObject({ supersededBy: 'S-010', steps: [] });
   });
 
-  // case: S-243.6
+  // case: S-314.1
   it('parses per-step execution-model applicability without implying a run result', () => {
     const directory = fixture();
     const profileRows = [
@@ -77,7 +77,7 @@ describe('QA case catalog diagnostics', () => {
     ]);
   });
 
-  // case: S-243.7
+  // case: S-314.1
   it('rejects unknown steps and execution models in profile applicability', () => {
     const directory = fixture();
     const document = caseDocument('S-243').replace('| S-243.1 | Run install | Plugin appears in the project |', '| S-243.6 | Run handler | The returned failure is normalized |')

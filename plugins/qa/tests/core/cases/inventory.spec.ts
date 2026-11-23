@@ -39,6 +39,11 @@ describe('buildQACaseEvidenceInventory', () => {
         requestAndConfigProvenance: 'UNDECLARED', candidateArtifactIdentity: 'UNDECLARED',
       },
     });
+    expect(inventory.policy.sourceDeclarations).toMatchObject({
+      partiallyDeclaredProfileDimensions: [],
+      declaredProfileDimensions: [],
+      missingProfileDimensions: expect.arrayContaining(['executionModel']),
+    });
   });
 
   // case: S-314.1
@@ -50,9 +55,9 @@ describe('buildQACaseEvidenceInventory', () => {
     expect(inventory.steps[0]).not.toHaveProperty('runStatus');
   });
 
-  // case: S-243.6
+  // case: S-314.1
   it('reports declared backend applicability as an unevaluated expectation and does not infer OS', () => {
-    const testCase = makeCase('S-243', true);
+    const testCase = makeCase('S-314', false);
     testCase.steps[0]!.executionModels = ['in-process', 'subprocess', 'worker-pool'];
     const inventory = buildQACaseEvidenceInventory([testCase], []);
 
@@ -66,5 +71,34 @@ describe('buildQACaseEvidenceInventory', () => {
       },
     });
     expect(inventory.steps[0]).not.toHaveProperty('profileExpectations.executionModel.result', 'PASS');
+  });
+
+  // case: S-314.1
+  it('classifies execution-model declarations as missing, partial, or complete from the step data', () => {
+    const declared = makeCase('S-314', false);
+    declared.steps[0]!.executionModels = ['subprocess'];
+    const undeclared = makeCase('S-315', false);
+
+    const noneDeclared = buildQACaseEvidenceInventory([undeclared], []).policy.sourceDeclarations;
+    const partiallyDeclared = buildQACaseEvidenceInventory([declared, undeclared], []).policy.sourceDeclarations;
+    const allDeclared = buildQACaseEvidenceInventory([declared], []).policy.sourceDeclarations;
+
+    expect(noneDeclared).toMatchObject({
+      declaredProfileDimensions: [],
+      partiallyDeclaredProfileDimensions: [],
+    });
+    expect(noneDeclared.missingProfileDimensions).toContain('executionModel');
+
+    expect(partiallyDeclared).toMatchObject({
+      declaredProfileDimensions: [],
+      partiallyDeclaredProfileDimensions: ['executionModel'],
+    });
+    expect(partiallyDeclared.missingProfileDimensions).not.toContain('executionModel');
+
+    expect(allDeclared).toMatchObject({
+      declaredProfileDimensions: ['executionModel'],
+      partiallyDeclaredProfileDimensions: [],
+    });
+    expect(allDeclared.missingProfileDimensions).not.toContain('executionModel');
   });
 });
