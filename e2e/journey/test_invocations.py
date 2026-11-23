@@ -104,6 +104,16 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    # case: S-315.2
+    def test_url_userinfo_is_redacted_in_retained_evidence(self):
+        rendered = redaction.redact_text(
+            "redis://journey:redis-password@cache.internal:6379/0 "
+            "https://user%40name:encoded%3Asecret@example.test/path"
+        )
+        self.assertNotIn("redis-password", rendered)
+        self.assertNotIn("encoded%3Asecret", rendered)
+        self.assertEqual(rendered.count("[REDACTED]@"), 2)
+
     def test_failed_envelope_log_path_is_captured_bounded_and_redacted(self):
         with tempfile.TemporaryDirectory(prefix="journey-error-log-artifact-") as temp:
             root = Path(temp)
