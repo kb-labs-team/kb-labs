@@ -42,6 +42,7 @@ from installed_fixture import installed_path, layout_value
 from journey_selection import JourneySelection
 from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
+from select_from_cases import journey_source_group_declaration
 import service_runner
 from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
@@ -83,6 +84,13 @@ def _release_entity(identity: str) -> dict:
 
 
 class MarketplaceStepTests(unittest.TestCase):
+    def test_public_platform_registry_routing_claim_uses_the_local_installed_cli_journey(self):
+        root = Path(__file__).resolve().parents[2]
+        declaration = journey_source_group_declaration(
+            "e2e/journey/marketplace_steps.py", root, "service-local:explore")
+
+        self.assertIn("S-300.1", declaration["cases"])
+
     def test_npm_fixture_publish_registers_a_local_user_and_uses_scoped_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
