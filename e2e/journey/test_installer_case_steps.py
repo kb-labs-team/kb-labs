@@ -1318,7 +1318,9 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     (active / ".kb/v2/receipt.json").write_text(json.dumps({"plan": {
                         "request": {"platformRoot": str(target_root.resolve()), "source": "offline"},
                         "artifacts": receipt_artifacts}}))
-                    (active / ".kb/v2/secret-state.json").write_text(json.dumps({"requirements": {
+                    secret_state = active / layout_value("sharedRuntimePaths.kb_v2_secret-state_json.platformPath")
+                    secret_state.parent.mkdir(parents=True, exist_ok=True)
+                    secret_state.write_text(json.dumps({"requirements": {
                         "gateway.jwtSecret": "generated fixture value"}}))
                     running = True
                     return subprocess.CompletedProcess(args, 0, "", "")
