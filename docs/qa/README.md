@@ -125,6 +125,8 @@ Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/ind
 }
 ```
 
+Replace each `<64-character SHA-256 hex>` with the first field printed by `shasum -a 256 artifacts/redacted-config.json` or `shasum -a 256 artifacts/step-PC-001.4.log`. Keep those artifact files in a directory beneath the directory containing `evidence.json`; store only a redacted configuration snapshot there.
+
 The evidence plan is supplied independently of the run result:
 
 ```json
