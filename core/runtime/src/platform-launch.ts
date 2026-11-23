@@ -21,6 +21,7 @@ import {
   type IContextLogger,
   type ILogReader,
 } from "@kb-labs/core-platform";
+import { toErrorEnvelope } from "@kb-labs/core-platform/error-envelope";
 import { getAdapterStatus, type AdapterSlotStatus } from "./adapter-status.js";
 import { isWorkspaceDevelopmentMode } from "./platform-mode.js";
 import {
@@ -118,6 +119,7 @@ export interface PlatformRuntime {
 
 let activeRuntime: PlatformRuntime | undefined;
 let activeLaunch: Promise<PlatformRuntime> | undefined;
+const lifecycleReportedFailures = new WeakSet<object>();
 
 function registerLifecycleLogging(
   applicationId: string,
@@ -179,6 +181,9 @@ function registerLifecycleLogging(
           error: error instanceof Error ? error.message : String(error),
         },
       );
+      if (error && typeof error === "object") {
+        lifecycleReportedFailures.add(error);
+      }
     },
   };
 
@@ -200,7 +205,7 @@ function publishConfigGlobals(
     loadResult.effectiveConfig ?? loadResult.rawConfig;
 }
 
-async function launch(
+async function launchRuntime(
   options: PlatformLaunchOptions,
 ): Promise<PlatformRuntime> {
   const {
@@ -375,6 +380,38 @@ async function launch(
   };
 
   return runtime;
+}
+
+async function launch(options: PlatformLaunchOptions): Promise<PlatformRuntime> {
+  try {
+    return await launchRuntime(options);
+  } catch (error) {
+    const alreadyReported =
+      error !== null && typeof error === "object" && lifecycleReportedFailures.has(error);
+    if (!alreadyReported) {
+      try {
+        const envelope = toErrorEnvelope(error);
+        const logger = createContextLogger(platform.logger, {
+          applicationId: options.applicationId,
+          serviceId: options.serviceId ?? options.applicationId,
+          instanceId: `${hostname()}:${process.pid}`,
+          layer: options.kind,
+        });
+        logger.event("error", {
+          event: "platform.failed",
+          message: "Platform startup failed",
+          fields: {
+            stage: "launch",
+            errorCode: envelope.code,
+            correlationId: envelope.correlationId,
+          },
+        });
+      } catch {
+        // Preserve the startup failure if the logger is itself unavailable.
+      }
+    }
+    throw error;
+  }
 }
 
 /**
