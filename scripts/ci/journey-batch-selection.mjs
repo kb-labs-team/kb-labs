@@ -56,7 +56,9 @@ export function resolveSelection(event, ref) {
 export function batchArguments(selection) {
   if (selection === 'full') return [];
   if (selection.startsWith('cases:')) return ['--cases', decodeCases(selection.slice(6))];
-  if (selection.startsWith('area:')) return ['--area', selection.slice(5)];
+  if (selection.startsWith('area:') && /^[a-z][a-z0-9-]*$/.test(selection.slice(5))) {
+    return ['--area', selection.slice(5)];
+  }
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 

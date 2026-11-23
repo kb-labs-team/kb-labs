@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
 from select_from_cases import (read_coverage_result, runners_for_case_selection,
-                               case_ids_for_area, uncovered_case_ids_for_area,
+                               claim_step_ids_for_area, uncovered_step_ids_for_area,
                                selection_from_coverage, selectors_from_coverage)
 from service_steps import Journey
 from service_steps import FlowGraph
@@ -39,6 +39,36 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    # case: S-262.19
+    def test_shared_prerequisite_does_not_select_sibling_service_group(self):
+        selection = JourneySelection(
+            requested=("S-262.19",),
+            claims=frozenset({"S-262.19"}),
+            owning_steps={"candidate provenance": ("S-262.19",)},
+            prerequisite_steps=frozenset({"candidate provenance"}),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset(),
+            runner_selector="service-local:explore",
+            requested_runners="service-local:explore",
+        )
+        groups = {
+            "selected": {"capabilities": {"selected"}, "cases": ("S-262.19",),
+                         "steps": ("candidate provenance",)},
+            "sibling": {"capabilities": {"adapter"}, "cases": (),
+                        "steps": ("candidate provenance",)},
+        }
+        journey = Journey("local", "shared-prerequisite-selection", selection=selection)
+        graph = FlowGraph(journey, {name: () for name in groups}, groups=groups)
+        sibling_calls = []
+
+        result = graph.flow("unrelated sibling flow", "sibling", "adapter",
+                            lambda: sibling_calls.append("ran"), cases=["S-054.1"],
+                            record_empty_success=False)
+
+        self.assertEqual(result, "SKIPPED")
+        self.assertEqual(sibling_calls, [])
+        self.assertNotIn("sibling", graph.selected_groups)
+
     # case: S-262.18
     def test_product_area_selects_active_qa_cases_by_catalog_area(self):
         marketplace = {"mode": "local", "cases": [
@@ -47,6 +77,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             ]},
             {"id": "S-268", "area": "marketplace", "status": "active", "steps": [
                 {"stepId": "S-268.1", "claims": [{"kind": "journey", "source": "e2e/journey/marketplace_steps.py"}]},
+                {"stepId": "S-268.2", "claims": [{"kind": "journey", "source": "e2e/journey/marketplace_steps.py"}]},
             ]},
             {"id": "S-026", "area": "marketplace", "status": "active", "steps": [
                 {"stepId": "S-026.1", "claims": []},
@@ -57,23 +88,34 @@ class CaseJourneySelectionTests(unittest.TestCase):
             ]},
         ]}
         secured = {"mode": "secured", "cases": [
-            marketplace["cases"][0], marketplace["cases"][1], marketplace["cases"][2],
+            marketplace["cases"][0],
+            {"id": "S-268", "area": "marketplace", "status": "active", "steps": [
+                marketplace["cases"][1]["steps"][0],
+                {"stepId": "S-268.2", "claims": []},
+            ]},
+            marketplace["cases"][2],
             {"id": "S-047", "area": "marketplace", "status": "planned"},
             marketplace["cases"][4],
         ]}
 
-        self.assertEqual(case_ids_for_area([marketplace, secured], "marketplace"), ["S-010", "S-268"])
-        self.assertEqual(uncovered_case_ids_for_area([marketplace, secured], "marketplace"), ["S-026"])
-        self.assertEqual(case_ids_for_area([marketplace, secured], "studio"), ["S-120"])
+        self.assertEqual(claim_step_ids_for_area([marketplace, secured], "marketplace"),
+                         ["S-010.1", "S-268.1", "S-268.2"])
+        self.assertEqual(uncovered_step_ids_for_area([marketplace, secured], "marketplace"),
+                         ["S-026.1"])
+        self.assertEqual(claim_step_ids_for_area([marketplace, secured], "marketplace", "local"),
+                         ["S-010.1", "S-268.1", "S-268.2"])
+        self.assertEqual(uncovered_step_ids_for_area([marketplace, secured], "marketplace", "secured"),
+                         ["S-026.1", "S-268.2"])
+        self.assertEqual(claim_step_ids_for_area([marketplace, secured], "studio"), ["S-120.1"])
         with self.assertRaisesRegex(ValueError, "unknown or empty product area"):
-            case_ids_for_area([marketplace], "registry")
+            claim_step_ids_for_area([marketplace], "registry")
         with self.assertRaisesRegex(ValueError, "lowercase QA area slug"):
-            case_ids_for_area([marketplace], "Marketplace")
+            claim_step_ids_for_area([marketplace], "Marketplace")
         broken = {"mode": "secured", "cases": [
             {"id": "S-010", "area": "platform-core", "status": "active"},
         ]}
         with self.assertRaisesRegex(ValueError, "inconsistent product areas"):
-            case_ids_for_area([marketplace, broken], "marketplace")
+            claim_step_ids_for_area([marketplace, broken], "marketplace")
 
     # case: S-262.18
     def test_coverage_reader_attaches_areas_from_the_qa_case_catalog(self):
@@ -95,7 +137,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
         self.assertEqual([item["cases"][0]["area"] for item in results], ["marketplace", "marketplace"])
 
     # case: S-262.18
-    def test_coverage_reader_keeps_active_catalog_cases_without_journey_claims(self):
+    def test_coverage_reader_keeps_active_catalog_cases_without_steps(self):
         def fake_cli(command, **_kwargs):
             if command[2:5] == ["qa", "cases", "list"]:
                 payload = {"ok": True, "data": {"cases": [
@@ -113,7 +155,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             self.assertEqual(mode["cases"], [{
                 "id": "S-026", "area": "marketplace", "status": "active", "steps": [],
             }])
-        self.assertEqual(uncovered_case_ids_for_area(results, "marketplace"), ["S-026"])
+        self.assertEqual(uncovered_step_ids_for_area(results, "marketplace"), [])
 
     def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
         root = Path(__file__).resolve().parents[2]

@@ -197,7 +197,7 @@ def verify_candidate_archive(metadata_path: Path, archive: Path) -> None:
 
 def write_mode_metadata(source: Path, destination: Path, mode: str, result: str, elapsed: int,
                         selected_cases: str = "", failure_reason: str = "",
-                        selected_area: str = "", uncovered_area_cases: str = "") -> None:
+                        selected_area: str = "", uncovered_area_steps: str = "") -> None:
     if mode not in {"local", "secured"} or result not in {"PASS", "FAIL", "NO_SELECTED_CLAIMS"}:
         raise ValueError("mode metadata has an unsupported mode or result")
     value = json.loads(source.read_text(encoding="utf-8"))
@@ -209,10 +209,11 @@ def write_mode_metadata(source: Path, destination: Path, mode: str, result: str,
     value["result"] = result
     value["requestedSelection"] = requested_selection(selected_cases)
     value["requestedArea"] = selected_area or None
-    value["requestedAreaUncoveredCases"] = requested_selection(uncovered_area_cases)
+    value["requestedAreaUncoveredSteps"] = requested_selection(uncovered_area_steps)
     value["requestedAreaCoverage"] = (
-        "NOT_COVERED" if selected_area and value["requestedAreaUncoveredCases"]
-        else "CLAIMABLE_CASES_SELECTED" if selected_area else None
+        "NOT_COVERED" if selected_area and (
+            value["requestedAreaUncoveredSteps"] or not value["requestedSelection"])
+        else "CLAIMABLE_STEPS_SELECTED" if selected_area else None
     )
     if failure_reason:
         value["failureReason"] = failure_reason
@@ -338,24 +339,27 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
     if any(len(selection) != len(set(selection)) for selection in requested_selections.values()):
         raise ValueError("batch mode metadata requestedSelection contains duplicate IDs")
     requested_areas = {mode: metadata.get("requestedArea") for mode, metadata in mode_metadata.items()}
-    uncovered_area_cases = {
-        mode: requested_selection(",".join(metadata.get("requestedAreaUncoveredCases", [])))
+    uncovered_area_steps = {
+        mode: requested_selection(",".join(metadata.get("requestedAreaUncoveredSteps", [])))
         for mode, metadata in mode_metadata.items()
     }
+    area_coverages = {mode: metadata.get("requestedAreaCoverage")
+                      for mode, metadata in mode_metadata.items()}
     if area:
         if any(requested_areas[mode] != area for mode in ("local", "secured")):
             raise ValueError("mode requestedArea does not match the producer product-area selection")
-        if requested_selections["local"] != requested_selections["secured"]:
-            raise ValueError("local and secured modes resolved different case IDs for the selected product area")
-        if uncovered_area_cases["local"] != uncovered_area_cases["secured"]:
-            raise ValueError("local and secured modes reported different uncovered cases for the selected product area")
-        if set(uncovered_area_cases["local"]).intersection(requested_selections["local"]):
-            raise ValueError("product-area cases cannot be both selected and reported uncovered")
-        selected = requested_selections["local"]
+        for mode in ("local", "secured"):
+            if set(uncovered_area_steps[mode]).intersection(requested_selections[mode]):
+                raise ValueError(f"product-area steps cannot be both selected and reported uncovered in {mode}")
+            expected_coverage = ("NOT_COVERED" if uncovered_area_steps[mode] or not requested_selections[mode]
+                                 else "CLAIMABLE_STEPS_SELECTED")
+            if area_coverages[mode] != expected_coverage:
+                raise ValueError(f"mode {mode} product-area coverage does not match its selected and uncovered steps")
+        selected = sorted(set(requested_selections["local"]) | set(requested_selections["secured"]))
     elif any(requested_areas.values()):
         raise ValueError("mode reports a product area but the producer selection does not")
-    elif any(uncovered_area_cases.values()):
-        raise ValueError("mode reports uncovered product-area cases but the producer selection does not")
+    elif any(uncovered_area_steps.values()):
+        raise ValueError("mode reports uncovered product-area steps but the producer selection does not")
 
     def reject_mode_selection(mode: str, reason: str) -> None:
         metadata = mode_metadata[mode]
@@ -368,15 +372,16 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
         metadata_selection = requested_selections[mode]
         scoreboard_selection = scoreboards[mode]["selection"] if scoreboards[mode] is not None else []
         if selected:
-            if metadata_selection != selected:
+            expected_mode_selection = metadata_selection if area else selected
+            if not area and metadata_selection != selected:
                 reject_mode_selection(mode,
                     f"mode {mode} requestedSelection does not match the producer selection: "
                     f"{metadata_selection!r} != {selected!r}"
                 )
-            if scoreboards[mode] is not None and scoreboard_selection != selected:
+            if scoreboards[mode] is not None and scoreboard_selection != expected_mode_selection:
                 reject_mode_selection(mode,
                     f"mode {mode} scoreboard selection does not match the producer selection: "
-                    f"{scoreboard_selection!r} != {selected!r}"
+                    f"{scoreboard_selection!r} != {expected_mode_selection!r}"
                 )
         elif metadata_selection or scoreboard_selection:
             reject_mode_selection(mode,
@@ -419,11 +424,14 @@ def assemble(output: Path, producer: Path, local: Path, secured: Path,
         lines.extend(["", "- Modes: local and secured", "- Reports and logs: one directory per mode", ""])
         if area:
             lines.extend([f"- Product area: `{area}`", ""])
-            if uncovered_area_cases["local"]:
-                cases = ", ".join(f"`{case_id}`" for case_id in uncovered_area_cases["local"])
-                lines.append(f"- Product area coverage: NOT COVERED; active cases without complete journey claims: {cases}. These cases were not run.")
+            for mode in ("local", "secured"):
+                selected_steps = ", ".join(f"`{step_id}`" for step_id in requested_selections[mode]) or "none"
+                uncovered_steps = ", ".join(f"`{step_id}`" for step_id in uncovered_area_steps[mode]) or "none"
+                lines.append(f"- {mode} area steps: selected {selected_steps}; NOT COVERED {uncovered_steps}.")
+            if any(area_coverages[mode] != "CLAIMABLE_STEPS_SELECTED" for mode in ("local", "secured")):
+                lines.append("- Product area coverage: NOT COVERED in at least one mode; listed claimable steps were run as partial evidence.")
             else:
-                lines.append("- Product area coverage: all active cases with journey claims were selected; this remains iteration-only evidence.")
+                lines.append("- Product area coverage: all active steps have journey claims in both modes; this remains iteration-only evidence.")
             lines.append("")
         for mode in mode_metadata:
             if mode_without_selection[mode]:

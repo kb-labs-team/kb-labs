@@ -8,7 +8,7 @@ from batch_summary import requested_area, write_mode_metadata
 
 class ProductAreaBatchSummaryTests(unittest.TestCase):
     # case: S-262.18
-    def test_area_batch_metadata_keeps_product_area_and_resolved_case_ids(self):
+    def test_area_batch_metadata_keeps_product_area_and_claim_step_ids(self):
         with tempfile.TemporaryDirectory(prefix="journey-area-metadata-") as temporary:
             root = Path(temporary)
             source = root / "shared.json"
@@ -19,12 +19,12 @@ class ProductAreaBatchSummaryTests(unittest.TestCase):
             }}))
 
             write_mode_metadata(source, destination, "local", "PASS", 12,
-                                "S-010,S-268", "", "marketplace", "S-026")
+                                "S-010.1,S-268.1", "", "marketplace", "S-026.1")
 
             metadata = json.loads(destination.read_text())
         self.assertEqual(metadata["requestedArea"], "marketplace")
-        self.assertEqual(metadata["requestedSelection"], ["S-010", "S-268"])
-        self.assertEqual(metadata["requestedAreaUncoveredCases"], ["S-026"])
+        self.assertEqual(metadata["requestedSelection"], ["S-010.1", "S-268.1"])
+        self.assertEqual(metadata["requestedAreaUncoveredSteps"], ["S-026.1"])
         self.assertEqual(metadata["requestedAreaCoverage"], "NOT_COVERED")
 
     # case: S-262.18

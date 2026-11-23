@@ -1304,6 +1304,24 @@ class DispatchRegistryTests(unittest.TestCase):
                     "install npm plugin with dependency from configured npm source": ["S-010.8"]
                 })
 
+    # case: S-262.19
+    def test_marketplace_lifecycle_source_routes_to_service_runners(self):
+        self.assertEqual(runners_for_source("e2e/journey/marketplace_steps.py", "local"),
+                         {"service-local:explore"})
+        self.assertEqual(runners_for_source("e2e/journey/marketplace_steps.py", "secured"),
+                         {"service-secured:explore"})
+
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/marketplace_steps.py"
+        line, _declaration = next(
+            (line, item) for line, item in _case_declarations(source, root).items()
+            if item.get("name") == "install exact marketplace plugin into both scopes")
+        coverage = [{"mode": "local", "cases": [{"id": "S-010", "status": "active", "steps": [{
+            "stepId": "S-010.1", "claims": [{"source": source, "kind": "journey", "line": line}],
+        }]}]}]
+        resolved = selection_from_coverage(coverage, "S-010.1", mode="local")
+        self.assertEqual(resolved["runners"], ["service-local:explore"])
+
     def test_s181_3_selects_the_supplied_password_install_file_scan(self):
         resolved = selection_from_coverage(self._coverage(), "S-181.3")
         self.assertEqual(resolved["runners"], ["agent-secured:commit", "agent:commit"])
@@ -1462,6 +1480,29 @@ class DispatchRegistryTests(unittest.TestCase):
         self.assertEqual(resolved["selectedClaimOwners"], {
             "plan the newer sealed release": ["S-023.2"],
         })
+
+    # case: S-262.19
+    def test_resolver_assigns_each_prerequisite_only_to_dependent_claims(self):
+        resolved = resolve_selection(
+            ["S-010.1", "S-047.1"],
+            {"S-010.1": {"e2e/journey/marketplace_steps.py"},
+             "S-047.1": {"e2e/journey/marketplace_steps.py"}},
+            {
+                "S-010.1": [{"kind": "step", "name": "install Commit", "requires": []}],
+                "S-047.1": [{"kind": "step", "name": "uninstall Commit",
+                             "requires": ["step:GET Commit status"]}],
+            },
+            {"step:GET Commit status": {"sources": {"e2e/journey/marketplace_steps.py"},
+                                         "requires": ["step:install Commit"]},
+             "step:install Commit": {"sources": {"e2e/journey/marketplace_steps.py"},
+                                     "requires": []}},
+            {"S-010.1": {"service-local:explore": {"S-010.1"}},
+             "S-047.1": {"service-local:explore": {"S-047.1"}}},
+            "",
+        )
+
+        self.assertEqual(resolved["selectedOwningSteps"]["GET Commit status"], ["S-047.1"])
+        self.assertEqual(resolved["selectedOwningSteps"]["install Commit"], ["S-010.1", "S-047.1"])
 
     def test_flow_graph_uses_resolved_step_names_to_select_update_journey(self):
         with patch.dict(os.environ, {
