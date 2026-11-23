@@ -66,12 +66,16 @@ async function verifyEvidenceArtifact(baseDirectory: string, reference: string |
 async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declaredClaims: Set<string>, artifactDirectory: string, recordPath: string): Promise<QACaseEvidenceRunResult> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('result must be an object');
   const record = value as Record<string, unknown>;
-  const allowedFields = new Set(['schema', 'runId', 'mode', 'candidateId', 'profile', 'claims']);
+  const allowedFields = new Set(['schema', 'runId', 'mode', 'candidateId', 'profile', 'selection', 'claims']);
   for (const field of Object.keys(record)) if (!allowedFields.has(field)) throw new Error(`unexpected field ${field}`);
   if (record.schema !== QA_CASE_EVIDENCE_RUN_SCHEMA) throw new Error(`schema must be ${QA_CASE_EVIDENCE_RUN_SCHEMA}; legacy evidence cannot satisfy evidence-backed coverage`);
   if (typeof record.runId !== 'string' || !record.runId) throw new Error('runId must be a non-empty string');
   if (record.mode !== 'local' && record.mode !== 'secured') throw new Error('mode must be local or secured');
   if (record.candidateId !== undefined && (typeof record.candidateId !== 'string' || !record.candidateId.trim())) throw new Error('candidateId must be a non-empty string');
+  if (record.selection !== undefined && (!Array.isArray(record.selection)
+    || !record.selection.every(item => typeof item === 'string' && item.trim()))) {
+    throw new Error('selection must be an array of non-empty strings');
+  }
   if (!Array.isArray(record.claims)) throw new Error('claims must be an array');
   if (record.profile !== undefined && (typeof record.profile !== 'object' || record.profile === null || Array.isArray(record.profile)
     || Object.keys(record.profile).length === 0 || !Object.values(record.profile).every(value => typeof value === 'string' && value.trim()))) {
@@ -112,6 +116,7 @@ async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, d
     mode: record.mode,
     ...(typeof record.candidateId === 'string' && record.candidateId.trim() ? { candidateId: record.candidateId } : {}),
     ...(profile ? { profile } : {}),
+    ...(Array.isArray(record.selection) ? { selection: [...record.selection] as string[] } : {}),
     recordPath,
     claims,
   };

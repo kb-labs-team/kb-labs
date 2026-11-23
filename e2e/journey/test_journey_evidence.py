@@ -6,14 +6,24 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import invocations
-from journey_evidence import apply_clean_install_case_evidence, capture_clean_install_artifacts
+from journey_evidence import (apply_clean_install_case_evidence, capture_clean_install_artifacts,
+                              clean_install_evidence_profile)
 from scoreboard import build_scoreboard
 from service_steps import Journey
 
 
 class CleanInstallCaseEvidenceTests(unittest.TestCase):
+    def test_profile_uses_observed_node_major_and_cli_surface(self):
+        with patch("journey_evidence.platform.system", return_value="Linux"), \
+             patch("journey_evidence.subprocess.run") as run:
+            run.return_value.stdout = "v24.1.0\n"
+            self.assertEqual(clean_install_evidence_profile(), {
+                "os": "linux", "runtime": "node-24", "surface": "cli",
+            })
+
     # case: S-315.2
     def test_real_journey_invocation_and_platform_config_symlink_are_captured(self):
         with tempfile.TemporaryDirectory() as temporary:

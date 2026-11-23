@@ -58,6 +58,8 @@ export interface QACaseEvidenceRunResult {
   mode: QACaseMode;
   candidateId?: string;
   profile?: Record<string, string>;
+  /** Requested case/step selection retained for partial-run diagnostics. */
+  selection?: string[];
   /** Relative path identifying the run record that owns its artifact references. */
   recordPath?: string;
   claims: Array<{
@@ -116,6 +118,7 @@ export const QA_CASE_EVIDENCE_RUN_JSON_SCHEMA = {
     mode: { enum: ['local', 'secured'] },
     candidateId: { type: 'string', minLength: 1 },
     profile: { type: 'object', minProperties: 1, additionalProperties: { type: 'string', minLength: 1 } },
+    selection: { type: 'array', items: { type: 'string', minLength: 1 } },
     claims: {
       type: 'array',
       items: {

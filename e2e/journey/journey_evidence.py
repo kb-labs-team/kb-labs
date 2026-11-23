@@ -4,7 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import platform
 import re
+import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -12,6 +14,19 @@ from invocations import write_report_text
 from redaction import redact_report_value, redact_text
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
+
+
+def clean_install_evidence_profile() -> dict[str, str]:
+    """Return the observed host, Node major, and installer surface."""
+    profile = {"os": platform.system().lower(), "surface": "cli"}
+    try:
+        result = subprocess.run(["node", "--version"], check=True, capture_output=True, text=True, timeout=5)
+        match = re.fullmatch(r"v?(\d+)\.\d+\.\d+", result.stdout.strip())
+        if match:
+            profile["runtime"] = f"node-{match.group(1)}"
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return profile
 
 
 def _sha256(path: Path) -> str:

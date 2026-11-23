@@ -158,6 +158,7 @@ describe('qa:coverage-show evidence mode', () => {
       writeFileSync(join(runRoot, 'run.json'), JSON.stringify({
         schema: 'kb.qa-case-run/v3', runId, mode: 'local', candidateId: 'candidate-approved',
         profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+        selection: ['S-010.1'],
         claims: [{
           claimId: 'S-010.1', kind: 'journey', status: 'PASS',
           configRef: 'config.json', configDigest: createHash('sha256').update(configText).digest('hex'),
@@ -197,6 +198,7 @@ describe('qa:coverage-show evidence mode', () => {
         schema: 'kb.qa-case-run/v3', runId: 'pc001-attempt-1', mode: 'local',
         candidateId: 'candidate-approved',
         profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+        selection: ['PC-001.2'],
         claims: [{
           claimId: 'S-010.1', kind: 'journey', status: 'PASS',
           configRef: 'qa-evidence/pc001-2/redacted-config.jsonc', configDigest,
@@ -217,6 +219,17 @@ describe('qa:coverage-show evidence mode', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ message: expect.stringContaining('result=PASS, evidence=INCOMPLETE') }),
+    ]));
+
+    writeFileSync(join(restored, 'qa-evidence', 'pc001-2', 'step-PC-001.2.log'), 'corrupted after restore\n');
+    const damaged = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+      evidence: true, 'evidence-plan': join(root, 'plan.json'),
+      run: join(restored, 'installer-case-local-agent-commit-default.json'),
+      level: 'release', mode: 'local', json: false,
+    } } as never) as { ok: boolean; error: { diagnostics?: Array<{ message: string }> } };
+    expect(damaged.ok).toBe(false);
+    expect(damaged.error.diagnostics).toEqual(expect.arrayContaining([
       expect.objectContaining({ message: expect.stringContaining('result=PASS, evidence=INCOMPLETE') }),
     ]));
   });
