@@ -107,3 +107,22 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
+
+### Evidence-backed coverage pilot
+
+`kb.qa-case-run/v2` remains supported by the existing coverage command. To require candidate, profile, configuration, and log evidence, use `--evidence` with the new `kb.qa-case-run/v3` envelope. A v2 run is rejected in this mode; missing v3 evidence stays incomplete and cannot make the release verdict pass.
+
+```json
+{
+  "schema": "kb.qa-case-run/v3",
+  "runId": "journey-local-001",
+  "mode": "local",
+  "candidateId": "sha256:release-manifest-digest",
+  "profile": { "os": "linux-x64", "runtime": "node-24", "surface": "cli" },
+  "claims": [
+    { "claimId": "PC-001.4", "kind": "journey", "status": "PASS", "configRef": "artifact://redacted-config/sha256/abc", "logRef": "artifact://journey/step-PC-001.4" }
+  ]
+}
+```
+
+Run `kb qa coverage show --level release --mode local --evidence --run evidence.json --json`. Coverage v2 reports behavior status and evidence status separately; `FAIL` remains a product failure, while `INCOMPLETE` evidence prevents `releasePassed` even if behavior passed. The references point to retained redacted artifacts; the envelope does not embed configuration values or log contents. Candidate or profile disagreement across records makes their evidence incomplete rather than combining them.

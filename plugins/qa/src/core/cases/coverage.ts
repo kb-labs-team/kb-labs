@@ -1,4 +1,4 @@
-import type { QACase, QACaseClaim, QACaseCoverage, QACaseMode, QACaseRunResult, QACaseStepResult } from '../../contracts/index.js';
+import type { QACase, QACaseClaim, QACaseCoverage, QACaseEvidenceCoverage, QACaseEvidenceRunResult, QACaseMode, QACaseRunResult, QACaseStepResult } from '../../contracts/index.js';
 
 export function computeQACaseCoverage(
   cases: QACase[],
@@ -53,4 +53,51 @@ export function computeQACaseCoverage(
   const releasePassed = coverageCases.every(testCase =>
     testCase.status !== 'active' || !testCase.release || testCase.statusResult === 'PASS' || testCase.statusResult === 'NOT REQUIRED');
   return { schema: 'kb.qa-case-coverage/v1', mode, cases: coverageCases, releasePassed };
+}
+
+export function computeQACaseEvidenceCoverage(
+  cases: QACase[],
+  claims: QACaseClaim[],
+  runs: QACaseEvidenceRunResult[],
+  mode: QACaseMode,
+): QACaseEvidenceCoverage {
+  const legacy = computeQACaseCoverage(cases, claims, runs.map(run => ({
+    schema: 'kb.qa-case-run/v2' as const,
+    runId: run.runId,
+    mode: run.mode,
+    claims: run.claims.map(({ claimId, kind, status }) => ({ claimId, kind, status })),
+  })), mode);
+  const matchingRuns = runs.filter(run => run.mode === mode);
+  const candidates = new Set(matchingRuns.map(run => run.candidateId).filter((value): value is string => Boolean(value)));
+  const profiles = new Set(matchingRuns.map(run => JSON.stringify(Object.entries(run.profile ?? {}).sort(([a], [b]) => a.localeCompare(b)))));
+  const identityMatches = candidates.size <= 1 && profiles.size <= 1;
+  const coverageCases = legacy.cases.map(testCase => ({
+    ...testCase,
+    steps: testCase.steps.map(step => {
+      const result = matchingRuns.flatMap(run => run.claims
+        .filter(claim => claim.claimId === step.stepId && (!testCase.release || claim.kind !== 'unit'))
+        .map(claim => ({ claim, candidateId: run.candidateId, profile: run.profile })))[0];
+      const evidenceComplete = Boolean(result?.candidateId && result.profile && Object.keys(result.profile).length > 0
+        && result.claim.configRef && result.claim.logRef && identityMatches);
+      return {
+        ...step,
+        evidenceStatus: evidenceComplete ? 'COMPLETE' as const : 'INCOMPLETE' as const,
+        ...(result?.candidateId ? { candidateId: result.candidateId } : {}),
+        ...(result?.profile ? { profile: result.profile } : {}),
+        ...(result?.claim.configRef ? { configRef: result.claim.configRef } : {}),
+        ...(result?.claim.logRef ? { logRef: result.claim.logRef } : {}),
+        ...(!evidenceComplete ? { reason: [step.reason, !identityMatches ? 'Evidence records use mismatched candidate or profile identities.' : undefined, 'Required candidate, profile, config, or log evidence is missing.'].filter(Boolean).join(' ') } : {}),
+      };
+    }),
+  }));
+  const evidencePassed = coverageCases.every(testCase => testCase.status !== 'active' || !testCase.release
+    || testCase.statusResult === 'NOT REQUIRED'
+    || testCase.steps.every(step => step.evidenceStatus === 'COMPLETE'));
+  return {
+    schema: 'kb.qa-case-coverage/v2',
+    mode,
+    cases: coverageCases,
+    releasePassed: legacy.releasePassed && evidencePassed,
+    evidencePassed,
+  };
 }

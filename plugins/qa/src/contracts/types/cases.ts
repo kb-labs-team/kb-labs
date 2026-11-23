@@ -45,6 +45,56 @@ export interface QACaseRunResult {
   claims: Array<{ claimId: string; kind: QACaseClaimKind; status: 'PASS' | 'FAIL' }>;
 }
 
+export const QA_CASE_EVIDENCE_RUN_SCHEMA = 'kb.qa-case-run/v3' as const;
+
+export interface QACaseEvidenceRunResult {
+  schema: typeof QA_CASE_EVIDENCE_RUN_SCHEMA;
+  runId: string;
+  mode: QACaseMode;
+  candidateId?: string;
+  profile?: Record<string, string>;
+  claims: Array<{
+    claimId: string;
+    kind: QACaseClaimKind;
+    status: 'PASS' | 'FAIL';
+    configRef?: string;
+    logRef?: string;
+  }>;
+}
+
+export const QA_CASE_EVIDENCE_RUN_JSON_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://kb-labs.dev/schemas/qa-case-run-v3.json',
+  title: 'KB Labs QA case run evidence',
+  type: 'object',
+  required: ['schema', 'runId', 'mode', 'claims'],
+  properties: {
+    schema: { const: QA_CASE_EVIDENCE_RUN_SCHEMA },
+    runId: { type: 'string', minLength: 1 },
+    mode: { enum: ['local', 'secured'] },
+    candidateId: { type: 'string', minLength: 1 },
+    profile: { type: 'object', minProperties: 1, additionalProperties: { type: 'string', minLength: 1 } },
+    claims: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['claimId', 'kind', 'status'],
+        properties: {
+          claimId: { type: 'string', pattern: '^(S|PC)-[0-9]{3}\\.[0-9]+$' },
+          kind: { enum: ['journey', 'e2e', 'unit'] },
+          status: { enum: ['PASS', 'FAIL'] },
+          configRef: { type: 'string', minLength: 1 },
+          logRef: { type: 'string', minLength: 1 },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+} as const;
+
+export type QACaseEvidenceStatus = 'COMPLETE' | 'INCOMPLETE';
+
 export interface QACaseStepCoverage {
   stepId: string;
   status: QACaseStepResult;
@@ -53,7 +103,7 @@ export interface QACaseStepCoverage {
 }
 
 export interface QACaseCoverage {
-  schema: 'kb.qa-case-coverage/v1';
+  schema: 'kb.qa-case-coverage/v1' | 'kb.qa-case-coverage/v2';
   mode: QACaseMode;
   cases: Array<{
     id: string;
@@ -66,6 +116,79 @@ export interface QACaseCoverage {
   }>;
   releasePassed: boolean;
 }
+
+export interface QACaseEvidenceCoverage {
+  schema: 'kb.qa-case-coverage/v2';
+  mode: QACaseMode;
+  cases: Array<{
+    id: string;
+    title: string;
+    status: QACaseStatus;
+    release: boolean;
+    statusResult: 'PASS' | 'FAIL' | 'NOT RUN' | 'NOT COVERED' | 'NOT REQUIRED';
+    reason?: string;
+    steps: Array<QACaseStepCoverage & {
+      evidenceStatus: QACaseEvidenceStatus;
+      candidateId?: string;
+      profile?: Record<string, string>;
+      configRef?: string;
+      logRef?: string;
+    }>;
+  }>;
+  releasePassed: boolean;
+  evidencePassed: boolean;
+}
+
+/** Versioned schema for evidence-backed `kb qa coverage show --json`. */
+export const QA_CASE_EVIDENCE_COVERAGE_JSON_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://kb-labs.dev/schemas/qa-case-coverage-v2.json',
+  title: 'KB Labs QA case coverage with evidence',
+  type: 'object',
+  required: ['schema', 'mode', 'cases', 'releasePassed', 'evidencePassed'],
+  properties: {
+    schema: { const: 'kb.qa-case-coverage/v2' },
+    mode: { enum: ['local', 'secured'] },
+    releasePassed: { type: 'boolean' },
+    evidencePassed: { type: 'boolean' },
+    cases: {
+      type: 'array',
+      items: {
+        type: 'object',
+        required: ['id', 'title', 'status', 'release', 'statusResult', 'steps'],
+        properties: {
+          id: { type: 'string', pattern: '^(S|PC)-[0-9]{3}$' },
+          title: { type: 'string' },
+          status: { enum: ['active', 'planned', 'draft', 'historical'] },
+          release: { type: 'boolean' },
+          statusResult: { enum: ['PASS', 'FAIL', 'NOT RUN', 'NOT COVERED', 'NOT REQUIRED'] },
+          reason: { type: 'string' },
+          steps: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['stepId', 'status', 'claims', 'evidenceStatus'],
+              properties: {
+                stepId: { type: 'string', pattern: '^(S|PC)-[0-9]{3}\\.[0-9]+$' },
+                status: { enum: ['PASS', 'FAIL', 'NOT RUN', 'NOT COVERED'] },
+                evidenceStatus: { enum: ['COMPLETE', 'INCOMPLETE'] },
+                reason: { type: 'string' },
+                candidateId: { type: 'string' },
+                profile: { type: 'object', additionalProperties: { type: 'string' } },
+                configRef: { type: 'string' },
+                logRef: { type: 'string' },
+                claims: { type: 'array' },
+              },
+              additionalProperties: false,
+            },
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  additionalProperties: false,
+} as const;
 
 /** Versioned schema for `kb qa coverage show --json`. */
 export const QA_CASE_COVERAGE_JSON_SCHEMA = {
