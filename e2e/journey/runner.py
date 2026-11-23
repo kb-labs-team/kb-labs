@@ -11,6 +11,7 @@ from journey_values import journey_value
 import json
 import base64
 import os
+import platform
 import re
 import stat
 import shutil
@@ -81,8 +82,10 @@ from invocations import (
     run_pty_command,
     start_background_command,
     store_report_secret,
+    write_report_json,
     write_report_text,
 )
+from journey_evidence import collect_clean_install_case_evidence
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = journey_value("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -935,6 +938,18 @@ def human_text_is_clean(output: str):
         fail("human output contains a stack trace")
 
 
+def _journey_evidence_profile() -> dict[str, str]:
+    machine = platform.machine().lower()
+    machine = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64"}.get(machine, machine)
+    profile = {"os": f"{platform.system().lower()}-{machine}"}
+    for key, field in (("KB_JOURNEY_RUNNER_SELECTOR", "runner"),
+                       ("KB_JOURNEY_SERVICE_PROFILE", "serviceProfile")):
+        value = BASE_ENV.get(key, "")
+        if value:
+            profile[field] = value
+    return profile
+
+
 def finalize_run(passed: bool) -> int:
     global SELECTED_CLAIM_COMPLETION_CHECKED
     report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
@@ -965,8 +980,16 @@ def finalize_run(passed: bool) -> int:
              f"{sum(TIMES.values()):.1f}s | {root_size:.1f} MiB | {MAX_PNPM_RSS_MIB:.1f} MiB |"]
     report.parent.mkdir(parents=True, exist_ok=True)
     if CASE_JOURNEY is not None:
-        CASE_JOURNEY.write_json(report.with_name(
-            f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json"))
+        case_report = report.with_name(
+            f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json")
+        result = CASE_JOURNEY.result().__dict__
+        result["case_run"] = collect_clean_install_case_evidence(
+            result["case_run"], result["steps"], report_root=report.parent,
+            config_path=PLATFORM_CURRENT / ".kb" / "kb.config.jsonc",
+            invocation_log_path=report.parent / "invocations" / "calls.jsonl",
+            profile=_journey_evidence_profile(),
+        )
+        write_report_json(case_report, result, env=BASE_ENV)
     if not report.exists():
         write_report_text(report,
                           "| Journey | Result | First broken step | install.sh | questions | apply | start | first command | total | platform root | peak pnpm RSS |\n"
