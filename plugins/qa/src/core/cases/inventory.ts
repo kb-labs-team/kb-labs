@@ -28,9 +28,15 @@ export function buildQACaseEvidenceInventory(cases: QACase[], claims: QACaseClai
       profileDeclarations: {
         operatingSystem: 'UNDECLARED' as const,
         runtime: 'UNDECLARED' as const,
-        executionModel: 'UNDECLARED' as const,
+        executionModel: step.executionModels?.length ? 'DECLARED' as const : 'UNDECLARED' as const,
         requestAndConfigProvenance: 'UNDECLARED' as const,
         candidateArtifactIdentity: 'UNDECLARED' as const,
+      },
+      profileExpectations: {
+        executionModel: {
+          required: step.executionModels ?? [],
+          evaluation: 'NOT EVALUATED' as const,
+        },
       },
     };
   }));
@@ -48,7 +54,9 @@ export function buildQACaseEvidenceInventory(cases: QACase[], claims: QACaseClai
       },
       sourceDeclarations: {
         caseFields: ['status', 'release', 'modes', 'surfaces'],
-        missingProfileDimensions: ['operatingSystem', 'runtime', 'executionModel', 'requestAndConfigProvenance', 'candidateArtifactIdentity'],
+        stepProfileFields: ['executionModels'],
+        partiallyDeclaredProfileDimensions: ['executionModel'],
+        missingProfileDimensions: ['operatingSystem', 'runtime', 'requestAndConfigProvenance', 'candidateArtifactIdentity'],
       },
     },
     totals: {

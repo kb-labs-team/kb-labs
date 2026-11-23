@@ -1,9 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { QACase, QACaseMode, QACasePriority, QACaseStatus, QACaseSurface } from '../../contracts/index.js';
+import type { QACase, QACaseExecutionModel, QACaseMode, QACasePriority, QACaseStatus, QACaseSurface } from '../../contracts/index.js';
 
 const CASE_ID = /^(?:S|PC)-\d{3}$/;
 const STEP_ID = /^((?:S|PC)-\d{3})\.(\d+)$/;
+const EXECUTION_MODELS: QACaseExecutionModel[] = ['in-process', 'subprocess', 'worker-pool'];
 const FIELDS = ['id', 'title', 'persona', 'area', 'priority', 'status', 'release', 'modes', 'surfaces', 'superseded_by'];
 const REQUIRED_FIELDS = ['id', 'title', 'persona', 'area', 'priority', 'status', 'release', 'modes', 'surfaces'];
 
@@ -117,6 +118,55 @@ function parseCase(file: string, source: string, errors: QACatalogDiagnostic[]):
     steps.push({ id: stepId, action, expected, line: i + 1 });
   }
   if (!steps.length && status !== 'historical') { errors.push(diagnostic(file, close + 1, 'Steps section has no step rows')); invalid = true; }
+
+  let inProfileApplicability = false;
+  let profileSectionSeen = false;
+  const profileRows = new Map<string, QACaseExecutionModel[]>();
+  for (let i = close + 1; i < lines.length; i += 1) {
+    const line = lines[i] ?? '';
+    if (/^##\s+Profile applicability\s*$/.test(line)) {
+      if (profileSectionSeen) {
+        errors.push(diagnostic(file, i + 1, 'duplicate Profile applicability section'));
+        invalid = true;
+      }
+      profileSectionSeen = true;
+      inProfileApplicability = true;
+      continue;
+    }
+    if (inProfileApplicability && /^##\s+/.test(line)) {inProfileApplicability = false; continue;}
+    if (!inProfileApplicability || !/^\s*\|/.test(line) || /^\s*\|\s*[-:| ]+\|?\s*$/.test(line)) {continue;}
+    const cells = line.split('|').slice(1, -1).map(cell => cell.trim());
+    if (cells[0]?.toLowerCase() === 'step' && cells[1]?.toLowerCase() === 'execution models') {continue;}
+    const stepId = cells[0] ?? '';
+    const modelsText = cells[1] ?? '';
+    if (cells.length !== 2 || !STEP_ID.test(stepId) || !stepId.startsWith(`${id}.`)) {
+      errors.push(diagnostic(file, i + 1, `profile applicability step id ${stepId || '(empty)'} must use ${id}.<number>`));
+      invalid = true;
+      continue;
+    }
+    if (!steps.some(step => step.id === stepId)) {
+      errors.push(diagnostic(file, i + 1, `profile applicability references unknown step ${stepId}`));
+      invalid = true;
+      continue;
+    }
+    if (profileRows.has(stepId)) {
+      errors.push(diagnostic(file, i + 1, `duplicate profile applicability for ${stepId}`));
+      invalid = true;
+      continue;
+    }
+    const models = modelsText.split(',').map(model => model.trim()).filter(Boolean);
+    if (!models.length || models.some(model => !EXECUTION_MODELS.includes(model as QACaseExecutionModel))
+      || new Set(models).size !== models.length) {
+      errors.push(diagnostic(file, i + 1, 'execution models must contain only in-process, subprocess, and worker-pool without duplicates'));
+      invalid = true;
+      continue;
+    }
+    profileRows.set(stepId, models as QACaseExecutionModel[]);
+  }
+  for (const step of steps) {
+    const executionModels = profileRows.get(step.id);
+    if (executionModels) {step.executionModels = executionModels;}
+  }
   if (invalid) {return undefined;}
   return {
     id, title: value('title'), persona: value('persona'), area: value('area'),
