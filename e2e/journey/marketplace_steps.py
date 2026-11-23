@@ -171,8 +171,9 @@ def _run_public_platform_registry_install(project: Path, env: dict[str, str],
     platform_root_value = env.get("KB_JOURNEY_PLATFORM_ROOT")
     if not platform_root_value:
         raise RuntimeError("the public Marketplace registry journey has no installed platform root")
-    platform_root = active_platform_root(Path(platform_root_value))
-    config_path = marketplace_platform_config_path(platform_root)
+    platform_install_root = Path(platform_root_value)
+    platform_root = active_platform_root(platform_install_root)
+    config_path = marketplace_platform_config_path(platform_install_root)
     npmrc_path = platform_root / ".npmrc"
     original_config = config_path.read_bytes() if config_path.is_file() else None
     config_mode = config_path.stat().st_mode & 0o777 if config_path.is_file() else None
@@ -214,7 +215,7 @@ def _run_public_platform_registry_install(project: Path, env: dict[str, str],
             if configure_result.returncode != 0:
                 raise RuntimeError("the journey could not configure the temporary Marketplace source")
             config_changed = True
-            _restart_installed_marketplace(platform_root, project, fixture_env, runner)
+            _restart_installed_marketplace(platform_install_root, project, fixture_env, runner)
 
             fixture.clear_requests()
             install = ["marketplace", "install", f"{ROUTING_FIXTURE_PLUGIN}@{ROUTING_FIXTURE_VERSION}",
@@ -293,7 +294,7 @@ def _run_public_platform_registry_install(project: Path, env: dict[str, str],
             _restore_fixture_file(npmrc_path, original_npmrc, npmrc_mode)
             if config_changed:
                 _restore_fixture_file(config_path, original_config, config_mode)
-                _restart_installed_marketplace(platform_root, project, fixture_env, runner)
+                _restart_installed_marketplace(platform_install_root, project, fixture_env, runner)
         except Exception:
             cleanup_failed = True
     if cleanup_failed:

@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               _run_public_platform_registry_install,
                                marketplace_platform_config_path,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
@@ -117,6 +118,87 @@ class MarketplaceStepTests(unittest.TestCase):
                 runners=("service-local:explore",),
             )
             self.assertEqual(result.status, expected)
+
+    def test_public_platform_registry_install_keeps_install_root_for_config_resolution(self):
+        class Endpoint:
+            def __init__(self, url):
+                self.url = url
+
+        class Fixture:
+            source = Endpoint("http://127.0.0.1:42001")
+            dependencies = Endpoint("http://127.0.0.1:42002")
+
+            def __init__(self, _token):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def clear_requests(self):
+                return None
+
+            def request_summary(self):
+                return {
+                    "source": [
+                        {"package": ROUTED_PLUGIN, "kind": "metadata", "authorized": True},
+                        {"package": ROUTED_PLUGIN, "kind": "tarball", "authorized": True},
+                    ],
+                    "dependencies": [
+                        {"package": ROUTED_DEPENDENCY, "kind": "metadata", "authorized": True},
+                        {"package": ROUTED_DEPENDENCY, "kind": "tarball", "authorized": True},
+                    ],
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "platform"
+            active_root = install_root / "versions" / "v1"
+            active_root.mkdir(parents=True)
+            kb_home = root / "home" / ".kb"
+            project = root / "project"
+            project.mkdir()
+            config_path = active_root / ".kb" / "kb.config.jsonc"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text("{}\n")
+            env = {
+                "HOME": str(root / "home"),
+                "KB_HOME": str(kb_home),
+                "KB_JOURNEY_PLATFORM_ROOT": str(install_root),
+            }
+            store_entry = kb_home / "store" / "entries" / (
+                ROUTED_PLUGIN.replace("/", "+") + "@1.0.0")
+
+            def fake_runner(command, *, cwd=None, env=None, **_kwargs):
+                if "install" in command and ROUTED_PLUGIN in " ".join(command):
+                    package = store_entry / "node_modules" / ROUTED_PLUGIN
+                    dependency = package / "node_modules" / ROUTED_DEPENDENCY
+                    package.mkdir(parents=True)
+                    dependency.mkdir(parents=True)
+                    (package / "package.json").write_text(json.dumps({"name": ROUTED_PLUGIN}))
+                    (dependency / "package.json").write_text(json.dumps({"name": ROUTED_DEPENDENCY}))
+                    (active_root / "marketplace.lock").write_text(json.dumps({"plugins": {
+                        ROUTED_PLUGIN: {"version": "1.0.0", "source": "marketplace",
+                                       "marketplaceSource": "npm", "integrity": "sha512-fixture"},
+                    }}))
+                    payload = {"ok": True, "data": {"scope": "platform", "installed": [{
+                        "id": ROUTED_PLUGIN, "version": "1.0.0", "source": "npm",
+                    }]}}
+                else:
+                    payload = {"ok": True, "data": {}}
+                return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+            with patch("marketplace_steps.PlatformRegistryRoutingFixture", Fixture), \
+                    patch("marketplace_steps.active_platform_root", return_value=active_root), \
+                    patch("marketplace_steps.marketplace_platform_config_path", return_value=config_path) as resolve_config, \
+                    patch("marketplace_steps._restart_installed_marketplace") as restart, \
+                    patch("marketplace_steps.layout_value", return_value="marketplace.lock"):
+                _run_public_platform_registry_install(project, env, fake_runner)
+
+            resolve_config.assert_called_once_with(install_root)
+            self.assertEqual([item.args[0] for item in restart.call_args_list], [install_root, install_root])
 
     def test_two_local_npm_registries_keep_secret_out_of_request_evidence(self):
         from urllib.error import HTTPError
