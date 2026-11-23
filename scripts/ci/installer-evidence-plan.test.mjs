@@ -6,12 +6,14 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { evidencePlan, selectLocalInstallerEvidence } from './installer-evidence-plan.mjs';
 
-test('plan is derived from the candidate bytes and coverage runner profile', () => {
+test('plan is derived from candidate bytes and checked-in runtime policy, not evaluator host', () => {
   const bytes = Buffer.from('{"schema":"kb.create.release-index/v2"}\n');
-  const plan = evidencePlan(bytes, 'v24.11.1', { platform: 'linux', arch: 'x64' });
+  const policy = Buffer.from('{"requiredMajor":24,"nodeBaseImage":"node:24-bookworm"}');
+  const plan = evidencePlan(bytes, policy);
   assert.equal(plan.candidateId, `sha256:${createHash('sha256').update(bytes).digest('hex')}`);
   assert.deepEqual(plan.profile, { os: 'linux-x64', runtime: 'node-24', surface: 'cli' });
-  assert.throws(() => evidencePlan(Buffer.from('{}'), 'v24.11.1'), /unsupported schema/);
+  assert.throws(() => evidencePlan(Buffer.from('{}'), policy), /unsupported schema/);
+  assert.throws(() => evidencePlan(bytes, Buffer.from('{"requiredMajor":"24"}')), /required Node major/);
 });
 
 test('selector returns only local v3 PC-001.2 records', () => {

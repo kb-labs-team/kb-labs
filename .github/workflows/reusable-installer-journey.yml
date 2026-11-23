@@ -225,6 +225,7 @@ jobs:
           mkdir -p .journey/diagnostics
           node scripts/ci/installer-evidence-plan.mjs \
             .journey/candidate/.journey/release/release-index.json \
+            tools/clikit/toolchain/node_policy_gen.json \
             .journey/diagnostics/pc001-local-plan.json \
             .journey/reports > .journey/diagnostics/pc001-local-records.txt
           run_files=$(cat .journey/diagnostics/pc001-local-records.txt)

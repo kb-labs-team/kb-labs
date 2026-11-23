@@ -1,20 +1,21 @@
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { arch, platform, version } from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-export function evidencePlan(indexBytes, nodeVersion = version(), host = { platform, arch }) {
+// This pilot cell is scoped by PC-001 (CLI/local) and the Linux installer
+// journey lane. Node major comes from the checked-in toolchain policy.
+export function evidencePlan(indexBytes, nodePolicyBytes) {
   const index = JSON.parse(indexBytes.toString('utf8'));
   if (index.schema !== 'kb.create.release-index/v2') throw new Error('candidate release index has an unsupported schema');
-  const nodeMajor = /^v?(\d+)\./.exec(nodeVersion)?.[1];
-  if (!nodeMajor) throw new Error('coverage runner Node version is unavailable');
-  const machine = ({ x64: 'x64', arm64: 'arm64' })[host.arch] ?? host.arch;
+  const nodePolicy = JSON.parse(nodePolicyBytes.toString('utf8'));
+  const nodeMajor = nodePolicy.requiredMajor;
+  if (!Number.isSafeInteger(nodeMajor) || nodeMajor < 1) throw new Error('toolchain policy has no valid required Node major');
   return {
     schema: 'kb.qa-evidence-plan/v1',
     mode: 'local',
     candidateId: `sha256:${createHash('sha256').update(indexBytes).digest('hex')}`,
-    profile: { os: `${host.platform}-${machine}`, runtime: `node-${nodeMajor}`, surface: 'cli' },
+    profile: { os: 'linux-x64', runtime: `node-${nodeMajor}`, surface: 'cli' },
   };
 }
 
@@ -33,9 +34,9 @@ export function selectLocalInstallerEvidence(reportDirectory) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const [indexPath, outputPath, reportDirectory] = process.argv.slice(2);
-  if (!indexPath || !outputPath || !reportDirectory) throw new Error('usage: node installer-evidence-plan.mjs <release-index.json> <plan.json> <reports-dir>');
-  const plan = evidencePlan(readFileSync(indexPath));
+  const [indexPath, policyPath, outputPath, reportDirectory] = process.argv.slice(2);
+  if (!indexPath || !policyPath || !outputPath || !reportDirectory) throw new Error('usage: node installer-evidence-plan.mjs <release-index.json> <node-policy.json> <plan.json> <reports-dir>');
+  const plan = evidencePlan(readFileSync(indexPath), readFileSync(policyPath));
   writeFileSync(outputPath, `${JSON.stringify(plan, null, 2)}\n`);
   const records = selectLocalInstallerEvidence(reportDirectory);
   if (records.length) process.stdout.write(records.join(','));
