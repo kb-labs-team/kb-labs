@@ -184,6 +184,20 @@ describe('array provenance', () => {
     );
     expect(provenance.x).toEqual({ layer: 'overlay', source: '/o' });
   });
+
+  it('records lower-layer array sources explicitly appended by an overlay', () => {
+    const provenance = buildProvenance(
+      [
+        { layer: 'generated', path: '/generated', data: { x: ['base'] } },
+        { layer: 'overlay', path: '/overlay', data: { 'kb:merge': { x: 'append' }, x: ['extra'] } },
+      ],
+      { x: ['base', 'extra'] },
+    );
+    expect(provenance.x?.contributors).toEqual([
+      { layer: 'overlay', source: '/overlay' },
+      { layer: 'generated', source: '/generated' },
+    ]);
+  });
 });
 
 describe('one writer per file: config set never touches generated files', () => {

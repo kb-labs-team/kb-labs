@@ -22,10 +22,10 @@ import { readJsonWithDiagnostics } from '../runtime/runtime.js';
 import { mergeOverlay } from '../overlay/merge.js';
 import type { Diagnostic } from '../types/index.js';
 
-export type ConfigLayerName = 'manifest' | 'generated' | 'platform' | 'project' | 'overlay';
+export type ConfigLayerName = 'manifest' | 'generated' | 'platform' | 'container' | 'project' | 'overlay';
 
 /** Layer names ordered from the lowest to the highest precedence. */
-export const CONFIG_LAYER_ORDER: readonly ConfigLayerName[] = ['manifest', 'generated', 'platform', 'project', 'overlay'];
+export const CONFIG_LAYER_ORDER: readonly ConfigLayerName[] = ['manifest', 'generated', 'platform', 'container', 'project', 'overlay'];
 
 /** Directory (relative to a root) that holds installer-written config. */
 export const GENERATED_CONFIG_DIR = path.join('.kb', 'generated');
@@ -39,6 +39,14 @@ export const USER_CONFIG_CANDIDATES = [
   path.join('.kb', 'kb.config.json'),
   'kb.config.jsonc',
   'kb.config.json',
+] as const;
+
+/** Read precedence for platform config. The `.kb` files override root templates. */
+export const PLATFORM_USER_CONFIG_CANDIDATES = [
+  'kb.config.jsonc',
+  'kb.config.json',
+  path.join('.kb', 'kb.config.jsonc'),
+  path.join('.kb', 'kb.config.json'),
 ] as const;
 
 /** Absolute path of the user config file `config set` writes for a root. */
@@ -68,6 +76,73 @@ export interface GeneratedLayerResult {
   /** Merged contents of generated files in precedence order. */
   data: Record<string, unknown>;
   diagnostics: Diagnostic[];
+}
+
+export interface ConfigFilesLayerResult {
+  files: ConfigLayerFile[];
+  /** Existing paths in precedence order, including files with parse diagnostics. */
+  paths: string[];
+  data: Record<string, unknown>;
+  diagnostics: Diagnostic[];
+}
+
+/** Read every platform user config candidate in the shared precedence order. */
+export async function loadPlatformUserLayerFiles(root: string): Promise<ConfigFilesLayerResult> {
+  return loadConfigFilesAtRoot(root, PLATFORM_USER_CONFIG_CANDIDATES, 'platform');
+}
+
+/** Read the optional Helm/container-owned platform override layer. */
+export async function loadPlatformContainerLayer(root: string): Promise<ConfigFilesLayerResult> {
+  return loadConfigFilesAtRoot(root, [path.join('.kb', 'kb.config.override.json')], 'container');
+}
+
+async function loadConfigFilesAtRoot(
+  root: string,
+  candidates: readonly string[],
+  layer: 'platform' | 'container',
+): Promise<ConfigFilesLayerResult> {
+  const files: ConfigLayerFile[] = [];
+  const paths: string[] = [];
+  const diagnostics: Diagnostic[] = [];
+  let data: Record<string, unknown> = {};
+
+  for (const relative of candidates) {
+    const full = path.join(root, relative);
+    try {
+      await fsp.access(full);
+      paths.push(full);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      diagnostics.push({
+        level: 'error',
+        code: 'FILE_READ_FAILED',
+        message: `Failed to read file: ${full}`,
+        detail: String(error),
+        path: full,
+      });
+      continue;
+    }
+
+    const read = await readJsonWithDiagnostics<unknown>(full);
+    diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
+    if (!read.ok) continue;
+    if (read.data === null || typeof read.data !== 'object' || Array.isArray(read.data)) {
+      diagnostics.push({
+        level: 'error',
+        code: 'CONFIG_NOT_OBJECT',
+        message: `Config must be a JSON object at top level: ${full}`,
+        path: full,
+      });
+      continue;
+    }
+
+    const object = read.data as Record<string, unknown>;
+    files.push({ layer, path: full, data: object });
+    data = mergeOverlay(data, object);
+  }
+
+  return { files, paths, data, diagnostics };
 }
 
 /**
@@ -212,7 +287,7 @@ export function buildProvenance(
       winner ??= file;
       if (Array.isArray(leafValue) && Array.isArray(hit.value)) {
         contributors.push({ layer: file.layer, source: file.path });
-        if (file.layer === 'overlay' || !appendsArrayAt(file.data, segments)) {
+        if (!appendsArrayAt(file.data, segments)) {
           break;
         }
       } else {
