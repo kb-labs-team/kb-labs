@@ -1043,7 +1043,8 @@ def _run_installed_flows(journey: Journey, project_root: str, registry: str, gra
                             service_api_token(graph) or "",
                             lambda path, token: request(path, token=token))),
                cases=["S-043.1", "S-196.1", "S-124.1", "S-124.2", "S-124.3", "S-124.4",
-                      "S-124.5", "S-124.6", "S-124.8", "S-124.9", "S-124.12", "S-051.1"],
+                      "S-124.5", "S-124.6", "S-124.8", "S-124.9", "S-124.12", "S-051.1",
+                      "S-320.1", "S-320.2"],
                record_empty_success=False)
     workspace_root = Path(journey_value("KB_JOURNEY_WORKSPACE_ROOT", resource_root()))
 
