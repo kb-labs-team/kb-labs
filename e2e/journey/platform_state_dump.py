@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import time
 from pathlib import Path
 from typing import Mapping
@@ -26,6 +27,10 @@ MAX_FILE_BYTES = 1024 * 1024
 TAIL_LINES = 400
 UNKNOWN_COMMAND = re.compile(r"Unknown command:\s*([^\n\r]+)")
 SERVICE_LOG_BUDGET = 2 * 1024 * 1024
+STATE_FINGERPRINT_MAX_FILES = 4096
+STATE_FINGERPRINT_MAX_BYTES = 64 * 1024 * 1024
+STATE_FINGERPRINT_MAX_SECONDS = 5.0
+STATE_FINGERPRINT_CHUNK_BYTES = 1024 * 1024
 
 
 def failure_dump_environment(active_main: Mapping[str, str] | None,
@@ -72,11 +77,15 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
         size = source.stat().st_size
         if size > MAX_FILE_BYTES and not tail:
             return 0
-        content = source.read_text(errors="replace")
         if tail:
+            with source.open("rb") as stream:
+                stream.seek(max(0, size - MAX_FILE_BYTES))
+                content = stream.read(MAX_FILE_BYTES).decode(errors="replace")
             content = "\n".join(content.splitlines()[-TAIL_LINES:]) + "\n"
             # A pathological single line must not defeat the per-file and dump caps.
             content = content[-MAX_FILE_BYTES:]
+        else:
+            content = source.read_text(errors="replace")
         target.parent.mkdir(parents=True, exist_ok=True)
         if source.suffix.lower() == ".json":
             try:
@@ -90,21 +99,85 @@ def _safe_copy(source: Path, target: Path, admin_password: str, *, tail: bool = 
         return 0
 
 
-def _write_state_fingerprints(source: Path, target: Path) -> int:
-    """Record one-way fingerprints for every opaque shared-state file."""
-    try:
-        fingerprints = {}
-        for path in sorted(source.rglob("*")):
-            if path.is_file():
-                relative = path.relative_to(source).as_posix()
-                fingerprints[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-        if not fingerprints:
-            return 0
-        target.parent.mkdir(parents=True, exist_ok=True)
+def _write_state_fingerprints(source: Path, target: Path) -> tuple[int, int]:
+    """Fingerprint a bounded shared-state sample and report any incomplete scan."""
+    fingerprints: dict[str, str] = {}
+    reasons: set[str] = set()
+    bytes_hashed = 0
+    unreadable_files = 0
+    deadline = time.monotonic() + STATE_FINGERPRINT_MAX_SECONDS
+
+    if not source.is_dir():
+        reasons.add("source_unavailable")
+    else:
+        def directory_error(_error: OSError) -> None:
+            reasons.add("directory_read_error")
+
+        try:
+            for directory, _subdirectories, filenames in os.walk(source, onerror=directory_error):
+                if time.monotonic() >= deadline:
+                    reasons.add("time_limit")
+                    break
+                for filename in filenames:
+                    if time.monotonic() >= deadline:
+                        reasons.add("time_limit")
+                        break
+                    if len(fingerprints) >= STATE_FINGERPRINT_MAX_FILES:
+                        reasons.add("file_limit")
+                        break
+                    path = Path(directory) / filename
+                    try:
+                        file_stat = path.stat()
+                        if not stat.S_ISREG(file_stat.st_mode):
+                            continue
+                        file_size = file_stat.st_size
+                        if file_size > STATE_FINGERPRINT_MAX_BYTES - bytes_hashed:
+                            reasons.add("byte_limit")
+                            break
+                        digest = hashlib.sha256()
+                        file_bytes = 0
+                        with path.open("rb") as stream:
+                            while True:
+                                if time.monotonic() >= deadline:
+                                    reasons.add("time_limit")
+                                    break
+                                chunk = stream.read(STATE_FINGERPRINT_CHUNK_BYTES)
+                                if not chunk:
+                                    break
+                                file_bytes += len(chunk)
+                                if file_bytes > file_size or file_bytes > STATE_FINGERPRINT_MAX_BYTES - bytes_hashed:
+                                    reasons.add("byte_limit")
+                                    break
+                                digest.update(chunk)
+                        if reasons.intersection({"time_limit", "byte_limit"}):
+                            break
+                        bytes_hashed += file_bytes
+                        fingerprints[path.relative_to(source).as_posix()] = digest.hexdigest()
+                    except OSError:
+                        unreadable_files += 1
+                if reasons.intersection({"time_limit", "byte_limit", "file_limit"}):
+                    break
+            if unreadable_files:
+                reasons.add("unreadable_files")
+        except OSError:
+            reasons.add("directory_read_error")
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fingerprint_bytes = 0
+    if fingerprints:
         _write_evidence_json(target, fingerprints)
-        return target.stat().st_size
-    except OSError:
-        return 0
+        fingerprint_bytes = target.stat().st_size
+    metadata = {
+        "schema": "kb.journey.state-fingerprints/v1",
+        "complete": not reasons,
+        "filesHashed": len(fingerprints),
+        "bytesHashed": bytes_hashed,
+        "unreadableFiles": unreadable_files,
+        "limitReasons": sorted(reasons),
+    }
+    metadata_path = target.with_name("shared-state-fingerprints.meta.json")
+    _write_evidence_json(metadata_path, metadata)
+    return fingerprint_bytes, metadata_path.stat().st_size
 
 
 def _registered_project_state(project_root: Path, env: Mapping[str, str] | None) -> Path | None:
@@ -294,14 +367,18 @@ def dump_platform_state(platform_root: str | Path, reports_dir: str | Path, *, m
                          Path('.kb/v2/receipt.json')):
             source = installed_path(root, 'currentLink', '.kb/v2/receipt.json') if relative == Path('.kb/v2/receipt.json') else active / relative
             add(source, relative)
-        fingerprint_bytes = _write_state_fingerprints(
+        fingerprint_bytes, fingerprint_meta_bytes = _write_state_fingerprints(
             root / layout_value('sharedStateDirectory'), destination / "shared-state-fingerprints.json"
         )
-        if fingerprint_bytes and used + fingerprint_bytes <= CONTENT_BUDGET:
-            used += fingerprint_bytes
-            entries.append(f"- `shared-state-fingerprints.json` ({fingerprint_bytes} bytes)")
-        elif fingerprint_bytes:
-            (destination / "shared-state-fingerprints.json").unlink(missing_ok=True)
+        for filename, written_bytes in (
+            ("shared-state-fingerprints.json", fingerprint_bytes),
+            ("shared-state-fingerprints.meta.json", fingerprint_meta_bytes),
+        ):
+            if written_bytes and used + written_bytes <= CONTENT_BUDGET:
+                used += written_bytes
+                entries.append(f"- `{filename}` ({written_bytes} bytes)")
+            elif written_bytes:
+                (destination / filename).unlink(missing_ok=True)
         auth_probe_bytes = _write_auth_state_probe(root, destination / "auth-state-probe.json")
         if auth_probe_bytes and used + auth_probe_bytes <= CONTENT_BUDGET:
             used += auth_probe_bytes

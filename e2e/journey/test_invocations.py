@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import urllib.request
 from pathlib import Path
@@ -113,6 +114,17 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertNotIn("redis-password", rendered)
         self.assertNotIn("encoded%3Asecret", rendered)
         self.assertEqual(rendered.count("[REDACTED]@"), 2)
+
+    def test_url_redaction_scales_for_large_single_line_logs(self):
+        value = "x" * (128 * 1024)
+        started = time.monotonic()
+        self.assertEqual(redaction.redact_text(value), value)
+        self.assertLess(time.monotonic() - started, 3.0)
+
+        credential = "very-long-userinfo-" + ("secret" * 4096)
+        rendered = redaction.redact_text(f"https://{credential}@registry.internal/path")
+        self.assertNotIn(credential, rendered)
+        self.assertEqual(rendered, "https://[REDACTED]@registry.internal/path")
 
     def test_failed_envelope_log_path_is_captured_bounded_and_redacted(self):
         with tempfile.TemporaryDirectory(prefix="journey-error-log-artifact-") as temp:

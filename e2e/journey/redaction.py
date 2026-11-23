@@ -20,7 +20,6 @@ _SECRET_JSON_VALUE = re.compile(
     r'(?i)(["\']?(?:password|token|secret|apiKey|key)["\']?\s*:\s*)("(?:\\.|[^"\\])*"|\'[^\']*\'|[^,}\]\s]+)'
 )
 _SECRET_JSON_KEY = re.compile(r"(?i)(password|token|secret|apiKey|key)")
-_URL_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)([^/\s?#@]+@)")
 
 
 def is_secret_key(key: str) -> bool:
@@ -43,7 +42,48 @@ def redact_text(value: str, env: Mapping[str, str] | None = None,
     value = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
     value = _SECRET_JSON_VALUE.sub(r'\1"[REDACTED]"', value)
     value = _SECRET_ARGUMENT_TEXT.sub(r"\1[REDACTED]", value)
-    return _URL_USERINFO.sub(r"\1[REDACTED]@", value)
+    return _redact_url_userinfo(value)
+
+
+def _redact_url_userinfo(value: str) -> str:
+    """Redact URL credentials with one forward scan, including very long lines."""
+    length = len(value)
+    parts: list[str] = []
+    copied_through = 0
+    index = 0
+    while index < length:
+        character = value[index]
+        if not character.isascii() or not character.isalpha():
+            index += 1
+            continue
+
+        scheme_end = index + 1
+        while scheme_end < length:
+            candidate = value[scheme_end]
+            if candidate.isascii() and (candidate.isalpha() or candidate.isdigit() or candidate in "+.-"):
+                scheme_end += 1
+                continue
+            break
+
+        if not value.startswith("://", scheme_end):
+            index = scheme_end + (1 if scheme_end < length and value[scheme_end] == ":" else 0)
+            continue
+
+        authority_start = scheme_end + 3
+        authority_end = authority_start
+        while authority_end < length and value[authority_end] not in "/\\?# \t\r\n\v\f":
+            authority_end += 1
+        userinfo_end = value.find("@", authority_start, authority_end)
+        if userinfo_end >= 0:
+            parts.append(value[copied_through:authority_start])
+            parts.append("[REDACTED]@")
+            copied_through = userinfo_end + 1
+        index = authority_end
+
+    if not parts:
+        return value
+    parts.append(value[copied_through:])
+    return "".join(parts)
 
 
 def redact_argv(argv: list[Any], env: Mapping[str, str] | None = None,
