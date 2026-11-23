@@ -9,6 +9,26 @@ import (
 	"github.com/kb-labs/create/v2/render"
 )
 
+// case: S-302.1
+func TestUnhealthyHostStatusUsesCataloguedModuleDetail(t *testing.T) {
+	failure, err := unhealthyHostDiagnostic()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failure.Code != "KB_HOST_UNHEALTHY" {
+		t.Fatalf("code = %q", failure.Code)
+	}
+	if failure.Message != "The host responds but module gateway is unhealthy." {
+		t.Fatalf("message = %q", failure.Message)
+	}
+	if failure.Hint != `Run "kb-create restart" or "kb-create doctor".` {
+		t.Fatalf("hint = %q", failure.Hint)
+	}
+	if failure.Meta["module"] != "gateway" {
+		t.Fatalf("details = %#v", failure.Meta)
+	}
+}
+
 func TestMarketplaceSourceStatusRedactsCredentialValues(t *testing.T) {
 	root := t.TempDir()
 	configPath := filepath.Join(root, ".kb", "kb.config.jsonc")
