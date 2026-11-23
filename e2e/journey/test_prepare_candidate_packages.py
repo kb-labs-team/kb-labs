@@ -15,6 +15,12 @@ class PrepareCandidatePackagesTests(unittest.TestCase):
         root = Path(temporary.name)
         packages = root / "packages"
         packages.mkdir()
+        journey = root / "e2e/journey"
+        journey.mkdir(parents=True)
+        (journey / "phase-timing.sh").write_text(
+            (REPOSITORY_ROOT / "e2e/journey/phase-timing.sh").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
         (root / "e2e/platform").mkdir(parents=True)
         scripts = root / "e2e/scripts"
         scripts.mkdir(parents=True)
@@ -70,6 +76,8 @@ class PrepareCandidatePackagesTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertFalse(pack_log.exists())
         self.assertEqual((packages / "fresh.tgz").read_text(), "cached")
+        self.assertIn("phase=start name=validate-restored-package-cache", result.stderr)
+        self.assertIn("phase=complete name=validate-restored-package-cache", result.stderr)
 
     def test_invalid_restored_cache_is_discarded_repacked_and_revalidated(self):
         temporary, root, packages, fake_bin, pack_log, _ = self._fixture()
@@ -84,6 +92,9 @@ class PrepareCandidatePackagesTests(unittest.TestCase):
         self.assertEqual(pack_log.read_text().splitlines(), ["packed"])
         self.assertIn("package metadata validated", result.stdout)
         self.assertIn("repacking", result.stderr.lower())
+        self.assertIn("phase=cache-invalid name=validate-restored-package-cache", result.stderr)
+        self.assertIn("phase=complete name=pack-publishable-packages", result.stderr)
+        self.assertIn("phase=complete name=validate-packed-package-outputs", result.stderr)
 
     def test_fresh_pack_validation_failure_remains_a_hard_error(self):
         temporary, root, packages, fake_bin, pack_log, _ = self._fixture()
@@ -95,6 +106,8 @@ class PrepareCandidatePackagesTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(pack_log.read_text().splitlines(), ["packed"])
         self.assertIn("does not match workspace source", result.stderr)
+        self.assertIn("phase=start name=validate-packed-package-outputs", result.stderr)
+        self.assertNotIn("phase=complete name=validate-packed-package-outputs", result.stderr)
 
 
 if __name__ == "__main__":

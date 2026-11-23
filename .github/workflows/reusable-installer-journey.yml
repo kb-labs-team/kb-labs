@@ -16,7 +16,8 @@ jobs:
   prepare:
     name: Build local release candidate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # One recent prepare job finished in 28m47s, leaving only 73s under 30m.
+    timeout-minutes: 45
     outputs:
       journeys: ${{ steps.matrix.outputs.journeys }}
     steps:
