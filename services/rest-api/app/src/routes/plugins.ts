@@ -80,16 +80,6 @@ export async function registerPluginRoutes(
 
   metricsCollector.resetPluginRouteBudgets();
 
-  await registerPluginRegistryRoutes(server, {
-    apiBasePath: basePath,
-    includePluginDocs: false,
-    getSnapshot: () => restDomainOperationMetrics.observeOperation(
-      "plugin.registry.snapshot",
-      async () => registry.snapshot(),
-    ),
-    validateManifest,
-  });
-
   const mountMetrics = metricsCollector.beginPluginMount();
   const mountStart = performance.now();
 
@@ -670,6 +660,16 @@ export async function registerPluginSnapshotRoutes(
   registry: IEntityRegistry,
 ): Promise<void> {
   const basePath = config.basePath;
+
+  await registerPluginRegistryRoutes(server, {
+    apiBasePath: basePath,
+    includePluginDocs: false,
+    getSnapshot: () => restDomainOperationMetrics.observeOperation(
+      "plugin.registry.snapshot",
+      async () => registry.snapshot(),
+    ),
+    validateManifest,
+  });
 
   server.post(`${basePath}/plugins/refresh`, { schema: { querystring: { type: 'object', additionalProperties: false }, body: noBodySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { rev: { type: 'integer' }, total: { type: 'integer' }, generatedAt: { type: 'string', format: 'date-time' }, partial: { type: 'boolean' }, stale: { type: 'boolean' } }, required: ['rev', 'total', 'generatedAt', 'partial', 'stale'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
