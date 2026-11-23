@@ -43,6 +43,11 @@ from journey_selection import JourneySelection
 from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
 from select_from_cases import journey_source_group_declaration
+from platform_registry_routing_fixture import (
+    DEPENDENCY as ROUTED_DEPENDENCY,
+    PLUGIN as ROUTED_PLUGIN,
+    PlatformRegistryRoutingFixture,
+)
 import service_runner
 from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
@@ -90,6 +95,48 @@ class MarketplaceStepTests(unittest.TestCase):
             "e2e/journey/marketplace_steps.py", root, "service-local:explore")
 
         self.assertIn("S-300.1", declaration["cases"])
+
+    def test_two_local_npm_registries_keep_secret_out_of_request_evidence(self):
+        from urllib.error import HTTPError
+        from urllib.parse import quote
+
+        token = "journey-platform-registry-token-fixture"
+        with PlatformRegistryRoutingFixture(token) as fixture:
+            source_metadata_url = f"{fixture.source.url}/{quote(ROUTED_PLUGIN, safe='')}"
+            with urllib.request.urlopen(source_metadata_url, timeout=5) as response:
+                source_metadata = json.loads(response.read())
+            self.assertEqual(source_metadata["versions"]["1.0.0"]["name"], ROUTED_PLUGIN)
+            self.assertIn(fixture.source.url, source_metadata["versions"]["1.0.0"]["dist"]["tarball"])
+
+            dependency_metadata_url = f"{fixture.dependencies.url}/{quote(ROUTED_DEPENDENCY, safe='')}"
+            with self.assertRaises(HTTPError) as unauthorized:
+                urllib.request.urlopen(dependency_metadata_url, timeout=5)
+            self.assertEqual(unauthorized.exception.code, 401)
+            request = urllib.request.Request(
+                dependency_metadata_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(request, timeout=5) as response:
+                dependency_metadata = json.loads(response.read())
+            tarball_url = dependency_metadata["versions"]["1.0.0"]["dist"]["tarball"]
+            tarball_request = urllib.request.Request(
+                tarball_url,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            with urllib.request.urlopen(tarball_request, timeout=5) as response:
+                self.assertGreater(len(response.read()), 0)
+
+            evidence = json.dumps(fixture.request_summary(), sort_keys=True)
+            self.assertNotIn(token, evidence)
+            requests = fixture.request_summary()
+            self.assertTrue(any(
+                item["package"] == ROUTED_PLUGIN and item["kind"] == "metadata"
+                for item in requests["source"]
+            ))
+            self.assertTrue(all(
+                item["package"] == ROUTED_DEPENDENCY and item["authorized"]
+                for item in requests["dependencies"] if item["authorized"]
+            ))
 
     def test_npm_fixture_publish_registers_a_local_user_and_uses_scoped_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
