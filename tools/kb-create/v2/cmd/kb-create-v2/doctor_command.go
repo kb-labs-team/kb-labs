@@ -149,7 +149,7 @@ func executeDoctor(_ context.Context, input doctorCommandInput) (doctorOperation
 			if truth, statusErr := supervisor.Observe(context.Background(), runner, runner.State); statusErr == nil {
 				running := truth.Status
 				response.RunningVersion = running.PlatformVersion
-				response.PendingRestart = pendingRestart(active, running, root)
+				response.PendingRestart = pendingRestart(active, running, layout.InstallRoot())
 				if running.PID > 0 {
 					runningRoot = running.TreeRoot
 				}
