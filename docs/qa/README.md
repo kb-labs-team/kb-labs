@@ -112,3 +112,35 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
+
+### Evidence-backed coverage pilot
+
+`kb.qa-case-run/v2` remains supported by the existing coverage command. To require candidate, profile, configuration, and log evidence, use `--evidence` with the new `kb.qa-case-run/v3` envelope. A v2 run is rejected in this mode; missing v3 evidence stays incomplete and cannot make the release verdict pass.
+
+```json
+{
+  "schema": "kb.qa-case-run/v3",
+  "runId": "journey-local-001",
+  "mode": "local",
+  "candidateId": "sha256:release-manifest-digest",
+  "profile": { "os": "linux-x64", "runtime": "node-24", "surface": "cli" },
+  "claims": [
+    { "claimId": "PC-001.4", "kind": "journey", "status": "PASS", "configRef": "artifacts/redacted-config.json", "configDigest": "<64-character SHA-256 hex>", "logRef": "artifacts/step-PC-001.4.log", "logDigest": "<64-character SHA-256 hex>" }
+  ]
+}
+```
+
+Replace each `<64-character SHA-256 hex>` with the first field printed by `shasum -a 256 artifacts/redacted-config.json` or `shasum -a 256 artifacts/step-PC-001.4.log`. Keep those artifact files in a directory beneath the directory containing `evidence.json`; store only a redacted configuration snapshot there.
+
+The evidence plan is supplied independently of the run result:
+
+```json
+{
+  "schema": "kb.qa-evidence-plan/v1",
+  "mode": "local",
+  "candidateId": "sha256:release-manifest-digest",
+  "profile": { "os": "linux-x64", "runtime": "node-24", "surface": "cli" }
+}
+```
+
+Run `kb qa coverage show --level release --mode local --evidence --evidence-plan expected.json --run evidence.json --json`. Each reference is a relative file path from the run JSON; the CLI requires the file to exist beneath that directory and verifies its SHA-256 digest. Coverage v2 reports behavior status and evidence status separately; `FAIL` remains a product failure, while `INCOMPLETE` evidence prevents `releasePassed` even if behavior passed. Candidate and profile values must match the independent plan for every supplied run, and the required matrix must contain at least one applicable active release step. Returned artifact links include each run ID and run-record root, so repeated relative paths from different attempts remain distinguishable. The envelope contains references and digests, never configuration values or log contents.

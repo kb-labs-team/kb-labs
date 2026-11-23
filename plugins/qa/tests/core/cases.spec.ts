@@ -2,8 +2,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { QA_CASE_RUN_SCHEMA, type QACase, type QACaseClaim, type QACaseRunResult } from '@kb-labs/qa/contracts';
-import { computeQACaseCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../../src/core/index.js';
+import { isQACaseClaimKind, QA_CASE_EVIDENCE_RUN_SCHEMA, QA_CASE_RUN_SCHEMA, type QACase, type QACaseClaim, type QACaseEvidencePlan, type QACaseEvidenceRunResult, type QACaseRunResult } from '../../src/contracts/index.js';
+import { computeQACaseCoverage, computeQACaseEvidenceCoverage, parseQACatalog, RELEASE_CASE_CLAIM_BASELINE, scanQACaseClaims, validateReleaseCaseClaims } from '../../src/core/index.js';
 
 const temporaryDirectories: string[] = [];
 function fixture(): string {
@@ -244,6 +244,12 @@ describe('release case journey claim validation', () => {
 });
 
 describe('QA case coverage', () => {
+  it('accepts only primitive claim-kind strings from evidence records', () => {
+    expect(isQACaseClaimKind('journey')).toBe(true);
+    expect(isQACaseClaimKind({ toString: () => 'journey' })).toBe(false);
+    expect(isQACaseClaimKind(['unit'])).toBe(false);
+  });
+
   it('filters by mode and marks planned, draft, or historical cases NOT REQUIRED', () => {
     const directory = fixture();
     const active = parsedCase(directory);
@@ -287,5 +293,100 @@ describe('QA case coverage', () => {
     const complete = computeQACaseCoverage([testCase], claims, testCase.steps.map(step => run('local', step.id, 'PASS')), 'local');
     expect(complete.cases[0]?.statusResult).toBe('PASS');
     expect(complete.releasePassed).toBe(true);
+  });
+
+  it('fails evidence-backed readiness when the required release matrix is empty or inapplicable', () => {
+    const directory = fixture();
+    const active = parsedCase(directory);
+    const plan: QACaseEvidencePlan = {
+      schema: 'kb.qa-evidence-plan/v1', mode: 'local', candidateId: 'candidate-a', profile: { os: 'linux' },
+    };
+    const empty = computeQACaseEvidenceCoverage([], [], [], 'local', plan);
+    expect(empty).toMatchObject({ releasePassed: false, evidencePassed: false });
+    const stepFree = computeQACaseEvidenceCoverage([{ ...active, steps: [] }], [], [], 'local', plan);
+    expect(stepFree).toMatchObject({ releasePassed: false, evidencePassed: false });
+    const inapplicable = computeQACaseEvidenceCoverage([{ ...active, modes: ['secured'] }], [], [], 'local', plan);
+    expect(inapplicable).toMatchObject({ releasePassed: false, evidencePassed: false });
+    const missingPlan = computeQACaseEvidenceCoverage([active], [], [], 'local');
+    expect(missingPlan).toMatchObject({ releasePassed: false, evidencePassed: false });
+  });
+
+  // case: S-299.1
+  it('keeps product failure distinct from incomplete evidence and requires matching candidate, profile, config, and log references', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const claims: QACaseClaim[] = testCase.steps.map(step => ({ id: step.id, stepId: step.id, kind: 'journey', source: 'journey.py', line: 1 }));
+    const base = {
+      schema: QA_CASE_EVIDENCE_RUN_SCHEMA,
+      runId: 'run-a',
+      mode: 'local' as const,
+      recordPath: 'runs/run-a.json',
+      candidateId: 'sha256:candidate-a',
+      profile: { os: 'linux', runtime: 'node-24', surface: 'cli' },
+    };
+    const runs: QACaseEvidenceRunResult[] = [{
+      ...base,
+      claims: [
+        { claimId: 'S-010.1', kind: 'journey', status: 'PASS', configRef: 'artifacts/config.json', configDigest: 'a'.repeat(64), configVerified: true, logRef: 'artifacts/step.log', logDigest: 'b'.repeat(64), logVerified: true },
+        { claimId: 'S-010.2', kind: 'journey', status: 'FAIL', configRef: 'artifacts/config.json', configDigest: 'a'.repeat(64), configVerified: true, logRef: 'artifacts/failed.log', logDigest: 'c'.repeat(64), logVerified: true },
+      ],
+    }];
+    const plan: QACaseEvidencePlan = { schema: 'kb.qa-evidence-plan/v1', mode: 'local', candidateId: 'sha256:candidate-a', profile: base.profile };
+    const complete = computeQACaseEvidenceCoverage([testCase], claims, runs, 'local', plan);
+    expect(complete.cases[0]?.steps.map(step => [step.status, step.evidenceStatus])).toEqual([['PASS', 'COMPLETE'], ['FAIL', 'COMPLETE']]);
+    expect(complete.cases[0]?.steps[0]).toMatchObject({
+      configRefs: [{ runId: 'run-a', runRoot: 'runs', path: 'artifacts/config.json', sha256: 'a'.repeat(64) }],
+      logRefs: [{ runId: 'run-a', runRoot: 'runs', path: 'artifacts/step.log', sha256: 'b'.repeat(64) }],
+      observedCandidateIds: ['sha256:candidate-a'],
+    });
+    expect(complete.releasePassed).toBe(false);
+
+    const missing = computeQACaseEvidenceCoverage([testCase], claims, [{ ...runs[0]!, claims: [runs[0]!.claims[0]!] }], 'local', plan);
+    expect(missing.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'COMPLETE' });
+    expect(missing.cases[0]?.steps[1]).toMatchObject({ status: 'NOT RUN', evidenceStatus: 'INCOMPLETE' });
+    expect(missing.evidencePassed).toBe(false);
+    expect(missing.releasePassed).toBe(false);
+
+    const missingRefs = computeQACaseEvidenceCoverage([testCase], claims, [{ ...runs[0]!, claims: [
+      { claimId: 'S-010.1', kind: 'journey', status: 'PASS', configRef: 'artifacts/missing.json', configDigest: 'd'.repeat(64), configVerified: false },
+      runs[0]!.claims[1]!,
+    ] }], 'local', plan);
+    expect(missingRefs.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(missingRefs.releasePassed).toBe(false);
+
+    const mismatched = computeQACaseEvidenceCoverage([testCase], claims, [runs[0]!, {
+      ...base, runId: 'run-b', candidateId: 'sha256:candidate-b',
+      recordPath: 'runs/run-b.json',
+      claims: [{ claimId: 'S-010.2', kind: 'journey', status: 'PASS', configRef: 'artifacts/config.json', configDigest: 'a'.repeat(64), configVerified: true, logRef: 'artifacts/step.log', logDigest: 'b'.repeat(64), logVerified: true }],
+    }], 'local', plan);
+    expect(mismatched.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(mismatched.releasePassed).toBe(false);
+
+    const unexpectedCandidate = computeQACaseEvidenceCoverage([testCase], claims, runs, 'local', { ...plan, candidateId: 'sha256:approved-candidate' });
+    expect(unexpectedCandidate.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(unexpectedCandidate.releasePassed).toBe(false);
+
+    const unexpectedProfile = computeQACaseEvidenceCoverage([testCase], claims, runs, 'local', { ...plan, profile: { ...plan.profile, os: 'darwin-arm64' } });
+    expect(unexpectedProfile.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(unexpectedProfile.releasePassed).toBe(false);
+
+    const noPlan = computeQACaseEvidenceCoverage([testCase], claims, runs, 'local');
+    expect(noPlan.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
+    expect(noPlan.releasePassed).toBe(false);
+
+    const reversed = computeQACaseEvidenceCoverage([testCase], claims, [{
+      ...runs[0]!,
+      claims: [runs[0]!.claims[1]!, { ...runs[0]!.claims[0]!, status: 'FAIL' }],
+    }], 'local', plan);
+    expect(reversed.cases[0]?.steps[0]).toMatchObject({ status: 'FAIL', evidenceStatus: 'COMPLETE' });
+
+    const failureWithoutEvidence = computeQACaseEvidenceCoverage([testCase], claims, [runs[0]!, {
+      ...base,
+      runId: 'run-failed-without-artifacts',
+      recordPath: 'runs/run-failed-without-artifacts.json',
+      claims: [{ claimId: 'S-010.1', kind: 'journey', status: 'FAIL', configRef: 'artifacts/missing.json', configDigest: 'f'.repeat(64), configVerified: false, logRef: 'artifacts/missing.log', logDigest: 'e'.repeat(64), logVerified: false }],
+    }], 'local', plan);
+    expect(failureWithoutEvidence.cases[0]?.steps[0]).toMatchObject({ status: 'FAIL', evidenceStatus: 'INCOMPLETE' });
+    expect(failureWithoutEvidence.releasePassed).toBe(false);
   });
 });
