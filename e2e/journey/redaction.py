@@ -20,6 +20,7 @@ _SECRET_JSON_VALUE = re.compile(
     r'(?i)(["\']?(?:password|token|secret|apiKey|key)["\']?\s*:\s*)("(?:\\.|[^"\\])*"|\'[^\']*\'|[^,}\]\s]+)'
 )
 _SECRET_JSON_KEY = re.compile(r"(?i)(password|token|secret|apiKey|key)")
+_URL_USERINFO = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)([^/\s?#@]+@)")
 
 
 def is_secret_key(key: str) -> bool:
@@ -41,7 +42,8 @@ def redact_text(value: str, env: Mapping[str, str] | None = None,
         value = value.replace(secret, "[REDACTED]")
     value = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
     value = _SECRET_JSON_VALUE.sub(r'\1"[REDACTED]"', value)
-    return _SECRET_ARGUMENT_TEXT.sub(r"\1[REDACTED]", value)
+    value = _SECRET_ARGUMENT_TEXT.sub(r"\1[REDACTED]", value)
+    return _URL_USERINFO.sub(r"\1[REDACTED]@", value)
 
 
 def redact_argv(argv: list[Any], env: Mapping[str, str] | None = None,

@@ -4,11 +4,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Mapping
 
 from invocations import write_report_text
 from redaction import redact_report_value, redact_text
+
+_CLEAN_INSTALL_STEP = "PC-001.2"
+_DIGEST = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 
 
 def _sha256(path: Path) -> str:
@@ -19,16 +23,9 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _observed_candidate(steps: list[Mapping[str, Any]]) -> str | None:
-    provenance = next((step for step in steps if step.get("name") == "candidate provenance"), None)
-    details = provenance.get("details") if isinstance(provenance, Mapping) else None
-    commit = details.get("candidateCommit") if isinstance(details, Mapping) else None
-    return f"git:{commit}" if isinstance(commit, str) and commit.strip() else None
-
-
 def _step_invocations(path: Path, claim_id: str) -> str | None:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        lines = path.read_bytes().decode("utf-8", errors="replace").splitlines()
     except OSError:
         return None
     selected = []
@@ -128,58 +125,72 @@ def _redacted_config(contents: str) -> str | None:
     if not isinstance(value, dict):
         return None
     redacted = redact_report_value(value, os.environ)
-    return json.dumps(redacted, indent=2, ensure_ascii=False) + "\n"
+    return redact_text(json.dumps(redacted, indent=2, ensure_ascii=False) + "\n", os.environ)
 
 
-def collect_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[Mapping[str, Any]], *,
-                                        report_root: str | Path, config_path: str | Path,
-                                        invocation_log_path: str | Path,
-                                        profile: Mapping[str, str]) -> dict[str, Any]:
-    """Upgrade PC-001.2 to evidence v3, retaining only artifacts observed on disk."""
+def capture_clean_install_artifacts(*, report_root: str | Path, run_id: str,
+                                   config_path: str | Path, installation_root: str | Path,
+                                   invocation_log_path: str | Path) -> dict[str, str]:
+    """Copy only the actual config and calls for PC-001.2 while the install still exists."""
+    captured: dict[str, str] = {}
+    report_dir = Path(report_root)
+    artifact_dir = report_dir / "qa-evidence" / hashlib.sha256(run_id.encode()).hexdigest()[:16]
+    try:
+        install_root = Path(installation_root).resolve(strict=True)
+        source_config = Path(config_path)
+        resolved_config = source_config.resolve(strict=True)
+        if (resolved_config.is_relative_to(install_root)
+                and resolved_config.is_file() and source_config.is_file()):
+            contents = resolved_config.read_bytes().decode("utf-8", errors="replace")
+            redacted_config = _redacted_config(contents)
+            if redacted_config:
+                target = artifact_dir / "redacted-platform-config.jsonc"
+                write_report_text(target, redacted_config, env=os.environ)
+                captured["configRef"] = target.relative_to(report_dir).as_posix()
+                captured["configDigest"] = _sha256(target)
+    except (OSError, RuntimeError, ValueError):
+        pass
+
+    try:
+        log_contents = _step_invocations(Path(invocation_log_path), _CLEAN_INSTALL_STEP)
+        if log_contents:
+            target = artifact_dir / f"step-{_CLEAN_INSTALL_STEP}.log"
+            write_report_text(target, log_contents, env=os.environ)
+            captured["logRef"] = target.relative_to(report_dir).as_posix()
+            captured["logDigest"] = _sha256(target)
+    except (OSError, RuntimeError, ValueError):
+        pass
+    return captured
+
+
+def apply_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[Mapping[str, Any]], *,
+                                      profile: Mapping[str, str], candidate_digest: str | None,
+                                      candidate_verified: bool, artifacts: Mapping[str, str]) -> dict[str, Any]:
+    """Bind captured evidence to the recorded result without changing its status."""
     claims = case_run.get("claims")
     if not isinstance(claims, list) or not any(
-        isinstance(claim, Mapping) and claim.get("claimId") == "PC-001.2" for claim in claims
+        isinstance(claim, Mapping) and claim.get("claimId") == _CLEAN_INSTALL_STEP for claim in claims
     ):
         return dict(case_run)
 
-    run_id = case_run.get("runId")
-    mode = case_run.get("mode")
     result: dict[str, Any] = {
         "schema": "kb.qa-case-run/v3",
-        "runId": run_id if isinstance(run_id, str) else "",
-        "mode": mode if mode in {"local", "secured"} else "local",
+        "runId": case_run.get("runId") if isinstance(case_run.get("runId"), str) else "",
+        "mode": case_run.get("mode") if case_run.get("mode") in {"local", "secured"} else "local",
         "claims": [dict(claim) for claim in claims if isinstance(claim, Mapping)],
     }
-    candidate_id = _observed_candidate(steps)
-    if candidate_id:
-        result["candidateId"] = candidate_id
+    provenance = next((step for step in steps if step.get("name") == "candidate provenance"), None)
+    valid_candidate = (candidate_verified and isinstance(provenance, Mapping)
+                       and provenance.get("status") == "PASS"
+                       and isinstance(candidate_digest, str) and _DIGEST.fullmatch(candidate_digest))
+    if valid_candidate:
+        result["candidateId"] = f"sha256:{candidate_digest.lower()}"
     if profile and all(isinstance(key, str) and key and isinstance(value, str) and value for key, value in profile.items()):
         result["profile"] = dict(profile)
 
-    claim = next(item for item in result["claims"] if item.get("claimId") == "PC-001.2")
-    artifact_root = Path(report_root) / "qa-evidence" / hashlib.sha256(str(run_id).encode()).hexdigest()[:16]
-    try:
-        source_config = Path(config_path)
-        if source_config.is_file() and not source_config.is_symlink():
-            config_ref = (artifact_root / "redacted-platform-config.jsonc").relative_to(Path(report_root)).as_posix()
-            config_target = Path(report_root) / config_ref
-            source_contents = source_config.read_text(encoding="utf-8")
-            redacted_config = _redacted_config(source_contents)
-            if redacted_config:
-                write_report_text(config_target, redact_text(redacted_config, os.environ), env=os.environ)
-                claim["configRef"] = config_ref
-                claim["configDigest"] = _sha256(config_target)
-    except (OSError, UnicodeError, ValueError):
-        pass
-
-    log_contents = _step_invocations(Path(invocation_log_path), "PC-001.2")
-    if log_contents:
-        try:
-            log_ref = (artifact_root / "step-PC-001.2.log").relative_to(Path(report_root)).as_posix()
-            log_target = Path(report_root) / log_ref
-            write_report_text(log_target, log_contents, env=os.environ)
-            claim["logRef"] = log_ref
-            claim["logDigest"] = _sha256(log_target)
-        except (OSError, UnicodeError, ValueError):
-            pass
+    claim = next(item for item in result["claims"] if item.get("claimId") == _CLEAN_INSTALL_STEP)
+    for key in ("configRef", "configDigest", "logRef", "logDigest"):
+        value = artifacts.get(key)
+        if isinstance(value, str) and value:
+            claim[key] = value
     return result

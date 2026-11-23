@@ -85,7 +85,8 @@ from invocations import (
     write_report_json,
     write_report_text,
 )
-from journey_evidence import collect_clean_install_case_evidence
+from journey_evidence import (apply_clean_install_case_evidence,
+                             capture_clean_install_artifacts)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = journey_value("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -109,6 +110,9 @@ ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
+CLEAN_INSTALL_EVIDENCE_CAPTURE: dict[str, str] = {}
+CLEAN_INSTALL_CANDIDATE_DIGEST: str | None = None
+CLEAN_INSTALL_CANDIDATE_VERIFIED = False
 
 
 def marketplace_install_flags(env: dict[str, str], *, gateway_url: str | None = None) -> list[str]:
@@ -983,11 +987,11 @@ def finalize_run(passed: bool) -> int:
         case_report = report.with_name(
             f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json")
         result = CASE_JOURNEY.result().__dict__
-        result["case_run"] = collect_clean_install_case_evidence(
-            result["case_run"], result["steps"], report_root=report.parent,
-            config_path=PLATFORM_CURRENT / ".kb" / "kb.config.jsonc",
-            invocation_log_path=report.parent / "invocations" / "calls.jsonl",
-            profile=_journey_evidence_profile(),
+        result["case_run"] = apply_clean_install_case_evidence(
+            result["case_run"], result["steps"], profile=_journey_evidence_profile(),
+            candidate_digest=CLEAN_INSTALL_CANDIDATE_DIGEST,
+            candidate_verified=CLEAN_INSTALL_CANDIDATE_VERIFIED,
+            artifacts=CLEAN_INSTALL_EVIDENCE_CAPTURE,
         )
         write_report_json(case_report, result, env=BASE_ENV)
     if not report.exists():
@@ -1279,10 +1283,15 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
 def _main(*, update_variant_runner=None):
     global FIRST_FAILURE, CASE_JOURNEY, SELECTED_CLAIM_COMPLETION_CHECKED
     global ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
+    global CLEAN_INSTALL_EVIDENCE_CAPTURE, CLEAN_INSTALL_CANDIDATE_DIGEST
+    global CLEAN_INSTALL_CANDIDATE_VERIFIED
     STATE_DUMP_GUARD.reset()
     Journey.reset_run_registry()
     FIRST_FAILURE = ""
     SELECTED_CLAIM_COMPLETION_CHECKED = False
+    CLEAN_INSTALL_EVIDENCE_CAPTURE = {}
+    CLEAN_INSTALL_CANDIDATE_DIGEST = None
+    CLEAN_INSTALL_CANDIDATE_VERIFIED = False
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
@@ -1394,6 +1403,7 @@ def _main(*, update_variant_runner=None):
             f"version --json exited {identity.returncode}: {' '.join(identity.stdout.split())[:300]}")
     provenance = record_candidate_provenance(
         CASE_JOURNEY, journey_value("KB_JOURNEY_GIT_REVISION", ""), candidate)
+    CLEAN_INSTALL_CANDIDATE_VERIFIED = provenance.status == "PASS"
     if provenance.status != "PASS":
         fail(provenance.message or "candidate provenance check failed")
         return finalize_run(False)
@@ -1415,9 +1425,10 @@ def _main(*, update_variant_runner=None):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
-        code, output, duration, apply_offset = pty_install(
-            [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
-        )
+        with invocation_context(step_id="PC-001.2"):
+            code, output, duration, apply_offset = pty_install(
+                [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
+            )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
             TIMES["apply"] = duration - apply_offset
@@ -1495,7 +1506,11 @@ def _main(*, update_variant_runner=None):
                     str(HOME / ".local/share/kb-create/release-index.json"),
                     "--input", str(request_path), "--registry", REGISTRY,
                     "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
-        result, elapsed = run(args, env=env, timeout=1200)
+        if operation == "install":
+            with invocation_context(step_id="PC-001.2"):
+                result, elapsed = run(args, env=env, timeout=1200)
+        else:
+            result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
             try:
@@ -1523,6 +1538,17 @@ def _main(*, update_variant_runner=None):
                               and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_receipt = result_records[0].get("data", {}).get("receipt", {}) if len(result_records) == 1 else {}
             install_plan = install_receipt.get("plan", {}) if isinstance(install_receipt, dict) else {}
+            release_digest = install_plan.get("releaseDigest") if isinstance(install_plan, dict) else None
+            if not (isinstance(release_digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", release_digest)):
+                try:
+                    saved_receipt = json.loads((PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").read_text())
+                    release_digest = saved_receipt.get("plan", {}).get("releaseDigest")
+                except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+                    release_digest = None
+            CLEAN_INSTALL_CANDIDATE_DIGEST = (
+                release_digest.lower() if isinstance(release_digest, str)
+                and re.fullmatch(r"[0-9a-fA-F]{64}", release_digest) else None
+            )
             install_marketplace_ok = requested_commit_marketplace_install_satisfied(install_receipt)
             install_plan_summary_ok = (isinstance(install_plan, dict)
                                        and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
@@ -1649,6 +1675,15 @@ def _main(*, update_variant_runner=None):
                 cases=["PC-001.2"], requires=("step:candidate provenance",),
                 runners=("agent:commit", "agent-secured:commit", "service-local:explore",
                          "service-secured:explore"))
+    evidence_case_run = CASE_JOURNEY.result().__dict__["case_run"]
+    if any(claim.get("claimId") == "PC-001.2" for claim in evidence_case_run.get("claims", [])):
+        report_root = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).parent
+        CLEAN_INSTALL_EVIDENCE_CAPTURE = capture_clean_install_artifacts(
+            report_root=report_root, run_id=CASE_JOURNEY.run_id,
+            config_path=PLATFORM_CURRENT / ".kb" / "kb.config.jsonc",
+            installation_root=PLATFORM,
+            invocation_log_path=report_root / "invocations" / "calls.jsonl",
+        )
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:
