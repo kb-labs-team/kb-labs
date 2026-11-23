@@ -34,6 +34,13 @@ and receive a stable exit result.
 | S-243.8 | Pass a serialized module-resolution failure from handler import through the shared plugin failure normalizer | The boundary returns catalogued `KB_PLUGIN_LOAD_FAILED` with structured `plugin`, `command`, and missing `specifier` details, and uses the catalogue-owned next-step hint for plugin diagnosis. It does not classify the module-load exception as `KB_PLUGIN_CONTRACT_VIOLATION`. |
 | S-243.9 | While a subprocess platform RPC is pending, close the receiving side of its stdio or IPC control channel | The pending call rejects with a transport error; the caller and child shut down without an uncaught stream/process error. IPC backpressure does not retry or duplicate the request. |
 
+## Profile applicability
+
+| Step | Execution models |
+|---|---|
+| S-243.6 | in-process, subprocess, worker-pool |
+| S-243.7 | in-process, subprocess, worker-pool |
+
 ## Decision notes
 
 - D45: “`QUEUE_FULL`, `ACQUIRE_TIMEOUT`, `WORKER_CRASHED` and container-unavailable are catalogued codes with hints. A known execution state never surfaces as `KB_RUNTIME_UNEXPECTED`.” The same rule applies to subprocess cancellation and timeout outcomes.

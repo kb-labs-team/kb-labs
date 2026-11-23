@@ -28,14 +28,29 @@ export function buildQACaseEvidenceInventory(cases: QACase[], claims: QACaseClai
       profileDeclarations: {
         operatingSystem: 'UNDECLARED' as const,
         runtime: 'UNDECLARED' as const,
-        executionModel: 'UNDECLARED' as const,
+        executionModel: step.executionModels?.length ? 'DECLARED' as const : 'UNDECLARED' as const,
         requestAndConfigProvenance: 'UNDECLARED' as const,
         candidateArtifactIdentity: 'UNDECLARED' as const,
+      },
+      profileExpectations: {
+        executionModel: {
+          required: step.executionModels ?? [],
+          evaluation: 'NOT EVALUATED' as const,
+        },
       },
     };
   }));
 
   const activeReleaseSteps = steps.filter(step => step.status === 'active' && step.release);
+  const stepsWithExecutionModelDeclaration = steps.filter(step => step.profileDeclarations.executionModel === 'DECLARED').length;
+  const declaredProfileDimensions = steps.length > 0 && stepsWithExecutionModelDeclaration === steps.length ? ['executionModel'] : [];
+  const partiallyDeclaredProfileDimensions = stepsWithExecutionModelDeclaration > 0 && stepsWithExecutionModelDeclaration < steps.length
+    ? ['executionModel']
+    : [];
+  const missingProfileDimensions = [
+    'operatingSystem', 'runtime', 'requestAndConfigProvenance', 'candidateArtifactIdentity',
+    ...(stepsWithExecutionModelDeclaration === 0 ? ['executionModel'] : []),
+  ];
   return {
     schema: 'kb.qa-case-evidence-inventory/v1' as const,
     policy: {
@@ -48,7 +63,10 @@ export function buildQACaseEvidenceInventory(cases: QACase[], claims: QACaseClai
       },
       sourceDeclarations: {
         caseFields: ['status', 'release', 'modes', 'surfaces'],
-        missingProfileDimensions: ['operatingSystem', 'runtime', 'executionModel', 'requestAndConfigProvenance', 'candidateArtifactIdentity'],
+        stepProfileFields: ['executionModels'],
+        declaredProfileDimensions,
+        partiallyDeclaredProfileDimensions,
+        missingProfileDimensions,
       },
     },
     totals: {

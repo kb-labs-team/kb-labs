@@ -2,6 +2,7 @@ export type QACasePriority = 'P0' | 'P1' | 'P2';
 export type QACaseStatus = 'active' | 'planned' | 'draft' | 'historical';
 export type QACaseMode = 'local' | 'secured';
 export type QACaseSurface = 'cli' | 'studio' | 'api' | 'agent';
+export type QACaseExecutionModel = 'in-process' | 'subprocess' | 'worker-pool';
 export type QACaseClaimKind = 'journey' | 'e2e' | 'unit';
 export function isQACaseClaimKind(value: unknown): value is QACaseClaimKind {
   return value === 'journey' || value === 'e2e' || value === 'unit';
@@ -13,6 +14,7 @@ export interface QACaseStep {
   action: string;
   expected: string;
   line: number;
+  executionModels?: QACaseExecutionModel[];
 }
 
 export interface QACase {

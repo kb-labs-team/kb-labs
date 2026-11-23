@@ -27,6 +27,8 @@ describe('qa:cases-inventory', () => {
       'status: active', 'release: false', 'modes: [local]', 'surfaces: [cli]', '---', '',
       '## Steps', '', '| # | Action | Expected |', '|---|---|---|',
       '| S-314.1 | Run inventory | Profile gaps are explicit |', '',
+      '## Profile applicability', '', '| Step | Execution models |', '|---|---|',
+      '| S-314.1 | subprocess, worker-pool |', '',
     ].join('\n'));
     writeFileSync(join(root, 'tests', 'inventory.test.ts'), [
       '// case: S-314.1', 'it("reports inventory", () => {});',
@@ -42,7 +44,11 @@ describe('qa:cases-inventory', () => {
       schema: 'kb.qa-case-evidence-inventory/v1',
       policy: { release1: { requiredOperatingSystems: ['macos', 'linux'], supplementalNonGatingMode: 'secured' } },
       totals: { cases: 1, steps: 1 },
-      steps: [{ stepId: 'S-314.1', ownership: 'CLAIMED', profileDeclarations: { runtime: 'UNDECLARED', candidateArtifactIdentity: 'UNDECLARED' } }],
+      steps: [{
+        stepId: 'S-314.1', ownership: 'CLAIMED',
+        profileDeclarations: { operatingSystem: 'UNDECLARED', runtime: 'UNDECLARED', executionModel: 'DECLARED', candidateArtifactIdentity: 'UNDECLARED' },
+        profileExpectations: { executionModel: { required: ['subprocess', 'worker-pool'], evaluation: 'NOT EVALUATED' } },
+      }],
     });
   });
 });

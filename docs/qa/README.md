@@ -11,6 +11,8 @@
 
 Use `kb qa cases inventory --json` to review the current obligation and claim map before planning matrix work. It reports case-step metadata and source-backed claim owners, then marks profile dimensions that the current case schema does not declare. The Release 1 inventory policy requires local runs on macOS and Linux; secured runs are supplemental and non-gating. In-process, subprocess, and worker-pool execution models are included only where a step is relevant to them. The inventory intentionally does not infer OS/runtime/backend coverage, request or config provenance, candidate identity, or run results from a source claim. Those remain explicit gaps until declared and linked to run evidence.
 
+Cases may add a `## Profile applicability` table to declare execution models for specific steps. For example, `S-243.6` and `S-243.7` each list `in-process, subprocess, worker-pool`. The inventory reports these as declared expectations with evaluation `NOT EVALUATED`; this declaration does not report a run result or imply OS coverage. OS and runtime remain separate dimensions.
+
 A test claim records its kind (`journey`, `e2e`, or `unit`). A unit claim cannot satisfy a user-flow step in a release case. Release readiness applies to cases with `status: active` and `release: true` for each listed mode. `historical` cases are retained as design records and are not release-gated.
 
 The decisions that bound the catalog (release scope, roles, adapter defaults, scheduling) are logged in [`docs/product/decisions.md`](../product/decisions.md). The step-by-step procedure for agents is the `intent-flow` skill.
