@@ -11,7 +11,6 @@ from typing import Any, Mapping
 from invocations import write_report_text
 from redaction import redact_report_value, redact_text
 
-_CLEAN_INSTALL_STEP = "PC-001.2"
 _DIGEST = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 
 
@@ -128,10 +127,10 @@ def _redacted_config(contents: str) -> str | None:
     return redact_text(json.dumps(redacted, indent=2, ensure_ascii=False) + "\n", os.environ)
 
 
-def capture_clean_install_artifacts(*, report_root: str | Path, run_id: str,
+def capture_clean_install_artifacts(*, report_root: str | Path, run_id: str, claim_id: str,
                                    config_path: str | Path, installation_root: str | Path,
                                    invocation_log_path: str | Path) -> dict[str, str]:
-    """Copy only the actual config and calls for PC-001.2 while the install still exists."""
+    """Copy only the actual config and calls for the selected install claim."""
     captured: dict[str, str] = {}
     report_dir = Path(report_root)
     artifact_dir = report_dir / "qa-evidence" / hashlib.sha256(run_id.encode()).hexdigest()[:16]
@@ -152,9 +151,9 @@ def capture_clean_install_artifacts(*, report_root: str | Path, run_id: str,
         pass
 
     try:
-        log_contents = _step_invocations(Path(invocation_log_path), _CLEAN_INSTALL_STEP)
+        log_contents = _step_invocations(Path(invocation_log_path), claim_id)
         if log_contents:
-            target = artifact_dir / f"step-{_CLEAN_INSTALL_STEP}.log"
+            target = artifact_dir / f"step-{claim_id}.log"
             write_report_text(target, log_contents, env=os.environ)
             captured["logRef"] = target.relative_to(report_dir).as_posix()
             captured["logDigest"] = _sha256(target)
@@ -164,13 +163,14 @@ def capture_clean_install_artifacts(*, report_root: str | Path, run_id: str,
 
 
 def apply_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[Mapping[str, Any]], *,
+                                      claim_id: str,
                                       profile: Mapping[str, str], candidate_digest: str | None,
                                       candidate_verified: bool, artifacts: Mapping[str, str],
                                       evidence_run_id: str | None = None) -> dict[str, Any]:
     """Bind captured evidence to the recorded result without changing its status."""
     claims = case_run.get("claims")
     if not isinstance(claims, list) or not any(
-        isinstance(claim, Mapping) and claim.get("claimId") == _CLEAN_INSTALL_STEP for claim in claims
+        isinstance(claim, Mapping) and claim.get("claimId") == claim_id for claim in claims
     ):
         return dict(case_run)
 
@@ -193,7 +193,7 @@ def apply_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[M
     if profile and all(isinstance(key, str) and key and isinstance(value, str) and value for key, value in profile.items()):
         result["profile"] = dict(profile)
 
-    claim = next(item for item in result["claims"] if item.get("claimId") == _CLEAN_INSTALL_STEP)
+    claim = next(item for item in result["claims"] if item.get("claimId") == claim_id)
     for key in ("configRef", "configDigest", "logRef", "logDigest"):
         value = artifacts.get(key)
         if isinstance(value, str) and value:

@@ -51,12 +51,12 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
             case_run = journey.result().__dict__["case_run"]
             digest = "a" * 64
             artifacts = capture_clean_install_artifacts(
-                report_root=report_root, run_id=evidence_run_id,
+                report_root=report_root, run_id=evidence_run_id, claim_id="PC-001.2",
                 config_path=config_link, installation_root=platform_root,
                 invocation_log_path=attempt_root / "invocations" / "calls.jsonl",
             )
             result = apply_clean_install_case_evidence(
-                case_run, journey.result().__dict__["steps"],
+                case_run, journey.result().__dict__["steps"], claim_id="PC-001.2",
                 profile={"os": "linux-x64", "runner": "service-local:explore"},
                 candidate_digest=digest, candidate_verified=provenance.status == "PASS",
                 artifacts=artifacts, evidence_run_id=evidence_run_id,
@@ -109,12 +109,12 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
                               cases=["PC-001.2"])
                 case_run = journey.result().__dict__["case_run"]
                 artifacts = capture_clean_install_artifacts(
-                    report_root=report_root, run_id=evidence_run_id,
+                    report_root=report_root, run_id=evidence_run_id, claim_id="PC-001.2",
                     config_path=config_link, installation_root=platform_root,
                     invocation_log_path=attempt_root / "invocations" / "calls.jsonl",
                 )
                 results.append((apply_clean_install_case_evidence(
-                    case_run, journey.result().__dict__["steps"], profile=profile,
+                    case_run, journey.result().__dict__["steps"], claim_id="PC-001.2", profile=profile,
                     candidate_digest=digest, candidate_verified=provenance.status == "PASS",
                     artifacts=artifacts, evidence_run_id=evidence_run_id,
                 ), report_root))
@@ -155,12 +155,12 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
             }
             steps = [{"name": "candidate provenance", "status": "FAIL", "details": {"candidateCommit": "mismatch"}}]
             artifacts = capture_clean_install_artifacts(
-                report_root=report_root, run_id=evidence_run_id,
+                report_root=report_root, run_id=evidence_run_id, claim_id="PC-001.2",
                 config_path=root / "missing-config", installation_root=root,
                 invocation_log_path=calls,
             )
             result = apply_clean_install_case_evidence(
-                case_run, steps, profile={}, candidate_digest="b" * 64,
+                case_run, steps, claim_id="PC-001.2", profile={}, candidate_digest="b" * 64,
                 candidate_verified=False, artifacts=artifacts, evidence_run_id=evidence_run_id,
             )
 
@@ -194,7 +194,7 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
                 ],
             }
             result = apply_clean_install_case_evidence(
-                case_run, [{"name": "candidate provenance", "status": "PASS"}],
+                case_run, [{"name": "candidate provenance", "status": "PASS"}], claim_id="PC-001.2",
                 profile={}, candidate_digest=None, candidate_verified=False,
                 artifacts={}, evidence_run_id="targeted-install",
             )

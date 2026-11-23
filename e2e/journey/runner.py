@@ -992,7 +992,8 @@ def finalize_run(passed: bool) -> int:
             f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json")
         result = CASE_JOURNEY.result().__dict__
         result["case_run"] = apply_clean_install_case_evidence(
-            result["case_run"], result["steps"], profile=_journey_evidence_profile(),
+            result["case_run"], result["steps"], claim_id="PC-001.2",
+            profile=_journey_evidence_profile(),
             candidate_digest=CLEAN_INSTALL_CANDIDATE_DIGEST,
             candidate_verified=CLEAN_INSTALL_CANDIDATE_VERIFIED,
             artifacts=CLEAN_INSTALL_EVIDENCE_CAPTURE,
@@ -1690,7 +1691,7 @@ def _main(*, update_variant_runner=None):
     if any(claim.get("claimId") == "PC-001.2" for claim in evidence_case_run.get("claims", [])):
         report_root = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).parent
         CLEAN_INSTALL_EVIDENCE_CAPTURE = capture_clean_install_artifacts(
-            report_root=report_root, run_id=CLEAN_INSTALL_EVIDENCE_RUN_ID,
+            report_root=report_root, run_id=CLEAN_INSTALL_EVIDENCE_RUN_ID, claim_id="PC-001.2",
             config_path=PLATFORM_CURRENT / ".kb" / "kb.config.jsonc",
             installation_root=PLATFORM,
             invocation_log_path=CLEAN_INSTALL_ATTEMPT_ROOT / "invocations" / "calls.jsonl",
