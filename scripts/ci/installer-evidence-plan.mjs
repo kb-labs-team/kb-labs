@@ -29,8 +29,15 @@ export function selectLocalInstallerEvidence(reportDirectory) {
       try {
         const wrapper = JSON.parse(readFileSync(path, 'utf8'));
         const run = wrapper?.case_run;
+        const claim = run?.claims?.find((item) => item.claimId === 'PC-001.2');
         if (run?.schema === 'kb.qa-case-run/v3' && run.mode === 'local'
-          && run.claims?.some((claim) => claim.claimId === 'PC-001.2')) records.push(path);
+          && (claim || run.selection?.includes('PC-001.2'))) {
+          if (claim?.status === 'PASS' || claim?.status === 'FAIL') {
+            records.push({ path, behaviorStatus: claim.status });
+          } else {
+            invalid.push({ path, reason: 'selected PC-001.2 claim is missing or has an invalid status' });
+          }
+        }
       } catch (error) {
         invalid.push({ path, reason: error instanceof Error ? error.message : String(error) });
       }
@@ -41,7 +48,9 @@ export function selectLocalInstallerEvidence(reportDirectory) {
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const [indexPath, policyPath, outputPath, reportDirectory, manifestPath] = process.argv.slice(2);
   if (!indexPath || !policyPath || !outputPath || !reportDirectory || !manifestPath) throw new Error('usage: node installer-evidence-plan.mjs <release-index.json> <node-policy.json> <plan.json> <reports-dir> <manifest.json>');
-  const plan = evidencePlan(readFileSync(indexPath), readFileSync(policyPath));
-  writeFileSync(outputPath, `${JSON.stringify(plan, null, 2)}\n`);
   writeFileSync(manifestPath, `${JSON.stringify(selectLocalInstallerEvidence(reportDirectory), null, 2)}\n`);
+  if (indexPath !== '-') {
+    const plan = evidencePlan(readFileSync(indexPath), readFileSync(policyPath));
+    writeFileSync(outputPath, `${JSON.stringify(plan, null, 2)}\n`);
+  }
 }

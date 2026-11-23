@@ -22,7 +22,7 @@ test('selector returns only local v3 PC-001.2 records', () => {
   try {
     const write = (name, run) => writeFileSync(join(directory, name), JSON.stringify({ case_run: run }));
     write('installer-case-local-cli-default.json', {
-      schema: 'kb.qa-case-run/v3', mode: 'local', claims: [{ claimId: 'PC-001.2' }],
+      schema: 'kb.qa-case-run/v3', mode: 'local', claims: [{ claimId: 'PC-001.2', status: 'PASS' }],
     });
     write('installer-case-secured-cli-default.json', {
       schema: 'kb.qa-case-run/v3', mode: 'secured', claims: [{ claimId: 'PC-001.2' }],
@@ -30,34 +30,53 @@ test('selector returns only local v3 PC-001.2 records', () => {
     write('installer-case-local-old.json', {
       schema: 'kb.qa-case-run/v2', mode: 'local', claims: [{ claimId: 'PC-001.2' }],
     });
+    write('installer-case-local-missing-claim.json', {
+      schema: 'kb.qa-case-run/v3', mode: 'local', selection: ['PC-001.2'], claims: [],
+    });
     writeFileSync(join(directory, 'installer-case-local-corrupt.json'), '{ invalid json');
     const selection = selectLocalInstallerEvidence(directory);
-    assert.deepEqual(selection.records, [join(directory, 'installer-case-local-cli-default.json')]);
-    assert.deepEqual(selection.invalid.map(({ path }) => path), [join(directory, 'installer-case-local-corrupt.json')]);
+    assert.deepEqual(selection.records, [{ path: join(directory, 'installer-case-local-cli-default.json'), behaviorStatus: 'PASS' }]);
+    assert.deepEqual(selection.invalid.map(({ path }) => path), [
+      join(directory, 'installer-case-local-corrupt.json'),
+      join(directory, 'installer-case-local-missing-claim.json'),
+    ]);
     assert.match(selection.invalid[0].reason, /JSON/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('summary exposes PC-001.2 PASS even when unrelated release cells remain NOT RUN', () => {
+test('summary unwraps the real CLI data envelope and exposes PC-001.2 PASS beside NOT RUN cells', () => {
   const result = summarizeInstallerEvidence({
-    schema: 'kb.qa-case-coverage/v2', releasePassed: false,
-    cases: [{ id: 'PC-001', steps: [
-      { stepId: 'PC-001.2', status: 'PASS', evidenceStatus: 'COMPLETE' },
-      { stepId: 'PC-001.3', status: 'NOT RUN', evidenceStatus: 'INCOMPLETE' },
-    ] }],
-  }, { records: ['installer-case-local-agent-commit-default.json'], invalid: [] });
+    ok: true,
+    data: {
+      schema: 'kb.qa-case-coverage/v2', releasePassed: false,
+      cases: [{ id: 'PC-001', steps: [
+        { stepId: 'PC-001.2', status: 'PASS', evidenceStatus: 'COMPLETE' },
+        { stepId: 'PC-001.3', status: 'NOT RUN', evidenceStatus: 'INCOMPLETE' },
+      ] }],
+    },
+  }, { records: [{ path: 'installer-case-local-agent-commit-default.json', behaviorStatus: 'PASS' }], invalid: [] });
   assert.deepEqual(result, {
     status: 'PASS', behaviorStatus: 'PASS', evidenceStatus: 'COMPLETE', releasePassed: false,
-    selectedRunRecords: ['installer-case-local-agent-commit-default.json'], invalidRunRecords: [],
+    selectedRunRecords: ['installer-case-local-agent-commit-default.json'], observedBehaviorStatuses: ['PASS'], invalidRunRecords: [],
   });
 });
 
-test('summary marks missing or malformed evidence INCOMPLETE even beside a complete attempt', () => {
+test('summary preserves observed FAIL without a candidate and forces corrupted input INCOMPLETE', () => {
   const evaluation = { schema: 'kb.qa-case-coverage/v2', releasePassed: false, cases: [{ id: 'PC-001', steps: [
     { stepId: 'PC-001.2', status: 'PASS', evidenceStatus: 'COMPLETE' },
   ] }] };
   assert.equal(summarizeInstallerEvidence(undefined, { records: [], invalid: [] }).status, 'INCOMPLETE');
-  assert.equal(summarizeInstallerEvidence(evaluation, {
-    records: ['valid.json'], invalid: [{ path: 'broken.json', reason: 'invalid JSON' }],
-  }).status, 'INCOMPLETE');
+  const noCandidate = summarizeInstallerEvidence(undefined, {
+    records: [{ path: 'installer-case-local-attempt.json', behaviorStatus: 'FAIL' }], invalid: [],
+  });
+  assert.equal(noCandidate.status, 'INCOMPLETE');
+  assert.equal(noCandidate.behaviorStatus, 'FAIL');
+  assert.equal(noCandidate.evidenceStatus, 'INCOMPLETE');
+
+  const corrupted = summarizeInstallerEvidence(evaluation, {
+    records: [{ path: 'valid.json', behaviorStatus: 'PASS' }], invalid: [{ path: 'broken.json', reason: 'invalid JSON' }],
+  });
+  assert.equal(corrupted.status, 'INCOMPLETE');
+  assert.equal(corrupted.evidenceStatus, 'INCOMPLETE');
+  assert.equal(corrupted.releasePassed, false);
 });

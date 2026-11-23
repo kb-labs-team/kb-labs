@@ -229,6 +229,7 @@ jobs:
     name: Hosted installer evidence diagnostic
     needs: [prepare, journey]
     if: ${{ always() && !cancelled() }}
+    continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -264,23 +265,34 @@ jobs:
         run: |
           mkdir -p .journey/diagnostics .journey/reports
           index=.journey/candidate/.journey/release/release-index.json
-          if [ ! -f "$index" ]; then
-            printf '{"status":"INCOMPLETE","behaviorStatus":"NOT RUN","evidenceStatus":"INCOMPLETE","releasePassed":false,"reason":"Sealed candidate artifact is unavailable."}\n' > .journey/diagnostics/pc001-local-summary.json
-            exit 0
-          fi
+          if [ ! -f "$index" ]; then index=-; fi
           if ! node scripts/ci/installer-evidence-plan.mjs "$index" \
             tools/clikit/toolchain/node_policy_gen.json \
             .journey/diagnostics/pc001-local-plan.json .journey/reports \
             .journey/diagnostics/pc001-local-manifest.json; then
-            printf '{"status":"INCOMPLETE","behaviorStatus":"NOT RUN","evidenceStatus":"INCOMPLETE","releasePassed":false,"reason":"Candidate plan or retained installer report is invalid."}\n' > .journey/diagnostics/pc001-local-summary.json
+            if [ -f .journey/diagnostics/pc001-local-manifest.json ]; then
+              node scripts/ci/summarize-installer-evidence.mjs - \
+                .journey/diagnostics/pc001-local-manifest.json \
+                .journey/diagnostics/pc001-local-summary.json
+            else
+              printf '{"status":"INCOMPLETE","behaviorStatus":"NOT RUN","evidenceStatus":"INCOMPLETE","releasePassed":false,"reason":"Candidate plan or retained installer report is invalid."}\n' > .journey/diagnostics/pc001-local-summary.json
+            fi
+            printf 'has_records=false\n' >> "$GITHUB_OUTPUT"
             exit 0
           fi
           record_count=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(String(m.records.length))')
-          printf 'has_records=%s\n' "$([ "$record_count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
-          if [ "$record_count" -eq 0 ]; then
+          if [ "$index" = "-" ]; then
             node scripts/ci/summarize-installer-evidence.mjs - \
               .journey/diagnostics/pc001-local-manifest.json \
               .journey/diagnostics/pc001-local-summary.json
+            printf 'has_records=false\n' >> "$GITHUB_OUTPUT"
+          elif [ "$record_count" -gt 0 ]; then
+            printf 'has_records=true\n' >> "$GITHUB_OUTPUT"
+          else
+            node scripts/ci/summarize-installer-evidence.mjs - \
+              .journey/diagnostics/pc001-local-manifest.json \
+              .journey/diagnostics/pc001-local-summary.json
+            printf 'has_records=false\n' >> "$GITHUB_OUTPUT"
           fi
       - name: Build the case coverage CLI for diagnostics
         if: steps.evidence-inputs.outputs.has_records == 'true'
@@ -292,7 +304,7 @@ jobs:
         if: steps.evidence-inputs.outputs.has_records == 'true'
         continue-on-error: true
         run: |
-          run_files=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(m.records.join(","))')
+          run_files=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(m.records.map(r=>r.path).join(","))')
           set +e
           node ./cli/bin/dist/bin.js qa coverage show --level all --mode local \
             --evidence --evidence-plan .journey/diagnostics/pc001-local-plan.json \
@@ -304,6 +316,18 @@ jobs:
             .journey/diagnostics/pc001-local-manifest.json \
             .journey/diagnostics/pc001-local-summary.json
           exit "$evaluation_status"
+      - name: Finalize an incomplete diagnostic if evaluation could not run
+        if: always()
+        run: |
+          mkdir -p .journey/diagnostics
+          if [ ! -f .journey/diagnostics/pc001-local-manifest.json ]; then
+            printf '{"records":[],"invalid":[]}\n' > .journey/diagnostics/pc001-local-manifest.json
+          fi
+          if [ ! -f .journey/diagnostics/pc001-local-summary.json ]; then
+            node scripts/ci/summarize-installer-evidence.mjs - \
+              .journey/diagnostics/pc001-local-manifest.json \
+              .journey/diagnostics/pc001-local-summary.json
+          fi
       - name: Upload diagnostic evidence evaluation
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
