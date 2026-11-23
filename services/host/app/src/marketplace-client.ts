@@ -60,10 +60,14 @@ export class MarketplaceClientError extends Error {
 export class MarketplaceClient {
   constructor(private readonly baseUrl: string) {}
 
+  private endpoint(path: string): URL {
+    return new URL(`/api/v1/marketplace${path}`, this.baseUrl);
+  }
+
   async listPackages(
     params: ListPackagesParams,
   ): Promise<{ entries: MarketplacePackageEntry[]; total: number }> {
-    const url = new URL("/packages", this.baseUrl);
+    const url = this.endpoint("/packages");
     if (params.kind) {
       url.searchParams.set("kind", params.kind);
     }
@@ -78,7 +82,7 @@ export class MarketplaceClient {
   }
 
   async setEnabled(params: SetEnabledParams, enabled: boolean): Promise<void> {
-    const url = new URL(`/packages/${enabled ? "enable" : "disable"}`, this.baseUrl);
+    const url = this.endpoint(`/packages/${enabled ? "enable" : "disable"}`);
     await this.request<unknown>(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -91,7 +95,7 @@ export class MarketplaceClient {
   }
 
   async installPackages(params: InstallPackagesParams): Promise<unknown> {
-    const url = new URL("/packages/install", this.baseUrl);
+    const url = this.endpoint("/packages/install");
     return this.request<unknown>(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -100,7 +104,7 @@ export class MarketplaceClient {
   }
 
   async uninstallPackages(params: UninstallPackagesParams): Promise<void> {
-    const url = new URL("/packages/uninstall", this.baseUrl);
+    const url = this.endpoint("/packages/uninstall");
     await this.request<unknown>(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
