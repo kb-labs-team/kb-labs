@@ -449,7 +449,7 @@ async function loadPluginSettingsDefaults(
  *   3. Read the platform config from `<platformRoot>`.
  *   4. Read project settings and overlays from `$KB_HOME/state/<projectId>`.
  *      The consumer repository is not a configuration source.
- *   5. `effective = mergeDefined(platformDefaults ?? {}, projectConfig ?? {})`.
+ *   5. Effective settings merge objects recursively and let higher layers replace arrays.
  *
  * Missing config layers are valid and contribute no overrides. A present but
  * unreadable, malformed, or invalid file throws `PlatformConfigError`; callers
@@ -597,7 +597,7 @@ export async function loadPlatformConfig(
   const containerConfigOverlayPath = path.join(roots.platformRoot, '.kb', 'kb.config.override.json');
   if (existsSync(containerConfigOverlayPath)) {
     const { platformSection, rawConfig } = await readConfigFile(containerConfigOverlayPath);
-    platformDefaults = mergeDefined(platformDefaults ?? {}, platformSection ?? {});
+    platformDefaults = mergeOverlay(platformDefaults ?? {}, platformSection ?? {});
     containerConfigOverlay = rawConfig ?? {};
   }
 
@@ -610,7 +610,7 @@ export async function loadPlatformConfig(
   if (generatedLayer.files.length > 0) {
     const generatedSection = toPlatformSection(generatedLayer.data);
     if (generatedSection) {
-      platformDefaults = mergeDefined(generatedSection, platformDefaults ?? {});
+      platformDefaults = mergeOverlay(generatedSection, platformDefaults ?? {});
     }
   }
 

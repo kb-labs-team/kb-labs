@@ -27,7 +27,7 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
-import { readJsonWithDiagnostics, mergeDefined } from '../runtime/runtime.js';
+import { readJsonWithDiagnostics } from '../runtime/runtime.js';
 import { AdapterProjectScopeError, PlatformConfigError } from '@kb-labs/core-platform';
 import type { Diagnostic } from '../types/index.js';
 import { loadOverlays } from '../overlay/loader.js';
@@ -169,13 +169,9 @@ async function readObjectsAtRoot(
       });
       continue;
     }
-    // Within a single root we layer files (e.g. .jsonc template + .json
-    // scan-update) using `mergeDefined` — the SAME semantics
-    // `loadPlatformConfig` uses for its platform↔project merge. Arrays
-    // concatenate at this layer; overlay-style array REPLACEMENT is
-    // reserved for the explicit overlay step below and the `kb:merge`
-    // directive within overlays.
-    merged = mergeDefined(merged, data as Record<string, unknown>);
+    // A higher-precedence file replaces arrays, matching platform-layer
+    // precedence in loadPlatformConfig. Objects continue to merge by key.
+    merged = mergeOverlay(merged, data as Record<string, unknown>);
     files.push({ layer, path: configPath, data: data as Record<string, unknown> });
   }
 

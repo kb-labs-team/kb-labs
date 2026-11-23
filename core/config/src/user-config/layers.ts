@@ -18,7 +18,8 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
-import { mergeDefined, readJsonWithDiagnostics } from '../runtime/runtime.js';
+import { readJsonWithDiagnostics } from '../runtime/runtime.js';
+import { mergeOverlay } from '../overlay/merge.js';
 import type { Diagnostic } from '../types/index.js';
 
 export type ConfigLayerName = 'manifest' | 'generated' | 'platform' | 'project' | 'overlay';
@@ -64,7 +65,7 @@ export interface ConfigLayerFile {
 
 export interface GeneratedLayerResult {
   files: ConfigLayerFile[];
-  /** Deep-merged contents of all generated files. */
+  /** Merged contents of generated files in precedence order. */
   data: Record<string, unknown>;
   diagnostics: Diagnostic[];
 }
@@ -122,7 +123,7 @@ export async function loadGeneratedLayer(roots: readonly string[]): Promise<Gene
       }
       const object = read.data as Record<string, unknown>;
       files.push({ layer: 'generated', path: full, data: object });
-      data = mergeDefined(data, object);
+      data = mergeOverlay(data, object);
     }
   }
 
@@ -139,8 +140,8 @@ export interface ValueProvenance {
   /** File that supplied it. */
   source: string;
   /**
-   * For arrays, which concatenate across generated/platform/project layers, every
-   * layer that contributed items (highest first). Absent for other values.
+   * For arrays explicitly appended with `kb:merge`, each contributing layer
+   * (highest first). Absent when one layer replaces the array.
    */
   contributors?: Array<{ layer: ConfigLayerName; source: string }>;
 }
@@ -158,6 +159,15 @@ function valueAt(data: unknown, segments: readonly string[]): { found: boolean; 
     current = current[segment];
   }
   return { found: true, value: current };
+}
+
+function appendsArrayAt(data: unknown, segments: readonly string[]): boolean {
+  const parent = valueAt(data, segments.slice(0, -1));
+  if (!parent.found || !isPlainObject(parent.value)) {
+    return false;
+  }
+  const directive = parent.value['kb:merge'];
+  return isPlainObject(directive) && directive[segments.at(-1)!] === 'append';
 }
 
 function collectLeaves(value: unknown, prefix: string[], out: string[][]): void {
@@ -202,8 +212,7 @@ export function buildProvenance(
       winner ??= file;
       if (Array.isArray(leafValue) && Array.isArray(hit.value)) {
         contributors.push({ layer: file.layer, source: file.path });
-        // Overlays replace arrays instead of concatenating: nothing below contributes.
-        if (file.layer === 'overlay') {
+        if (file.layer === 'overlay' || !appendsArrayAt(file.data, segments)) {
           break;
         }
       } else {
