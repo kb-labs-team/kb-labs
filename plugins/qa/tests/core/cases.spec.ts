@@ -311,7 +311,7 @@ describe('QA case coverage', () => {
     expect(missingPlan).toMatchObject({ releasePassed: false, evidencePassed: false });
   });
 
-  // case: S-299.1
+  // case: S-315.1
   it('keeps product failure distinct from incomplete evidence and requires matching candidate, profile, config, and log references', () => {
     const directory = fixture();
     const testCase = parsedCase(directory);
