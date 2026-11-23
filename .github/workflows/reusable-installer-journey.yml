@@ -209,41 +209,11 @@ jobs:
           pattern: service-journey-results-*
           path: .journey/reports
           merge-multiple: true
-      - name: Restore sealed candidate for independent evidence plan
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: installer-journey-candidate
-          path: .journey/candidate
       - name: Build the case coverage CLI
         run: |
           make build -C tools/kb-devkit
           e2e/journey/install-workspace-dependencies.sh
           ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
-      - name: Evaluate hosted PC-001.2 evidence diagnostically
-        continue-on-error: true
-        run: |
-          mkdir -p .journey/diagnostics
-          node scripts/ci/installer-evidence-plan.mjs \
-            .journey/candidate/.journey/release/release-index.json \
-            tools/clikit/toolchain/node_policy_gen.json \
-            .journey/diagnostics/pc001-local-plan.json \
-            .journey/reports > .journey/diagnostics/pc001-local-records.txt
-          run_files=$(cat .journey/diagnostics/pc001-local-records.txt)
-          if [ -z "$run_files" ]; then
-            printf '{"status":"INCOMPLETE","reason":"No retained local v3 PC-001.2 evidence record."}\n' > .journey/diagnostics/pc001-local-evaluation.json
-            exit 0
-          fi
-          node ./cli/bin/dist/bin.js qa coverage show --level release --mode local \
-            --evidence --evidence-plan .journey/diagnostics/pc001-local-plan.json \
-            --run "$run_files" --json > .journey/diagnostics/pc001-local-evaluation.json
-      - name: Upload diagnostic evidence evaluation
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: installer-evidence-diagnostic
-          path: .journey/diagnostics/**
-          if-no-files-found: warn
-          retention-days: 7
       - name: Enforce local and secured release case coverage
         run: |
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)
@@ -254,3 +224,91 @@ jobs:
             node ./cli/bin/dist/bin.js "${args[@]}" || coverage_status=1
           done
           exit "$coverage_status"
+
+  evidence_diagnostic:
+    name: Hosted installer evidence diagnostic
+    needs: [prepare, journey]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with: { run_install: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.11'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Restore local installer reports for diagnostics
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          pattern: service-journey-results-*
+          path: .journey/reports
+          merge-multiple: true
+      - name: Restore candidate for diagnostics
+        id: restore-candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: installer-journey-candidate
+          path: .journey/candidate
+      - name: Prepare an independent diagnostic plan
+        id: evidence-inputs
+        run: |
+          mkdir -p .journey/diagnostics .journey/reports
+          index=.journey/candidate/.journey/release/release-index.json
+          if [ ! -f "$index" ]; then
+            printf '{"status":"INCOMPLETE","behaviorStatus":"NOT RUN","evidenceStatus":"INCOMPLETE","releasePassed":false,"reason":"Sealed candidate artifact is unavailable."}\n' > .journey/diagnostics/pc001-local-summary.json
+            exit 0
+          fi
+          if ! node scripts/ci/installer-evidence-plan.mjs "$index" \
+            tools/clikit/toolchain/node_policy_gen.json \
+            .journey/diagnostics/pc001-local-plan.json .journey/reports \
+            .journey/diagnostics/pc001-local-manifest.json; then
+            printf '{"status":"INCOMPLETE","behaviorStatus":"NOT RUN","evidenceStatus":"INCOMPLETE","releasePassed":false,"reason":"Candidate plan or retained installer report is invalid."}\n' > .journey/diagnostics/pc001-local-summary.json
+            exit 0
+          fi
+          record_count=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(String(m.records.length))')
+          printf 'has_records=%s\n' "$([ "$record_count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          if [ "$record_count" -eq 0 ]; then
+            node scripts/ci/summarize-installer-evidence.mjs - \
+              .journey/diagnostics/pc001-local-manifest.json \
+              .journey/diagnostics/pc001-local-summary.json
+          fi
+      - name: Build the case coverage CLI for diagnostics
+        if: steps.evidence-inputs.outputs.has_records == 'true'
+        run: |
+          make build -C tools/kb-devkit
+          e2e/journey/install-workspace-dependencies.sh
+          ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
+      - name: Evaluate hosted PC-001.2 evidence diagnostically
+        if: steps.evidence-inputs.outputs.has_records == 'true'
+        continue-on-error: true
+        run: |
+          run_files=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(m.records.join(","))')
+          set +e
+          node ./cli/bin/dist/bin.js qa coverage show --level all --mode local \
+            --evidence --evidence-plan .journey/diagnostics/pc001-local-plan.json \
+            --run "$run_files" --json > .journey/diagnostics/pc001-local-evaluation.json
+          evaluation_status=$?
+          set -e
+          node scripts/ci/summarize-installer-evidence.mjs \
+            .journey/diagnostics/pc001-local-evaluation.json \
+            .journey/diagnostics/pc001-local-manifest.json \
+            .journey/diagnostics/pc001-local-summary.json
+          exit "$evaluation_status"
+      - name: Upload diagnostic evidence evaluation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-evidence-diagnostic
+          path: .journey/diagnostics/**
+          if-no-files-found: warn
+          retention-days: 7

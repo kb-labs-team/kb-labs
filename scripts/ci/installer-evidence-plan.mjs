@@ -20,24 +20,28 @@ export function evidencePlan(indexBytes, nodePolicyBytes) {
 }
 
 export function selectLocalInstallerEvidence(reportDirectory) {
-  return readdirSync(reportDirectory, { withFileTypes: true })
+  const candidates = readdirSync(reportDirectory, { withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.startsWith('installer-case-local-') && entry.name.endsWith('.json'))
-    .map((entry) => join(reportDirectory, entry.name))
-    .filter((path) => {
+    .map((entry) => join(reportDirectory, entry.name));
+  const records = [];
+  const invalid = [];
+  for (const path of candidates) {
       try {
         const wrapper = JSON.parse(readFileSync(path, 'utf8'));
         const run = wrapper?.case_run;
-        return run?.schema === 'kb.qa-case-run/v3' && run.mode === 'local'
-          && run.claims?.some((claim) => claim.claimId === 'PC-001.2');
-      } catch { return false; }
-    });
+        if (run?.schema === 'kb.qa-case-run/v3' && run.mode === 'local'
+          && run.claims?.some((claim) => claim.claimId === 'PC-001.2')) records.push(path);
+      } catch (error) {
+        invalid.push({ path, reason: error instanceof Error ? error.message : String(error) });
+      }
+  }
+  return { records, invalid };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  const [indexPath, policyPath, outputPath, reportDirectory] = process.argv.slice(2);
-  if (!indexPath || !policyPath || !outputPath || !reportDirectory) throw new Error('usage: node installer-evidence-plan.mjs <release-index.json> <node-policy.json> <plan.json> <reports-dir>');
+  const [indexPath, policyPath, outputPath, reportDirectory, manifestPath] = process.argv.slice(2);
+  if (!indexPath || !policyPath || !outputPath || !reportDirectory || !manifestPath) throw new Error('usage: node installer-evidence-plan.mjs <release-index.json> <node-policy.json> <plan.json> <reports-dir> <manifest.json>');
   const plan = evidencePlan(readFileSync(indexPath), readFileSync(policyPath));
   writeFileSync(outputPath, `${JSON.stringify(plan, null, 2)}\n`);
-  const records = selectLocalInstallerEvidence(reportDirectory);
-  if (records.length) process.stdout.write(records.join(','));
+  writeFileSync(manifestPath, `${JSON.stringify(selectLocalInstallerEvidence(reportDirectory), null, 2)}\n`);
 }

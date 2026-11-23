@@ -27,20 +27,25 @@ test('installer journey uploads v3 case records and relative evidence artifacts 
   assert.equal(restore.with['merge-multiple'], true, 'restoration keeps report-relative evidence refs resolvable');
 });
 
-test('hosted PC-001 evidence uses an independent candidate plan and stays diagnostic', () => {
+test('hosted PC-001 diagnostic runs independently of the legacy release gate', () => {
   const coverage = workflow.jobs.coverage;
-  const candidate = coverage.steps.find(step => step.name === 'Restore sealed candidate for independent evidence plan');
-  const diagnostic = coverage.steps.find(step => step.name === 'Evaluate hosted PC-001.2 evidence diagnostically');
-  const upload = coverage.steps.find(step => step.name === 'Upload diagnostic evidence evaluation');
+  const diagnosticJob = workflow.jobs.evidence_diagnostic;
+  const candidate = diagnosticJob.steps.find(step => step.name === 'Restore candidate for diagnostics');
+  const preparePlan = diagnosticJob.steps.find(step => step.name === 'Prepare an independent diagnostic plan');
+  const diagnostic = diagnosticJob.steps.find(step => step.name === 'Evaluate hosted PC-001.2 evidence diagnostically');
+  const upload = diagnosticJob.steps.find(step => step.name === 'Upload diagnostic evidence evaluation');
   const legacyGate = coverage.steps.find(step => step.name === 'Enforce local and secured release case coverage');
+  assert.deepEqual(diagnosticJob.needs, ['prepare', 'journey']);
+  assert.match(diagnosticJob.if, /always\(\)/);
+  assert.equal(candidate['continue-on-error'], true);
   assert.equal(candidate.with.name, 'installer-journey-candidate');
   assert.equal(candidate.with.path, '.journey/candidate');
-  assert.match(diagnostic.run, /installer-evidence-plan\.mjs/);
+  assert.match(preparePlan.run, /installer-evidence-plan\.mjs/);
   assert.match(diagnostic.run, /--evidence-plan/);
+  assert.match(diagnostic.run, /--level all/);
   assert.equal(diagnostic['continue-on-error'], true);
   assert.match(upload.if, /always\(\)/);
-  assert.ok(coverage.steps.indexOf(diagnostic) < coverage.steps.indexOf(legacyGate));
+  assert.ok(!coverage.steps.some(step => step.name === 'Restore sealed candidate for independent evidence plan'));
   assert.match(legacyGate.run, /qa coverage show --level release --mode/);
   assert.doesNotMatch(legacyGate.run, /--evidence/);
-  assert.match(diagnostic.run, /status.*INCOMPLETE/);
 });

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { evidencePlan, selectLocalInstallerEvidence } from './installer-evidence-plan.mjs';
+import { summarizeInstallerEvidence } from './summarize-installer-evidence.mjs';
 
 test('plan is derived from candidate bytes and checked-in runtime policy, not evaluator host', () => {
   const bytes = Buffer.from('{"schema":"kb.create.release-index/v2"}\n');
@@ -29,6 +30,34 @@ test('selector returns only local v3 PC-001.2 records', () => {
     write('installer-case-local-old.json', {
       schema: 'kb.qa-case-run/v2', mode: 'local', claims: [{ claimId: 'PC-001.2' }],
     });
-    assert.deepEqual(selectLocalInstallerEvidence(directory), [join(directory, 'installer-case-local-cli-default.json')]);
+    writeFileSync(join(directory, 'installer-case-local-corrupt.json'), '{ invalid json');
+    const selection = selectLocalInstallerEvidence(directory);
+    assert.deepEqual(selection.records, [join(directory, 'installer-case-local-cli-default.json')]);
+    assert.deepEqual(selection.invalid.map(({ path }) => path), [join(directory, 'installer-case-local-corrupt.json')]);
+    assert.match(selection.invalid[0].reason, /JSON/);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('summary exposes PC-001.2 PASS even when unrelated release cells remain NOT RUN', () => {
+  const result = summarizeInstallerEvidence({
+    schema: 'kb.qa-case-coverage/v2', releasePassed: false,
+    cases: [{ id: 'PC-001', steps: [
+      { stepId: 'PC-001.2', status: 'PASS', evidenceStatus: 'COMPLETE' },
+      { stepId: 'PC-001.3', status: 'NOT RUN', evidenceStatus: 'INCOMPLETE' },
+    ] }],
+  }, { records: ['installer-case-local-agent-commit-default.json'], invalid: [] });
+  assert.deepEqual(result, {
+    status: 'PASS', behaviorStatus: 'PASS', evidenceStatus: 'COMPLETE', releasePassed: false,
+    selectedRunRecords: ['installer-case-local-agent-commit-default.json'], invalidRunRecords: [],
+  });
+});
+
+test('summary marks missing or malformed evidence INCOMPLETE even beside a complete attempt', () => {
+  const evaluation = { schema: 'kb.qa-case-coverage/v2', releasePassed: false, cases: [{ id: 'PC-001', steps: [
+    { stepId: 'PC-001.2', status: 'PASS', evidenceStatus: 'COMPLETE' },
+  ] }] };
+  assert.equal(summarizeInstallerEvidence(undefined, { records: [], invalid: [] }).status, 'INCOMPLETE');
+  assert.equal(summarizeInstallerEvidence(evaluation, {
+    records: ['valid.json'], invalid: [{ path: 'broken.json', reason: 'invalid JSON' }],
+  }).status, 'INCOMPLETE');
 });
