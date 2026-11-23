@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -39,6 +39,7 @@ describe("launchPlatform", () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     resetPlatformRuntime();
     await rm(projectRoot, { recursive: true, force: true });
     await rm(kbHome, { recursive: true, force: true });
@@ -73,8 +74,13 @@ describe("launchPlatform", () => {
     expect(runtime.startupReport.applicationId).toBe("test-service");
   });
 
-  it('refuses service startup when the delivery producer omits topology', async () => {
-    await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({ platform: {} }));
+  // case: S-317.1
+  it('reports a safe startup failure when the delivery producer omits topology', async () => {
+    await writeFile(path.join(projectRoot, '.kb', 'kb.config.json'), JSON.stringify({
+      platform: {},
+      token: 'startup-secret-sentinel',
+    }));
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     await expect(launchPlatform({
       applicationId: 'missing-topology-service',
       kind: 'service',
@@ -83,6 +89,29 @@ describe("launchPlatform", () => {
     })).rejects.toMatchObject({
       envelope: { code: 'KB_DEPLOYMENT_TOPOLOGY_REQUIRED' },
     });
+
+    const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(output).toContain('Platform startup failed');
+    expect(output).toContain('"event":"platform.failed"');
+    expect(output).toContain('"errorCode":"KB_DEPLOYMENT_TOPOLOGY_REQUIRED"');
+    expect(output.match(/platform\.failed/g)).toHaveLength(1);
+    expect(output).not.toContain('stack');
+    expect(output).not.toContain('startup-secret-sentinel');
+  });
+
+  it('does not duplicate startup failures already reported by lifecycle hooks', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    await expect(launchPlatform({
+      applicationId: 'assembly-failure-service',
+      kind: 'service',
+      startDir: projectRoot,
+      assemblyHook: () => {
+        throw new Error('assembly setup failed');
+      },
+    })).rejects.toThrow('assembly setup failed');
+
+    const output = stderr.mock.calls.map(([chunk]) => String(chunk)).join('');
+    expect(output.match(/platform\.failed/g)).toHaveLength(1);
   });
 
   it("is idempotent for one application identity", async () => {
