@@ -42,6 +42,15 @@ export function buildQACaseEvidenceInventory(cases: QACase[], claims: QACaseClai
   }));
 
   const activeReleaseSteps = steps.filter(step => step.status === 'active' && step.release);
+  const stepsWithExecutionModelDeclaration = steps.filter(step => step.profileDeclarations.executionModel === 'DECLARED').length;
+  const declaredProfileDimensions = steps.length > 0 && stepsWithExecutionModelDeclaration === steps.length ? ['executionModel'] : [];
+  const partiallyDeclaredProfileDimensions = stepsWithExecutionModelDeclaration > 0 && stepsWithExecutionModelDeclaration < steps.length
+    ? ['executionModel']
+    : [];
+  const missingProfileDimensions = [
+    'operatingSystem', 'runtime', 'requestAndConfigProvenance', 'candidateArtifactIdentity',
+    ...(stepsWithExecutionModelDeclaration === 0 ? ['executionModel'] : []),
+  ];
   return {
     schema: 'kb.qa-case-evidence-inventory/v1' as const,
     policy: {
@@ -55,8 +64,9 @@ export function buildQACaseEvidenceInventory(cases: QACase[], claims: QACaseClai
       sourceDeclarations: {
         caseFields: ['status', 'release', 'modes', 'surfaces'],
         stepProfileFields: ['executionModels'],
-        partiallyDeclaredProfileDimensions: ['executionModel'],
-        missingProfileDimensions: ['operatingSystem', 'runtime', 'requestAndConfigProvenance', 'candidateArtifactIdentity'],
+        declaredProfileDimensions,
+        partiallyDeclaredProfileDimensions,
+        missingProfileDimensions,
       },
     },
     totals: {
