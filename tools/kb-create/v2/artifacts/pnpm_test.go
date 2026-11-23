@@ -188,7 +188,7 @@ func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
 	}
 }
 
-// case: S-023.19
+// case: S-318.1
 func TestPnpmRestoreRepairsMissingTransitiveLinkWithRealPnpm(t *testing.T) {
 	testworkspace.Require(t)
 	if _, err := exec.LookPath("node"); err != nil {
@@ -730,7 +730,6 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 	if err := yaml.Unmarshal(workspaceData, &workspaceConfig); err != nil || workspaceConfig.AutoInstallPeers == nil || *workspaceConfig.AutoInstallPeers || workspaceConfig.Overrides["lodash"] != "4.17.21" {
 		t.Fatalf("rollback lost unrelated workspace settings: config=%#v err=%v", workspaceConfig, err)
 	}
-	// case: S-023.19
 	got := runner.calls[len(runner.calls)-1]
 	containsPurgeConfirmation := false
 	containsFrozenLockfile := false
@@ -748,7 +747,7 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{old, oldRuntime})
 }
 
-// case: S-023.19
+// case: S-318.2
 func TestPnpmRestoreRebuildsModulesAndRestoresPriorTreeOnFailure(t *testing.T) {
 	root := t.TempDir()
 	modules := filepath.Join(root, "node_modules")
@@ -785,7 +784,7 @@ func TestPnpmRestoreRebuildsModulesAndRestoresPriorTreeOnFailure(t *testing.T) {
 	}
 }
 
-// case: S-023.19
+// case: S-318.2
 func TestPnpmRestoreFailureWithNoPriorModulesLeavesNoPartialTree(t *testing.T) {
 	root := t.TempDir()
 	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
@@ -802,7 +801,7 @@ func TestPnpmRestoreFailureWithNoPriorModulesLeavesNoPartialTree(t *testing.T) {
 	}
 }
 
-// case: S-023.19
+// case: S-318.2
 func TestInterruptedPnpmModulesRestoreRecoversPreviousTreeUnlessCommitted(t *testing.T) {
 	for _, scenario := range []string{"prepared", "committed", "committed_cleanup_pending", "committed_tree_missing"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -866,7 +865,7 @@ func TestInterruptedPnpmModulesRestoreRecoversPreviousTreeUnlessCommitted(t *tes
 	}
 }
 
-// case: S-023.19
+// case: S-318.2
 func TestPnpmModulesRestoreRejectsUnknownJournalWithoutTouchingModules(t *testing.T) {
 	for _, journal := range []string{
 		`{}`,
@@ -902,7 +901,7 @@ func TestPnpmModulesRestoreRejectsUnknownJournalWithoutTouchingModules(t *testin
 	}
 }
 
-// case: S-023.19
+// case: S-318.2
 func TestPnpmRestoreRejectsNonDirectoryModulesWithoutFollowingSymlinks(t *testing.T) {
 	root := t.TempDir()
 	external := filepath.Join(t.TempDir(), "user-data")
@@ -926,7 +925,7 @@ func TestPnpmRestoreRejectsNonDirectoryModulesWithoutFollowingSymlinks(t *testin
 	}
 }
 
-// case: S-023.19
+// case: S-318.2
 func TestModulesRestoreCleanupRemovesSymlinkAsLeaf(t *testing.T) {
 	root := t.TempDir()
 	transactionsRoot := modulesRestoreTransactionsPath(root)
