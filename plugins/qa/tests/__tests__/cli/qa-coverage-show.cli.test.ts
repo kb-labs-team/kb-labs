@@ -9,7 +9,7 @@ vi.mock('@kb-labs/sdk', async (importOriginal) => {
 });
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import command from '../../../src/cli/commands/qa-coverage-show.js';
@@ -106,5 +106,75 @@ describe('qa:coverage-show evidence mode', () => {
     } } as never);
     expect(result).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
     expect(result).toMatchObject({ error: { diagnostics: [expect.objectContaining({ message: expect.stringContaining('evidence=INCOMPLETE') })] } });
+  });
+
+  it('keeps legacy case-level coverage diagnostics unchanged', async () => {
+    const root = fixture();
+    const ui = { warn: vi.fn(), success: vi.fn() };
+    const result = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+      level: 'release', mode: 'local', json: false,
+    } } as never) as { ok: boolean; error: { diagnostics: Array<{ code: string; path: string; message: string }> } };
+    expect(result.error.diagnostics).toEqual([
+      expect.objectContaining({ code: 'KB_QA_CASE_COVERAGE_INCOMPLETE', path: 'S-010', message: 'Case S-010 is NOT RUN.' }),
+    ]);
+  });
+
+  it('fails closed for a missing evidence plan and an inapplicable release matrix', async () => {
+    const root = fixture();
+    const { run } = writeEvidence(root, { claimId: 'S-010.1', kind: 'journey', status: 'PASS' });
+    const emptyRoot = fixture();
+    const casePath = join(emptyRoot, 'docs', 'qa', 'scenarios', 'S-010-example.md');
+    writeFileSync(casePath, readFileSync(casePath, 'utf8').replace('modes: [local]', 'modes: [secured]'));
+    const ui = { warn: vi.fn(), success: vi.fn() };
+    const missingPlan = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+      evidence: true, run, level: 'release', mode: 'local', json: true,
+    } } as never);
+    expect(missingPlan).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
+
+    const empty = await command.handler.execute({ ui, cwd: emptyRoot } as never, { flags: {
+      evidence: true, level: 'release', mode: 'local', json: true,
+    } } as never);
+    expect(empty).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED' } });
+    expect(empty).toMatchObject({ error: { diagnostics: expect.arrayContaining([
+      expect.objectContaining({ code: 'KB_QA_EVIDENCE_PLAN_INCOMPLETE' }),
+      expect.objectContaining({ code: 'KB_QA_EVIDENCE_INCOMPLETE', path: '<release-matrix>' }),
+    ]) } });
+  });
+
+  it('qualifies same relative artifact paths with each run identity and root', async () => {
+    const root = fixture();
+    const plan = join(root, 'plan.json');
+    writeFileSync(plan, JSON.stringify({
+      schema: 'kb.qa-evidence-plan/v1', mode: 'local', candidateId: 'candidate-approved',
+      profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+    }));
+    const configText = 'redacted config\n';
+    const logText = 'passed\n';
+    for (const [attempt, runId] of [['one', 'attempt-1'], ['two', 'attempt-2']] as const) {
+      const runRoot = join(root, 'runs', attempt);
+      mkdirSync(runRoot, { recursive: true });
+      writeFileSync(join(runRoot, 'config.json'), configText);
+      writeFileSync(join(runRoot, 'step.log'), logText);
+      writeFileSync(join(runRoot, 'run.json'), JSON.stringify({
+        schema: 'kb.qa-case-run/v3', runId, mode: 'local', candidateId: 'candidate-approved',
+        profile: { os: 'linux-x64', runtime: 'node-24', surface: 'cli' },
+        claims: [{
+          claimId: 'S-010.1', kind: 'journey', status: 'PASS',
+          configRef: 'config.json', configDigest: createHash('sha256').update(configText).digest('hex'),
+          logRef: 'step.log', logDigest: createHash('sha256').update(logText).digest('hex'),
+        }],
+      }));
+    }
+    const ui = { warn: vi.fn(), success: vi.fn() };
+    const result = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+      evidence: true, 'evidence-plan': plan, run: 'runs/one/run.json,runs/two/run.json', level: 'all', mode: 'local', json: true,
+    } } as never) as { cases: Array<{ steps: Array<{ configRefs: Array<{ runId: string; runRoot: string; path: string }>; logRefs: Array<{ runId: string; runRoot: string; path: string }> }> }> };
+    expect(result.cases[0]?.steps[0]?.configRefs).toEqual([
+      { runId: 'attempt-1', runRoot: 'runs/one', path: 'config.json', sha256: createHash('sha256').update(configText).digest('hex') },
+      { runId: 'attempt-2', runRoot: 'runs/two', path: 'config.json', sha256: createHash('sha256').update(configText).digest('hex') },
+    ]);
+    expect(result.cases[0]?.steps[0]?.logRefs.map(ref => [ref.runId, ref.runRoot, ref.path])).toEqual([
+      ['attempt-1', 'runs/one', 'step.log'], ['attempt-2', 'runs/two', 'step.log'],
+    ]);
   });
 });

@@ -264,6 +264,22 @@ describe('QA case coverage', () => {
     expect(complete.releasePassed).toBe(true);
   });
 
+  it('fails evidence-backed readiness when the required release matrix is empty or inapplicable', () => {
+    const directory = fixture();
+    const active = parsedCase(directory);
+    const plan: QACaseEvidencePlan = {
+      schema: 'kb.qa-evidence-plan/v1', mode: 'local', candidateId: 'candidate-a', profile: { os: 'linux' },
+    };
+    const empty = computeQACaseEvidenceCoverage([], [], [], 'local', plan);
+    expect(empty).toMatchObject({ releasePassed: false, evidencePassed: false });
+    const stepFree = computeQACaseEvidenceCoverage([{ ...active, steps: [] }], [], [], 'local', plan);
+    expect(stepFree).toMatchObject({ releasePassed: false, evidencePassed: false });
+    const inapplicable = computeQACaseEvidenceCoverage([{ ...active, modes: ['secured'] }], [], [], 'local', plan);
+    expect(inapplicable).toMatchObject({ releasePassed: false, evidencePassed: false });
+    const missingPlan = computeQACaseEvidenceCoverage([active], [], [], 'local');
+    expect(missingPlan).toMatchObject({ releasePassed: false, evidencePassed: false });
+  });
+
   // case: S-299.1
   it('keeps product failure distinct from incomplete evidence and requires matching candidate, profile, config, and log references', () => {
     const directory = fixture();
@@ -273,6 +289,7 @@ describe('QA case coverage', () => {
       schema: QA_CASE_EVIDENCE_RUN_SCHEMA,
       runId: 'run-a',
       mode: 'local' as const,
+      recordPath: 'runs/run-a.json',
       candidateId: 'sha256:candidate-a',
       profile: { os: 'linux', runtime: 'node-24', surface: 'cli' },
     };
@@ -286,7 +303,11 @@ describe('QA case coverage', () => {
     const plan: QACaseEvidencePlan = { schema: 'kb.qa-evidence-plan/v1', mode: 'local', candidateId: 'sha256:candidate-a', profile: base.profile };
     const complete = computeQACaseEvidenceCoverage([testCase], claims, runs, 'local', plan);
     expect(complete.cases[0]?.steps.map(step => [step.status, step.evidenceStatus])).toEqual([['PASS', 'COMPLETE'], ['FAIL', 'COMPLETE']]);
-    expect(complete.cases[0]?.steps[0]).toMatchObject({ configRefs: ['artifacts/config.json'], logRefs: ['artifacts/step.log'], observedCandidateIds: ['sha256:candidate-a'] });
+    expect(complete.cases[0]?.steps[0]).toMatchObject({
+      configRefs: [{ runId: 'run-a', runRoot: 'runs', path: 'artifacts/config.json', sha256: 'a'.repeat(64) }],
+      logRefs: [{ runId: 'run-a', runRoot: 'runs', path: 'artifacts/step.log', sha256: 'b'.repeat(64) }],
+      observedCandidateIds: ['sha256:candidate-a'],
+    });
     expect(complete.releasePassed).toBe(false);
 
     const missing = computeQACaseEvidenceCoverage([testCase], claims, [{ ...runs[0]!, claims: [runs[0]!.claims[0]!] }], 'local', plan);
@@ -304,6 +325,7 @@ describe('QA case coverage', () => {
 
     const mismatched = computeQACaseEvidenceCoverage([testCase], claims, [runs[0]!, {
       ...base, runId: 'run-b', candidateId: 'sha256:candidate-b',
+      recordPath: 'runs/run-b.json',
       claims: [{ claimId: 'S-010.2', kind: 'journey', status: 'PASS', configRef: 'artifacts/config.json', configDigest: 'a'.repeat(64), configVerified: true, logRef: 'artifacts/step.log', logDigest: 'b'.repeat(64), logVerified: true }],
     }], 'local', plan);
     expect(mismatched.cases[0]?.steps[0]).toMatchObject({ status: 'PASS', evidenceStatus: 'INCOMPLETE' });
@@ -330,6 +352,7 @@ describe('QA case coverage', () => {
     const failureWithoutEvidence = computeQACaseEvidenceCoverage([testCase], claims, [runs[0]!, {
       ...base,
       runId: 'run-failed-without-artifacts',
+      recordPath: 'runs/run-failed-without-artifacts.json',
       claims: [{ claimId: 'S-010.1', kind: 'journey', status: 'FAIL', configRef: 'artifacts/missing.json', configDigest: 'f'.repeat(64), configVerified: false, logRef: 'artifacts/missing.log', logDigest: 'e'.repeat(64), logVerified: false }],
     }], 'local', plan);
     expect(failureWithoutEvidence.cases[0]?.steps[0]).toMatchObject({ status: 'FAIL', evidenceStatus: 'INCOMPLETE' });
