@@ -59,6 +59,40 @@ describe('QA case catalog diagnostics', () => {
     expect(parsed.cases.find(item => item.id === 'S-011')).toMatchObject({ supersededBy: 'S-010', steps: [] });
   });
 
+  // case: S-243.6
+  it('parses per-step execution-model applicability without implying a run result', () => {
+    const directory = fixture();
+    const profileRows = [
+      '', '## Profile applicability', '', '| Step | Execution models |', '|---|---|',
+      '| S-243.6 | in-process, subprocess, worker-pool |',
+      '| S-243.7 | in-process, subprocess, worker-pool |', '',
+    ].join('\n');
+    const document = caseDocument('S-243').replace('| S-243.1 | Run install | Plugin appears in the project |', '| S-243.6 | Run handler | The returned failure is normalized |')
+      .replace('| S-243.2 | Verify plugin | Plugin command works |', '| S-243.7 | Run handler | The thrown failure is normalized |') + profileRows;
+    const parsed = parsedCase(directory, 'S-243', document);
+
+    expect(parsed.steps.map(step => ({ id: step.id, executionModels: step.executionModels }))).toEqual([
+      { id: 'S-243.6', executionModels: ['in-process', 'subprocess', 'worker-pool'] },
+      { id: 'S-243.7', executionModels: ['in-process', 'subprocess', 'worker-pool'] },
+    ]);
+  });
+
+  // case: S-243.7
+  it('rejects unknown steps and execution models in profile applicability', () => {
+    const directory = fixture();
+    const document = caseDocument('S-243').replace('| S-243.1 | Run install | Plugin appears in the project |', '| S-243.6 | Run handler | The returned failure is normalized |')
+      .replace('| S-243.2 | Verify plugin | Plugin command works |', '| S-243.7 | Run handler | The thrown failure is normalized |')
+      + '\n## Profile applicability\n\n| Step | Execution models |\n|---|---|\n| S-243.8 | in-process |\n| S-243.6 | container |\n';
+    writeFileSync(join(directory, 'S-243.md'), document);
+
+    const parsed = parseQACatalog(directory);
+
+    expect(parsed.diagnostics.map(item => item.message)).toEqual(expect.arrayContaining([
+      'profile applicability references unknown step S-243.8',
+      'execution models must contain only in-process, subprocess, and worker-pool without duplicates',
+    ]));
+  });
+
   it('recognizes the native macOS installer entrypoint as a journey claim source', () => {
     const directory = fixture();
     const testCase = parsedCase(directory, 'S-298');

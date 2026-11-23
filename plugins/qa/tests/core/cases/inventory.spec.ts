@@ -49,4 +49,22 @@ describe('buildQACaseEvidenceInventory', () => {
     expect(inventory.steps[0]).toMatchObject({ ownership: 'CLAIMED' });
     expect(inventory.steps[0]).not.toHaveProperty('runStatus');
   });
+
+  // case: S-243.6
+  it('reports declared backend applicability as an unevaluated expectation and does not infer OS', () => {
+    const testCase = makeCase('S-243', true);
+    testCase.steps[0]!.executionModels = ['in-process', 'subprocess', 'worker-pool'];
+    const inventory = buildQACaseEvidenceInventory([testCase], []);
+
+    expect(inventory.steps[0]).toMatchObject({
+      profileDeclarations: { operatingSystem: 'UNDECLARED', executionModel: 'DECLARED' },
+      profileExpectations: {
+        executionModel: {
+          required: ['in-process', 'subprocess', 'worker-pool'],
+          evaluation: 'NOT EVALUATED',
+        },
+      },
+    });
+    expect(inventory.steps[0]).not.toHaveProperty('profileExpectations.executionModel.result', 'PASS');
+  });
 });
