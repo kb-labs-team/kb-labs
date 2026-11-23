@@ -208,7 +208,7 @@ describe('CLI result descriptor boundary', () => {
     expect(result.stderr).toContain('fixture direct progress');
   });
 
-  // case: S-203.1
+  // case: S-203.1, S-319.1
   it('delivers a result larger than the pipe buffer whole through a slow non-blocking stdout pipe', async () => {
     fixture = await createCliFixture('local');
     const result = await runCliThroughSlowPipe(fixture, ['stdout', 'fixture', 'large', '--json']);
