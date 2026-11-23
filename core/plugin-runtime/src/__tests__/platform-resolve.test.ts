@@ -167,6 +167,7 @@ describe('platform resolve hook', () => {
     await expect(load('plain.mjs')).rejects.toThrow('nested SDK copy must not load');
   });
 
+  // case: S-320.1
   it('ESM: resolves platform packages to the host copy and leaves plugin packages alone', async () => {
     hook = installPlatformResolveHook({ platformRoot, logger });
     const { seen } = (await load('handler.mjs')) as { seen: Record<string, string> };
