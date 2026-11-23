@@ -11,6 +11,7 @@ import unittest
 import json
 import os
 import re
+import shutil
 from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
@@ -51,9 +52,33 @@ from installed_fixture import layout_value
 
 
 class InstalledHostStopJourneyTests(unittest.TestCase):
+    def test_stop_case_invokes_installed_launcher_outside_path(self):
+        with tempfile.TemporaryDirectory(prefix="journey-installed-stop-path-") as directory:
+            root = Path(directory)
+            launcher = root / ".local" / "bin" / "kb-create"
+            launcher.parent.mkdir(parents=True)
+            launcher.write_text(
+                "#!/bin/sh\n"
+                "case \"$1\" in\n"
+                "  stop) printf '%s\\n' '{\"ok\":true,\"data\":{\"operation\":\"stop\"}}' ;;\n"
+                "  status) printf '%s\\n' '{\"ok\":true,\"data\":{\"running\":false,\"host\":{\"state\":\"stopped\"}}}' ;;\n"
+                "  *) exit 2 ;;\n"
+                "esac\n"
+            )
+            launcher.chmod(0o755)
+            env = {"HOME": directory, "PATH": "/usr/local/bin:/usr/bin:/bin"}
+            self.assertIsNone(shutil.which("kb-create", path=env["PATH"]))
+
+            journey = Journey("local", "installed-stop-path")
+            add_installed_host_stop_case_step(journey, root, env, executable=launcher)
+
+        self.assertEqual(journey.steps[-1].cases, ["PC-002.4"])
+        self.assertEqual(journey.steps[-1].status, "PASS")
+
     def test_stop_case_runs_installed_stop_then_confirms_stopped_status(self):
         with tempfile.TemporaryDirectory(prefix="journey-installed-stop-") as directory:
             root = Path(directory)
+            launcher = root / ".local" / "bin" / "kb-create"
             calls = []
 
             def runner(command, **kwargs):
@@ -66,11 +91,14 @@ class InstalledHostStopJourneyTests(unittest.TestCase):
                                                    json.dumps({"ok": True, "data": data}), "")
 
             journey = Journey("local", "installed-stop")
-            add_installed_host_stop_case_step(journey, root, {"HOME": directory}, runner=runner)
+            add_installed_host_stop_case_step(
+                journey, root, {"HOME": directory, "PATH": "/usr/local/bin:/usr/bin:/bin"},
+                executable=launcher, runner=runner,
+            )
 
         self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][0], ["kb-create", "stop", "--platform-root", str(root), "--json"])
-        self.assertEqual(calls[1][0], ["kb-create", "status", "--platform-root", str(root), "--json"])
+        self.assertEqual(calls[0][0], [str(launcher), "stop", "--platform-root", str(root.resolve()), "--json"])
+        self.assertEqual(calls[1][0], [str(launcher), "status", "--platform-root", str(root.resolve()), "--json"])
         self.assertEqual(journey.steps[-1].cases, ["PC-002.4"])
         self.assertEqual(journey.steps[-1].status, "PASS")
 
@@ -85,7 +113,10 @@ class InstalledHostStopJourneyTests(unittest.TestCase):
                                                    json.dumps({"ok": True, "data": data}), "")
 
             journey = Journey("local", "installed-stop-running")
-            add_installed_host_stop_case_step(journey, root, {"HOME": directory}, runner=runner)
+            add_installed_host_stop_case_step(
+                journey, root, {"HOME": directory}, executable=root / ".local" / "bin" / "kb-create",
+                runner=runner,
+            )
 
         self.assertEqual(journey.steps[-1].status, "FAIL")
         self.assertIn("status", journey.steps[-1].message)
