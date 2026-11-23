@@ -9,7 +9,10 @@ objects merge recursively, while an array supplied by a higher layer replaces
 the lower-layer array. Array concatenation requires an explicit
 `kb:merge: append` directive. Raw config inspection and the structured runtime
 reader use the same rule, so their effective values and provenance agree.
-Case: S-316.
+Platform user config candidates fold in this order: root `.json`, root `.jsonc`,
+`.kb/kb.config.json`, then `.kb/kb.config.jsonc`. This makes the candidate
+selected by `config set` the highest-precedence file when multiple candidates
+exist. Case: S-316.
 
 ## 2026-11-19
 

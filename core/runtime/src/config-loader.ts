@@ -529,10 +529,8 @@ export async function loadPlatformConfig(
     ...platformUserLayer.files,
     ...containerLayer.files,
   ];
-  let rawPlatformDefaults: Record<string, unknown> = {};
   let platformDefaults: PlatformConfig | undefined;
   for (const file of platformSourceFiles) {
-    rawPlatformDefaults = mergeOverlay(rawPlatformDefaults, file.data);
     const projected = toPlatformSection(file.data as Record<string, unknown> & {
       platform?: PlatformConfig | string;
       adapterOptions?: Partial<Record<string, unknown>>;
