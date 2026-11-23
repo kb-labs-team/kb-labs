@@ -6,7 +6,7 @@ cd "$ROOT"
 export PYTHONPATH="$ROOT/e2e/journey${PYTHONPATH:+:$PYTHONPATH}"
 
 node scripts/ci/journey-case-claims-preflight.mjs
-node --test scripts/ci/journey-batch-selection.test.mjs
+node --test scripts/ci/journey-case-claims-preflight.test.mjs
 
 python3 -m unittest \
   test_dispatch_registry.DispatchRegistryTests.test_full_unselected_plan_matches_checked_in_golden \
