@@ -18,9 +18,7 @@ _DIGEST = re.compile(r"^[0-9a-f]{64}$", re.IGNORECASE)
 
 def clean_install_evidence_profile() -> dict[str, str]:
     """Return the observed host, Node major, and installer surface."""
-    machine = platform.machine().lower()
-    machine = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64"}.get(machine, machine)
-    profile = {"os": f"{platform.system().lower()}-{machine}", "surface": "cli"}
+    profile = {"os": platform.system().lower(), "surface": "cli"}
     try:
         result = subprocess.run(["node", "--version"], check=True, capture_output=True, text=True, timeout=5)
         match = re.fullmatch(r"v?(\d+)\.\d+\.\d+", result.stdout.strip())

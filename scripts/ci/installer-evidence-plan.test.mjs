@@ -11,7 +11,7 @@ test('plan is derived from candidate bytes and checked-in runtime policy, not ev
   const policy = Buffer.from('{"requiredMajor":24,"nodeBaseImage":"node:24-bookworm"}');
   const plan = evidencePlan(bytes, policy);
   assert.equal(plan.candidateId, `sha256:${createHash('sha256').update(bytes).digest('hex')}`);
-  assert.deepEqual(plan.profile, { os: 'linux-x64', runtime: 'node-24', surface: 'cli' });
+  assert.deepEqual(plan.profile, { os: 'linux', runtime: 'node-24', surface: 'cli' });
   assert.throws(() => evidencePlan(Buffer.from('{}'), policy), /unsupported schema/);
   assert.throws(() => evidencePlan(bytes, Buffer.from('{"requiredMajor":"24"}')), /required Node major/);
 });

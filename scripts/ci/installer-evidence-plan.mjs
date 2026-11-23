@@ -15,7 +15,7 @@ export function evidencePlan(indexBytes, nodePolicyBytes) {
     schema: 'kb.qa-evidence-plan/v1',
     mode: 'local',
     candidateId: `sha256:${createHash('sha256').update(indexBytes).digest('hex')}`,
-    profile: { os: 'linux-x64', runtime: `node-${nodeMajor}`, surface: 'cli' },
+    profile: { os: 'linux', runtime: `node-${nodeMajor}`, surface: 'cli' },
   };
 }
 

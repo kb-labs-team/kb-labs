@@ -18,11 +18,10 @@ from service_steps import Journey
 class CleanInstallCaseEvidenceTests(unittest.TestCase):
     def test_profile_uses_observed_node_major_and_cli_surface(self):
         with patch("journey_evidence.platform.system", return_value="Linux"), \
-             patch("journey_evidence.platform.machine", return_value="x86_64"), \
              patch("journey_evidence.subprocess.run") as run:
             run.return_value.stdout = "v24.1.0\n"
             self.assertEqual(clean_install_evidence_profile(), {
-                "os": "linux-x64", "runtime": "node-24", "surface": "cli",
+                "os": "linux", "runtime": "node-24", "surface": "cli",
             })
 
     # case: S-315.2
