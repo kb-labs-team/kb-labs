@@ -25,6 +25,7 @@ from platform_snapshot import _platform_snapshot
 from journey_selection import read_journey_selection
 from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
+from gateway_sessions import gateway_session
 from invocations import (
     CompletedProcess,
     catalogued_error_hint,
@@ -459,8 +460,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     status = kb_command([ "auth", "status", "--json"])
     with invocation_context(step_id="marketplace.authenticated-session"):
         auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
-    sessions = auth_status.get("sessions")
-    session = sessions[0] if isinstance(sessions, list) and sessions else None
+    session = gateway_session(auth_status, gateway)
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
 

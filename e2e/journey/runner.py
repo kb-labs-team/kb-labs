@@ -64,6 +64,7 @@ from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
+from gateway_sessions import SavedGatewaySession
 from invocations import (
     CompletedProcess,
     TimeoutExpired,
@@ -1768,12 +1769,13 @@ def _main(*, update_variant_runner=None):
             verify_admin = None
             expire_admin_session = None
             if access_mode == "secured":
+                admin_gateway = "http://127.0.0.1:4000"
                 admin_email = env.get("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
                 admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
 
                 def verify_admin():
                     result, _ = run(kb_command([ "auth", "login", "--gateway-url",
-                                     "http://127.0.0.1:4000", "--email", admin_email,
+                                     admin_gateway, "--email", admin_email,
                                      "--password-stdin"], executable=str(BIN / "kb")),
                                     env=env, cwd=PROJECT, timeout=90,
                                     input_text=admin_password + "\n")
@@ -1782,14 +1784,8 @@ def _main(*, update_variant_runner=None):
                 def expire_admin_session():
                     status, _ = run(kb_command([ "auth", "status", "--json"], executable=str(BIN / "kb")),
                                     env=env, cwd=PROJECT, timeout=30)
-                    envelope = json.loads(status.stdout)
-                    session_path = envelope.get("data", {}).get("session", {}).get("path")
-                    if not session_path:
-                        raise RuntimeError("kb auth status omitted session.path")
-                    session_file = Path(session_path)
-                    session = json.loads(session_file.read_text())
-                    session["expiresAt"] = 0
-                    session_file.write_text(json.dumps(session) + "\n")
+                    data = decode_ux_success_result(read_ux_cli_result(status))
+                    SavedGatewaySession.from_status(data, admin_gateway).expire()
 
             platform_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-{access_mode}.json")

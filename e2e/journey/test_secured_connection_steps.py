@@ -55,12 +55,12 @@ class SecuredConnectionContractTests(unittest.TestCase):
                 validate_local_health_response(status, body)
 
     def test_s031_session_status_requires_the_canonical_path(self):
-        payload = {"ok": True, "data": {"session": {
+        payload = {"ok": True, "data": {"sessions": [{
             "authenticated": True, "tokenExpired": True, "gatewayUrl": "https://gateway.test",
             "path": "/tmp/cli-home/.kb/session.json",
-        }}}
+        }]}}
         validate_cli_case("S-031.1", 0, "", payload, gateway="https://gateway.test")
-        payload["data"]["session"].pop("path")
+        payload["data"]["sessions"][0].pop("path")
         with self.assertRaisesRegex(AssertionError, "S-031.1"):
             validate_cli_case("S-031.1", 0, "", payload, gateway="https://gateway.test")
 

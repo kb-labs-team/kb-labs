@@ -192,9 +192,9 @@ class CliAuthJourneyTests(unittest.TestCase):
         def invoke(args, *, env, **kwargs):
             calls.append(args)
             if args[1:3] == ["auth", "status"]:
-                payload = {"ok": True, "data": {"session": {"authenticated": bool(state["email"]),
+                payload = {"ok": True, "data": {"sessions": [{"authenticated": bool(state["email"]),
                                                                "path": str(Path(env["HOME"]) / ".kb" / "session.json"),
-                                                               **({"email": state["email"]} if state["email"] else {})}}}
+                                                               **({"email": state["email"], "gatewayUrl": "http://gateway.test"} if state["email"] else {})}]}}
             elif args[1:3] == ["auth", "login"]:
                 if "--password-stdin" not in args:
                     message = "The provided input is invalid. [KB_RUNTIME_INPUT_INVALID]"
