@@ -219,8 +219,9 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
       } else if (caseComment) {
         const next = lines[index + 1] ?? '';
         const testLine = next.match(/\b(?:test|it)(?:\.each\([^)]*\))?\s*\(\s*(?:["'`]([^"'`]+)|\([^)]*\)\s*=>)/);
-        if (!testLine) {diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a test declaration' });}
-        else {add(caseComment[1]!, 'unit', index + 1, testLine[1] ?? 'parameterized test');}
+        const multilineParameterizedTest = next.match(/^\s*(?:test|it)\.each\s*\(/);
+        if (!testLine && !multilineParameterizedTest) {diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a test declaration' });}
+        else {add(caseComment[1]!, 'unit', index + 1, testLine?.[1] ?? 'parameterized test');}
       }
     }
   }
