@@ -858,6 +858,107 @@ def verify_package_manager_failure_diagnostic(*, launcher: str, stable_index: Pa
     assert_failure_diagnostic()
 
 
+def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
+                                     update_index: Path, registry: str,
+                                     run_command: CommandRunner) -> None:
+    """Exercise the typed Gateway topology input through public request-file plan/apply/update."""
+    with tempfile.TemporaryDirectory(prefix="pc001-request-gateway-") as temporary:
+        parent = Path(temporary)
+        root = parent / "platform"
+        request_path = parent / "request.json"
+        gateway_url = unused_loopback_gateway_url()
+        request = {
+            "schema": "kb.create/v2",
+            "platform": {"channel": "stable"},
+            "serviceProfile": "default",
+            "gatewayUrl": gateway_url,
+            "platformRoot": str(root),
+        }
+        request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+
+        invalid_root = parent / "invalid-platform"
+        invalid_request_path = parent / "invalid-request.json"
+        invalid_request = {**request, "gatewayUrl": "https://example.test:45100",
+                           "platformRoot": str(invalid_root)}
+        invalid_request_path.write_text(json.dumps(invalid_request, indent=2) + "\n", encoding="utf-8")
+        invalid_result = run_command([launcher, "plan", "--json", "--index", str(stable_index),
+                                      "--input", str(invalid_request_path), "--registry", registry])
+        _, invalid_error = _diagnostic(invalid_result, "PC-001 invalid request-file Gateway")
+        if (invalid_result.returncode == 0 or invalid_error.get("code") != "KB_INSTALL_INPUT_REQUIRED"
+                or invalid_root.exists()):
+            raise RuntimeError("invalid request-file Gateway input was not rejected before target writes")
+
+        planned = _json_command(
+            run_command,
+            [launcher, "plan", "--json", "--index", str(stable_index),
+             "--input", str(request_path), "--registry", registry],
+            "PC-001 request-file Gateway plan",
+        ).get("plan", {})
+        planned_request = planned.get("request", {})
+        planned_host = planned.get("host", {})
+        gateway_service = next((item for item in planned.get("serviceGraph", {}).get("services", [])
+                                if item.get("id") == "gateway"), {})
+        if (planned_request.get("gatewayUrl") != gateway_url
+                or "marketplaceSources" in planned_request
+                or planned_host.get("healthUrl") != gateway_url + "/health"
+                or gateway_service.get("port") != urlsplit(gateway_url).port):
+            raise RuntimeError("request-file plan did not carry the Gateway topology input without Marketplace sources")
+        if root.exists():
+            raise RuntimeError("planning the request-file Gateway input changed the target root")
+
+        try:
+            result = _data(
+                run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                             "--input", str(request_path), "--registry", registry]),
+                "PC-001 request-file Gateway apply",
+            )
+            if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
+                raise RuntimeError("request-file apply omitted its receipt or log path")
+
+            receipt_path = active_platform_root(root) / ".kb/v2/receipt.json"
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            installed_plan = receipt.get("plan", {})
+            installed_request = installed_plan.get("request", {})
+            health_url = receipt.get("verification", {}).get("hostHealthUrl")
+            installed_gateway = next((item for item in installed_plan.get("serviceGraph", {}).get("services", [])
+                                      if item.get("id") == "gateway"), {})
+            config_path = active_platform_root(root) / ".kb/kb.config.jsonc"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            gateway_config = (config.get("platform", {}).get("adapterOptions", {})
+                              .get("serviceTransport", {}).get("services", {}).get("gateway", {}))
+            if (installed_request.get("gatewayUrl") != gateway_url
+                    or health_url != gateway_url + "/health"
+                    or installed_gateway.get("port") != urlsplit(gateway_url).port
+                    or gateway_config.get("url") != gateway_url):
+                raise RuntimeError("applied request did not persist its Gateway address in receipt and generated config")
+
+            status = _data(run_command([launcher, "status", "--json", "--platform-root", str(root)]),
+                           "PC-001 request-file Gateway status")
+            if status.get("running") is not True or status.get("reachable") is not True:
+                raise RuntimeError("request-file Gateway install did not leave a running, reachable host")
+
+            updated = _data(run_command([launcher, "update", "--json", "--index", str(update_index),
+                                         "--platform-root", str(root), "--registry", registry]),
+                            "PC-001 request-file Gateway update")
+            updated_receipt = json.loads((active_platform_root(root) / ".kb/v2/receipt.json").read_text(encoding="utf-8"))
+            updated_plan = updated_receipt.get("plan", {})
+            updated_request = updated_plan.get("request", {})
+            updated_health = updated_receipt.get("verification", {}).get("hostHealthUrl")
+            updated_gateway = next((item for item in updated_plan.get("serviceGraph", {}).get("services", [])
+                                    if item.get("id") == "gateway"), {})
+            updated_config = json.loads((active_platform_root(root) / ".kb/kb.config.jsonc").read_text(encoding="utf-8"))
+            effective_gateway = (updated_config.get("platform", {}).get("adapterOptions", {})
+                                 .get("serviceTransport", {}).get("services", {}).get("gateway", {}))
+            if (updated.get("operation") != "update"
+                    or updated_request.get("gatewayUrl") != gateway_url
+                    or updated_health != gateway_url + "/health"
+                    or updated_gateway.get("port") != urlsplit(gateway_url).port
+                    or effective_gateway.get("url") != gateway_url):
+                raise RuntimeError("update did not preserve the request-file Gateway topology input")
+        finally:
+            cleanup_installer_fixture_root(root, launcher, run_command)
+
+
 def run_platform_cli(platform_root: Path, args: list[str], run_command: CommandRunner,
                      *, input_text: str | None = None) -> CompletedProcess:
     """Run the CLI installed for the requested root, independent of PATH shim ownership."""
@@ -2131,6 +2232,13 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
 
     journey.step("apply the resolved default service profile", "platform.install", apply_and_check,
                  cases=["PC-001.4"])
+
+    journey.step("plan and apply the declared Gateway topology from a request file",
+                 "platform.install",
+                 lambda: verify_request_file_gateway_input(
+                     launcher=launcher, stable_index=stable_index, update_index=update_index,
+                     registry=registry, run_command=run_command),
+                 cases=["PC-001.20"])
 
     def isolated_container_install() -> None:
         with tempfile.TemporaryDirectory(prefix="pc001-container-") as temporary:
