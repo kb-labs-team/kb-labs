@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/create/v2/contracts"
@@ -88,6 +89,66 @@ func TestShimLifecycle(t *testing.T) {
 	if err := Remove(launcher, platformRoot); err != nil || Correct(launcher, platformRoot) {
 		t.Fatalf("Remove error = %v; shim still correct = %t", err, Correct(launcher, platformRoot))
 	}
+}
+
+// case: S-320.1
+func TestManagedShimProvidesPlatformRootForPeerResolution(t *testing.T) {
+	root := t.TempDir()
+	launcherDir := filepath.Join(root, "bin")
+	platformRoot := filepath.Join(root, "platform")
+	if err := os.MkdirAll(launcherDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	layout, err := versionroot.New(platformRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cliEntry := filepath.Join(stage, "node_modules", "@kb-labs", "cli-bin", "dist", "bin.js")
+	if err := os.MkdirAll(filepath.Dir(cliEntry), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cliEntry, []byte("process.stdout.write(process.env.KB_PLATFORM_ROOT ?? '')\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	id, err := versionroot.InstallationIDForPath(stage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(stage, contracts.InstallReceipt{Schema: contracts.ReceiptSchema, ID: "receipt", InstallationID: id,
+		Plan: contracts.ResolvedInstallPlan{ServiceGraph: contracts.ServiceGraph{PlatformVersion: "1.0.0"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "1.0.0", "fixture-plan"); err != nil {
+		t.Fatal(err)
+	}
+	platformRoot = layout.PlatformRoot()
+	launcher := filepath.Join(launcherDir, "kb-create")
+	if _, err := Ensure(launcher, platformRoot); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(Path(launcher))
+	cmd.Env = withoutEnv(os.Environ(), "KB_PLATFORM_ROOT")
+	output, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(output); got != platformRoot {
+		t.Fatalf("managed kb launcher passed KB_PLATFORM_ROOT %q, want %q", got, platformRoot)
+	}
+}
+
+func withoutEnv(env []string, key string) []string {
+	filtered := make([]string, 0, len(env))
+	for _, entry := range env {
+		if !strings.HasPrefix(entry, key+"=") {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 func TestRemoveLeavesUnownedShimPointingElsewhere(t *testing.T) {
