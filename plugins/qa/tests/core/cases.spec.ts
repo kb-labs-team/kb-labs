@@ -140,6 +140,11 @@ describe('QA case claim scanning', () => {
     writeFileSync(join(unitSource, 'parameterized.test.ts'), [
       '// case: S-010.1',
       "it.each(['a', 'b'])('accepts %s', () => {})",
+      '// case: S-010.2',
+      'it.each([',
+      "  { value: 'a' },",
+      "  { value: 'b' },",
+      "])('accepts expanded inputs', () => {})",
     ].join('\n'));
 
     const scanned = scanQACaseClaims(directory, [testCase]);
@@ -147,6 +152,7 @@ describe('QA case claim scanning', () => {
     expect(scanned.diagnostics).toEqual([]);
     expect(scanned.claims).toEqual([
       expect.objectContaining({ stepId: 'S-010.1', kind: 'unit', testName: 'accepts %s' }),
+      expect.objectContaining({ stepId: 'S-010.2', kind: 'unit' }),
     ]);
   });
 
