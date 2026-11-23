@@ -11,9 +11,9 @@ function makeCase(id: string, release: boolean): QACase {
 }
 
 describe('buildQACaseEvidenceInventory', () => {
-  // case: S-313.1
+  // case: S-314.1
   it('reports declared claims separately from missing profile and evidence provenance dimensions', () => {
-    const cases = [makeCase('S-313', false), makeCase('S-400', true)];
+    const cases = [makeCase('S-314', false), makeCase('S-400', true)];
     const claims: QACaseClaim[] = [{
       id: 'S-400.1', stepId: 'S-400.1', kind: 'unit', source: 'src/example.test.ts', line: 12,
     }];
@@ -41,7 +41,7 @@ describe('buildQACaseEvidenceInventory', () => {
     });
   });
 
-  // case: S-313.1
+  // case: S-314.1
   it('does not treat a claim as a passing run result', () => {
     const inventory = buildQACaseEvidenceInventory([makeCase('S-400', true)], [{
       id: 'S-400.1', stepId: 'S-400.1', kind: 'journey', source: 'journey.py', line: 9,

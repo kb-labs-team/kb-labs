@@ -108,7 +108,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-284](scenarios/S-284-local-candidate-registry-delivery.md) | Deliver and install immutable candidates from a local registry | platform-team | P0 | planned | false | [local] | [cli] | — |
 | [S-298](scenarios/S-298-node24-marketplace-install-with-corepack.md) | Marketplace plugin install without standalone pnpm | solo-developer | P0 | active | true | [local] | [cli] | — |
 | [S-311](scenarios/S-311-marketplace-installed-tarball-local-runtime.md) | Marketplace-installed plugin tarball executes in a local project runtime | solo-developer | P1 | active | false | [local] | [api] | — |
-| [S-313](scenarios/S-313-case-evidence-inventory.md) | QA — inspect case evidence and runtime matrix gaps | developer | P1 | active | false | [local] | [cli] | — |
+| [S-314](scenarios/S-314-case-evidence-inventory.md) | QA — inspect case evidence and runtime matrix gaps | developer | P1 | active | false | [local] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
