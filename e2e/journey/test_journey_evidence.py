@@ -9,6 +9,7 @@ from pathlib import Path
 
 import invocations
 from journey_evidence import apply_clean_install_case_evidence, capture_clean_install_artifacts
+from scoreboard import build_scoreboard
 from service_steps import Journey
 
 
@@ -168,6 +169,44 @@ class CleanInstallCaseEvidenceTests(unittest.TestCase):
             self.assertNotIn("configRef", result["claims"][0])
             self.assertIn("logRef", result["claims"][0])
             self.assertIn("\ufffd", (report_root / result["claims"][0]["logRef"]).read_text())
+
+    # case: S-315.2
+    def test_targeted_case_run_keeps_selection_in_generated_scoreboard(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reports = root / "reports"
+            catalog = root / "catalog"
+            reports.mkdir()
+            catalog.mkdir()
+            (catalog / "PC-001-clean-install.md").write_text(
+                "---\nid: PC-001\ntitle: Clean install\nstatus: active\nrelease: false\n"
+                "modes: [local]\n---\n"
+                "| PC-001.1 | First observable result | expected result |\n"
+                "| PC-001.2 | Install is running | expected result |\n",
+                encoding="utf-8",
+            )
+            case_run = {
+                "schema": "kb.qa-case-run/v2", "runId": "targeted-install", "mode": "local",
+                "selection": ["PC-001.2"], "selectedClaims": ["PC-001.2"],
+                "claims": [
+                    {"claimId": "PC-001.1", "kind": "journey", "status": "PASS"},
+                    {"claimId": "PC-001.2", "kind": "journey", "status": "PASS"},
+                ],
+            }
+            result = apply_clean_install_case_evidence(
+                case_run, [{"name": "candidate provenance", "status": "PASS"}],
+                profile={}, candidate_digest=None, candidate_verified=False,
+                artifacts={}, evidence_run_id="targeted-install",
+            )
+            (reports / "installer-case-local-agent-commit-default.json").write_text(
+                json.dumps({"case_run": result, "steps": []}), encoding="utf-8",
+            )
+
+            scoreboard = build_scoreboard(reports, catalog, ["local"])
+
+            self.assertEqual(scoreboard["selection"], ["PC-001.2"])
+            pc_case = next(item for item in scoreboard["cases"] if item["id"] == "PC-001")
+            self.assertEqual(pc_case["claimedCount"], 0)
 
 
 if __name__ == "__main__":

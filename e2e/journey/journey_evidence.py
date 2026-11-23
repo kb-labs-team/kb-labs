@@ -174,12 +174,16 @@ def apply_clean_install_case_evidence(case_run: Mapping[str, Any], steps: list[M
     ):
         return dict(case_run)
 
-    result: dict[str, Any] = {
+    # Preserve runner metadata such as the requested selection. Rebuilding this
+    # object from only the evidence fields turns a targeted attempt into a full
+    # run when the scoreboard consumes its case_run record.
+    result: dict[str, Any] = dict(case_run)
+    result.update({
         "schema": "kb.qa-case-run/v3",
         "runId": evidence_run_id or (case_run.get("runId") if isinstance(case_run.get("runId"), str) else ""),
         "mode": case_run.get("mode") if case_run.get("mode") in {"local", "secured"} else "local",
         "claims": [dict(claim) for claim in claims if isinstance(claim, Mapping)],
-    }
+    })
     provenance = next((step for step in steps if step.get("name") == "candidate provenance"), None)
     valid_candidate = (candidate_verified and isinstance(provenance, Mapping)
                        and provenance.get("status") == "PASS"
