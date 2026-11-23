@@ -139,6 +139,17 @@ func TestManagedShimProvidesPlatformRootForPeerResolution(t *testing.T) {
 	if got := string(output); got != platformRoot {
 		t.Fatalf("managed kb launcher passed KB_PLATFORM_ROOT %q, want %q", got, platformRoot)
 	}
+
+	const explicitRoot = "/opt/another-kb-platform"
+	cmd = exec.Command(Path(launcher))
+	cmd.Env = append(withoutEnv(os.Environ(), "KB_PLATFORM_ROOT"), "KB_PLATFORM_ROOT="+explicitRoot)
+	output, err = cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(output); got != explicitRoot {
+		t.Fatalf("managed kb launcher replaced explicit KB_PLATFORM_ROOT %q with %q", explicitRoot, got)
+	}
 }
 
 func withoutEnv(env []string, key string) []string {
