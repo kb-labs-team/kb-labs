@@ -153,6 +153,13 @@ describe('the generated layer is optional', () => {
     expect(generated.data).toEqual({ k: 'b', 'only-a': 1 });
     expect(generated.files).toHaveLength(2);
   });
+
+  it('replaces generated arrays from a higher-precedence file', async () => {
+    await write(platform, '.kb/generated/10-a.json', '{ "items": ["old"] }');
+    await write(platform, '.kb/generated/20-b.json', '{ "items": ["new"] }');
+    const generated = await loadGeneratedLayer([platform]);
+    expect(generated.data).toEqual({ items: ['new'] });
+  });
 });
 
 describe('array provenance', () => {
@@ -164,7 +171,7 @@ describe('array provenance', () => {
     expect((result!.data.plugins as { allow: string[] }).allow).toEqual(['c']);
     const entry = result!.provenance['plugins.allow']!;
     expect(entry.layer).toBe('project');
-    expect(entry.contributors?.map((c) => c.layer)).toEqual(['project', 'platform', 'generated']);
+    expect(entry.contributors).toBeUndefined();
   });
 
   it('stops at an overlay because overlays replace arrays', () => {
@@ -176,6 +183,20 @@ describe('array provenance', () => {
       { x: [2] },
     );
     expect(provenance.x).toEqual({ layer: 'overlay', source: '/o' });
+  });
+
+  it('records lower-layer array sources explicitly appended by an overlay', () => {
+    const provenance = buildProvenance(
+      [
+        { layer: 'generated', path: '/generated', data: { x: ['base'] } },
+        { layer: 'overlay', path: '/overlay', data: { 'kb:merge': { x: 'append' }, x: ['extra'] } },
+      ],
+      { x: ['base', 'extra'] },
+    );
+    expect(provenance.x?.contributors).toEqual([
+      { layer: 'overlay', source: '/overlay' },
+      { layer: 'generated', source: '/generated' },
+    ]);
   });
 });
 

@@ -128,6 +128,7 @@ func TestApplyCommitsReceiptOnlyAfterVerification(t *testing.T) {
 	}
 }
 
+// case: S-316.3
 func TestUpdateKeepsUserConfigWhenTargetAddsServiceDefault(t *testing.T) {
 	root := t.TempDir()
 	if _, err := Apply(context.Background(), planIn(root, "old-plan"), Dependencies{Artifacts: &fakeInstaller{}}); err != nil {

@@ -230,11 +230,6 @@ describe('loadEffectiveConfig — manifest defaults', () => {
     expect(result?.provenance['plugins.sample.scope.scopes']).toEqual({
       layer: 'project',
       source: path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc'),
-      contributors: [
-        { layer: 'project', source: path.join(testStoreRoot(c.project), 'state', TEST_PROJECT_ID, 'config.jsonc') },
-        { layer: 'platform', source: path.join(c.platform, '.kb', 'kb.config.json') },
-        { layer: 'manifest', source: manifestPath },
-      ],
     });
     expect(result?.provenance['plugins.sample.scope.active']?.layer).toBe('overlay');
   });

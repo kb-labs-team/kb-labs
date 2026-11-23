@@ -41,10 +41,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 
 import {
-  readJsonWithDiagnostics,
   mergeWithFieldPolicy,
-  mergeDefined,
   loadGeneratedLayer,
+  loadPlatformUserLayerFiles,
+  loadPlatformContainerLayer,
   loadOverlays,
   mergeOverlay,
   readProjectSettings,
@@ -101,13 +101,6 @@ function expandPlatformDir(raw: string, projectRoot: string): string {
   }
   return path.resolve(projectRoot, value);
 }
-
-const CONFIG_RELATIVE_PATHS = [
-  path.join(".kb", "kb.config.jsonc"),
-  path.join(".kb", "kb.config.json"),
-  "kb.config.jsonc",
-  "kb.config.json",
-] as const;
 
 export interface LoadPlatformConfigOptions {
   /** Load platform configuration without resolving a current project. */
@@ -284,20 +277,6 @@ export function ensurePlatformEnvironment(
 }
 
 /**
- * Look for a config file at `<root>/.kb/kb.config.json` or `<root>/kb.config.json`.
- * Returns `undefined` if neither exists.
- */
-function findConfigAtRoot(root: string): string | undefined {
-  for (const rel of CONFIG_RELATIVE_PATHS) {
-    const full = path.join(root, rel);
-    if (existsSync(full)) {
-      return full;
-    }
-  }
-  return undefined;
-}
-
-/**
  * Project a raw config object onto the `PlatformConfig` view: normalise the
  * `platform` string shorthand and fold top-level `adapterOptions` in.
  */
@@ -321,14 +300,14 @@ function toPlatformSection(
   // Merge top-level adapterOptions into the platform section so initPlatform
   // receives adapter credentials (e.g. llm.kbClientId) alongside adapter bindings.
   const platformSection: PlatformConfig | undefined = normalizedPlatform
-    ? {
-        ...normalizedPlatform,
-        adapterOptions:
-          data.adapterOptions ?? normalizedPlatform.adapterOptions,
-      }
+    ? { ...normalizedPlatform }
     : data.adapterOptions
       ? { adapters: {}, adapterOptions: data.adapterOptions }
       : undefined;
+
+  if (platformSection && data.adapterOptions !== undefined) {
+    platformSection.adapterOptions = data.adapterOptions;
+  }
 
   return platformSection;
 }
@@ -354,47 +333,6 @@ function throwFirstConfigError(
   if (diagnostic) {
     throwConfigDiagnostic(diagnostic, fallbackPath);
   }
-}
-
-/**
- * Read a KB Labs config file and extract its `platform` section. Returns
- * `{ platformSection, rawConfig }` where the config section may be `undefined`
- * when a present valid file has no `platform` section. Missing files are
- * handled by the caller; unreadable, malformed, and invalid files are errors.
- *
- * `adapterOptions` lives at the top level of the config file (not inside
- * `platform`), so we merge it into the returned platformSection so that
- * initPlatform receives credentials and adapter-specific options.
- */
-async function readConfigFile(configPath: string): Promise<{
-  platformSection?: PlatformConfig;
-  rawConfig?: Record<string, unknown>;
-}> {
-  const result = await readJsonWithDiagnostics<{
-    platform?: PlatformConfig;
-    adapterOptions?: Partial<Record<string, unknown>>;
-    [k: string]: unknown;
-  }>(configPath);
-
-  if (!result.ok) {
-    throwFirstConfigError(result.diagnostics, configPath);
-    throw new PlatformConfigError(configPath, 'invalid', 'Config reader returned no data or diagnostic.');
-  }
-
-  if (typeof result.data !== 'object' || result.data === null || Array.isArray(result.data)) {
-    throw new PlatformConfigError(configPath, 'invalid', 'Top-level configuration value must be an object.');
-  }
-
-  const data = result.data as Record<string, unknown> & {
-    platform?: PlatformConfig | string;
-    adapterOptions?: Partial<Record<string, unknown>>;
-  };
-  const platformSection = toPlatformSection(data);
-
-  return {
-    platformSection,
-    rawConfig: data,
-  };
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -449,7 +387,7 @@ async function loadPluginSettingsDefaults(
  *   3. Read the platform config from `<platformRoot>`.
  *   4. Read project settings and overlays from `$KB_HOME/state/<projectId>`.
  *      The consumer repository is not a configuration source.
- *   5. `effective = mergeDefined(platformDefaults ?? {}, projectConfig ?? {})`.
+ *   5. Effective settings merge objects recursively and let higher layers replace arrays.
  *
  * Missing config layers are valid and contribute no overrides. A present but
  * unreadable, malformed, or invalid file throws `PlatformConfigError`; callers
@@ -517,18 +455,21 @@ export async function loadPlatformConfig(
 
   // Project settings are platform-owned. Only platform-root config files are
   // read here; repository `.kb/kb.config.*` files are intentionally ignored.
-  const projectConfigPath = findConfigAtRoot(roots.platformRoot);
-  let projectPlatformConfig: PlatformConfig | undefined;
-  let rawProjectConfig: Record<string, unknown> | undefined;
-  let projectConfigSource: string | undefined;
-  let projectConfigData: Awaited<ReturnType<typeof readConfigFile>> | undefined;
-
-  if (projectConfigPath) {
-    projectConfigData = await readConfigFile(projectConfigPath);
-    projectPlatformConfig = projectConfigData.platformSection;
-    rawProjectConfig = projectConfigData.rawConfig;
-    projectConfigSource = projectConfigPath;
-  }
+  const projectConfigLayer = await loadPlatformUserLayerFiles(roots.platformRoot);
+  throwFirstConfigError(projectConfigLayer.diagnostics, roots.platformRoot);
+  const projectConfigPath = projectConfigLayer.paths.at(-1);
+  const projectConfigData = projectConfigLayer.paths.length > 0
+    ? {
+        platformSection: toPlatformSection(projectConfigLayer.data as Record<string, unknown> & {
+          platform?: PlatformConfig | string;
+          adapterOptions?: Partial<Record<string, unknown>>;
+        }),
+        rawConfig: projectConfigLayer.data,
+      }
+    : undefined;
+  let projectPlatformConfig = projectConfigData?.platformSection;
+  let rawProjectConfig = projectConfigData?.rawConfig;
+  let projectConfigSource = projectConfigPath;
 
   // Honor `platform.dir` only from platform-owned config.
   let platformDirOverride: string | undefined;
@@ -554,17 +495,17 @@ export async function loadPlatformConfig(
     }
   }
 
-  // Locate the platform config file AFTER honoring platform.dir.
-  const platformConfigPath = findConfigAtRoot(roots.platformRoot);
-  let platformDefaults: PlatformConfig | undefined;
-  let platformDefaultsSource: string | undefined;
-  let rawPlatformConfig: Record<string, unknown> | undefined;
-  let containerConfigOverlay: Record<string, unknown> = {};
+  // Read every candidate using the same order as the raw effective-config
+  // loader, then fold each source file exactly once in precedence order.
+  const platformUserLayer = await loadPlatformUserLayerFiles(roots.platformRoot);
+  const containerLayer = await loadPlatformContainerLayer(roots.platformRoot);
+  const generatedLayer = await loadGeneratedLayer([roots.platformRoot]);
+  throwFirstConfigError(platformUserLayer.diagnostics, roots.platformRoot);
+  throwFirstConfigError(containerLayer.diagnostics, roots.platformRoot);
+  throwFirstConfigError(generatedLayer.diagnostics, roots.platformRoot);
 
-  const samePath =
-    !!platformConfigPath &&
-    !!projectConfigPath &&
-    path.resolve(platformConfigPath) === path.resolve(projectConfigPath);
+  const samePath = projectConfigLayer.paths.some((projectPath) =>
+    platformUserLayer.paths.some((platformPath) => path.resolve(platformPath) === path.resolve(projectPath)));
 
   if (!samePath && (
       projectConfigData?.rawConfig?.adapters !== undefined ||
@@ -576,43 +517,29 @@ export async function loadPlatformConfig(
   }
 
   if (samePath && projectConfigData) {
-    // A development workspace's single config file is platform-owned.
-    platformDefaults = projectConfigData.platformSection;
-    rawPlatformConfig = projectConfigData.rawConfig;
-    platformDefaultsSource = projectConfigPath;
+    // A development workspace config is platform-owned. Its raw representation
+    // is still folded with generated and container files below.
     projectConfigSource = undefined;
     projectPlatformConfig = undefined;
-  } else if (platformConfigPath) {
-    const { platformSection, rawConfig } =
-      await readConfigFile(platformConfigPath);
-    platformDefaults = platformSection;
-    rawPlatformConfig = rawConfig;
-    platformDefaultsSource = platformConfigPath;
   }
 
-  // Container delivery can mount a topology-owned overlay without replacing
-  // the release image's baked composition. The standard config remains the
-  // base; this file is an explicit higher-precedence layer owned by the
-  // container composition producer (currently Helm).
-  const containerConfigOverlayPath = path.join(roots.platformRoot, '.kb', 'kb.config.override.json');
-  if (existsSync(containerConfigOverlayPath)) {
-    const { platformSection, rawConfig } = await readConfigFile(containerConfigOverlayPath);
-    platformDefaults = mergeDefined(platformDefaults ?? {}, platformSection ?? {});
-    containerConfigOverlay = rawConfig ?? {};
-  }
-
-  // Generated layer (ADR-0047): installer-written `.kb/generated/*.json|jsonc`
-  // is the lowest-precedence baseline, under BOTH user layers. It is folded
-  // into the platform defaults so every user value (platform or project) wins
-  // over it, and it is absent (no-op) for installs that do not generate config.
-  const generatedLayer = await loadGeneratedLayer([roots.platformRoot]);
-  throwFirstConfigError(generatedLayer.diagnostics, roots.platformRoot);
-  if (generatedLayer.files.length > 0) {
-    const generatedSection = toPlatformSection(generatedLayer.data);
-    if (generatedSection) {
-      platformDefaults = mergeDefined(generatedSection, platformDefaults ?? {});
+  const rawPlatformConfig = platformUserLayer.paths.length > 0 ? platformUserLayer.data : undefined;
+  const platformSourceFiles = [
+    ...generatedLayer.files,
+    ...platformUserLayer.files,
+    ...containerLayer.files,
+  ];
+  let platformDefaults: PlatformConfig | undefined;
+  for (const file of platformSourceFiles) {
+    const projected = toPlatformSection(file.data as Record<string, unknown> & {
+      platform?: PlatformConfig | string;
+      adapterOptions?: Partial<Record<string, unknown>>;
+    });
+    if (projected) {
+      platformDefaults = mergeOverlay(platformDefaults ?? {}, projected);
     }
   }
+  const platformDefaultsSource = platformSourceFiles.at(-1)?.path;
 
   // Policy-aware merge: platform-only fields reject project overrides;
   // mergeable fields deep-merge with project winning.
@@ -705,14 +632,14 @@ export async function loadPlatformConfig(
   // Effective full config applies defaults, generated config, the selected
   // base config, then the delivery overlay, project settings, and scenario
   // overlays. Keep the delivery layer independent of root layout.
-  let effectiveConfig: Record<string, unknown> = mergeOverlay(
-    defaultsData,
-    mergeOverlay(
-      generatedLayer.data,
-      rawProjectConfig ?? rawPlatformConfig ?? {},
-    ),
-  );
-  effectiveConfig = mergeOverlay(effectiveConfig, containerConfigOverlay);
+  let effectiveConfig = defaultsData;
+  for (const file of [
+    ...generatedLayer.files,
+    ...platformUserLayer.files,
+    ...containerLayer.files,
+  ]) {
+    effectiveConfig = mergeOverlay(effectiveConfig, file.data);
+  }
   if (projectId) {
     effectiveConfig = mergeOverlay(effectiveConfig, projectSettings);
   }
