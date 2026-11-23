@@ -41,12 +41,12 @@ export const USER_CONFIG_CANDIDATES = [
   'kb.config.json',
 ] as const;
 
-/** Read precedence for platform config. The `.kb` files override root templates. */
+/** Read order is low-to-high; the first existing writer target wins last. */
 export const PLATFORM_USER_CONFIG_CANDIDATES = [
-  'kb.config.jsonc',
   'kb.config.json',
-  path.join('.kb', 'kb.config.jsonc'),
+  'kb.config.jsonc',
   path.join('.kb', 'kb.config.json'),
+  path.join('.kb', 'kb.config.jsonc'),
 ] as const;
 
 /** Absolute path of the user config file `config set` writes for a root. */

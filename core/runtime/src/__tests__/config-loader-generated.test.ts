@@ -229,8 +229,38 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     })
     const raw = await loadEffectiveConfig({ platformRoot })
 
-    expect(structured.effectiveConfig?.extension).toEqual({ retained: true, order: ['json'] })
-    expect(raw?.data.extension).toEqual({ retained: true, order: ['json'] })
+    expect(structured.effectiveConfig?.extension).toEqual({ retained: true, order: ['jsonc'] })
+    expect(raw?.data.extension).toEqual({ retained: true, order: ['jsonc'] })
+  })
+
+  // case: S-316.2
+  it.each([
+    {
+      name: 'higher top-level options merge with generated nested platform options',
+      generated: { platform: { adapterOptions: { storage: { baseDir: 'generated' } } } },
+      user: { adapterOptions: { cache: { namespace: 'operator' } } },
+      expected: { storage: { baseDir: 'generated' }, cache: { namespace: 'operator' } },
+    },
+    {
+      name: 'higher nested platform options merge with generated top-level options',
+      generated: { adapterOptions: { cache: { namespace: 'generated' } } },
+      user: { platform: { adapterOptions: { storage: { baseDir: 'operator' } } } },
+      expected: { cache: { namespace: 'generated' }, storage: { baseDir: 'operator' } },
+    },
+  ])('merges projected adapter options from each source file: $name', async ({ generated, user, expected }) => {
+    const platformRoot = path.join(tmpDir, `adapter-option-projection-${expected.storage ? 'nested' : 'top'}`)
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', generated)
+    write(platformRoot, '.kb/kb.config.jsonc', user)
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+
+    expect(structured.platformConfig.adapterOptions).toMatchObject(expected)
   })
 
   // case: S-316.2

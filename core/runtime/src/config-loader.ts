@@ -530,15 +530,17 @@ export async function loadPlatformConfig(
     ...containerLayer.files,
   ];
   let rawPlatformDefaults: Record<string, unknown> = {};
+  let platformDefaults: PlatformConfig | undefined;
   for (const file of platformSourceFiles) {
     rawPlatformDefaults = mergeOverlay(rawPlatformDefaults, file.data);
+    const projected = toPlatformSection(file.data as Record<string, unknown> & {
+      platform?: PlatformConfig | string;
+      adapterOptions?: Partial<Record<string, unknown>>;
+    });
+    if (projected) {
+      platformDefaults = mergeOverlay(platformDefaults ?? {}, projected);
+    }
   }
-  const platformDefaults = platformSourceFiles.length > 0
-    ? toPlatformSection(rawPlatformDefaults as Record<string, unknown> & {
-        platform?: PlatformConfig | string;
-        adapterOptions?: Partial<Record<string, unknown>>;
-      })
-    : undefined;
   const platformDefaultsSource = platformSourceFiles.at(-1)?.path;
 
   // Policy-aware merge: platform-only fields reject project overrides;
