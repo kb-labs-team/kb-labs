@@ -113,6 +113,8 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-314](scenarios/S-314-case-evidence-inventory.md) | QA — inspect case evidence and runtime matrix gaps | developer | P1 | active | false | [local] | [cli] | — |
 | [S-315](scenarios/S-315-case-step-evidence-envelope.md) | QA release coverage links each result to its evidence | platform-team | P1 | active | false | [local] | [cli] | — |
 | [S-316](scenarios/S-316-platform-config-ownership-durability.md) | Platform config keeps generated and user ownership across updates | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
+| [S-317](scenarios/S-317-service-startup-failure-diagnostics.md) | S-317 — Diagnose a service that fails before startup completes | solo-developer | P1 | planned | true | [local] | [cli] | — |
+| [S-318](scenarios/S-318-platform-rollback-rebuilds-extension-graph.md) | Platform — rollback rebuilds the Marketplace extension graph | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.

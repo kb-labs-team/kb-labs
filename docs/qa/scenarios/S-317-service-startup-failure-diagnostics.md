@@ -4,7 +4,7 @@ title: S-317 — Diagnose a service that fails before startup completes
 persona: solo-developer
 area: platform
 priority: P1
-status: active
+status: planned
 release: true
 modes: [local]
 surfaces: [cli]
