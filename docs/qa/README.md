@@ -9,6 +9,8 @@
 3. **Run:** execute the relevant journey or test suite and retain its result JSON. A claim alone does not prove a step passed.
 4. **Coverage:** use `kb qa cases` to compare the catalog, claims, and run results. Steps report PASS, FAIL, NOT RUN, or NOT COVERED; a case passes only when every step passes. Unknown case or step IDs are errors.
 
+Use `kb qa cases inventory --json` to review the current obligation and claim map before planning matrix work. It reports case-step metadata and source-backed claim owners, then marks profile dimensions that the current case schema does not declare. The Release 1 inventory policy requires local runs on macOS and Linux; secured runs are supplemental and non-gating. In-process, subprocess, and worker-pool execution models are included only where a step is relevant to them. The inventory intentionally does not infer OS/runtime/backend coverage, request or config provenance, candidate identity, or run results from a source claim. Those remain explicit gaps until declared and linked to run evidence.
+
 A test claim records its kind (`journey`, `e2e`, or `unit`). A unit claim cannot satisfy a user-flow step in a release case. Release readiness applies to cases with `status: active` and `release: true` for each listed mode. `historical` cases are retained as design records and are not release-gated.
 
 The decisions that bound the catalog (release scope, roles, adapter defaults, scheduling) are logged in [`docs/product/decisions.md`](../product/decisions.md). The step-by-step procedure for agents is the `intent-flow` skill.
@@ -106,6 +108,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-284](scenarios/S-284-local-candidate-registry-delivery.md) | Deliver and install immutable candidates from a local registry | platform-team | P0 | planned | false | [local] | [cli] | — |
 | [S-298](scenarios/S-298-node24-marketplace-install-with-corepack.md) | Marketplace plugin install without standalone pnpm | solo-developer | P0 | active | true | [local] | [cli] | — |
 | [S-311](scenarios/S-311-marketplace-installed-tarball-local-runtime.md) | Marketplace-installed plugin tarball executes in a local project runtime | solo-developer | P1 | active | false | [local] | [api] | — |
+| [S-313](scenarios/S-313-case-evidence-inventory.md) | QA — inspect case evidence and runtime matrix gaps | developer | P1 | active | false | [local] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
