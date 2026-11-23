@@ -1100,7 +1100,8 @@ class MarketplaceStepTests(unittest.TestCase):
                     return subprocess.CompletedProcess(command, 0, json.dumps({
                         "ok": True, "data": {
                             "authenticated": False,
-                            "sessions": [{"authenticated": session_saved}],
+                            "sessions": [{"authenticated": False, "gatewayUrl": "https://other.test"},
+                                         {"authenticated": session_saved, "gatewayUrl": "http://127.0.0.1:4317"}],
                         },
                     }), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
