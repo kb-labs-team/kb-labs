@@ -3,6 +3,9 @@ export type QACaseStatus = 'active' | 'planned' | 'draft' | 'historical';
 export type QACaseMode = 'local' | 'secured';
 export type QACaseSurface = 'cli' | 'studio' | 'api' | 'agent';
 export type QACaseClaimKind = 'journey' | 'e2e' | 'unit';
+export function isQACaseClaimKind(value: unknown): value is QACaseClaimKind {
+  return value === 'journey' || value === 'e2e' || value === 'unit';
+}
 export type QACaseStepResult = 'PASS' | 'FAIL' | 'NOT RUN' | 'NOT COVERED';
 
 export interface QACaseStep {
@@ -58,9 +61,37 @@ export interface QACaseEvidenceRunResult {
     kind: QACaseClaimKind;
     status: 'PASS' | 'FAIL';
     configRef?: string;
+    configDigest?: string;
+    /** Set by the CLI after the referenced file passes digest verification. */
+    configVerified?: boolean;
     logRef?: string;
+    logDigest?: string;
+    /** Set by the CLI after the referenced file passes digest verification. */
+    logVerified?: boolean;
   }>;
 }
+
+export interface QACaseEvidencePlan {
+  schema: 'kb.qa-evidence-plan/v1';
+  mode: QACaseMode;
+  candidateId: string;
+  profile: Record<string, string>;
+}
+
+export const QA_CASE_EVIDENCE_PLAN_SCHEMA = {
+  $schema: 'https://json-schema.org/draft/2020-12/schema',
+  $id: 'https://kb-labs.dev/schemas/qa-evidence-plan-v1.json',
+  title: 'KB Labs expected QA evidence plan',
+  type: 'object',
+  required: ['schema', 'mode', 'candidateId', 'profile'],
+  properties: {
+    schema: { const: 'kb.qa-evidence-plan/v1' },
+    mode: { enum: ['local', 'secured'] },
+    candidateId: { type: 'string', minLength: 1 },
+    profile: { type: 'object', minProperties: 1, additionalProperties: { type: 'string', minLength: 1 } },
+  },
+  additionalProperties: false,
+} as const;
 
 export const QA_CASE_EVIDENCE_RUN_JSON_SCHEMA = {
   $schema: 'https://json-schema.org/draft/2020-12/schema',
@@ -84,7 +115,9 @@ export const QA_CASE_EVIDENCE_RUN_JSON_SCHEMA = {
           kind: { enum: ['journey', 'e2e', 'unit'] },
           status: { enum: ['PASS', 'FAIL'] },
           configRef: { type: 'string', minLength: 1 },
+          configDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
           logRef: { type: 'string', minLength: 1 },
+          logDigest: { type: 'string', pattern: '^[a-f0-9]{64}$' },
         },
         additionalProperties: false,
       },
@@ -129,10 +162,11 @@ export interface QACaseEvidenceCoverage {
     reason?: string;
     steps: Array<QACaseStepCoverage & {
       evidenceStatus: QACaseEvidenceStatus;
-      candidateId?: string;
-      profile?: Record<string, string>;
-      configRef?: string;
-      logRef?: string;
+      expectedCandidateId?: string;
+      observedCandidateIds: string[];
+      expectedProfile?: Record<string, string>;
+      configRefs: string[];
+      logRefs: string[];
     }>;
   }>;
   releasePassed: boolean;
@@ -173,10 +207,11 @@ export const QA_CASE_EVIDENCE_COVERAGE_JSON_SCHEMA = {
                 status: { enum: ['PASS', 'FAIL', 'NOT RUN', 'NOT COVERED'] },
                 evidenceStatus: { enum: ['COMPLETE', 'INCOMPLETE'] },
                 reason: { type: 'string' },
-                candidateId: { type: 'string' },
-                profile: { type: 'object', additionalProperties: { type: 'string' } },
-                configRef: { type: 'string' },
-                logRef: { type: 'string' },
+                expectedCandidateId: { type: 'string' },
+                observedCandidateIds: { type: 'array', items: { type: 'string' } },
+                expectedProfile: { type: 'object', additionalProperties: { type: 'string' } },
+                configRefs: { type: 'array', items: { type: 'string' } },
+                logRefs: { type: 'array', items: { type: 'string' } },
                 claims: { type: 'array' },
               },
               additionalProperties: false,

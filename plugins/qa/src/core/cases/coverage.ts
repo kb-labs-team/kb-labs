@@ -1,4 +1,4 @@
-import type { QACase, QACaseClaim, QACaseCoverage, QACaseEvidenceCoverage, QACaseEvidenceRunResult, QACaseMode, QACaseRunResult, QACaseStepResult } from '../../contracts/index.js';
+import type { QACase, QACaseClaim, QACaseCoverage, QACaseEvidenceCoverage, QACaseEvidencePlan, QACaseEvidenceRunResult, QACaseMode, QACaseRunResult, QACaseStepResult } from '../../contracts/index.js';
 
 export function computeQACaseCoverage(
   cases: QACase[],
@@ -60,6 +60,7 @@ export function computeQACaseEvidenceCoverage(
   claims: QACaseClaim[],
   runs: QACaseEvidenceRunResult[],
   mode: QACaseMode,
+  expectedPlan?: QACaseEvidencePlan,
 ): QACaseEvidenceCoverage {
   const legacy = computeQACaseCoverage(cases, claims, runs.map(run => ({
     schema: 'kb.qa-case-run/v2' as const,
@@ -68,25 +69,33 @@ export function computeQACaseEvidenceCoverage(
     claims: run.claims.map(({ claimId, kind, status }) => ({ claimId, kind, status })),
   })), mode);
   const matchingRuns = runs.filter(run => run.mode === mode);
-  const candidates = new Set(matchingRuns.map(run => run.candidateId).filter((value): value is string => Boolean(value)));
-  const profiles = new Set(matchingRuns.map(run => JSON.stringify(Object.entries(run.profile ?? {}).sort(([a], [b]) => a.localeCompare(b)))));
-  const identityMatches = candidates.size <= 1 && profiles.size <= 1;
+  const profileKey = (profile: Record<string, string> | undefined): string => JSON.stringify(Object.entries(profile ?? {}).sort(([a], [b]) => a.localeCompare(b)));
+  const identityMatches = Boolean(expectedPlan && expectedPlan.mode === mode && matchingRuns.length > 0
+    && matchingRuns.every(run => run.candidateId === expectedPlan.candidateId && profileKey(run.profile) === profileKey(expectedPlan.profile)));
   const coverageCases = legacy.cases.map(testCase => ({
     ...testCase,
     steps: testCase.steps.map(step => {
-      const result = matchingRuns.flatMap(run => run.claims
-        .filter(claim => claim.claimId === step.stepId && (!testCase.release || claim.kind !== 'unit'))
-        .map(claim => ({ claim, candidateId: run.candidateId, profile: run.profile })))[0];
-      const evidenceComplete = Boolean(result?.candidateId && result.profile && Object.keys(result.profile).length > 0
-        && result.claim.configRef && result.claim.logRef && identityMatches);
+      const stepResults = matchingRuns.flatMap(run => run.claims
+        .filter(claim => claim.claimId === step.stepId)
+        .map(claim => ({ claim, candidateId: run.candidateId })));
+      const evidenceResults = step.status === 'FAIL'
+        ? stepResults.filter(result => result.claim.status === 'FAIL')
+        : step.status === 'PASS'
+          ? stepResults.filter(result => result.claim.status === 'PASS' && (!testCase.release || result.claim.kind !== 'unit'))
+          : [];
+      const evidenceComplete = Boolean(identityMatches && evidenceResults.length > 0 && evidenceResults.every(result =>
+        result.claim.configVerified === true && result.claim.logVerified === true));
+      const configRefs = [...new Set(evidenceResults.flatMap(result => result.claim.configVerified && result.claim.configRef ? [result.claim.configRef] : []))];
+      const logRefs = [...new Set(evidenceResults.flatMap(result => result.claim.logVerified && result.claim.logRef ? [result.claim.logRef] : []))];
+      const observedCandidateIds = [...new Set(stepResults.map(result => result.candidateId).filter((value): value is string => Boolean(value)))];
       return {
         ...step,
         evidenceStatus: evidenceComplete ? 'COMPLETE' as const : 'INCOMPLETE' as const,
-        ...(result?.candidateId ? { candidateId: result.candidateId } : {}),
-        ...(result?.profile ? { profile: result.profile } : {}),
-        ...(result?.claim.configRef ? { configRef: result.claim.configRef } : {}),
-        ...(result?.claim.logRef ? { logRef: result.claim.logRef } : {}),
-        ...(!evidenceComplete ? { reason: [step.reason, !identityMatches ? 'Evidence records use mismatched candidate or profile identities.' : undefined, 'Required candidate, profile, config, or log evidence is missing.'].filter(Boolean).join(' ') } : {}),
+        ...(expectedPlan ? { expectedCandidateId: expectedPlan.candidateId, expectedProfile: expectedPlan.profile } : {}),
+        observedCandidateIds,
+        configRefs,
+        logRefs,
+        ...(!evidenceComplete ? { reason: [step.reason, !expectedPlan ? 'Independent expected evidence plan is missing.' : undefined, !identityMatches ? 'Evidence records do not match the independent candidate and profile plan.' : undefined, 'Required verified config and log artifacts are missing.'].filter(Boolean).join(' ') } : {}),
       };
     }),
   }));

@@ -1,10 +1,14 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createReadStream, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { defineCommand, useConfig, type CLIInput, type CommandResult, type PluginCommandContextV3 } from '@kb-labs/sdk';
 import { computeQACaseCoverage, computeQACaseEvidenceCoverage, parseQACatalog, scanQACaseClaims } from '../../core/index.js';
 import {
   QA_CASE_EVIDENCE_RUN_SCHEMA,
+  type QACaseEvidencePlan,
+  QA_CASE_EVIDENCE_PLAN_SCHEMA,
   QA_CASE_RUN_SCHEMA,
+  isQACaseClaimKind,
   type QACaseClaimKind,
   type QACaseMode,
   type QACaseRunResult,
@@ -27,7 +31,7 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
     if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new Error(`claims[${index}] must be an object`);
     const claim = item as Record<string, unknown>;
     if (typeof claim.claimId !== 'string' || !knownSteps.has(claim.claimId)) throw new Error(`claims[${index}] references unknown case step ${String(claim.claimId)}`);
-    if (!['journey', 'e2e', 'unit'].includes(String(claim.kind))) throw new Error(`claims[${index}].kind must be journey, e2e, or unit`);
+    if (!isQACaseClaimKind(claim.kind)) throw new Error(`claims[${index}].kind must be journey, e2e, or unit`);
     if (!declaredClaims.has(`${claim.claimId}:${String(claim.kind)}`)) throw new Error(`claims[${index}] has no matching ${String(claim.kind)} test claim in source`);
     if (claim.status !== 'PASS' && claim.status !== 'FAIL') throw new Error(`claims[${index}].status must be PASS or FAIL`);
     const status: QACaseRunResult['claims'][number]['status'] = claim.status;
@@ -36,7 +40,30 @@ function parseRunResult(value: unknown, knownSteps: Set<string>, declaredClaims:
   return { schema: QA_CASE_RUN_SCHEMA, runId: record.runId, mode: record.mode, claims };
 }
 
-function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declaredClaims: Set<string>): QACaseEvidenceRunResult {
+async function verifyEvidenceArtifact(baseDirectory: string, reference: string | undefined, digest: string | undefined): Promise<boolean> {
+  if (!reference || !digest || isAbsolute(reference)) return false;
+  try {
+    const base = realpathSync(baseDirectory);
+    const resolved = resolve(base, reference);
+    const pathFromBase = relative(base, resolved);
+    if (!pathFromBase || pathFromBase === '..' || pathFromBase.startsWith(`..${sep}`) || isAbsolute(pathFromBase)) return false;
+    const actual = realpathSync(resolved);
+    const actualFromBase = relative(base, actual);
+    if (actualFromBase === '..' || actualFromBase.startsWith(`..${sep}`) || isAbsolute(actualFromBase) || !statSync(actual).isFile()) return false;
+    const hash = createHash('sha256');
+    await new Promise<void>((resolveHash, rejectHash) => {
+      const stream = createReadStream(actual);
+      stream.on('data', chunk => hash.update(chunk));
+      stream.on('error', rejectHash);
+      stream.on('end', resolveHash);
+    });
+    return hash.digest('hex') === digest.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+async function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declaredClaims: Set<string>, artifactDirectory: string): Promise<QACaseEvidenceRunResult> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('result must be an object');
   const record = value as Record<string, unknown>;
   const allowedFields = new Set(['schema', 'runId', 'mode', 'candidateId', 'profile', 'claims']);
@@ -54,24 +81,31 @@ function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declare
     && Object.values(record.profile).every(value => typeof value === 'string')
     ? record.profile as Record<string, string>
     : undefined;
-  const claims = record.claims.map((item, index) => {
+  const claims = await Promise.all(record.claims.map(async (item, index) => {
     if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new Error(`claims[${index}] must be an object`);
     const claim = item as Record<string, unknown>;
-    const claimFields = new Set(['claimId', 'kind', 'status', 'configRef', 'logRef']);
+    const claimFields = new Set(['claimId', 'kind', 'status', 'configRef', 'configDigest', 'logRef', 'logDigest']);
     for (const field of Object.keys(claim)) if (!claimFields.has(field)) throw new Error(`claims[${index}] has unexpected field ${field}`);
     if (typeof claim.claimId !== 'string' || !knownSteps.has(claim.claimId)) throw new Error(`claims[${index}] references unknown case step ${String(claim.claimId)}`);
-    if (!['journey', 'e2e', 'unit'].includes(String(claim.kind))) throw new Error(`claims[${index}].kind must be journey, e2e, or unit`);
+    if (!isQACaseClaimKind(claim.kind)) throw new Error(`claims[${index}].kind must be journey, e2e, or unit`);
     if (!declaredClaims.has(`${claim.claimId}:${String(claim.kind)}`)) throw new Error(`claims[${index}] has no matching ${String(claim.kind)} test claim in source`);
     if (claim.status !== 'PASS' && claim.status !== 'FAIL') throw new Error(`claims[${index}].status must be PASS or FAIL`);
     for (const field of ['configRef', 'logRef']) if (claim[field] !== undefined && (typeof claim[field] !== 'string' || !claim[field].trim())) throw new Error(`claims[${index}].${field} must be a non-empty string`);
+    for (const field of ['configDigest', 'logDigest']) if (claim[field] !== undefined && (typeof claim[field] !== 'string' || !claim[field].trim())) throw new Error(`claims[${index}].${field} must be a non-empty string`);
+    const configRef = typeof claim.configRef === 'string' ? claim.configRef : undefined;
+    const configDigest = typeof claim.configDigest === 'string' ? claim.configDigest : undefined;
+    const logRef = typeof claim.logRef === 'string' ? claim.logRef : undefined;
+    const logDigest = typeof claim.logDigest === 'string' ? claim.logDigest : undefined;
     return {
       claimId: claim.claimId,
       kind: claim.kind as QACaseClaimKind,
       status: claim.status as 'PASS' | 'FAIL',
-      ...(typeof claim.configRef === 'string' ? { configRef: claim.configRef } : {}),
-      ...(typeof claim.logRef === 'string' ? { logRef: claim.logRef } : {}),
+      ...(configRef ? { configRef, configVerified: await verifyEvidenceArtifact(artifactDirectory, configRef, configDigest) } : { configVerified: false }),
+      ...(configDigest ? { configDigest } : {}),
+      ...(logRef ? { logRef, logVerified: await verifyEvidenceArtifact(artifactDirectory, logRef, logDigest) } : { logVerified: false }),
+      ...(logDigest ? { logDigest } : {}),
     };
-  });
+  }));
   return {
     schema: QA_CASE_EVIDENCE_RUN_SCHEMA,
     runId: record.runId,
@@ -80,6 +114,21 @@ function parseEvidenceRunResult(value: unknown, knownSteps: Set<string>, declare
     ...(profile ? { profile } : {}),
     claims,
   };
+}
+
+function parseEvidencePlan(value: unknown): QACaseEvidencePlan {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('plan must be an object');
+  const plan = value as Record<string, unknown>;
+  const fields = new Set(['schema', 'mode', 'candidateId', 'profile']);
+  for (const field of Object.keys(plan)) if (!fields.has(field)) throw new Error(`unexpected plan field ${field}`);
+  if (plan.schema !== 'kb.qa-evidence-plan/v1') throw new Error(`schema must be ${QA_CASE_EVIDENCE_PLAN_SCHEMA.$id}`);
+  if (plan.mode !== 'local' && plan.mode !== 'secured') throw new Error('plan mode must be local or secured');
+  if (typeof plan.candidateId !== 'string' || !plan.candidateId.trim()) throw new Error('plan candidateId must be a non-empty string');
+  if (typeof plan.profile !== 'object' || plan.profile === null || Array.isArray(plan.profile)
+    || Object.keys(plan.profile).length === 0 || !Object.values(plan.profile).every(value => typeof value === 'string' && value.trim())) {
+    throw new Error('plan profile must be a non-empty object of non-empty strings');
+  }
+  return { schema: 'kb.qa-evidence-plan/v1', mode: plan.mode, candidateId: plan.candidateId, profile: plan.profile as Record<string, string> };
 }
 
 export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
@@ -95,6 +144,17 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
     const level = input.flags.level ?? 'all';
     if (mode !== 'local' && mode !== 'secured') diagnostics.push({ file: '<arguments>', line: 1, message: '--mode must be local or secured' });
     if (level !== 'all' && level !== 'release') diagnostics.push({ file: '<arguments>', line: 1, message: '--level must be all or release' });
+    let evidencePlan: QACaseEvidencePlan | undefined;
+    if (input.flags.evidence && input.flags['evidence-plan']) {
+      try {
+        const planPath = resolve(cwd, input.flags['evidence-plan']);
+        const parsed: unknown = JSON.parse(readFileSync(planPath, 'utf8'));
+        evidencePlan = parseEvidencePlan(parsed);
+        if (evidencePlan.mode !== mode) evidencePlan = undefined;
+      } catch (error) {
+        diagnostics.push({ file: input.flags['evidence-plan'], line: 1, message: `cannot read evidence plan: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    }
     let runs: QACaseRunResult[] = [];
     let evidenceRuns: QACaseEvidenceRunResult[] = [];
     for (const path of (input.flags.run ?? '').split(',').filter(Boolean)) {
@@ -103,7 +163,7 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
         const candidate = typeof value === 'object' && value !== null && !Array.isArray(value) && 'case_run' in value ? value.case_run : value;
         const knownSteps = new Set(catalog.cases.flatMap(item => item.steps.map(step => step.id)));
         const declaredClaims = new Set(scanned.claims.map(claim => `${claim.stepId}:${claim.kind}`));
-        if (input.flags.evidence) evidenceRuns.push(parseEvidenceRunResult(candidate, knownSteps, declaredClaims));
+        if (input.flags.evidence) evidenceRuns.push(await parseEvidenceRunResult(candidate, knownSteps, declaredClaims, dirname(resolve(cwd, path))));
         else runs.push(parseRunResult(candidate, knownSteps, declaredClaims));
       } catch (error) {
         diagnostics.push({ file: path, line: 1, message: `cannot read case run result: ${error instanceof Error ? error.message : String(error)}` });
@@ -115,7 +175,7 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
       return { ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID', message: 'QA case coverage input is invalid', hint: 'Fix the listed case coverage inputs, then rerun `kb qa coverage show`.', diagnostics: diagnostics.map((item) => ({ code: 'KB_QA_CASE_COVERAGE_INPUT_INVALID', severity: 'error', path: item.file, message: item.message })) } };
     }
     const coverage = input.flags.evidence
-      ? computeQACaseEvidenceCoverage(catalog.cases, scanned.claims, evidenceRuns, mode as QACaseMode)
+      ? computeQACaseEvidenceCoverage(catalog.cases, scanned.claims, evidenceRuns, mode as QACaseMode, evidencePlan)
       : computeQACaseCoverage(catalog.cases, scanned.claims, runs, mode as QACaseMode);
     const ok = level === 'all' || coverage.releasePassed;
     if (!input.flags.json) {
@@ -130,13 +190,18 @@ export default defineCommand<unknown, CLIInput<QaCasesCoverageFlags>, unknown>({
         code: 'KB_RUNTIME_COMMAND_FAILED',
         message: `Release cases are not passing for ${mode}; rerun with completed results using \`kb qa coverage show --level release --mode ${mode} --run <results.json>\``,
         hint: `Run \`kb qa coverage show --level release --mode ${mode} --run <results.json>\` after completing the release case steps.`,
-        diagnostics: coverage.cases
-          .filter((item) => item.statusResult !== 'PASS' && item.statusResult !== 'NOT REQUIRED')
-          .map((item) => ({
-            code: 'KB_QA_CASE_COVERAGE_INCOMPLETE',
-            severity: 'error',
-            path: item.id,
-            message: `Case ${item.id} is ${item.statusResult}.`,
+        diagnostics: coverage.cases.flatMap(item => item.steps
+          .filter(step => step.status !== 'PASS' || ('evidenceStatus' in step && step.evidenceStatus !== 'COMPLETE'))
+          .map(step => {
+            const observedCandidates = 'observedCandidateIds' in step && Array.isArray(step.observedCandidateIds) ? step.observedCandidateIds.join(',') : '';
+            const configRefs = 'configRefs' in step && Array.isArray(step.configRefs) ? step.configRefs.join(',') : '';
+            const logRefs = 'logRefs' in step && Array.isArray(step.logRefs) ? step.logRefs.join(',') : '';
+            return {
+              code: step.status === 'FAIL' ? 'KB_QA_CASE_BEHAVIOR_FAILED' : 'KB_QA_CASE_EVIDENCE_INCOMPLETE',
+              severity: 'error',
+              path: step.stepId,
+              message: `${step.stepId}: result=${step.status}${'evidenceStatus' in step ? `, evidence=${step.evidenceStatus}` : ''}${'expectedCandidateId' in step && step.expectedCandidateId ? `, expectedCandidate=${step.expectedCandidateId}` : ''}${observedCandidates ? `, observedCandidates=${observedCandidates}` : ''}${configRefs ? `, config=${configRefs}` : ''}${logRefs ? `, logs=${logRefs}` : ''}${step.reason ? `; ${step.reason}` : ''}`,
+            };
           })),
       },
     };
