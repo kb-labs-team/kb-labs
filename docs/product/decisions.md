@@ -8,9 +8,10 @@ Fresh Release 1 installs keep `marketplace.sources` on its existing npm default
 and configure the public signed Registry independently as
 `marketplace.catalogRegistry`. Studio catalog selections install through that
 trusted Registry source only; ordinary Marketplace installs continue to use
-the configured generic source order. Registry installs record their source URL
-in the lock, and updates fail with a typed configuration error if that origin
-is no longer configured. This supersedes the Registry rollout portion of the
+the configured generic source order. Registry installs record their source
+channel, URL, and signing key fingerprint in the lock. Updates fail with a
+typed configuration error if that provenance changes, and remain pinned to the
+same canonical Registry identity. This supersedes the Registry rollout portion of the
 2026-10-23 Marketplace default decision without changing its generic source
 compatibility rule. Case: S-323.
 

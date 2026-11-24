@@ -33,6 +33,9 @@ type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources' |
   catalogRegistrySource?: PackageSource;
   catalogRegistryUrl?: string;
   catalogRegistryResolution?: MarketplaceSource['resolveIdentity'];
+  catalogRegistryKey?: string;
+  orderedRegistryUrl?: string;
+  orderedRegistryKey?: string;
   resolveSelectedAdapterSlot?: MarketplaceServiceOptions['resolveSelectedAdapterSlot'];
 };
 
@@ -63,9 +66,17 @@ function makeMarketplaceService(options: TestServiceOptions): MarketplaceService
     ...(options.registrySource ? [asMarketplaceSource(options.registrySource, 'registry')] : []),
     ...(options.source ? [asMarketplaceSource(options.source, 'npm')] : []),
   ];
+  for (const source of sources) {
+    if (source.kind !== 'registry') {continue;}
+    if (options.orderedRegistryUrl) {source.registrySourceUrl = options.orderedRegistryUrl;}
+    if (options.orderedRegistryKey) {source.verificationKey = options.orderedRegistryKey;}
+  }
   const catalogRegistrySource = options.catalogRegistrySource
     ? asMarketplaceSource(options.catalogRegistrySource, 'registry')
     : undefined;
+  if (catalogRegistrySource && options.catalogRegistryKey) {
+    catalogRegistrySource.verificationKey = options.catalogRegistryKey;
+  }
   if (catalogRegistrySource && options.catalogRegistryResolution) {
     catalogRegistrySource.resolveIdentity = options.catalogRegistryResolution;
   }
@@ -254,6 +265,8 @@ describe('MarketplaceService', () => {
           package: packageName,
           marketplaceSource: 'registry',
           marketplaceSourceUrl: 'https://production-registry.example/api/v1/marketplace-registry',
+          marketplaceSourceChannel: 'catalog',
+          marketplaceSourceKeyFingerprint: crypto.createHash('sha256').update(marketplaceServiceTestKeys.publicKey.export({ type: 'spki', format: 'der' })).digest('hex'),
           version: '1.2.3',
         },
       },
@@ -300,9 +313,11 @@ describe('MarketplaceService', () => {
     const packageBeforeUpdate = await fs.readFile(path.join(packageDir.dir, 'package.json'), 'utf8');
 
     const replacementRegistrySource = makeRegistrySource();
+    const replacementOrderedRegistrySource = makeRegistrySource();
     const replacementService = makeMarketplaceService({
       platformRoot: tmpDir,
-      sources: [asMarketplaceSource(npmSource, 'npm')],
+      sources: [asMarketplaceSource(npmSource, 'npm'), asMarketplaceSource(replacementOrderedRegistrySource, 'registry')],
+      orderedRegistryUrl: 'https://registry-a.example/api/v1/marketplace-registry',
       catalogRegistrySource: replacementRegistrySource,
       catalogRegistryUrl: 'https://registry-b.example/api/v1/marketplace-registry',
     });
@@ -310,9 +325,96 @@ describe('MarketplaceService', () => {
       .rejects.toMatchObject({ envelope: { code: 'KB_CONFIG_INVALID' } });
 
     expect(replacementRegistrySource.resolve).not.toHaveBeenCalled();
+    expect(replacementOrderedRegistrySource.resolve).not.toHaveBeenCalled();
     expect(npmSource.resolve).not.toHaveBeenCalled();
     expect(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')).toBe(lockBeforeUpdate);
     expect(await fs.readFile(path.join(packageDir.dir, 'package.json'), 'utf8')).toBe(packageBeforeUpdate);
+  });
+
+  // case: S-323.4
+  it('refuses catalog updates after a signing key change even when an ordered Registry shares the URL', async () => {
+    const projectRoot = path.join(tmpDir, 'catalog-update-key-project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    const packageId = '@kb-labs/catalog-key-plugin';
+    const packageDir = await createPluginDir(projectRoot, 'catalog-key-plugin', packageId, '1.0.0');
+    const makeRegistrySource = (): PackageSource => ({
+      resolve: vi.fn(async () => ({
+        id: packageId,
+        canonicalIdentity: packageId,
+        version: '1.0.0',
+        integrity: packageDir.integrity,
+        source: 'marketplace' as const,
+        primaryKind: 'plugin' as const,
+      })),
+      install: vi.fn(async () => ({ id: packageId, version: '1.0.0', packageRoot: packageDir.dir, integrity: packageDir.integrity })),
+      async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+    });
+    const registryUrl = 'https://shared-registry.example/api/v1/marketplace-registry';
+    const originalCatalogSource = makeRegistrySource();
+    const firstService = makeMarketplaceService({
+      platformRoot: tmpDir,
+      catalogRegistrySource: originalCatalogSource,
+      catalogRegistryUrl: registryUrl,
+    });
+    await firstService.installRegistryPlugin({ scope: 'project', projectRoot }, packageId);
+    const lockBeforeUpdate = await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8');
+    const alternateKeys = crypto.generateKeyPairSync('ed25519');
+    const alternatePublicKey = alternateKeys.publicKey.export({ type: 'spki', format: 'pem' }).toString();
+    const changedCatalogSource = makeRegistrySource();
+    const orderedSource = makeRegistrySource();
+    const replacementService = makeMarketplaceService({
+      platformRoot: tmpDir,
+      sources: [asMarketplaceSource(orderedSource, 'registry')],
+      orderedRegistryUrl: registryUrl,
+      catalogRegistrySource: changedCatalogSource,
+      catalogRegistryUrl: registryUrl,
+      catalogRegistryKey: alternatePublicKey,
+    });
+
+    await expect(replacementService.update({ scope: 'project', projectRoot }, [packageId]))
+      .rejects.toMatchObject({ envelope: { code: 'KB_CONFIG_INVALID' } });
+    expect(changedCatalogSource.resolve).not.toHaveBeenCalled();
+    expect(orderedSource.resolve).not.toHaveBeenCalled();
+    expect(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')).toBe(lockBeforeUpdate);
+  });
+
+  // case: S-323.4
+  it('rejects a Registry update that resolves to another canonical identity', async () => {
+    const projectRoot = path.join(tmpDir, 'catalog-update-identity-project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    const packageId = '@kb-labs/catalog-pinned-plugin';
+    const packageDir = await createPluginDir(projectRoot, 'catalog-pinned-plugin', packageId, '1.0.0');
+    const makeRegistrySource = (canonicalIdentity: string, version: string): PackageSource => ({
+      resolve: vi.fn(async () => ({
+        id: packageId,
+        canonicalIdentity,
+        version,
+        integrity: packageDir.integrity,
+        source: 'marketplace' as const,
+        primaryKind: 'plugin' as const,
+      })),
+      install: vi.fn(async () => ({ id: packageId, version, packageRoot: packageDir.dir, integrity: packageDir.integrity })),
+      async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+    });
+    const originalSource = makeRegistrySource(packageId, '1.0.0');
+    const firstService = makeMarketplaceService({
+      platformRoot: tmpDir,
+      catalogRegistrySource: originalSource,
+      catalogRegistryUrl: 'https://identity-registry.example/api/v1/marketplace-registry',
+    });
+    await firstService.installRegistryPlugin({ scope: 'project', projectRoot }, packageId);
+    const lockBeforeUpdate = await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8');
+    const replacementSource = makeRegistrySource('@kb-labs/replacement-plugin', '2.0.0');
+    const replacementService = makeMarketplaceService({
+      platformRoot: tmpDir,
+      catalogRegistrySource: replacementSource,
+      catalogRegistryUrl: 'https://identity-registry.example/api/v1/marketplace-registry',
+    });
+
+    await expect(replacementService.update({ scope: 'project', projectRoot }, [packageId]))
+      .rejects.toThrow(/pinned identity/);
+    expect(replacementSource.install).not.toHaveBeenCalled();
+    expect(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')).toBe(lockBeforeUpdate);
   });
 
   // case: S-323.2

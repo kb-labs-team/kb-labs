@@ -233,30 +233,55 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   }
 
   private registryUpdateSource(packageId: string, entry: Extract<MarketplaceLockEntry, { source: 'marketplace' }>): MarketplaceSource {
-    const sources = this.registryInstallSources().filter(source => source.kind === 'registry');
+    const genericSources = this.sources.filter(source => source.kind === 'registry');
+    if (entry.marketplaceSourceChannel === 'catalog') {
+      const source = this.registryCatalogSource;
+      if (source && entry.marketplaceSourceUrl && source.registrySourceUrl &&
+        normalizeSourceUrl(source.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl) &&
+        this.registrySourceKeyMatches(source, entry)) {return source;}
+      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl, entry.marketplaceSourceKeyFingerprint);
+    }
+    if (entry.marketplaceSourceChannel === 'ordered') {
+      const matchingSources = entry.marketplaceSourceUrl
+        ? genericSources.filter(candidate => candidate.registrySourceUrl && normalizeSourceUrl(candidate.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl!))
+        : [];
+      if (matchingSources.length === 1 && this.registrySourceKeyMatches(matchingSources[0]!, entry)) {return matchingSources[0]!;}
+      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl, entry.marketplaceSourceKeyFingerprint);
+    }
     if (entry.marketplaceSourceUrl) {
       const expectedUrl = normalizeSourceUrl(entry.marketplaceSourceUrl);
-      const source = sources.find(candidate => candidate.registrySourceUrl && normalizeSourceUrl(candidate.registrySourceUrl) === expectedUrl);
-      if (source) {return source;}
-      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl);
+      const candidates = this.registryInstallSources().filter(candidate => candidate.kind === 'registry' && candidate.registrySourceUrl &&
+        normalizeSourceUrl(candidate.registrySourceUrl) === expectedUrl && this.registrySourceKeyMatches(candidate, entry));
+      if (candidates.length === 1) {return candidates[0]!;}
+      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl, entry.marketplaceSourceKeyFingerprint);
     }
 
-    // Older lock entries do not record a Registry URL. Only update them when
-    // the active generic source list has exactly one Registry candidate.
-    const legacySources = this.sources.filter(source => source.kind === 'registry');
-    if (legacySources.length === 1) {return legacySources[0]!;}
+    // Older lock entries have no channel, URL, or key fingerprint. Restrict
+    // their update to one unambiguous generic ordered Registry source.
+    if (genericSources.length === 1) {return genericSources[0]!;}
     throw this.registrySourceChangedError(packageId, undefined);
   }
 
-  private registrySourceChangedError(packageId: string, expectedUrl?: string): ErrorEnvelopeError {
+  private registrySourceKeyMatches(source: MarketplaceSource, entry: Extract<MarketplaceLockEntry, { source: 'marketplace' }>): boolean {
+    return !entry.marketplaceSourceKeyFingerprint || this.registrySourceKeyFingerprint(source) === entry.marketplaceSourceKeyFingerprint;
+  }
+
+  private registrySourceKeyFingerprint(source: MarketplaceSource): string | undefined {
+    if (!source.verificationKey?.trim()) {return undefined;}
+    const key = crypto.createPublicKey(source.verificationKey).export({ type: 'spki', format: 'der' });
+    return crypto.createHash('sha256').update(key).digest('hex');
+  }
+
+  private registrySourceChangedError(packageId: string, expectedUrl?: string, expectedKeyFingerprint?: string): ErrorEnvelopeError {
     return new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', {
       details: {
         path: 'marketplace.catalogRegistry.url',
         package: packageId,
         ...(expectedUrl ? { expectedUrl } : {}),
+        ...(expectedKeyFingerprint ? { expectedKeyFingerprint } : {}),
       },
       hint: expectedUrl
-        ? `Restore the configured Registry URL to ${expectedUrl} before updating this package.`
+        ? `Restore the Registry source and signing key${expectedKeyFingerprint ? ` (${expectedKeyFingerprint})` : ''} for ${expectedUrl} before updating this package.`
         : 'Keep exactly one Registry source configured to update this older package, whose original Registry URL is not recorded.',
     }));
   }
@@ -342,6 +367,12 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           details: { plugin: spec },
           cause: sourceResults.join('; '),
         }));
+      }
+      if (isUpdate && sourceOverrides?.has(spec) && source.kind === 'registry' &&
+        stripSpecVersion(spec) !== (resolved.canonicalIdentity ?? resolved.id)) {
+        throw new InvalidEntityError(
+          `Registry resolved "${resolved.canonicalIdentity ?? resolved.id}" while updating pinned identity "${stripSpecVersion(spec)}".`,
+        );
       }
       if (expectedKind === 'adapter' && source.kind !== 'registry') {
         throw new InvalidEntityError(
@@ -453,6 +484,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         : result.packageRoot;
 
       const trust: 'trusted' | 'untrusted' = verification.signatureStatus === 'verified' ? 'trusted' : 'untrusted';
+      const registryKeyFingerprint = source.kind === 'registry' ? this.registrySourceKeyFingerprint(source) : undefined;
 
       // Write to marketplace.lock
       const entryOptions = {
@@ -464,6 +496,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         signature: resolved.signature,
         marketplaceSource: source.kind,
         ...(source.kind === 'registry' && source.registrySourceUrl ? { marketplaceSourceUrl: source.registrySourceUrl } : {}),
+        ...(source.kind === 'registry' ? {
+          marketplaceSourceChannel: source === this.registryCatalogSource ? 'catalog' as const : 'ordered' as const,
+          ...(registryKeyFingerprint ? { marketplaceSourceKeyFingerprint: registryKeyFingerprint } : {}),
+        } : {}),
         signatureStatus: verification.signatureStatus,
       };
       const packagePath = relativeToRoot(scopeRoot, installedPackageRoot);
@@ -1088,12 +1124,23 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   }
 
   private sourceForLockEntry(entry: Extract<MarketplaceLockEntry, { source: 'marketplace' }>): MarketplaceSource | undefined {
-    const candidates = entry.marketplaceSource === 'registry'
-      ? this.registryInstallSources()
-      : this.sources.filter(source => source.kind === entry.marketplaceSource);
-    return (entry.marketplaceSourceUrl
-      ? candidates.find(source => source.registrySourceUrl && normalizeSourceUrl(source.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl!))
-      : undefined) ?? candidates.find(source => source.kind === entry.marketplaceSource);
+    if (entry.marketplaceSource === 'registry' && entry.marketplaceSourceChannel === 'catalog') {
+      return this.registryCatalogSource && (!entry.marketplaceSourceUrl || normalizeSourceUrl(this.registryCatalogSource.registrySourceUrl ?? '') === normalizeSourceUrl(entry.marketplaceSourceUrl))
+        ? this.registryCatalogSource
+        : undefined;
+    }
+    const candidates = entry.marketplaceSource === 'registry' && entry.marketplaceSourceChannel === 'ordered'
+      ? this.sources.filter(source => source.kind === 'registry')
+      : entry.marketplaceSource === 'registry'
+        ? entry.marketplaceSourceChannel === undefined
+          ? this.sources.filter(source => source.kind === 'registry')
+          : this.registryInstallSources()
+        : this.sources.filter(source => source.kind === entry.marketplaceSource);
+    if (entry.marketplaceSourceUrl) {
+      return candidates.find(source => source.registrySourceUrl && normalizeSourceUrl(source.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl!) &&
+        this.registrySourceKeyMatches(source, entry));
+    }
+    return candidates.length === 1 ? candidates[0] : undefined;
   }
 
   // -------------------------------------------------------------------------

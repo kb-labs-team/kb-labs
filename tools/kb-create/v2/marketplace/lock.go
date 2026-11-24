@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -38,14 +39,17 @@ type Lock struct {
 }
 
 type Item struct {
-	Version           string `json:"version"`
-	Integrity         string `json:"integrity"`
-	ResolvedPath      string `json:"resolvedPath,omitempty"`
-	Package           string `json:"package,omitempty"`
-	Source            string `json:"source"`
-	MarketplaceSource string `json:"marketplaceSource,omitempty"`
-	SignatureStatus   string `json:"signatureStatus,omitempty"`
-	Enabled           bool   `json:"enabled"`
+	Version                         string `json:"version"`
+	Integrity                       string `json:"integrity"`
+	ResolvedPath                    string `json:"resolvedPath,omitempty"`
+	Package                         string `json:"package,omitempty"`
+	Source                          string `json:"source"`
+	MarketplaceSource               string `json:"marketplaceSource,omitempty"`
+	MarketplaceSourceURL            string `json:"marketplaceSourceUrl,omitempty"`
+	MarketplaceSourceChannel        string `json:"marketplaceSourceChannel,omitempty"`
+	MarketplaceSourceKeyFingerprint string `json:"marketplaceSourceKeyFingerprint,omitempty"`
+	SignatureStatus                 string `json:"signatureStatus,omitempty"`
+	Enabled                         bool   `json:"enabled"`
 }
 
 // WriteLock regenerates .kb/marketplace.lock at platformRoot from the exact
@@ -216,9 +220,33 @@ func validateLockItem(kind, id string, item Item) error {
 		if kind == "plugin" && item.Package == "" {
 			return fmt.Errorf("invalid marketplace lock %s %q: platform entries require a package", kind, id)
 		}
+		if item.MarketplaceSource != "" || item.MarketplaceSourceURL != "" || item.MarketplaceSourceChannel != "" || item.MarketplaceSourceKeyFingerprint != "" || item.SignatureStatus != "" {
+			return fmt.Errorf("invalid marketplace lock %s %q: platform entries cannot have Marketplace provenance", kind, id)
+		}
 	case "marketplace":
 		if item.MarketplaceSource != "registry" && item.MarketplaceSource != "npm" {
 			return fmt.Errorf("invalid marketplace lock %s %q: Marketplace entries require their resolved source", kind, id)
+		}
+		if item.MarketplaceSourceURL != "" && item.MarketplaceSource != "registry" {
+			return fmt.Errorf("invalid marketplace lock %s %q: source URL is only valid for Registry entries", kind, id)
+		}
+		if item.MarketplaceSourceURL != "" {
+			parsed, err := url.Parse(item.MarketplaceSourceURL)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+				return fmt.Errorf("invalid marketplace lock %s %q: source URL must be an absolute HTTP or HTTPS URL", kind, id)
+			}
+		}
+		if item.MarketplaceSourceChannel != "" && item.MarketplaceSource != "registry" {
+			return fmt.Errorf("invalid marketplace lock %s %q: source channel is only valid for Registry entries", kind, id)
+		}
+		if item.MarketplaceSourceChannel != "" && item.MarketplaceSourceChannel != "catalog" && item.MarketplaceSourceChannel != "ordered" {
+			return fmt.Errorf("invalid marketplace lock %s %q: invalid Registry source channel", kind, id)
+		}
+		if item.MarketplaceSourceKeyFingerprint != "" && item.MarketplaceSource != "registry" {
+			return fmt.Errorf("invalid marketplace lock %s %q: key fingerprint is only valid for Registry entries", kind, id)
+		}
+		if item.MarketplaceSourceKeyFingerprint != "" && !validKeyFingerprint(item.MarketplaceSourceKeyFingerprint) {
+			return fmt.Errorf("invalid marketplace lock %s %q: key fingerprint must be a SHA-256 hex value", kind, id)
 		}
 		if item.SignatureStatus != "verified" && item.SignatureStatus != "unsigned" {
 			return fmt.Errorf("invalid marketplace lock %s %q: Marketplace entries require signature status", kind, id)
@@ -227,10 +255,25 @@ func validateLockItem(kind, id string, item Item) error {
 		if item.ResolvedPath == "" {
 			return fmt.Errorf("invalid marketplace lock %s %q: local entries require a resolved path", kind, id)
 		}
+		if item.MarketplaceSource != "" || item.MarketplaceSourceURL != "" || item.MarketplaceSourceChannel != "" || item.MarketplaceSourceKeyFingerprint != "" || item.SignatureStatus != "" {
+			return fmt.Errorf("invalid marketplace lock %s %q: local entries cannot have Marketplace provenance", kind, id)
+		}
 	default:
 		return fmt.Errorf("invalid marketplace lock %s %q: unknown source %q", kind, id, item.Source)
 	}
 	return nil
+}
+
+func validKeyFingerprint(value string) bool {
+	if len(value) != sha256.Size*2 {
+		return false
+	}
+	for _, char := range value {
+		if !(char >= '0' && char <= '9') && !(char >= 'a' && char <= 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // MarketplacePins returns exact identities owned by the installed Marketplace lock.
