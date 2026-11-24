@@ -67,7 +67,7 @@ Workflow Engine
 - **Concurrency control** with idempotency
 - **Timeout handling** for jobs and steps
 - **Worker system** for background processing
-- **Run state** persisted through the project's `IStorage` adapter at `workflows/<runId>.json`
+- **Run state** persisted through the project's `IStorage` adapter at `workflow/projects/project-<registered-project-id-as-utf8-hex>/runs/<runId>.json`
 - **Nested workflows** - call workflows from within workflows
 - **Conditional execution** - `if` expressions for steps and jobs
 - **Step outputs** - capture and use outputs between steps
@@ -234,7 +234,9 @@ src/__tests__/
 
 ### Persistence contract
 
-Pass the registered project's `projectId`, `cache`, `storage`, and `eventBus` adapters when creating an engine. Inside a composed service, read the project ID from its `ServiceContext.projectId`. A standalone launcher maps its project input into `ServiceConfig.projectId` before calling `runService`; service setup does not reread the environment. The project ID comes from the project registry and scopes every workflow cache key, including queues, leases, indexes, snapshots, and locks. Do not derive it from a path. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflows/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
+Pass the registered project's `projectId`, `cache`, `storage`, and `eventBus` adapters when creating an engine. Inside a composed service, read the project ID from its `ServiceContext.projectId`. A standalone launcher maps its project input into `ServiceConfig.projectId` before calling `runService`; service setup does not reread the environment. The project ID comes from the project registry and scopes every workflow cache key, including queues, leases, indexes, snapshots, and locks. Do not derive it from a path. The cache coordinates live work; `IStorage` is the source of truth for workflow run records. Each record is JSON at `workflow/projects/project-<registered-project-id-as-utf8-hex>/runs/<runId>.json` and contains the run, jobs, steps, status, trigger, metadata, artifacts, and step outputs. The default storage binding in the built-in adapter pack uses the filesystem; the logical key stays the same for other storage adapters.
+
+Earlier daemon records at the unscoped `workflows/<runId>.json` path are not imported automatically. Those records do not identify their owning project, so a shared storage adapter cannot assign them safely. They remain untouched in the adapter, but are not returned by project-scoped workflow history until an owner-proven migration is available.
 
 ```ts
 import { WorkflowEngine, createDefaultSecretProvider, requireWorkflowProjectId } from '@kb-labs/workflow-engine';
