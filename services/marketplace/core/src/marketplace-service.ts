@@ -311,14 +311,14 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const source = this.requireTrustedRegistryInstallSource();
     const ctx: ScopeContext = { scope: 'platform' };
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], opts, false, 'adapter', 'registry', new Map([[spec, source]])));
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], opts, false, 'adapter', 'registry', [source]));
   }
 
   /** Install a project plugin from the configured Marketplace Registry only. */
   async installRegistryPlugin(ctx: ScopeContext, spec: string): Promise<InstallResult> {
     const source = this.requireTrustedRegistryInstallSource();
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], undefined, false, 'plugin', 'registry', new Map([[spec, source]])));
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], undefined, false, 'plugin', 'registry', [source]));
   }
 
   private async installInScope(
@@ -329,18 +329,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     isUpdate = false,
     expectedKind?: EntityKind,
     requiredSource?: MarketplaceSourceKind,
-    sourceOverrides?: Map<string, MarketplaceSource>,
+    sourceOverrides?: Array<MarketplaceSource | undefined>,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
     const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
-    for (const spec of specs) {
+    for (const [specIndex, spec] of specs.entries()) {
       let source: MarketplaceSource | undefined;
+      let sourceChannel: 'catalog' | 'ordered' | undefined;
       let resolved: Awaited<ReturnType<MarketplaceSource['resolve']>> | undefined;
       const sourceResults: string[] = [];
-      const configuredSources = sourceOverrides?.has(spec) ? [sourceOverrides.get(spec)!] : this.sources;
+      const sourceOverride = sourceOverrides?.[specIndex];
+      const configuredSources = sourceOverride ? [sourceOverride] : this.sources;
       for (const configuredSource of configuredSources) {
         if (requiredSource && configuredSource.kind !== requiredSource) {continue;}
         const candidateSource = opts?.shareToken && configuredSource.withShareToken
@@ -356,6 +358,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         }
         sourceResults.push(`${candidateSource.kind}: found`);
         source = candidateSource;
+        sourceChannel = configuredSource === this.registryCatalogSource ? 'catalog' : 'ordered';
         resolved = { ...result.package, source: 'marketplace' };
         break;
       }
@@ -368,7 +371,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           cause: sourceResults.join('; '),
         }));
       }
-      if (isUpdate && sourceOverrides?.has(spec) && source.kind === 'registry' &&
+      if (isUpdate && sourceOverride && source.kind === 'registry' &&
         stripSpecVersion(spec) !== (resolved.canonicalIdentity ?? resolved.id)) {
         throw new InvalidEntityError(
           `Registry resolved "${resolved.canonicalIdentity ?? resolved.id}" while updating pinned identity "${stripSpecVersion(spec)}".`,
@@ -403,7 +406,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
       const verification = verifyResolvedArtifact(resolved, source, ctx.scope);
       const canonicalIdentity = resolved.canonicalIdentity ?? resolved.id;
-      const installedPin = findInstalledPin(lock, resolved.id, canonicalIdentity);
+      const exactRegistryPin = isUpdate && sourceOverride && source.kind === 'registry'
+        ? lock?.plugins[stripSpecVersion(spec)]
+        : undefined;
+      if (isUpdate && sourceOverride && source.kind === 'registry' &&
+        (!exactRegistryPin || exactRegistryPin.source !== 'marketplace' || exactRegistryPin.marketplaceSource !== 'registry')) {
+        throw new InvalidEntityError(\`Marketplace lock has no Registry version pin for "\${stripSpecVersion(spec)}".\`);
+      }
+      const installedPin = exactRegistryPin && exactRegistryPin.source !== 'local'
+        ? { version: exactRegistryPin.version, integrity: exactRegistryPin.integrity }
+        : findInstalledPin(lock, resolved.id, canonicalIdentity);
       if (installedPin) {
         const installedVersion = installedPin.version;
         if (!semver.valid(installedVersion) || !semver.valid(resolved.version)) {
@@ -485,6 +497,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
       const trust: 'trusted' | 'untrusted' = verification.signatureStatus === 'verified' ? 'trusted' : 'untrusted';
       const registryKeyFingerprint = source.kind === 'registry' ? this.registrySourceKeyFingerprint(source) : undefined;
+      const registrySourceUrl = source.kind === 'registry' ? normalizeSourceUrl(source.registrySourceUrl ?? '') : undefined;
 
       // Write to marketplace.lock
       const entryOptions = {
@@ -495,9 +508,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         trust,
         signature: resolved.signature,
         marketplaceSource: source.kind,
-        ...(source.kind === 'registry' && source.registrySourceUrl ? { marketplaceSourceUrl: source.registrySourceUrl } : {}),
+        ...(registrySourceUrl ? { marketplaceSourceUrl: registrySourceUrl } : {}),
         ...(source.kind === 'registry' ? {
-          marketplaceSourceChannel: source === this.registryCatalogSource ? 'catalog' as const : 'ordered' as const,
+          marketplaceSourceChannel: sourceChannel ?? (source === this.registryCatalogSource ? 'catalog' as const : 'ordered' as const),
           ...(registryKeyFingerprint ? { marketplaceSourceKeyFingerprint: registryKeyFingerprint } : {}),
         } : {}),
         signatureStatus: verification.signatureStatus,
@@ -704,13 +717,14 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const warnings = packageIds
         ?.filter(id => !(id in lock.plugins))
         .map(id => `Plugin ${id} is not installed in the ${ctx.scope} scope and cannot be updated.`) ?? [];
-      const sourceOverrides = new Map<string, MarketplaceSource>();
+      const sourceOverrides: Array<MarketplaceSource | undefined> = [];
       const specs = ids.filter(id => id in lock.plugins).map(id => {
         const entry = lock.plugins[id]!;
         if (entry.source === 'marketplace' && entry.marketplaceSource === 'registry') {
-          sourceOverrides.set(id, this.registryUpdateSource(id, entry));
+          sourceOverrides.push(this.registryUpdateSource(id, entry));
           return id;
         }
+        sourceOverrides.push(undefined);
         return entry.package!;
       });
 

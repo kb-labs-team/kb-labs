@@ -29,6 +29,7 @@ A platform owner can install packages selected from the trusted Marketplace Regi
 | S-323.3 | Install the npm-only fixture package through the ordinary Marketplace install command and inspect the lock and request log | Generic Marketplace resolution uses the unchanged configured npm source; the catalog Registry source is not consulted and source order is not changed. |
 | S-323.4 | Update a catalog-installed package after changing `marketplace.catalogRegistry.url` or its signing key; also configure an ordered Registry with the old URL; inspect the response, package files, lock, and request logs | The update fails with a typed configuration error identifying the recorded Registry URL and key fingerprint. It does not switch to the ordered source, even when that source has the same URL. No package files or lock entries change. |
 | S-323.5 | Update a catalog-installed package when the Registry resolves its pinned identity to a different canonical identity; inspect the response, package files, lock, and request log | The update fails with an identity error before installation. It cannot install the replacement identity as a successful update, and package files and lock remain unchanged. |
+| S-323.6 | Update one catalog-installed identity when another lock entry uses the same Registry package name at a higher version | The update compares versions against the selected lock identity only, then updates that identity if its own pin permits it. |
 
 ## Source
 

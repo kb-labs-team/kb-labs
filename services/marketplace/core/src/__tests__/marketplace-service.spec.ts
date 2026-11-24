@@ -417,6 +417,54 @@ describe('MarketplaceService', () => {
     expect(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')).toBe(lockBeforeUpdate);
   });
 
+  // case: S-323.5
+  it('compares a Registry update with the selected lock identity when package names are shared', async () => {
+    const projectRoot = path.join(tmpDir, 'catalog-update-exact-pin-project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    const packageName = '@vendor/shared-registry-package';
+    const otherIdentity = 'other-canonical-plugin';
+    const selectedIdentity = 'selected-canonical-plugin';
+    const integrity = computeIntegrity('current release');
+    for (const [identity, version] of [[otherIdentity, '5.0.0'], [selectedIdentity, '2.0.0']] as const) {
+      await addToMarketplaceLock(projectRoot, identity, createMarketplaceEntry({
+        version,
+        integrity,
+        primaryKind: 'plugin',
+        provides: ['plugin'],
+        source: 'marketplace',
+        package: packageName,
+        marketplaceSource: 'registry',
+        marketplaceSourceUrl: 'https://shared-package-registry.example/api/v1/marketplace-registry',
+        marketplaceSourceChannel: 'catalog',
+        signatureStatus: 'verified',
+      }), 'project');
+    }
+    const updatedPackage = await createPluginDir(projectRoot, 'shared-registry-package', packageName, '3.0.0', selectedIdentity);
+    const source: PackageSource = {
+      resolve: vi.fn(async () => ({
+        id: packageName,
+        canonicalIdentity: selectedIdentity,
+        version: '3.0.0',
+        integrity: updatedPackage.integrity,
+        source: 'marketplace' as const,
+        primaryKind: 'plugin' as const,
+      })),
+      install: vi.fn(async () => ({ id: packageName, version: '3.0.0', packageRoot: updatedPackage.dir, integrity: updatedPackage.integrity })),
+      async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+    };
+    const service = makeMarketplaceService({
+      platformRoot: tmpDir,
+      catalogRegistrySource: source,
+      catalogRegistryUrl: 'https://shared-package-registry.example/api/v1/marketplace-registry',
+    });
+
+    const result = await service.update({ scope: 'project', projectRoot }, [selectedIdentity]);
+
+    expect(result.installed[0]).toMatchObject({ id: selectedIdentity, version: '3.0.0' });
+    expect(source.install).toHaveBeenCalledTimes(1);
+    expect((await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project'))?.plugins[selectedIdentity]?.version).toBe('3.0.0');
+  });
+
   // case: S-323.2
   it('does not fall back to generic npm when the trusted catalog has no matching package', async () => {
     const projectRoot = path.join(tmpDir, 'empty-catalog-project');
@@ -1039,13 +1087,22 @@ describe('MarketplaceService', () => {
         async commitInstall() {},
         async rollbackInstall() {},
       };
-      const service = makeMarketplaceService({ platformRoot: tmpDir, sources: [asMarketplaceSource(source, 'registry')] });
+      source.withShareToken = vi.fn(() => source);
+      const service = makeMarketplaceService({
+        platformRoot: tmpDir,
+        sources: [],
+        catalogRegistrySource: source,
+        catalogRegistryUrl: 'https://registry.test',
+      });
       expect(service.registryCatalogStatus()).toEqual({ trustedInstallAvailable: true });
 
-      const result = await service.installAdapter(packageId);
+      const result = await service.installAdapter(packageId, { shareToken: 'catalog-token' });
 
       expect(result.installed[0]).toMatchObject({ id: packageId, version: '1.2.0', primaryKind: 'adapter', scope: 'platform' });
-      expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.adapters?.[packageId]?.version).toBe('1.2.0');
+      expect(source.withShareToken).toHaveBeenCalledWith('catalog-token');
+      expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.adapters?.[packageId]).toMatchObject({
+        version: '1.2.0', marketplaceSourceChannel: 'catalog', marketplaceSourceUrl: 'https://registry.test',
+      });
       expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.plugins?.[packageId]).toBeUndefined();
     });
 
