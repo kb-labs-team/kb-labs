@@ -198,24 +198,25 @@ describe('Gateway global auth gate', () => {
     expect(anonymousPublish.statusCode).toBe(401);
     expect(upstreamHits).toBe(3);
 
-    const deniedPlatformInstall = await app.inject({
+    const genericPlatformInstall = await app.inject({
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       headers: { authorization: `Bearer ${token}` },
       payload: { specs: ['@acme/adapter'], scope: 'platform' },
     });
-    expect(deniedPlatformInstall.statusCode).toBe(403);
-    expect(deniedPlatformInstall.json()).toMatchObject({ error: { code: 'KB_AUTH_FORBIDDEN' } });
-    expect(upstreamHits).toBe(3);
+    // The Marketplace API parses the proxied body and applies the platform
+    // settings permission after the generic scope is known.
+    expect(genericPlatformInstall.statusCode).toBe(200);
+    expect(upstreamHits).toBe(4);
 
-    const deniedDefaultScopeInstall = await app.inject({
+    const genericProjectInstall = await app.inject({
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       headers: { authorization: `Bearer ${token}` },
-      payload: { specs: ['@acme/adapter'], scope: null },
+      payload: { specs: ['@acme/plugin'], scope: 'project' },
     });
-    expect(deniedDefaultScopeInstall.statusCode).toBe(403);
-    expect(upstreamHits).toBe(3);
+    expect(genericProjectInstall.statusCode).toBe(200);
+    expect(upstreamHits).toBe(5);
 
     const platformAdmin = await signAccessToken({
       hostId: 'admin-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access',
@@ -228,7 +229,7 @@ describe('Gateway global auth gate', () => {
       payload: { spec: '@acme/adapter' },
     });
     expect(allowedPlatformInstall.statusCode).toBe(200);
-    expect(upstreamHits).toBe(4);
+    expect(upstreamHits).toBe(6);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {

@@ -263,7 +263,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     const discoveredAdapters = await loadCatalogAdapterEntries(new Map([['@kb-labs/adapters-openai', {
       id: '@kb-labs/adapters-openai',
       packageRoot,
-      source: 'marketplace',
+      source: 'workspace',
       manifest: loadedManifest,
     }]]), { development: false, configuredPackages: [] });
     const openai = discoveredAdapters.get('@kb-labs/adapters-openai');
@@ -381,6 +381,18 @@ describe('resolveDiscoveredAdapterDefaults', () => {
 
     expect(resolved.adapters).not.toHaveProperty('serviceTransport');
     expect(resolved.adapterOptions).not.toHaveProperty('serviceTransport');
+  });
+
+  it('does not implicitly select an adapter installed from Marketplace', () => {
+    const marketplaceAdapter = discovered('@kb-labs/adapters-marketplace-default', {
+      defaultFor: { cache: ['cache'] }, schema: 'kb.adapter/1', implements: 'ICache',
+    });
+    marketplaceAdapter.source = 'marketplace';
+    const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} },
+      new Map([[marketplaceAdapter.packageName, marketplaceAdapter]]), '/project');
+
+    expect(resolved.adapters).not.toHaveProperty('cache');
+    expect(resolved.adapterOptions).not.toHaveProperty('cache');
   });
 
   it('allows a required secret credential with an environment source as an implicit default', () => {

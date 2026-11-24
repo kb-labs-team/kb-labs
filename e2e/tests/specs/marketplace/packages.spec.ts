@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { MARKETPLACE } from '../../fixtures/urls.js'
+import { GATEWAY } from '../../fixtures/urls.js'
 
 // Verifies marketplace is functional after kb-create bootstrap
 // GET /packages → { entries: [...], total: N }
 // POST /packages/install → { specs: [...] } (not { packages: [...] })
 
 test('MKT-01: marketplace lists installed packages', async ({ request }) => {
-  const res = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)
+  const res = await request.get(`${GATEWAY}/api/v1/marketplace/packages`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const packages = body.entries ?? body.packages ?? (Array.isArray(body) ? body : [])
@@ -15,7 +15,7 @@ test('MKT-01: marketplace lists installed packages', async ({ request }) => {
 })
 
 test('MKT-02: marketplace diagnostics — lock file OK, no errors', async ({ request }) => {
-  const res = await request.get(`${MARKETPLACE}/api/v1/marketplace/diagnostics`)
+  const res = await request.get(`${GATEWAY}/api/v1/marketplace/diagnostics`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.lockFile?.ok ?? body.ok).toBe(true)
@@ -28,7 +28,7 @@ test('MKT-03: install a test package and verify it appears in listing', async ({
   // to avoid parallel test interference — both spec files run concurrently with 2 workers
   // and share the same marketplace lock file.
   const SPEC = '@kb-labs/qa'
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [SPEC] },
     timeout: 60_000,  // pnpm install can take 30-60s on first run
   })
@@ -44,7 +44,7 @@ test('MKT-03: install a test package and verify it appears in listing', async ({
   let found = false
   for (let attempt = 0; attempt < 3 && !found; attempt++) {
     if (attempt > 0) await new Promise(resolve => setTimeout(resolve, 1000))
-    const list = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)
+    const list = await request.get(`${GATEWAY}/api/v1/marketplace/packages`)
     const body = await list.json()
     const packages: { name?: string; id?: string; spec?: string }[] = body.entries ?? body.packages ?? []
     found = packages.some(p =>

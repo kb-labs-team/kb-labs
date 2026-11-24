@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { MARKETPLACE } from '../../fixtures/urls.js'
+import { GATEWAY } from '../../fixtures/urls.js'
 
 // Marketplace package lifecycle: install → disable → enable → uninstall
 // All mutating operations use the body-based API (not URL-encoded package IDs)
@@ -26,14 +26,14 @@ function skipOnInstallError(status: number) {
 
 // ML-01: install package → appears in listing
 test('ML-01: install package → appears in GET /packages', async ({ request }) => {
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [TEST_SPEC] },
     timeout: 60_000,  // pnpm install can take 30-60s on first run
   })
   skipOnInstallError(install.status())
   expect([200, 201, 409]).toContain(install.status()) // 409 = already installed
 
-  const list = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)
+  const list = await request.get(`${GATEWAY}/api/v1/marketplace/packages`)
   expect(list.status()).toBe(200)
   const body = await list.json()
   const packages: PkgEntry[] = body.entries ?? body.packages ?? []
@@ -42,14 +42,14 @@ test('ML-01: install package → appears in GET /packages', async ({ request }) 
 
 // ML-02: disable package → listing reflects disabled state
 test('ML-02: disable package → disabled flag set in listing', async ({ request }) => {
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [TEST_SPEC] },
     timeout: 60_000,
   })
   skipOnInstallError(install.status())
   expect([200, 201, 409]).toContain(install.status())
 
-  const disable = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/disable`, {
+  const disable = await request.post(`${GATEWAY}/api/v1/marketplace/packages/disable`, {
     data: { packageId: TEST_SPEC },
   })
   test.skip(disable.status() === 404, 'disable endpoint not available in this build')
@@ -58,7 +58,7 @@ test('ML-02: disable package → disabled flag set in listing', async ({ request
   expect(disableData.enabled).toBe(false)
 
   // Verify listing shows the exact package as disabled
-  const list = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)
+  const list = await request.get(`${GATEWAY}/api/v1/marketplace/packages`)
   const listBody = await list.json()
   const packages: PkgEntry[] = listBody.entries ?? listBody.packages ?? []
   const pkg = findExact(packages)
@@ -69,18 +69,18 @@ test('ML-02: disable package → disabled flag set in listing', async ({ request
 
 // ML-03: enable previously disabled package → enabled flag restored
 test('ML-03: enable package → enabled flag restored in listing', async ({ request }) => {
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [TEST_SPEC] },
     timeout: 60_000,
   })
   skipOnInstallError(install.status())
   expect([200, 201, 409]).toContain(install.status())
 
-  await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/disable`, {
+  await request.post(`${GATEWAY}/api/v1/marketplace/packages/disable`, {
     data: { packageId: TEST_SPEC },
   })
 
-  const enable = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/enable`, {
+  const enable = await request.post(`${GATEWAY}/api/v1/marketplace/packages/enable`, {
     data: { packageId: TEST_SPEC },
   })
   test.skip(enable.status() === 404, 'enable endpoint not available in this build')
@@ -91,14 +91,14 @@ test('ML-03: enable package → enabled flag restored in listing', async ({ requ
 
 // ML-04: update installed package — endpoint responds without error
 test('ML-04: POST /packages/update — responds without error', async ({ request }) => {
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [TEST_SPEC] },
     timeout: 60_000,
   })
   skipOnInstallError(install.status())
   expect([200, 201, 409]).toContain(install.status())
 
-  const update = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/update`, {
+  const update = await request.post(`${GATEWAY}/api/v1/marketplace/packages/update`, {
     data: { packageIds: [TEST_SPEC] },
   })
   test.skip(update.status() === 404, 'update endpoint not available in this build')
@@ -108,14 +108,14 @@ test('ML-04: POST /packages/update — responds without error', async ({ request
 
 // ML-05: uninstall package → no longer in listing
 test('ML-05: uninstall package → gone from GET /packages', async ({ request }) => {
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [TEST_SPEC] },
     timeout: 60_000,
   })
   skipOnInstallError(install.status())
   expect([200, 201, 409]).toContain(install.status())
 
-  const uninstall = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/uninstall`, {
+  const uninstall = await request.post(`${GATEWAY}/api/v1/marketplace/packages/uninstall`, {
     data: { packageIds: [TEST_SPEC] },
   })
   test.skip(uninstall.status() === 404, 'uninstall endpoint not available in this build')
@@ -123,7 +123,7 @@ test('ML-05: uninstall package → gone from GET /packages', async ({ request })
 
   // Give it a moment, then verify the exact package is gone
   await new Promise(resolve => setTimeout(resolve, 500))
-  const list = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)
+  const list = await request.get(`${GATEWAY}/api/v1/marketplace/packages`)
   const body = await list.json()
   const packages: PkgEntry[] = body.entries ?? body.packages ?? []
   // Use exact match — pre-installed packages like '@kb-labs/commit' must not cause false positives

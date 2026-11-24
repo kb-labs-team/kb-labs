@@ -209,19 +209,14 @@ export async function createServer(
     } } : {}),
   }));
 
-  // Platform adapter installation changes the platform package graph. Keep
-  // both the generic Marketplace install route and its adapter-only operation
-  // behind the same settings permission before the request reaches the service.
+  // The adapter-only operation is always platform scoped. Generic Marketplace
+  // installs are checked by the Marketplace API after it parses the body; the
+  // gateway's Fastify proxy exposes the body as a stream during preValidation.
   app.addHook('preValidation', async (request, reply) => {
     if (request.method !== 'POST') { return; }
     const pathname = new URL(request.url, 'http://gateway.local').pathname.replace(/\/+$/, '');
     const adapterInstall = pathname === '/api/v1/marketplace/packages/adapters/install';
-    const genericInstall = pathname === '/api/v1/marketplace/packages/install';
-    if (!adapterInstall && !genericInstall) { return; }
-    const scope = genericInstall && request.body && typeof request.body === 'object'
-      ? (request.body as { scope?: unknown }).scope
-      : 'platform';
-    if (genericInstall && scope === 'project') { return; }
+    if (!adapterInstall) { return; }
     const auth = request.authContext;
     if (!auth || !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_WRITE)) {
       return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_WRITE, undefined, undefined, { durationMs: 0 });

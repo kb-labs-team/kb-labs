@@ -87,6 +87,9 @@ export function resolveDiscoveredAdapterDefaults(
 
   const defaults = new Map<string, DiscoveredAdapter[]>();
   for (const adapter of packages.values()) {
+    // Marketplace installation makes an adapter available for explicit
+    // configuration, but it must not select that adapter as a runtime default.
+    if (adapter.source === 'marketplace') {continue;}
     const manifest = adapter.module.manifest;
     if (!manifest || typeof manifest !== 'object') {continue;}
     const hasUnprovidedStructure = Object.values(manifest.configSchema ?? {}).some(option =>

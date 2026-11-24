@@ -164,6 +164,7 @@ export async function loadCatalogAdapterEntries(
 
     const adapter: DiscoveredAdapter = {
       packageName,
+      source: entry.source,
       pkgRoot: entry.packageRoot,
       createAdapter: (config?: unknown) => createAdapter(config, {}),
       module: { ...loaded, manifest: entry.manifest.manifest },

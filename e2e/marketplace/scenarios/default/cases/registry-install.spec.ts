@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { MARKETPLACE, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
 import { createTestTarball } from '../../../../marketplace-registry/fixtures/create-test-tarball.js'
 
@@ -58,7 +58,7 @@ test('MI-01: install public kb: package via marketplace → 201', async ({ reque
   const pub = await publishToRegistry(request, token, pkgName, 'public')
   expect(pub.status()).toBe(201)
 
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [`kb:${REG_HANDLE}/${pkgName}`] },
     timeout: 30_000,
   })
@@ -66,7 +66,7 @@ test('MI-01: install public kb: package via marketplace → 201', async ({ reque
   expect([200, 201, 409]).toContain(install.status())
 
   // Verify it appears in the installed packages list
-  const list = await request.get(`${MARKETPLACE}/api/v1/marketplace/packages`)
+  const list = await request.get(`${GATEWAY}/api/v1/marketplace/packages`)
   expect(list.status()).toBe(200)
   const body = await list.json()
   const packages: Array<{ name?: string; id?: string; spec?: string }> = body.entries ?? body.packages ?? []
@@ -83,7 +83,7 @@ test('MI-02: install private kb: package without token → 403', async ({ reques
   const pub = await publishToRegistry(request, token, pkgName, 'private')
   expect(pub.status()).toBe(201)
 
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [`kb:${REG_HANDLE}/${pkgName}`] },
     timeout: 30_000,
   })
@@ -111,7 +111,7 @@ test('MI-03: install private kb: package with share token → 201', async ({ req
   expect(typeof shareToken).toBe('string')
 
   // Install via marketplace with share token
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: [`kb:${REG_HANDLE}/${pkgName}`], token: shareToken },
     timeout: 30_000,
   })
@@ -122,7 +122,7 @@ test('MI-03: install private kb: package with share token → 201', async ({ req
 // ── kb: spec format validation ────────────────────────────────────────────────
 
 test('MI-04: install with malformed kb: spec → 400', async ({ request }) => {
-  const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
+  const install = await request.post(`${GATEWAY}/api/v1/marketplace/packages/install`, {
     data: { specs: ['kb:no-slash-here'] },
     timeout: 10_000,
   })
