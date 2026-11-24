@@ -142,6 +142,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
       if (filters.to) {params.append('to', filters.to);}
       if (filters.level) {params.append('level', filters.level);}
       if (filters.plugin) {params.append('plugin', filters.plugin);}
+      if (filters.runId) {params.append('runId', filters.runId);}
       if (filters.executionId) {params.append('executionId', filters.executionId);}
       if (filters.tenantId) {params.append('tenantId', filters.tenantId);}
       if (filters.search) {params.append('search', filters.search);}
@@ -175,6 +176,7 @@ export class HttpObservabilitySource implements ObservabilityDataSource {
     const params = new URLSearchParams();
     if (filters?.level) {params.append('level', filters.level);}
     if (filters?.plugin) {params.append('plugin', filters.plugin);}
+    if (filters?.runId) {params.append('runId', filters.runId);}
     if (filters?.executionId) {params.append('executionId', filters.executionId);}
     if (filters?.tenantId) {params.append('tenantId', filters.tenantId);}
 

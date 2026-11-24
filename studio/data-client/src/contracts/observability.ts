@@ -223,6 +223,7 @@ export interface LogRecord {
   level: 'trace' | 'debug' | 'info' | 'warn' | 'error';
   msg?: string;
   plugin?: string;
+  runId?: string;
   command?: string;
   executionId?: string;
   tenantId?: string;
@@ -246,6 +247,7 @@ export interface LogQuery {
   to?: string; // ISO timestamp
   level?: string; // trace|debug|info|warn|error (comma-separated)
   plugin?: string;
+  runId?: string;
   executionId?: string;
   tenantId?: string;
   search?: string; // Text search in msg field
@@ -280,6 +282,7 @@ export interface LogEvent {
   level: LogRecord['level'];
   msg?: string;
   plugin?: string;
+  runId?: string;
   executionId?: string;
   tenantId?: string;
   [key: string]: unknown;

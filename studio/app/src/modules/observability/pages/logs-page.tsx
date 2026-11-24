@@ -240,12 +240,20 @@ export function LogsPage() {
   const [searchParams] = useSearchParams();
   const { setProjectId } = useProjectContext();
   const requestedProjectId = searchParams.get('projectId');
+  const requestedRunId = searchParams.get('runId');
   const requestedExecutionId = searchParams.get('executionId');
+  const [runIdFilter, setRunIdFilter] = useState<string | null>(requestedRunId);
   const [executionIdFilter, setExecutionIdFilter] = useState<string | null>(requestedExecutionId);
   const sources = useDataSources();
+  const streamFilters = useMemo(
+    () => runIdFilter || executionIdFilter
+      ? { runId: runIdFilter ?? undefined, executionId: executionIdFilter ?? undefined }
+      : undefined,
+    [runIdFilter, executionIdFilter],
+  );
   const { logs: streamLogs, isConnected, error, clearLogs } = useLogStream(
     sources.observability,
-    executionIdFilter ? { executionId: executionIdFilter } : undefined,
+    streamFilters,
   );
   const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
   const [searchQuery, setSearchQuery] = useState('');
@@ -279,8 +287,9 @@ export function LogsPage() {
 
   useEffect(() => {
     if (requestedProjectId) {setProjectId(requestedProjectId);}
+    setRunIdFilter(requestedRunId);
     setExecutionIdFilter(requestedExecutionId);
-  }, [requestedProjectId, requestedExecutionId, setProjectId]);
+  }, [requestedProjectId, requestedRunId, requestedExecutionId, setProjectId]);
 
   // AI Summarize Modal
   const [summarizeModalOpen, setSummarizeModalOpen] = useState(false);
@@ -324,6 +333,9 @@ export function LogsPage() {
         }
         if (executionIdFilter) {
           query.executionId = executionIdFilter;
+        }
+        if (runIdFilter) {
+          query.runId = runIdFilter;
         }
         if (searchQuery.trim()) {
           query.search = searchQuery.trim();
@@ -372,6 +384,7 @@ export function LogsPage() {
     levelFilter,
     pluginFilter,
     executionIdFilter,
+    runIdFilter,
     timeRange,
     customTimeRange,
     searchQuery,
@@ -388,6 +401,9 @@ export function LogsPage() {
     // In history mode level/plugin/time/search are applied on backend.
     // In live mode apply all filters client-side.
     if (viewMode !== 'history') {
+      if (runIdFilter) {
+        filtered = filtered.filter((log) => log.runId === runIdFilter);
+      }
       if (executionIdFilter) {
         filtered = filtered.filter((log) => log.executionId === executionIdFilter);
       }
