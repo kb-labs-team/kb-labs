@@ -7,5 +7,6 @@ export default defineConfig({
   dts: true, // Re-enabled after V3 migration
   entry: {
     index: 'src/index.ts',
+    'project-run-storage': 'src/project-run-storage.ts',
   },
 })

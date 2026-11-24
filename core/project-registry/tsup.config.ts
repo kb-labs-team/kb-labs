@@ -5,6 +5,7 @@ export default defineConfig({
   ...nodePreset,
   entry: {
     index: 'src/index.ts',
+    'file-lock': 'src/file-lock.ts',
   },
   tsconfig: "tsconfig.build.json", // Use build-specific tsconfig without paths
 })

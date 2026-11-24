@@ -23,7 +23,8 @@ import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createWorkflowActiveWorkProvider } from "./active-work.js";
-import { importLegacyWorkflowHistory, trustedLegacyProjectStorageRoot } from "./legacy-history-importer.js";
+import { importLegacyWorkflowHistory } from "./legacy-history-importer.js";
+import { trustedLegacyProjectStorageRoot } from "./legacy-storage-origin.js";
 
 /**
  * Bootstrap workflow daemon.

@@ -15,7 +15,7 @@ import { importLegacyWorkflowHistory } from '../legacy-history-importer.js'
 import {
   workflowLegacyHistoryMigrationDecisionPath,
   workflowRunRecordPath,
-} from '@kb-labs/workflow-engine'
+} from '@kb-labs/workflow-engine/project-run-storage'
 
 const projectId = 'prj_0000000000000001'
 const roots: string[] = []
@@ -74,7 +74,7 @@ describe('legacy workflow history import', () => {
     ).resolves.toMatchObject({
       status: 'already-imported',
       imported: 0,
-      skipped: 1,
+      alreadyDecided: 1,
     })
     await expect(readFile(destination)).rejects.toMatchObject({
       code: 'ENOENT',
@@ -87,7 +87,7 @@ describe('legacy workflow history import', () => {
     ).resolves.toMatchObject({
       status: 'imported',
       imported: 1,
-      skipped: 1,
+      alreadyDecided: 1,
     })
     await expect(
       readFile(
@@ -147,7 +147,7 @@ describe('legacy workflow history import', () => {
     ])
 
     expect(results.filter((result) => result.imported === 1)).toHaveLength(1)
-    expect(results.filter((result) => result.skipped === 1)).toHaveLength(1)
+    expect(results.filter((result) => result.alreadyDecided === 1)).toHaveLength(1)
     await expect(
       readFile(
         join(

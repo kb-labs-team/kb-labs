@@ -10,6 +10,11 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
+    },
+    "./file-lock": {
+      "types": "./dist/file-lock.d.ts",
+      "import": "./dist/file-lock.js",
+      "require": "./dist/file-lock.js"
     }
   },
   "files": [
