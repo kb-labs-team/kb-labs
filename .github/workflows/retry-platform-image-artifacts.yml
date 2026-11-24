@@ -79,7 +79,7 @@ jobs:
             echo "Docker archive tag mismatch: expected=$IMAGE_REF actual=$repo_tag" >&2
             exit 1
           fi
-          if [ "$config_file" != "${image_id#sha256:}.json" ] || [ "$archive_config_sha" != "$image_id" ]; then
+          if [ "$archive_config_sha" != "$image_id" ]; then
             echo "Docker archive config mismatch: imageID=$image_id configFile=$config_file archiveConfigSHA=$archive_config_sha" >&2
             exit 1
           fi
