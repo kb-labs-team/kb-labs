@@ -7,3 +7,5 @@ export { NpmPackageSource, PackageInstallError, PackageMetadataError, PlatformAr
 export type { NpmPackageSourceOptions } from './npm-source.js';
 export { RegistryPackageSource, RegistryPackageError } from './registry-source.js';
 export type { RegistrySourceOptions } from './registry-source.js';
+export { RegistryCatalogClient, RegistryCatalogClientError } from './registry-catalog-client.js';
+export { registryEndpointUrl } from './registry-url.js';

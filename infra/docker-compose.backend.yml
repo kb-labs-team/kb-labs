@@ -71,6 +71,7 @@ services:
       - "${KB_MARKETPLACE_HOST_PORT:-5070}:5070"
     environment:
       - NODE_ENV=production
+      - GATEWAY_INTERNAL_SECRET=${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the deployment secret configuration}
       # Consumer-side daemon (distinct from kb-marketplace-registry, the
       # publisher/storage service). Points at your own registry, not any
       # KB Labs default — see services/marketplace/app/Dockerfile.

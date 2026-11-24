@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findWorkspacePackages } from '@kb-labs/core-discovery';
+import { addToMarketplaceLock, createMarketplaceEntry } from '@kb-labs/core-discovery';
+import { openCatalog } from '@kb-labs/core-registry';
 import { loadAdapterManifest } from '@kb-labs/core-platform';
 import type { AdapterManifest } from '@kb-labs/core-platform';
 import { validatePlatformAdapterOptions } from '@kb-labs/core-config';
@@ -35,6 +37,44 @@ describe('projectEffectiveAdapterImplementation', () => {
         .toBe(configured);
     }
   });
+});
+
+it.each(['platform', 'marketplace'] as const)('preserves %s adapter provenance from openCatalog through runtime defaults', async source => {
+  const root = await mkdtemp(path.join(tmpdir(), 'kb-adapter-provenance-'));
+  const packageName = '@kb-labs/adapters-sqlite';
+  const packageRoot = path.join(root, 'node_modules', packageName);
+  try {
+    await mkdir(path.dirname(packageRoot), { recursive: true });
+    await symlink(path.join(workspaceRoot, 'adapters/sqlite'), packageRoot);
+    const entry = source === 'platform'
+      ? createMarketplaceEntry({
+        version: '1.0.0', integrity: 'sha256-platform', primaryKind: 'adapter', provides: ['adapter'],
+        source: 'platform', package: packageName, resolvedPath: `./node_modules/${packageName}`,
+      })
+      : createMarketplaceEntry({
+        version: '1.0.0', integrity: 'sha256-marketplace', primaryKind: 'adapter', provides: ['adapter'],
+        source: 'marketplace', package: packageName, resolvedPath: `./node_modules/${packageName}`,
+        marketplaceSource: 'registry', signatureStatus: 'verified',
+      });
+    await addToMarketplaceLock(root, packageName, entry, 'platform');
+    const catalog = await openCatalog({ platformRoot: root }, {
+      resolvePlatformVersion: async () => 'test',
+      persistSnapshot: false,
+    });
+    const catalogAdapter = catalog.adapters().get(packageName);
+    expect(catalogAdapter?.source).toBe(source);
+    const discovered = await loadCatalogAdapterEntries(catalog.adapters(), undefined);
+    const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} }, discovered, root);
+
+    if (source === 'platform') {
+      expect(resolved.adapters.vectorStore).toBe(`${packageName}/vector-store`);
+    } else {
+      expect(resolved.adapters).toEqual({});
+    }
+    await catalog.dispose();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 async function workspaceAdapterManifests(): Promise<Map<string, AdapterManifest>> {
@@ -263,7 +303,7 @@ describe('resolveDiscoveredAdapterDefaults', () => {
     const discoveredAdapters = await loadCatalogAdapterEntries(new Map([['@kb-labs/adapters-openai', {
       id: '@kb-labs/adapters-openai',
       packageRoot,
-      source: 'marketplace',
+      source: 'workspace',
       manifest: loadedManifest,
     }]]), { development: false, configuredPackages: [] });
     const openai = discoveredAdapters.get('@kb-labs/adapters-openai');
@@ -381,6 +421,18 @@ describe('resolveDiscoveredAdapterDefaults', () => {
 
     expect(resolved.adapters).not.toHaveProperty('serviceTransport');
     expect(resolved.adapterOptions).not.toHaveProperty('serviceTransport');
+  });
+
+  it('does not implicitly select an adapter installed from Marketplace', () => {
+    const marketplaceAdapter = discovered('@kb-labs/adapters-marketplace-default', {
+      defaultFor: { cache: ['cache'] }, schema: 'kb.adapter/1', implements: 'ICache',
+    });
+    marketplaceAdapter.source = 'marketplace';
+    const resolved = resolveDiscoveredAdapterDefaults({ adapters: {}, adapterOptions: {} },
+      new Map([[marketplaceAdapter.packageName, marketplaceAdapter]]), '/project');
+
+    expect(resolved.adapters).not.toHaveProperty('cache');
+    expect(resolved.adapterOptions).not.toHaveProperty('cache');
   });
 
   it('allows a required secret credential with an environment source as an implicit default', () => {

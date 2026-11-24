@@ -39,6 +39,8 @@ import { isManifestV3, type ManifestV3 } from '@kb-labs/plugin-contracts';
 
 import type {
   MarketplaceSource,
+  MarketplaceSourceKind,
+  MarketplaceRegistryCatalog,
   PackageSource,
   EntityKindStrategy,
   MarketplaceServiceAPI,
@@ -75,6 +77,8 @@ export interface MarketplaceServiceOptions {
   projectRoot?: string;
   /** Ordered identity sources from platform config; Registry precedes npm when configured. */
   sources: MarketplaceSource[];
+  /** Public Registry catalog target; browsing is allowed without an install key. */
+  registryCatalog?: MarketplaceRegistryCatalog;
   /** Shared machine store. When set, packages never enter project node_modules. */
   extensionStore?: IExtensionStore;
   /** Platform logger used by lifecycle strategies. */
@@ -122,6 +126,12 @@ function verifyResolvedArtifact(
       details: { package: resolved.id, scope },
     }));
   }
+  const subjectPackage = resolved.signatureSubject.slice(resolved.signatureSubject.indexOf('/') + 1);
+  if (!resolved.signatureSubject.includes('/') || subjectPackage.toLowerCase() !== resolved.id.toLowerCase()) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_SIGNATURE_INVALID', {
+      details: { package: resolved.id, scope },
+    }));
+  }
   const payload = Buffer.from(JSON.stringify({ integrity: resolved.integrity, pkg: `${resolved.signatureSubject}@${resolved.version}` }));
   let valid = false;
   try {
@@ -144,6 +154,7 @@ function verifyResolvedArtifact(
 export class MarketplaceService implements MarketplaceServiceAPI {
   private readonly roots: ServiceRoots;
   private readonly sources: MarketplaceSource[];
+  private readonly registryCatalog?: MarketplaceRegistryCatalog;
   private readonly extensionStore?: IExtensionStore;
   private readonly logger: ILogger;
   private readonly strategies = new Map<EntityKind, EntityKindStrategy>();
@@ -159,6 +170,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   constructor(opts: MarketplaceServiceOptions) {
     this.roots = { platformRoot: opts.platformRoot, projectRoot: opts.projectRoot };
     this.sources = opts.sources;
+    this.registryCatalog = opts.registryCatalog;
     this.extensionStore = opts.extensionStore;
     this.logger = opts.logger;
 
@@ -178,6 +190,38 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     this.strategies.set(strategy.kind, strategy);
   }
 
+  registryCatalogStatus(): { trustedInstallAvailable: boolean } {
+    return { trustedInstallAvailable: this.hasTrustedRegistryInstallSource() };
+  }
+
+  listRegistryCatalogPackages(query?: string): Promise<unknown[]> {
+    if (!this.registryCatalog) {return Promise.reject(this.registryCatalogConfigurationError());}
+    return this.registryCatalog.listPackages(query);
+  }
+
+  getRegistryCatalogPackage(handle: string, name: string): Promise<unknown | null> {
+    if (!this.registryCatalog) {return Promise.reject(this.registryCatalogConfigurationError());}
+    return this.registryCatalog.getPackage(handle, name);
+  }
+
+  private hasTrustedRegistryInstallSource(): boolean {
+    const catalogUrl = this.registryCatalog?.registryUrl;
+    const normalizedCatalogUrl = catalogUrl ? normalizeSourceUrl(catalogUrl) : undefined;
+    return Boolean(normalizedCatalogUrl && this.sources.some(source =>
+      source.kind === 'registry' && source.verificationKey?.trim() && source.registrySourceUrl &&
+      normalizeSourceUrl(source.registrySourceUrl) === normalizedCatalogUrl));
+  }
+
+  private requireTrustedRegistryInstallSource(): void {
+    if (!this.hasTrustedRegistryInstallSource()) {throw this.registryCatalogConfigurationError();}
+  }
+
+  private registryCatalogConfigurationError(): ErrorEnvelopeError {
+    return new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', {
+      details: { path: 'marketplace.sources' },
+    }));
+  }
+
   // -------------------------------------------------------------------------
   // Install
   // -------------------------------------------------------------------------
@@ -191,12 +235,29 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, specs, opts, false));
   }
 
+  /** Install a Registry-resolved adapter into the platform graph only. */
+  async installAdapter(spec: string, opts?: { shareToken?: string }): Promise<InstallResult> {
+    this.requireTrustedRegistryInstallSource();
+    const ctx: ScopeContext = { scope: 'platform' };
+    const scopeRoot = resolveScopeRoot(this.roots, ctx);
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], opts, false, 'adapter', 'registry'));
+  }
+
+  /** Install a project plugin from the configured Marketplace Registry only. */
+  async installRegistryPlugin(ctx: ScopeContext, spec: string): Promise<InstallResult> {
+    this.requireTrustedRegistryInstallSource();
+    const scopeRoot = resolveScopeRoot(this.roots, ctx);
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], undefined, false, 'plugin', 'registry'));
+  }
+
   private async installInScope(
     ctx: ScopeContext,
     scopeRoot: string,
     specs: string[],
     opts?: { dev?: boolean; shareToken?: string },
     isUpdate = false,
+    expectedKind?: EntityKind,
+    requiredSource?: MarketplaceSourceKind,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
@@ -208,6 +269,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       let resolved: Awaited<ReturnType<MarketplaceSource['resolve']>> | undefined;
       const sourceResults: string[] = [];
       for (const configuredSource of this.sources) {
+        if (requiredSource && configuredSource.kind !== requiredSource) {continue;}
         const candidateSource = opts?.shareToken && configuredSource.withShareToken
           ? configuredSource.withShareToken(opts.shareToken)
           : configuredSource;
@@ -225,10 +287,18 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         break;
       }
       if (!source || !resolved) {
+        if (requiredSource === 'registry' && !this.sources.some((candidate) => candidate.kind === 'registry')) {
+          throw new InvalidEntityError('Marketplace Registry source is not configured for Registry catalog installs.');
+        }
         throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
           details: { plugin: spec },
           cause: sourceResults.join('; '),
         }));
+      }
+      if (expectedKind === 'adapter' && source.kind !== 'registry') {
+        throw new InvalidEntityError(
+          `Marketplace adapter installation requires the configured Marketplace Registry source; "${resolved.id}" resolved from "${source.kind}".`,
+        );
       }
       if (!resolved.primaryKind) {
         throw new PackageClassificationError(
@@ -236,8 +306,25 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           resolved.version,
         );
       }
+      if (expectedKind && resolved.primaryKind !== expectedKind) {
+        throw new InvalidEntityError(
+          `Marketplace ${expectedKind} installation requires a Registry package classified as "${expectedKind}"; "${resolved.id}" is "${resolved.primaryKind}".`,
+        );
+      }
+      if (requiredSource === 'registry' && stripSpecVersion(spec) !== (resolved.canonicalIdentity ?? resolved.id)) {
+        throw new InvalidEntityError(
+          `Registry resolved "${resolved.canonicalIdentity ?? resolved.id}" for requested identity "${stripSpecVersion(spec)}".`,
+        );
+      }
+      const requestedVersion = getExactSpecVersion(spec);
+      if (requiredSource === 'registry' && requestedVersion && requestedVersion !== resolved.version) {
+        throw new InvalidEntityError(
+          `Registry resolved version "${resolved.version}" for explicitly requested version "${requestedVersion}".`,
+        );
+      }
       const verification = verifyResolvedArtifact(resolved, source, ctx.scope);
-      const installedPin = findInstalledPin(lock, resolved.id);
+      const canonicalIdentity = resolved.canonicalIdentity ?? resolved.id;
+      const installedPin = findInstalledPin(lock, resolved.id, canonicalIdentity);
       if (installedPin) {
         const installedVersion = installedPin.version;
         if (!semver.valid(installedVersion) || !semver.valid(resolved.version)) {
@@ -282,6 +369,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         );
       }
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
+      if (expectedKind && primaryKind !== expectedKind) {
+        throw new InvalidEntityError(
+          `Marketplace ${expectedKind} installation requires an installed manifest classified as "${expectedKind}"; "${result.id}" is "${primaryKind}".`,
+        );
+      }
 
       const strategy = this.strategies.get(primaryKind);
       canonicalId = strategy?.resolveId
@@ -293,15 +385,24 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           'Declare the ID in its KB manifest and retry the install.',
         );
       }
-      if (canonicalId !== resolved.id) {
+      const expectedIdentity = resolved.canonicalIdentity ?? resolved.id;
+      if (canonicalId !== expectedIdentity) {
         throw new InvalidEntityError(
-          `Package requested as "${resolved.id}" declares manifest identity "${canonicalId}". ` +
-          `Publish the package with matching npm name and manifest ID, then rerun "kb marketplace install ${spec}".`,
+          `Package resolved as "${expectedIdentity}" declares manifest identity "${canonicalId}". ` +
+          `Publish the package with matching Registry identity and manifest ID, then rerun "kb marketplace install ${spec}".`,
         );
       }
       const provides = strategy
         ? await strategy.extractProvides(result.packageRoot)
         : [primaryKind];
+
+      // Registry source extracts into a fresh sibling directory. Promote it
+      // only after the Marketplace has validated the artifact and manifest.
+      // The source retains its backup until commitInstall so later lock/cache
+      // failures still restore the previous package atomically.
+      const installedPackageRoot = !usesExtensionStore && source.activateInstall
+        ? await source.activateInstall(result.id, scopeRoot)
+        : result.packageRoot;
 
       const trust: 'trusted' | 'untrusted' = verification.signatureStatus === 'verified' ? 'trusted' : 'untrusted';
 
@@ -316,7 +417,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         marketplaceSource: source.kind,
         signatureStatus: verification.signatureStatus,
       };
-      const packagePath = relativeToRoot(scopeRoot, result.packageRoot);
+      const packagePath = relativeToRoot(scopeRoot, installedPackageRoot);
       const entrySource = resolved.source;
       const entry = entrySource === 'marketplace'
         ? createMarketplaceEntry({ ...entryOptions, source: 'marketplace', package: result.id, resolvedPath: usesExtensionStore ? undefined : packagePath })
@@ -326,13 +427,13 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
       // Cache manifest
       if (!this.extensionStore) {
-        await this.cacheManifest(scopeRoot, canonicalId, result.packageRoot, primaryKind, result.integrity);
+        await this.cacheManifest(scopeRoot, canonicalId, installedPackageRoot, primaryKind, result.integrity);
       }
 
       // Run post-install hook
       if (strategy?.afterInstall) {
         try {
-          await strategy.afterInstall(canonicalId, result.packageRoot, this, ctx);
+          await strategy.afterInstall(canonicalId, installedPackageRoot, this, ctx);
         } catch (err) {
           warnings.push(`afterInstall for ${canonicalId}: ${(err as Error).message}`);
         }
@@ -344,7 +445,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         version: result.version,
         primaryKind,
         provides,
-        packageRoot: result.packageRoot,
+        packageRoot: installedPackageRoot,
         scope: ctx.scope,
         source: source.kind,
         signatureStatus: verification.signatureStatus,
@@ -521,7 +622,10 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         return entry.package!;
       });
 
-      const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true);
+      // The update command operates on plugin pins. If Registry metadata changes
+      // an installed identity into another kind, do not let update become an
+      // implicit adapter installation path.
+      const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true, 'plugin');
       return { ...result, warnings: [...warnings, ...result.warnings] };
     });
   }
@@ -1010,15 +1114,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 function findInstalledPin(
   lock: MarketplaceLock | null,
   packageId: string,
+  canonicalId = packageId,
 ): { version: string; integrity: string } | undefined {
   if (!lock) { return undefined; }
   const plugin = Object.entries(lock.plugins).find(([id, entry]) =>
-    id === packageId || (entry.source !== 'local' && entry.package === packageId),
+    id === packageId || id === canonicalId || (entry.source !== 'local' && (entry.package === packageId || entry.package === canonicalId)),
   )?.[1];
   if (plugin && plugin.source !== 'local') {
     return { version: plugin.version, integrity: plugin.integrity };
   }
-  const adapter = lock.adapters?.[packageId];
+  const adapter = lock.adapters?.[packageId] ?? lock.adapters?.[canonicalId];
   return adapter ? { version: adapter.version, integrity: adapter.integrity } : undefined;
 }
 
@@ -1111,6 +1216,31 @@ async function restoreMarketplaceState(snapshot: MarketplaceStateFile[]): Promis
 function relativeToRoot(root: string, absPath: string): string {
   const rel = path.relative(root, absPath);
   return rel.startsWith('.') ? rel : `./${rel}`;
+}
+
+function stripSpecVersion(spec: string): string {
+  const separator = spec.lastIndexOf('@');
+  const identityBoundary = spec.startsWith('@') ? spec.indexOf('/') : 0;
+  return separator > identityBoundary ? spec.slice(0, separator) : spec;
+}
+
+function getExactSpecVersion(spec: string): string | undefined {
+  const separator = spec.lastIndexOf('@');
+  const identityBoundary = spec.startsWith('@') ? spec.indexOf('/') : 0;
+  if (separator <= identityBoundary) {return undefined;}
+  const requested = spec.slice(separator + 1);
+  return semver.valid(requested) ? requested : undefined;
+}
+
+function normalizeSourceUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    url.search = '';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return undefined;
+  }
 }
 
 function isPathInside(parent: string, child: string): boolean {

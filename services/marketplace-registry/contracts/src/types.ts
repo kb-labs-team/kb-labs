@@ -147,6 +147,8 @@ export interface RegistryPackageSummary {
   handle: string;
   name: string;
   fullName: string;
+  /** Canonical KB Labs package identity used by Marketplace install/resolve. */
+  identity: string;
   version: string;
   description?: string;
   author?: PackageAuthor | string;

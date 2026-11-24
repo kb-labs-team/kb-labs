@@ -13,6 +13,7 @@ import { MarketplaceService } from "@kb-labs/marketplace-core";
 import { createExtensionStore } from "@kb-labs/core-extension-store";
 import {
   NpmPackageSource,
+  RegistryCatalogClient,
   RegistryPackageSource,
 } from "@kb-labs/marketplace-npm";
 
@@ -35,27 +36,34 @@ export async function setup({
   const kbConfig = await readKbConfig(repoRoot, { required: true });
   const marketplace = (kbConfig?.data as { marketplace?: { sources?: MarketplaceSourcesConfig } } | undefined)?.marketplace;
   const sourcesConfig = marketplace?.sources;
-  if (!sourcesConfig?.[0]) {
+  if (!sourcesConfig?.length) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', { details: { path: 'marketplace.sources' } }));
   }
-  const sources = [
-    ...(sourcesConfig[0].kind === 'registry'
-      ? [new RegistryPackageSource({
-        registryUrl: sourcesConfig[0].url,
-        signingPublicKey: sourcesConfig[0].signingPublicKey,
-        authToken: sourcesConfig[0].authToken,
-      })]
-      : []),
-    ...sourcesConfig.flatMap(source => source?.kind === 'npm'
-      ? [new NpmPackageSource({ registryUrl: source.url })]
-      : []),
-  ];
+  const sources: ConstructorParameters<typeof MarketplaceService>[0]['sources'] = [];
+  let configuredRegistryUrl: string | undefined;
+  for (const source of sourcesConfig) {
+    if (!source) {
+      continue;
+    }
+    if (source.kind === 'registry') {
+      configuredRegistryUrl ??= source.url;
+      sources.push(new RegistryPackageSource({
+        registryUrl: source.url,
+        signingPublicKey: source.signingPublicKey,
+        authToken: source.authToken,
+      }));
+      continue;
+    }
+    sources.push(new NpmPackageSource({ registryUrl: source.url }));
+  }
+  const registryCatalogUrl = configuredRegistryUrl ?? process.env.KB_MARKETPLACE_CATALOG_URL ?? 'https://api.kblabs.ru/api/v1/registry';
 
   const service = new MarketplaceService({
     platformRoot,
     logger,
     extensionStore: createExtensionStore({ platformRoot }),
     sources,
+    registryCatalog: new RegistryCatalogClient(registryCatalogUrl),
     resolveSelectedAdapterSlot: async (packageId) => {
       const currentConfig = await readKbConfig(repoRoot);
       const data = isRecord(currentConfig?.data) ? currentConfig.data : {};

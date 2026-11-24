@@ -418,7 +418,7 @@ export class RegistryService {
     callerNamespaceId: string | null,
     shareToken?: { pkg: string } | null,
   ): RegistryEntry | null {
-    const versions = entry.versions.filter(version => this.canAccess(entry, callerNamespaceId, shareToken, version.version));
+    const versions = entry.versions.filter(version => !version.yanked && this.canAccess(entry, callerNamespaceId, shareToken, version.version));
     const latest = versions.at(-1);
     if (!latest) { return null; }
     const isOwner = callerNamespaceId === entry.authorNamespaceId;
@@ -543,6 +543,7 @@ export class RegistryService {
       status: 'found',
       package: {
         id: meta.name,
+        canonicalIdentity: meta.identity ?? entry.meta.identity,
         version: latest.version,
         integrity: latest.integrity,
         ...(latest.signature ? { signature: latest.signature } : {}),
@@ -586,7 +587,7 @@ export class RegistryService {
 
   async listPublicPackages(): Promise<RegistryPackageSummary[]> {
     const generation = await this.cache.get<string>('registry:search:generation') ?? '0';
-    const cached = await this.cache.get<RegistryPackageSummary[]>(`registry:search:${generation}:catalog-index`);
+    const cached = await this.cache.get<RegistryPackageSummary[]>(`registry:search:v2:${generation}:catalog-index`);
     if (cached) { return cached; }
     return this.rebuildIndex(generation);
   }
@@ -594,7 +595,7 @@ export class RegistryService {
   async searchPackages(query: string): Promise<RegistryPackageSummary[]> {
     const q = query.toLowerCase().trim();
     const generation = await this.cache.get<string>('registry:search:generation') ?? '0';
-    const cacheKey = `registry:search:${generation}:query:${q}`;
+    const cacheKey = `registry:search:v2:${generation}:query:${q}`;
     const cached = await this.cache.get<RegistryPackageSummary[]>(cacheKey);
     if (cached) { return cached; }
 
@@ -602,6 +603,7 @@ export class RegistryService {
     const results = all.filter(p =>
       p.name.toLowerCase().includes(q) ||
       p.fullName.toLowerCase().includes(q) ||
+      p.identity?.toLowerCase().includes(q) ||
       p.description?.toLowerCase().includes(q) ||
       p.keywords?.some(k => k.toLowerCase().includes(q)),
     );
@@ -688,7 +690,7 @@ export class RegistryService {
   private async invalidateCaches(handle: string, name: string): Promise<void> {
     await this.cache.delete(`registry:pkg:${handle}/${name}`);
     const generation = await this.cache.get<string>('registry:search:generation') ?? '0';
-    await this.cache.delete(`registry:search:${generation}:catalog-index`);
+    await this.cache.delete(`registry:search:v2:${generation}:catalog-index`);
     await this.cache.delete('registry:search:__index');
     await this.cache.set('registry:search:generation', `${Date.now()}-${Math.random().toString(36).slice(2)}`);
   }
@@ -713,6 +715,7 @@ export class RegistryService {
         handle: entry.authorHandle,
         name: entry.name,
         fullName: `${entry.authorHandle}/${entry.name}`,
+        identity: meta.identity,
         version: latest.version,
         description: meta.description,
         author: meta.author,
@@ -727,7 +730,7 @@ export class RegistryService {
     }
 
     summaries.sort((a, b) => (b.featured ? 1 : 0) - (a.featured ? 1 : 0) || b.installs - a.installs);
-    await this.cache.set(`registry:search:${cacheGeneration}:catalog-index`, summaries, CACHE_TTL_SEARCH);
+    await this.cache.set(`registry:search:v2:${cacheGeneration}:catalog-index`, summaries, CACHE_TTL_SEARCH);
 
     const indexPath = `${STORAGE_PREFIX}/index.json`;
     await this.storage.write(indexPath, Buffer.from(JSON.stringify(summaries, null, 2)));

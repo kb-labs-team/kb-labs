@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { MARKETPLACE } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
 
 // POST /packages/link — link a local package path for dev
 // POST /packages/unlink — unlink a previously linked package
@@ -7,7 +7,7 @@ import { MARKETPLACE } from '@kb-labs/e2e-shared/urls.js'
 // Full link→unlink cycle requires a real local package path — skipped in CI.
 // Error-path tests run without side effects.
 
-const BASE = `${MARKETPLACE}/api/v1/marketplace`
+const BASE = `${GATEWAY}/api/v1/marketplace`
 
 test('MLK-01: POST /packages/link without required path field returns 400', async ({ request }) => {
   const res = await request.post(`${BASE}/packages/link`, {

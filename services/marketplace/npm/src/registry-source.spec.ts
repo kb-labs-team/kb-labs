@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { create as pack } from 'tar';
 import { RegistryPackageSource } from './registry-source.js';
 
 describe('RegistryPackageSource', () => {
@@ -18,6 +19,21 @@ describe('RegistryPackageSource', () => {
       .resolveIdentity('@kb-labs/test');
 
     expect(resolved).toMatchObject({ status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', primaryKind: 'plugin' } });
+  });
+
+  it('uses the public Registry alias endpoint without duplicating the API prefix', async () => {
+    let requestedUrl = '';
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ status: 'not-found-unowned' }), { status: 200 });
+    }));
+
+    await new RegistryPackageSource({
+      registryUrl: 'https://api.kblabs.ru/api/v1/registry',
+      signingPublicKey: 'test-key',
+    }).resolveIdentity('@kb-labs/commit');
+
+    expect(requestedUrl).toBe('https://api.kblabs.ru/api/v1/registry/resolve?identity=%40kb-labs%2Fcommit');
   });
 
   // case: S-268.1
@@ -103,7 +119,7 @@ describe('RegistryPackageSource', () => {
       code: 'TRANSPORT_FAILED', message: 'Registry redirects are not followed for authenticated requests',
     });
     expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0][1]).toMatchObject({
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
       redirect: 'manual', headers: { 'X-Share-Token': 'share-sentinel' },
     });
     expect(JSON.stringify(request.mock.calls)).not.toContain('attacker.test');
@@ -123,6 +139,94 @@ describe('RegistryPackageSource', () => {
         primaryKind: 'plugin', downloadUrl: 'https://registry.test/plugin.tgz',
       }, root)).rejects.toMatchObject({ name: 'RegistryPackageError', code: 'INTEGRITY_MISMATCH' });
       await expect(fs.access(packageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reuse an installed manifest when a fresh Registry archive omits package.json', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-fresh-stage-'));
+    const packageRoot = path.join(root, 'node_modules', 'author', 'adapter');
+    const archiveRoot = path.join(root, 'archive', 'package');
+    const archivePath = path.join(root, 'registry.tgz');
+    const oldManifest = JSON.stringify({
+      name: 'author/adapter', version: '1.0.0', kb: { adapter: { manifest: './manifest.mjs' } },
+    });
+    try {
+      await fs.mkdir(packageRoot, { recursive: true });
+      await fs.writeFile(path.join(packageRoot, 'package.json'), oldManifest);
+      await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = {};');
+      await fs.mkdir(archiveRoot, { recursive: true });
+      await fs.writeFile(path.join(archiveRoot, 'README.md'), 'no package metadata');
+      await pack({ cwd: path.dirname(archiveRoot), file: archivePath, gzip: true }, ['package']);
+      const tarball = await fs.readFile(archivePath);
+      const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(tarball, { status: 200 })));
+
+      await expect(source.install({
+        id: 'author/adapter', version: '1.0.0', integrity: `sha256-${createHash('sha256').update(tarball).digest('base64')}`,
+        source: 'marketplace', primaryKind: 'adapter', downloadUrl: 'https://registry.test/adapter.tgz',
+      }, root)).rejects.toMatchObject({ code: 'PACKAGE_INVALID' });
+
+      expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toBe(oldManifest);
+      expect(await fs.readFile(path.join(packageRoot, 'manifest.mjs'), 'utf8')).toContain('export const manifest');
+      expect(await fs.readdir(path.dirname(packageRoot))).toEqual(['adapter']);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses to extract through a symlinked scoped package parent', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-symlink-parent-'));
+    const outside = path.join(root, 'outside');
+    const archiveRoot = path.join(root, 'archive', 'package');
+    const archivePath = path.join(root, 'registry.tgz');
+    try {
+      await fs.mkdir(path.join(root, 'node_modules'), { recursive: true });
+      await fs.mkdir(outside, { recursive: true });
+      await fs.writeFile(path.join(outside, 'keep.txt'), 'user data');
+      await fs.symlink(outside, path.join(root, 'node_modules', '@author'));
+      await fs.mkdir(archiveRoot, { recursive: true });
+      await fs.writeFile(path.join(archiveRoot, 'package.json'), JSON.stringify({ name: '@author/plugin', version: '1.0.0' }));
+      await pack({ cwd: path.dirname(archiveRoot), file: archivePath, gzip: true }, ['package']);
+      const tarball = await fs.readFile(archivePath);
+      const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(tarball, { status: 200 })));
+
+      await expect(source.install({
+        id: '@author/plugin', version: '1.0.0', integrity: `sha256-${createHash('sha256').update(tarball).digest('base64')}`,
+        source: 'marketplace', primaryKind: 'plugin', downloadUrl: 'https://registry.test/plugin.tgz',
+      }, root)).rejects.toMatchObject({ code: 'RESOLUTION_FAILED' });
+
+      expect(await fs.readFile(path.join(outside, 'keep.txt'), 'utf8')).toBe('user data');
+      expect(await fs.readdir(outside)).toEqual(['keep.txt']);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('installs an unscoped package directly under node_modules', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-unscoped-'));
+    const archiveRoot = path.join(root, 'archive', 'package');
+    const archivePath = path.join(root, 'registry.tgz');
+    try {
+      await fs.mkdir(archiveRoot, { recursive: true });
+      await fs.writeFile(path.join(archiveRoot, 'package.json'), JSON.stringify({ name: 'plain-plugin', version: '1.0.0' }));
+      await pack({ cwd: path.dirname(archiveRoot), file: archivePath, gzip: true }, ['package']);
+      const tarball = await fs.readFile(archivePath);
+      const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(tarball, { status: 200 })));
+      const result = await source.install({
+        id: 'plain-plugin', version: '1.0.0', integrity: `sha256-${createHash('sha256').update(tarball).digest('base64')}`,
+        source: 'marketplace', primaryKind: 'plugin', downloadUrl: 'https://registry.test/plain-plugin.tgz',
+      }, root);
+
+      expect(await fs.readFile(path.join(result.packageRoot, 'package.json'), 'utf8'))
+        .toContain('"name":"plain-plugin"');
+      await source.activateInstall('plain-plugin', root);
+      await source.commitInstall('plain-plugin', root);
+      expect(await fs.readFile(path.join(root, 'node_modules', 'plain-plugin', 'package.json'), 'utf8'))
+        .toContain('"name":"plain-plugin"');
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

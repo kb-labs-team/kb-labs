@@ -9,6 +9,7 @@ export type {
   MarketplaceSource,
   MarketplaceSourceKind,
   MarketplaceSourceResolution,
+  MarketplaceRegistryCatalog,
   MarketplaceEntryWithId,
   ResolvedPackage,
   InstalledPackage,

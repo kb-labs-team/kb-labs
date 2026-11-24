@@ -219,6 +219,8 @@ export type MarketplaceLockEntry = MarketplaceEntry | MarketplaceAdapterEntry;
 
 export interface MarketplaceResolvedIdentity {
   id: string;
+  /** Registry-owned canonical install identity; may differ from package.json `id`. */
+  canonicalIdentity?: string;
   version: string;
   integrity: string;
   signature?: EntitySignature;
@@ -262,7 +264,7 @@ export interface DiagnosticReport {
 export interface CatalogAdapter {
   id: string;
   packageRoot: string;
-  source: 'marketplace' | 'workspace';
+  source: 'marketplace' | 'platform' | 'workspace';
   manifest: AdapterManifestLoadResult;
 }
 

@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { MARKETPLACE } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
 
 // Error-path tests for the marketplace package management API.
 // Tests verify that invalid input is rejected with appropriate HTTP status codes
 // and that responses contain useful error information.
 // No side effects — uses non-existent package IDs throughout.
 
-const BASE = `${MARKETPLACE}/api/v1/marketplace`
+const BASE = `${GATEWAY}/api/v1/marketplace`
 const FAKE_PKG = '@e2e-nonexistent/pkg-00000000'
 
 test('ME-01: POST /packages/install with empty specs array returns 4xx', async ({ request }) => {

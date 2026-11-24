@@ -118,7 +118,15 @@ describe('the gateway really reads what it declares', () => {
   it('materialised paths land where the gateway config schema reads them', () => {
     const config: Record<string, unknown> = {};
     // Defaults as the installer writes them, plus samples for the value-less requirements.
-    const samples: Record<string, unknown> = { 'gateway.bootstrap.adminEmail': 'admin@example.com', 'gateway.bootstrap.tenantId': 'acme' };
+    const samples: Record<string, unknown> = {
+      'gateway.bootstrap.adminEmail': 'admin@example.com',
+      'gateway.bootstrap.tenantId': 'acme',
+      'gateway.marketplaceRegistryRoute': {
+        serviceId: 'marketplace-registry',
+        prefix: '/api/v1/marketplace-registry',
+        rewritePrefix: '',
+      },
+    };
     for (const r of file.requirements.filter((x) => !x.secret)) {
       const value = samples[r.id] ?? r.default;
       expect(value, `${r.id} needs a default or a sample`).toBeDefined();

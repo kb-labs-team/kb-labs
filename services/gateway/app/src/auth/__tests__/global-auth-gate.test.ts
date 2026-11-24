@@ -78,6 +78,7 @@ describe('Gateway global auth gate', () => {
       upstreams: {
         testPlugin: { serviceId: 'test-plugin', prefix: '/api/v1/plugins/test-plugin' },
         mcp: { serviceId: 'mcp-test', prefix: '/api/v1/mcp' },
+        marketplace: { serviceId: 'marketplace-test', prefix: '/api/v1/marketplace' },
         marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry', rewritePrefix: '' },
       },
       staticTokens: {},
@@ -196,6 +197,39 @@ describe('Gateway global auth gate', () => {
     });
     expect(anonymousPublish.statusCode).toBe(401);
     expect(upstreamHits).toBe(3);
+
+    const genericPlatformInstall = await app.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { specs: ['@acme/adapter'], scope: 'platform' },
+    });
+    // The Marketplace API parses the proxied body and applies the platform
+    // settings permission after the generic scope is known.
+    expect(genericPlatformInstall.statusCode).toBe(200);
+    expect(upstreamHits).toBe(4);
+
+    const genericProjectInstall = await app.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { specs: ['@acme/plugin'], scope: 'project' },
+    });
+    expect(genericProjectInstall.statusCode).toBe(200);
+    expect(upstreamHits).toBe(5);
+
+    const platformAdmin = await signAccessToken({
+      hostId: 'admin-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access',
+      permissions: ['platform-settings:write'],
+    }, jwtConfig);
+    const allowedPlatformInstall = await app.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/adapters/install',
+      headers: { authorization: `Bearer ${platformAdmin.token}` },
+      payload: { spec: '@acme/adapter' },
+    });
+    expect(allowedPlatformInstall.statusCode).toBe(200);
+    expect(upstreamHits).toBe(6);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {
@@ -322,11 +356,19 @@ describe('Gateway global auth gate', () => {
       secret: request.headers['x-internal-secret'],
       user: request.headers['x-kb-auth-user-id'],
     }));
+    app.get('/api/v1/registry/packages', async (request) => ({
+      secret: request.headers['x-internal-secret'],
+      user: request.headers['x-kb-auth-user-id'],
+    }));
     await app.ready();
 
     const anonymous = await app.inject({ method: 'GET', url: '/api/v1/marketplace-registry/api/v1/packages/acme/widget' });
     expect(anonymous.statusCode).toBe(200);
     expect(anonymous.json()).toEqual({ secret: 'gateway-internal-secret' });
+
+    const publicAlias = await app.inject({ method: 'GET', url: '/api/v1/registry/packages' });
+    expect(publicAlias.statusCode).toBe(200);
+    expect(publicAlias.json()).toEqual({ secret: 'gateway-internal-secret' });
 
     const { token } = await signAccessToken({
       hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: ['packages:read'],

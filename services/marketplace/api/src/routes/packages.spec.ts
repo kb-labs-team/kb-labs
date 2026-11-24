@@ -3,7 +3,10 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import type { ILogger, IContextLogger } from '@kb-labs/core-platform';
+import type { FastifyInstance, InjectOptions } from 'fastify';
 import { createContextLogger } from '@kb-labs/core-platform';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { forwardedIdentityHeaders, type AuthContext } from '@kb-labs/gateway-contracts';
 import type { PackageSource, MarketplaceSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
 import { MarketplaceService, MarketplaceVersionError } from '@kb-labs/marketplace-core';
 import { NpmPackageSource, PackageInstallError, RegistryPackageSource } from '@kb-labs/marketplace-npm';
@@ -35,6 +38,7 @@ interface CapturedLog {
 }
 
 function makeContextLogger(): { logger: IContextLogger; errors: CapturedLog[] } {
+  vi.stubEnv('GATEWAY_INTERNAL_SECRET', TEST_GATEWAY_SECRET);
   const errors: CapturedLog[] = [];
   const base: ILogger = {
     trace: () => undefined,
@@ -79,10 +83,30 @@ function createFailingSource(failure: Error, throwsDuringResolve: boolean): Pack
   };
 }
 
+const TEST_GATEWAY_SECRET = 'marketplace-api-test-gateway-secret';
+const TEST_PLATFORM_ADMIN: AuthContext = {
+  type: 'machine', userId: 'marketplace-api-test-admin', namespaceId: 'local', tier: 'enterprise',
+  permissions: Object.values(PERMISSIONS),
+};
+
+function injectAsPlatformAdmin(
+  server: FastifyInstance,
+  options: InjectOptions,
+) {
+  return server.inject({
+    ...options,
+    headers: { ...forwardedIdentityHeaders(TEST_PLATFORM_ADMIN, TEST_GATEWAY_SECRET), ...options.headers },
+  });
+}
+
 describe('Marketplace API error boundary', () => {
   const servers: Array<Awaited<ReturnType<typeof createServer>>> = [];
   const httpServers: Array<ReturnType<typeof createHttpServer>> = [];
   const roots: string[] = [];
+
+  function configureGatewayIdentity(): void {
+    vi.stubEnv('GATEWAY_INTERNAL_SECRET', TEST_GATEWAY_SECRET);
+  }
 
   afterEach(async () => {
     await Promise.all(servers.splice(0).map(server => server.close()));
@@ -90,6 +114,203 @@ describe('Marketplace API error boundary', () => {
       server.close(() => resolve());
     })));
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
+    vi.unstubAllEnvs();
+  });
+
+  // case: S-321.2
+  it('exposes a platform-only adapter install operation without accepting caller scope', async () => {
+    configureGatewayIdentity();
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-adapter-route-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    const installAdapter = vi.spyOn(service, 'installAdapter').mockResolvedValue({
+      installed: [{
+        id: '@kb-labs/test-adapter', version: '1.0.0', primaryKind: 'adapter', provides: ['adapter'],
+        packageRoot: '/platform/node_modules/@kb-labs/test-adapter', scope: 'platform', source: 'registry', signatureStatus: 'verified',
+      }],
+      warnings: [],
+      scope: 'platform',
+    });
+    const install = vi.spyOn(service, 'install');
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const directMarketplace = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/adapters/install',
+      payload: { spec: '@kb-labs/test-adapter' },
+    });
+    expect(directMarketplace.statusCode).toBe(403);
+    expect(directMarketplace.json()).toMatchObject({ error: { hint: expect.stringContaining('through Gateway') } });
+    expect(installAdapter).not.toHaveBeenCalled();
+
+    const forgedResponse = await injectAsPlatformAdmin(server, {
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/adapters/install',
+      headers: { 'x-internal-secret': 'forged', 'x-kb-auth-permissions': '["platform-settings:write"]' },
+      payload: { spec: '@kb-labs/test-adapter@1.0.0' },
+    });
+    expect(forgedResponse.statusCode).toBe(403);
+    expect(installAdapter).not.toHaveBeenCalled();
+
+    const unsignedGenericInstall = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-plugin'] },
+    });
+    expect(unsignedGenericInstall.statusCode).toBe(403);
+    expect(install).not.toHaveBeenCalled();
+
+    const response = await injectAsPlatformAdmin(server, {
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/adapters/install',
+      payload: { spec: '@kb-labs/test-adapter@1.0.0' },
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ ok: true, data: { scope: 'platform', installed: [{ primaryKind: 'adapter' }] } });
+    expect(installAdapter).toHaveBeenCalledWith('@kb-labs/test-adapter@1.0.0');
+
+    const callerSelectedScope = await injectAsPlatformAdmin(server, {
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/adapters/install',
+      payload: { spec: '@kb-labs/test-adapter', scope: 'project' },
+    });
+    expect(callerSelectedScope.statusCode).toBe(201);
+    expect(callerSelectedScope.json()).toMatchObject({ ok: true, data: { scope: 'platform' } });
+    expect(installAdapter).toHaveBeenCalledTimes(2);
+    expect(installAdapter).toHaveBeenLastCalledWith('@kb-labs/test-adapter');
+  });
+
+  // case: S-321.1
+  it('exposes public Registry catalog data and trusted install availability without leaking keys', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-catalog-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    vi.spyOn(service, 'registryCatalogStatus').mockReturnValue({ trustedInstallAvailable: false });
+    vi.spyOn(service, 'listRegistryCatalogPackages').mockResolvedValue([{
+      handle: 'adapter-author', name: 'cache', fullName: 'adapter-author/cache',
+      identity: '@kb-labs/adapters-cache', version: '1.2.0', primaryKind: 'adapter',
+    }]);
+    vi.spyOn(service, 'getRegistryCatalogPackage').mockResolvedValue({
+      authorHandle: 'adapter-author', name: 'cache', meta: { identity: '@kb-labs/adapters-cache' },
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const status = await server.inject({ method: 'GET', url: '/api/v1/marketplace/registry/catalog/status' });
+    const packages = await server.inject({ method: 'GET', url: '/api/v1/marketplace/registry/catalog/packages?q=cache' });
+    const detail = await server.inject({ method: 'GET', url: '/api/v1/marketplace/registry/catalog/packages/adapter-author/cache' });
+
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toEqual({ trustedInstallAvailable: false });
+    expect(packages.statusCode).toBe(200);
+    expect(packages.json()[0]).toMatchObject({ identity: '@kb-labs/adapters-cache', primaryKind: 'adapter' });
+    expect(service.listRegistryCatalogPackages).toHaveBeenCalledWith('cache');
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ meta: { identity: '@kb-labs/adapters-cache' } });
+  });
+
+  it('routes Registry-only plugin installs through the project scope', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-plugin-route-'));
+    roots.push(root);
+    const projectRoot = path.join(root, 'project');
+    await mkdir(projectRoot);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    const installRegistryPlugin = vi.spyOn(service, 'installRegistryPlugin').mockResolvedValue({
+      installed: [{ id: '@kb-labs/plugin', version: '1.0.0', primaryKind: 'plugin', provides: ['plugin'], packageRoot: '/project/plugin', scope: 'project', source: 'registry', signatureStatus: 'verified' }],
+      warnings: [], scope: 'project',
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const unauthenticated = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
+    });
+    expect(unauthenticated.statusCode).toBe(403);
+    expect(installRegistryPlugin).not.toHaveBeenCalled();
+
+    const userIdentity = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      headers: forwardedIdentityHeaders(TEST_PLATFORM_ADMIN, TEST_GATEWAY_SECRET),
+      payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
+    });
+    expect(userIdentity.statusCode).toBe(403);
+    expect(installRegistryPlugin).not.toHaveBeenCalled();
+
+    const response = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      headers: forwardedIdentityHeaders(undefined, TEST_GATEWAY_SECRET),
+      payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ scope: 'project', installed: [{ primaryKind: 'plugin' }] });
+    expect(installRegistryPlugin).toHaveBeenCalledWith({ scope: 'project', projectRoot }, '@kb-labs/plugin@1.0.0');
+  });
+
+  it('rejects platform scope on the Registry-only plugin install operation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-plugin-platform-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({ platformRoot: root, logger, source: createFailingSource(new Error('unused'), true) });
+    const installRegistryPlugin = vi.spyOn(service, 'installRegistryPlugin');
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      headers: forwardedIdentityHeaders(undefined, TEST_GATEWAY_SECRET),
+      payload: { spec: '@kb-labs/plugin', scope: 'platform', projectRoot: root },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(installRegistryPlugin).not.toHaveBeenCalled();
+  });
+
+  it('requires platform settings permission for update and keeps project installs unaffected', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-update-auth-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    const update = vi.spyOn(service, 'update').mockResolvedValue({ installed: [], warnings: [], scope: 'platform' });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+    const member: AuthContext = { ...TEST_PLATFORM_ADMIN, permissions: [] };
+
+    const denied = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/update',
+      headers: forwardedIdentityHeaders(member, TEST_GATEWAY_SECRET),
+      payload: { scope: 'platform' },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(update).not.toHaveBeenCalled();
+
+    const allowed = await injectAsPlatformAdmin(server, {
+      method: 'POST', url: '/api/v1/marketplace/packages/update',
+      payload: { scope: 'platform' },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(update).toHaveBeenCalledWith({ scope: 'platform', projectRoot: undefined }, undefined);
   });
 
   // case: S-051.2
@@ -106,7 +327,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['journey-not-published'], scope: 'platform' },
@@ -162,7 +383,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
@@ -207,7 +428,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST', url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/private'], scope: 'platform' },
     });
@@ -239,7 +460,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
@@ -283,7 +504,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
@@ -322,7 +543,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
@@ -358,7 +579,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter@1.0.0'], scope: 'platform' },
@@ -400,7 +621,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-plugin@1.4.0'], scope: 'platform' },
@@ -436,7 +657,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { scope: 'platform' },
@@ -464,7 +685,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
@@ -513,7 +734,7 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
-    const response = await server.inject({
+    const response = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/install',
       payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },

@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,5 +22,17 @@ describe('marketplace project scope', () => {
     mkdirSync(projectRoot);
 
     expect(resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot })).toBe(projectRoot);
+  });
+
+  // case: S-321.7
+  it('rejects a project root that aliases the platform root through a symlink', () => {
+    sandbox = mkdtempSync(join(tmpdir(), 'kb-marketplace-scope-alias-'));
+    const platformRoot = join(sandbox, 'platform');
+    const projectAlias = join(sandbox, 'platform-alias');
+    mkdirSync(platformRoot);
+    symlinkSync(platformRoot, projectAlias, 'dir');
+
+    expect(() => resolveScopeRoot({ platformRoot }, { scope: 'project', projectRoot: projectAlias }))
+      .toThrow(expect.objectContaining({ code: 'SCOPE_PROJECT_EQUALS_PLATFORM' }));
   });
 });

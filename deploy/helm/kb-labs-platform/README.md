@@ -16,7 +16,7 @@ helm install my-platform . --set image.tag=<release-version>
 `image.tag` is required — the chart refuses to render without it (never
 defaults to `latest`, see `docs/deployment/docker-build-hygiene.md`).
 
-The gateway, REST API, and marketplace-registry also require the same
+The gateway, REST API, Marketplace, and marketplace-registry also require the same
 `GATEWAY_INTERNAL_SECRET` in every mode. Create a Kubernetes Secret and pass
 its name to the chart; rendering fails if the name is omitted:
 

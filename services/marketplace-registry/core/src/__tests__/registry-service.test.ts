@@ -1089,6 +1089,63 @@ describe('RegistryService.listPublicPackages', () => {
     expect(list.find(p => p.name === 'private-plugin')).toBeUndefined();
   });
 
+  // case: S-321.1
+  it('includes the canonical package identity and entity kind in catalog summaries', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'adapter-cache', identity: '@kb-labs/adapters-cache' }),
+      primaryKind: 'adapter',
+    }, 'adapter-author', 'ns-adapter');
+
+    await expect(svc.listPublicPackages()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'adapter-cache',
+        fullName: 'adapter-author/adapter-cache',
+        identity: '@kb-labs/adapters-cache',
+        primaryKind: 'adapter',
+      }),
+    ]));
+  });
+
+  it('searches catalog packages by canonical identity', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'identity-search', identity: '@kb-labs/adapters-cache' }),
+      primaryKind: 'adapter',
+    }, 'adapter-author', 'ns-adapter');
+
+    await expect(svc.searchPackages('@KB-LABS/ADAPTERS-CACHE')).resolves.toEqual([
+      expect.objectContaining({ identity: '@kb-labs/adapters-cache', primaryKind: 'adapter' }),
+    ]);
+  });
+
+  it('keeps searching legacy summaries without a canonical identity', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'legacy-search' }), 'legacy-author', 'ns-legacy-search');
+    const legacySummary = (await svc.listPublicPackages())[0]!;
+    Reflect.deleteProperty(legacySummary, 'identity');
+    vi.spyOn(svc, 'listPublicPackages').mockResolvedValue([legacySummary]);
+
+    await expect(svc.searchPackages('legacy-search')).resolves.toEqual([legacySummary]);
+  });
+
+  it('excludes yanked versions from the public package detail projection', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'yanked-detail', version: '1.0.0' }), visibility: 'public',
+    }, 'detail-author', 'ns-detail');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'yanked-detail', version: '2.0.0' }), visibility: 'public',
+    }, 'detail-author', 'ns-detail');
+    await svc.yank('detail-author', 'yanked-detail', '2.0.0');
+
+    const entry = await svc.getEntry('detail-author', 'yanked-detail');
+    expect(entry).not.toBeNull();
+    expect(svc.getVisibleEntry(entry!, null)).toMatchObject({
+      versions: [{ version: '1.0.0' }],
+    });
+  });
+
   it('ignores and invalidates the legacy warm catalog index cache key', async () => {
     const cache = createMemoryCache();
     const svc = new RegistryService({

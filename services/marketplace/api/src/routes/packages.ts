@@ -22,14 +22,104 @@
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
 import type { EntityKind } from '@kb-labs/plugin-contracts';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
+import { RegistryCatalogClientError } from '@kb-labs/marketplace-npm';
 import {
+  ScopeRequestError,
   parseMutatingScope,
   parseQueryScope,
   queryScopeBodySchemaFragment,
   scopeBodySchemaFragment,
 } from '../scope-parser.js';
 
+const PLATFORM_SETTINGS_PERMISSION = PERMISSIONS.PLATFORM_SETTINGS_WRITE;
+
+function requirePlatformSettingsWrite(
+  headers: Record<string, string | string[] | undefined>,
+  reply: import('fastify').FastifyReply,
+): boolean {
+  const forwarded = readForwardedIdentity(headers, process.env.GATEWAY_INTERNAL_SECRET);
+  if (forwarded.kind === 'identity' && forwarded.auth.permissions.includes(PLATFORM_SETTINGS_PERMISSION)) {
+    return true;
+  }
+  const gatewayHint = forwarded.kind === 'identity'
+    ? undefined
+    : 'Send platform-scope Marketplace writes through Gateway. A direct Marketplace URL does not carry a verified user identity.';
+  reply.code(403).send({
+    ok: false,
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+      details: { permission: PLATFORM_SETTINGS_PERMISSION },
+      ...(gatewayHint ? { hint: gatewayHint } : {}),
+    }),
+  });
+  return false;
+}
+
+function requireGatewayServiceIdentity(
+  headers: Record<string, string | string[] | undefined>,
+  reply: import('fastify').FastifyReply,
+): boolean {
+  const forwarded = readForwardedIdentity(headers, process.env.GATEWAY_INTERNAL_SECRET);
+  if (forwarded.kind === 'service') { return true; }
+  reply.code(403).send({
+    ok: false,
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'trusted Host service identity' } }),
+  });
+  return false;
+}
+
 export function registerPackagesRoutes(app: FastifyInstance): void {
+  app.get('/registry/catalog/status', {
+    schema: { tags: ['Marketplace'], summary: 'Check trusted Registry catalog install availability' },
+  }, async (_request, reply) => reply.send(app.marketplace.registryCatalogStatus()));
+
+  app.get('/registry/catalog/packages', {
+    schema: {
+      tags: ['Marketplace'],
+      summary: 'List public Marketplace Registry packages',
+      querystring: { type: 'object', properties: { q: { type: 'string' } } },
+    },
+  }, async (request, reply) => {
+    const query = (request.query as { q?: string }).q;
+    try {
+      return reply.send(await app.marketplace.listRegistryCatalogPackages(query));
+    } catch (error) {
+      if (error instanceof RegistryCatalogClientError) {
+        return reply.code(502).send({
+          ok: false,
+          error: createErrorEnvelope('KB_MARKETPLACE_TRANSPORT_FAILED', { details: { package: 'registry', scope: 'platform' } }),
+        });
+      }
+      throw error;
+    }
+  });
+
+  app.get<{ Params: { handle: string; name: string } }>('/registry/catalog/packages/:handle/:name', {
+    schema: { tags: ['Marketplace'], summary: 'Get a public Marketplace Registry package' },
+  }, async (request, reply) => {
+    const { handle, name } = request.params;
+    try {
+      const entry = await app.marketplace.getRegistryCatalogPackage(handle, name);
+      if (!entry) {
+        return reply.code(404).send({
+          ok: false,
+          error: createErrorEnvelope('KB_PLUGIN_NOT_FOUND', { details: { plugin: `${handle}/${name}` } }),
+        });
+      }
+      return reply.send(entry);
+    } catch (error) {
+      if (error instanceof RegistryCatalogClientError) {
+        return reply.code(502).send({
+          ok: false,
+          error: createErrorEnvelope('KB_MARKETPLACE_TRANSPORT_FAILED', { details: { package: `${handle}/${name}`, scope: 'platform' } }),
+        });
+      }
+      throw error;
+    }
+  });
+
   // GET /packages — list installed packages
   app.get('/packages', {
     schema: {
@@ -73,9 +163,65 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
   }, async (request, reply) => {
     const body = request.body as { specs: string[]; dev?: boolean; token?: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
+    if (ctx.scope === 'platform' && !requirePlatformSettingsWrite(request.headers, reply)) { return; }
     const result = await app.observability.observeOperation(
       'marketplace.install',
       () => app.marketplace.install(ctx, body.specs, { dev: body.dev, shareToken: body.token }),
+    );
+    return reply.code(201).send(result);
+  });
+
+  // POST /packages/adapters/install — install one Registry adapter at platform scope.
+  // This operation intentionally has no caller-selected scope field.
+  app.post('/packages/adapters/install', {
+    schema: {
+      tags: ['Marketplace'],
+      summary: 'Install an adapter into platform scope',
+      body: {
+        type: 'object',
+        required: ['spec'],
+        additionalProperties: false,
+        properties: {
+          spec: { type: 'string', minLength: 1, description: 'Canonical Registry adapter identity, optionally with an exact version' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const body = request.body as { spec: string };
+    if (!requirePlatformSettingsWrite(request.headers, reply)) { return; }
+    const result = await app.observability.observeOperation(
+      'marketplace.install.adapter',
+      () => app.marketplace.installAdapter(body.spec),
+    );
+    return reply.code(201).send({ ok: true, data: result });
+  });
+
+  // Registry catalog plugin installs are source-pinned; generic CLI installs
+  // continue using the configured ordered source list and npm fallback.
+  app.post('/packages/registry/install', {
+    schema: {
+      tags: ['Marketplace'],
+      summary: 'Install a plugin from the Marketplace Registry only',
+      body: {
+        type: 'object',
+        required: ['spec', 'scope', 'projectRoot'],
+        properties: {
+          spec: { type: 'string', minLength: 1, description: 'Canonical Registry plugin identity, optionally with an exact version' },
+          ...scopeBodySchemaFragment,
+          scope: { type: 'string', const: 'project' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const body = request.body as { spec: string } & Record<string, unknown>;
+    if (!requireGatewayServiceIdentity(request.headers, reply)) { return; }
+    const ctx = parseMutatingScope(body);
+    if (ctx.scope !== 'project' || !ctx.projectRoot) {
+      throw new ScopeRequestError('SCOPE_INVALID', 'Registry catalog installs require project scope and a projectRoot.');
+    }
+    const result = await app.observability.observeOperation(
+      'marketplace.install.registry-plugin',
+      () => app.marketplace.installRegistryPlugin(ctx, body.spec),
     );
     return reply.code(201).send(result);
   });
@@ -168,6 +314,7 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
   }, async (request, reply) => {
     const body = (request.body ?? {}) as { packageIds?: string[] } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
+    if (ctx.scope === 'platform' && !requirePlatformSettingsWrite(request.headers, reply)) { return; }
     const result = await app.observability.observeOperation(
       'marketplace.update',
       () => app.marketplace.update(ctx, body.packageIds),

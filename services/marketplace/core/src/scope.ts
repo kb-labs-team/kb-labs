@@ -9,7 +9,7 @@
  */
 
 import * as path from 'node:path';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, realpathSync } from 'node:fs';
 import type {
   MarketplaceScope,
   ScopeContext,
@@ -66,14 +66,27 @@ export function resolveScopeRoot(roots: ServiceRoots, ctx: ScopeContext): string
     );
   }
 
-  if (path.resolve(candidate) === path.resolve(roots.platformRoot)) {
+  const canonicalPlatformRoot = canonicalizeRoot(roots.platformRoot);
+  const canonicalProjectRoot = canonicalizeRoot(candidate);
+  if (canonicalProjectRoot === canonicalPlatformRoot) {
     throw new ScopeResolutionError(
       'SCOPE_PROJECT_EQUALS_PLATFORM',
       'projectRoot must not equal platformRoot; use scope="platform" for platform-level operations.',
     );
   }
 
+  // Keep the caller's configured spelling for lock entries and package paths;
+  // realpath is used only for the security comparison above.
   return path.resolve(candidate);
+}
+
+function canonicalizeRoot(root: string): string {
+  const resolved = path.resolve(root);
+  try {
+    return realpathSync.native(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 /**

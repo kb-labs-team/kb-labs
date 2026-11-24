@@ -21,6 +21,7 @@ import type { GatewayConfig } from "@kb-labs/gateway-contracts";
 import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
+import { PERMISSIONS } from "@kb-labs/core-contracts";
 import {
   AuthService,
   type JwtConfig,
@@ -207,6 +208,20 @@ export async function createServer(
       jwtConfig,
     } } : {}),
   }));
+
+  // The adapter-only operation is always platform scoped. Generic Marketplace
+  // installs are checked by the Marketplace API after it parses the body; the
+  // gateway's Fastify proxy exposes the body as a stream during preValidation.
+  app.addHook('preValidation', async (request, reply) => {
+    if (request.method !== 'POST') { return; }
+    const pathname = new URL(request.url, 'http://gateway.local').pathname.replace(/\/+$/, '');
+    const adapterInstall = pathname === '/api/v1/marketplace/packages/adapters/install';
+    if (!adapterInstall) { return; }
+    const auth = request.authContext;
+    if (!auth || !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_WRITE)) {
+      return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_WRITE, undefined, undefined, { durationMs: 0 });
+    }
+  });
 
   const isProduction = process.env.NODE_ENV === "production";
   const webhookHistoryStore = platform.hasResourceBroker
