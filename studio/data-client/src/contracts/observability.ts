@@ -313,6 +313,7 @@ export interface LogSummarizeRequest {
   filters?: {
     level?: string;
     plugin?: string;
+    runId?: string;
     traceId?: string;
     executionId?: string;
   };

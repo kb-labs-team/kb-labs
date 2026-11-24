@@ -667,6 +667,7 @@ export async function registerLogRoutes(
       filters?: {
         level?: string;
         plugin?: string;
+        runId?: string;
         traceId?: string;
         executionId?: string;
       };
@@ -682,7 +683,7 @@ export async function registerLogRoutes(
     };
   }>(
     "/api/v1/logs/summarize",
-    { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Logs"], summary: "AI-powered log summarization", querystring: { type: 'object', additionalProperties: false }, body: { type: 'object', properties: { timeRange: { type: 'object', properties: { from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' } }, additionalProperties: false }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, traceId: { type: 'string' }, executionId: { type: 'string' } }, additionalProperties: false }, groupBy: { enum: ['trace', 'execution', 'plugin'] }, question: { type: 'string' }, includeContext: { type: 'object', properties: { errors: { type: 'boolean' }, warnings: { type: 'boolean' }, info: { type: 'boolean' }, metadata: { type: 'boolean' }, stackTraces: { type: 'boolean' } }, additionalProperties: false } }, additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { summary: { type: 'object', properties: { question: { type: 'string' }, timeRange: { type: 'object', properties: { from: { type: ['string', 'null'] }, to: { type: ['string', 'null'] } }, required: ['from', 'to'], additionalProperties: false }, total: { type: 'integer' }, stats: { type: 'object' }, groups: { type: ['object', 'null'] } }, required: ['question', 'timeRange', 'total', 'stats'], additionalProperties: false }, aiSummary: { type: ['string', 'null'] }, message: { type: ['string', 'null'] } }, required: ['summary', 'aiSummary', 'message'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
+    { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Logs"], summary: "AI-powered log summarization", querystring: { type: 'object', additionalProperties: false }, body: { type: 'object', properties: { timeRange: { type: 'object', properties: { from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' } }, additionalProperties: false }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, runId: { type: 'string' }, traceId: { type: 'string' }, executionId: { type: 'string' } }, additionalProperties: false }, groupBy: { enum: ['trace', 'execution', 'plugin'] }, question: { type: 'string' }, includeContext: { type: 'object', properties: { errors: { type: 'boolean' }, warnings: { type: 'boolean' }, info: { type: 'boolean' }, metadata: { type: 'boolean' }, stackTraces: { type: 'boolean' } }, additionalProperties: false } }, additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { summary: { type: 'object', properties: { question: { type: 'string' }, timeRange: { type: 'object', properties: { from: { type: ['string', 'null'] }, to: { type: ['string', 'null'] } }, required: ['from', 'to'], additionalProperties: false }, total: { type: 'integer' }, stats: { type: 'object' }, groups: { type: ['object', 'null'] } }, required: ['question', 'timeRange', 'total', 'stats'], additionalProperties: false }, aiSummary: { type: ['string', 'null'] }, message: { type: ['string', 'null'] } }, required: ['summary', 'aiSummary', 'message'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       const { timeRange, filters, groupBy, question, includeContext } =
         request.body;
@@ -696,6 +697,7 @@ export async function registerLogRoutes(
             ? new Date(timeRange.from).getTime()
             : undefined,
           to: timeRange?.to ? new Date(timeRange.to).getTime() : undefined,
+          runId: filters?.runId,
         };
 
         // Query logs using unified service

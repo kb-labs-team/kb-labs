@@ -456,6 +456,35 @@ describe('Log Routes Integration Tests', () => {
   });
 
   describe('POST /api/v1/logs/summarize', () => {
+    // case: S-122.3
+    it('keeps AI summaries scoped to the selected workflow run without adding a time window', async () => {
+      const mockLogs = [createMockLog('log-old-run', 'error', 'RUN_DIAGNOSTIC_MARKER')];
+      (mockLogService.query as any).mockResolvedValue({
+        logs: mockLogs,
+        total: 1,
+        hasMore: false,
+        source: 'persistence',
+      });
+      vi.spyOn(platform, 'llm', 'get').mockReturnValue({
+        complete: vi.fn().mockResolvedValue({ content: 'Run-specific summary' }),
+      } as any);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/logs/summarize',
+        payload: {
+          question: 'Summarize this workflow run',
+          filters: { runId: 'run-old' },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockLogService.query).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: 'run-old', from: undefined, to: undefined }),
+        { limit: 1000 },
+      );
+    });
+
     it('should summarize logs with LLM', async () => {
       const mockLogs = [
         createMockLog('log-1', 'error', 'Database connection failed'),

@@ -195,7 +195,11 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
-  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId!)
+  const previouslySelectedProject = `${projectId}-previous`
+  await page.addInitScript(({ requested, selected }) => {
+    localStorage.setItem('kb.workflow.projectId', requested)
+    localStorage.setItem('kb-studio-active-project', selected)
+  }, { requested: projectId!, selected: previouslySelectedProject })
   await page.route(`**${projectServicePath(projectId!, 'workflow', 'runs/run-studio-diagnostic')}`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -215,6 +219,12 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
         },
       }),
     })
+  })
+
+  let previousProjectLogRequests = 0
+  await page.route(`**${projectServicePath(previouslySelectedProject, 'rest', 'logs')}**`, async (route) => {
+    previousProjectLogRequests += 1
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: { logs: [], total: 0 } }) })
   })
 
   await page.route(`**${projectServicePath(projectId!, 'rest', 'logs')}**`, async (route) => {
@@ -243,6 +253,13 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
       }),
     })
   })
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'logs/summarize')}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { summary: { question: 'Summarize this workflow run', timeRange: { from: null, to: null }, total: 1, stats: {} }, aiSummary: 'Run-specific summary', message: null } }),
+    })
+  })
 
   await page.goto(`${GATEWAY}/p/workflows/runs/run-studio-diagnostic`)
   const logsLink = page.getByRole('link', { name: 'Inspect run logs', exact: true })
@@ -260,6 +277,15 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
   expect(historyUrl.searchParams.get('to')).toBeNull()
   await expect(page.getByText('Historical Logs', { exact: true })).toBeVisible()
   await expect(page.getByText('RUN_LOG_MARKER', { exact: true })).toBeVisible()
+  expect(previousProjectLogRequests).toBe(0)
+
+  await page.getByRole('button', { name: 'AI Summarize', exact: true }).click()
+  await page.getByPlaceholder('Ask anything about these logs... (e.g., \'What went wrong in the last 5 minutes?\')').fill('Summarize this workflow run')
+  const summarizeRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/summarize')))
+  await page.getByRole('button', { name: 'Generate Summary', exact: true }).click()
+  const summaryBody = (await summarizeRequest).postDataJSON()
+  expect(summaryBody.filters.runId).toBe('run-studio-diagnostic')
+  expect(summaryBody.timeRange).toBeUndefined()
 })
 
 test('S-122.5: unavailable observability logs name the source and doctor command', async ({ page }) => {
