@@ -1,0 +1,21 @@
+# Production overlay for infra/docker-compose.backend.yml.
+# Gateway and Registry are reachable from host Nginx only; State Daemon stays
+# on the private Compose network and its journal survives container recreation.
+services:
+  kb-state-daemon:
+    ports: !reset []
+    environment:
+      KB_STATE_DAEMON_DATA_ROOT: /app/.kb/data/state
+    volumes:
+      - registry_state:/app/.kb/data/state
+
+  kb-gateway:
+    ports: !override
+      - 127.0.0.1:4000:4000
+
+  kb-marketplace-registry:
+    ports: !override
+      - 127.0.0.1:5071:5071
+
+volumes:
+  registry_state:
