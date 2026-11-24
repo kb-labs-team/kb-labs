@@ -3504,6 +3504,7 @@
     "post-restart doctor",
     "installed platform bootstrap",
     "start platform host",
+    "Studio dashboard with empty project registry",
     "platform update prerequisites",
     "workflow fixture lint",
     "workflow execution journey",
