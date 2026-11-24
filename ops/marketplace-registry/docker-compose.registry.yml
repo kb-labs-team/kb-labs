@@ -4,7 +4,7 @@ name: kb-marketplace-registry
 # to the existing web compose project or publish State/Registry ports.
 services:
   kb-state-daemon:
-    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-state-daemon:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-state-daemon:${STATE_DAEMON_IMAGE_TAG:?set STATE_DAEMON_IMAGE_TAG to its verified image tag}
     environment:
       NODE_ENV: production
       KB_STATE_DAEMON_PORT: "7777"
@@ -28,7 +28,7 @@ services:
       - registry_private
 
   kb-marketplace-registry:
-    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-marketplace-registry:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-marketplace-registry:${MARKETPLACE_REGISTRY_IMAGE_TAG:?set MARKETPLACE_REGISTRY_IMAGE_TAG to its verified image tag}
     environment:
       NODE_ENV: production
       KB_REGISTRY_HOST: 0.0.0.0
@@ -56,7 +56,7 @@ services:
       - registry_private
 
   kb-gateway:
-    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-gateway:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-gateway:${GATEWAY_IMAGE_TAG:?set GATEWAY_IMAGE_TAG to its verified image tag}
     ports:
       - 127.0.0.1:4000:4000
     environment:
