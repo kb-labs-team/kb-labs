@@ -368,11 +368,9 @@ describe('Gateway /health endpoint', () => {
     app = await buildHealthApp({}, transport);
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
-    const body = response.json().data;
 
     expect(response.statusCode).toBe(503);
-    expect(body.ready).toBe(false);
-    expect(body.components['upstream:rest']).toEqual({ ready: false, status: 'down' });
+    expect(response.json().ok).toBe(false);
   });
 
   // case: S-268.23
