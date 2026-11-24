@@ -60,9 +60,9 @@ export async function importLegacyWorkflowHistory(
   }
   try {
     if (!(await ensureAbsoluteDirectory(storageRoot)))
-      return blocked(counters, 'unsafe-storage-root')
+      {return blocked(counters, 'unsafe-storage-root')}
     if (!(await ensureSafeDirectories(storageRoot, [])))
-      return blocked(counters, 'unsafe-storage-root')
+      {return blocked(counters, 'unsafe-storage-root')}
     const decisionDirectoryRelative = dirname(
       workflowLegacyHistoryMigrationDecisionPath(projectId, 'valid-id'),
     )
@@ -120,7 +120,7 @@ export async function importLegacyWorkflowHistory(
             return conflict(counters, 'unreadable-legacy-directory')
           }
           if (canonicalSource !== sourceDirectory)
-            return conflict(counters, 'legacy-directory-alias')
+            {return conflict(counters, 'legacy-directory-alias')}
           for (const entry of entries) {
             if (
               entry.isSymbolicLink() ||
@@ -142,7 +142,7 @@ export async function importLegacyWorkflowHistory(
             )
             if (source.status !== 'file') {
               if (source.status === 'read-error')
-                counters.conflicts += 1
+                {counters.conflicts += 1}
               counters.skipped += 1
               continue
             }
@@ -171,7 +171,7 @@ export async function importLegacyWorkflowHistory(
               return blocked(counters, 'unsafe-migration-decision')
             }
             if (priorDecision.status === 'read-error')
-              return retryable(counters, 'unreadable-migration-decision')
+              {return retryable(counters, 'unreadable-migration-decision')}
             if (priorDecision.status === 'file') {
               const decision = parseDecision(
                 priorDecision.bytes,
@@ -196,7 +196,7 @@ export async function importLegacyWorkflowHistory(
             )
             const existing = await readRegularFile(destination)
             if (existing.status === 'read-error')
-              return retryable(counters, 'scoped-record-read-failed')
+              {return retryable(counters, 'scoped-record-read-failed')}
             if (existing.status === 'unsafe') {
               return blocked(counters, 'unsafe-scoped-run-record')
             }
@@ -214,13 +214,13 @@ export async function importLegacyWorkflowHistory(
                 destination,
                 source.bytes,
               )
-              if (written === 'written') disposition = 'imported'
+              if (written === 'written') {disposition = 'imported'}
               else if (written === 'exists-equal')
-                disposition = 'alreadyPresent'
+                {disposition = 'alreadyPresent'}
               else if (written === 'exists-different') {
                 counters.conflicts += 1
                 continue
-              } else return retryable(counters, 'scoped-record-write-failed')
+              } else {return retryable(counters, 'scoped-record-write-failed')}
             }
 
             const decision: MigrationDecision = {
@@ -236,7 +236,7 @@ export async function importLegacyWorkflowHistory(
               Buffer.from(JSON.stringify(decision)),
             )
             if (decisionWrite === 'written' || decisionWrite === 'exists-equal')
-              counters[disposition] += 1
+              {counters[disposition] += 1}
             else if (decisionWrite === 'exists-different') {
               const racedDecision = await readRegularFile(decisionPath)
               if (
@@ -246,7 +246,7 @@ export async function importLegacyWorkflowHistory(
                 return retryable(counters, 'migration-decision-conflict')
               }
               counters.alreadyPresent += 1
-            } else return retryable(counters, 'migration-decision-write-failed')
+            } else {return retryable(counters, 'migration-decision-write-failed')}
           }
         }
 
@@ -327,7 +327,7 @@ type DirectoryState =
 async function directoryState(path: string): Promise<DirectoryState> {
   try {
     const info = await lstat(path)
-    if (info.isSymbolicLink()) return 'symlink'
+    if (info.isSymbolicLink()) {return 'symlink'}
     return info.isDirectory() ? 'directory' : 'not-directory'
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'ENOENT'
@@ -341,7 +341,7 @@ async function ensureSafeDirectories(
   segments: string[],
 ): Promise<boolean> {
   const rootInfo = await directoryState(storageRoot)
-  if (rootInfo !== 'directory') return false
+  if (rootInfo !== 'directory') {return false}
   let current = storageRoot
   for (const segment of segments.filter(Boolean)) {
     current = join(current, segment)
@@ -350,12 +350,12 @@ async function ensureSafeDirectories(
       try {
         await mkdir(current, { mode: 0o700 })
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return false
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {return false}
       }
     } else if (state !== 'directory') {
       return false
     }
-    if ((await directoryState(current)) !== 'directory') return false
+    if ((await directoryState(current)) !== 'directory') {return false}
   }
   return true
 }
@@ -367,18 +367,18 @@ async function cleanupImporterTemporaryFiles(directory: string): Promise<void> {
     }
     const path = join(directory, entry.name)
     const file = await lstat(path)
-    if (file.isFile() && !file.isSymbolicLink()) await unlink(path)
+    if (file.isFile() && !file.isSymbolicLink()) {await unlink(path)}
   }
 }
 
 async function validateScopedRunDirectory(directory: string): Promise<boolean> {
   for (const entry of await readdir(directory, { withFileTypes: true })) {
-    if (!entry.name.endsWith('.json')) continue
+    if (!entry.name.endsWith('.json')) {continue}
     const runId = entry.name.slice(0, -'.json'.length)
-    if (!isSafeWorkflowRunId(runId)) continue
-    if (entry.isSymbolicLink() || !entry.isFile()) return false
+    if (!isSafeWorkflowRunId(runId)) {continue}
+    if (entry.isSymbolicLink() || !entry.isFile()) {return false}
     const record = await readRegularFile(join(directory, entry.name), true)
-    if (record.status !== 'file') return false
+    if (record.status !== 'file') {return false}
   }
   return true
 }
@@ -395,12 +395,12 @@ async function ensureAbsoluteDirectory(path: string): Promise<boolean> {
       try {
         await mkdir(current, { mode: 0o700 })
       } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return false
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {return false}
       }
     } else if (state !== 'directory') {
       return false
     }
-    if ((await directoryState(current)) !== 'directory') return false
+    if ((await directoryState(current)) !== 'directory') {return false}
   }
   return true
 }
@@ -430,7 +430,7 @@ async function writeFileExclusive(
     try {
       await link(temporary, path)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') return 'failed'
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {return 'failed'}
       const existing = await readRegularFile(path)
       if (existing.status === 'file') {
         return existing.bytes.equals(bytes)
@@ -455,7 +455,7 @@ async function syncDirectory(directory: string): Promise<void> {
     await directoryHandle.sync()
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code
-    if (!['EINVAL', 'ENOTSUP', 'EISDIR', 'EBADF'].includes(code ?? '')) throw error
+    if (!['EINVAL', 'ENOTSUP', 'EISDIR', 'EBADF'].includes(code ?? '')) {throw error}
   } finally {
     await directoryHandle.close()
   }
@@ -469,7 +469,7 @@ function parseDecision(
   try {
     const parsed: unknown = JSON.parse(bytes.toString('utf8'))
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-      return null
+      {return null}
     const decision = parsed as Partial<MigrationDecision>
     return decision.version === MIGRATION_VERSION &&
       decision.projectId === projectId &&

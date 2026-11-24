@@ -28,9 +28,9 @@ export async function trustedLegacyProjectStorageRoot(
     !isProjectId(projectId) ||
     runtime.startupReport.status !== 'ready'
   )
-    return null
+    {return null}
   const projectRoot = runtime.roots.projectRoot
-  if (!projectRoot) return null
+  if (!projectRoot) {return null}
 
   let canonicalProjectRoot: string
   try {
@@ -42,7 +42,7 @@ export async function trustedLegacyProjectStorageRoot(
     canonicalProjectRoot !== projectRoot ||
     deriveProjectId(canonicalProjectRoot) !== projectId
   )
-    return null
+    {return null}
 
   const selected = configuredAdapterForSlot(
     'storage',
@@ -58,7 +58,7 @@ export async function trustedLegacyProjectStorageRoot(
     configuredPath &&
     adapterPackageRoot(configuredPath) !== FILESYSTEM_ADAPTER
   )
-    return null
+    {return null}
 
   const storageOptions = selected
     ? runtime.platformConfig.adapterOptions?.[selected.key]
@@ -69,7 +69,7 @@ export async function trustedLegacyProjectStorageRoot(
     !Array.isArray(storageOptions) &&
     Object.hasOwn(storageOptions, 'baseDir')
   )
-    return null
+    {return null}
 
   const actualStorage = runtime.startupReport.adapters.find(
     (adapter) => adapter.slot === 'storage',

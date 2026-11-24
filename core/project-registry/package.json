@@ -26,7 +26,7 @@
     "build": "pnpm clean && tsup --config tsup.config.ts",
     "clean": "rimraf dist",
     "dev": "tsup --config tsup.config.ts --watch",
-    "lint": "eslint . --ignore-pattern 'dist/**'",
+    "lint": "eslint src --ignore-pattern 'dist/**'",
     "lint:fix": "eslint . --fix --ignore-pattern 'dist/**'",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest",
