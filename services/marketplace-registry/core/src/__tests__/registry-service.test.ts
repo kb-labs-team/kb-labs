@@ -852,7 +852,7 @@ describe('RegistryService.getTarball', () => {
       list: async prefix => [...files.keys()].filter(path => path.startsWith(prefix)),
       exists: async path => files.has(path),
     };
-    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger });
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger, baseUrl: 'https://registry.test' });
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
     expect((await svc.getEntry('kirill', 'my-plugin'))?.versions[0]?.visibility).toBe('public');
 
