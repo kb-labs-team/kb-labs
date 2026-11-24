@@ -193,7 +193,7 @@ describe("LogRingBufferAdapter", () => {
         timestamp: timestamp - 3000,
         level: "info",
         message: "matching workflow log",
-        fields: { runId: "run-1", executionId: "exec-1" },
+        fields: { runId: "run-1", executionId: "exec-1", traceId: "trace-1" },
         source: "workflow",
       });
       scopedBuffer.append({
@@ -212,8 +212,16 @@ describe("LogRingBufferAdapter", () => {
         fields: { runId: "run-2", executionId: "exec-1" },
         source: "workflow",
       });
+      scopedBuffer.append({
+        id: "same-run-execution-other-trace",
+        timestamp: timestamp - 500,
+        level: "info",
+        message: "other trace",
+        fields: { runId: "run-1", executionId: "exec-1", traceId: "trace-2" },
+        source: "workflow",
+      });
 
-      const logs = scopedBuffer.query({ runId: "run-1", executionId: "exec-1", limit: 1 });
+      const logs = scopedBuffer.query({ runId: "run-1", executionId: "exec-1", traceId: "trace-1", limit: 1 });
 
       expect(logs.map((log) => log.id)).toEqual(["matching-run-and-execution"]);
     });

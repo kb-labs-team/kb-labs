@@ -474,13 +474,13 @@ describe('Log Routes Integration Tests', () => {
         url: '/api/v1/logs/summarize',
         payload: {
           question: 'Summarize this workflow run',
-          filters: { runId: 'run-old', executionId: 'step-old' },
+          filters: { runId: 'run-old', executionId: 'step-old', traceId: 'trace-old' },
         },
       });
 
       expect(response.statusCode).toBe(200);
       expect(mockLogService.query).toHaveBeenCalledWith(
-        expect.objectContaining({ runId: 'run-old', executionId: 'step-old', from: undefined, to: undefined }),
+        expect.objectContaining({ runId: 'run-old', executionId: 'step-old', traceId: 'trace-old', from: undefined, to: undefined }),
         { limit: 1000 },
       );
     });

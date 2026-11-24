@@ -178,7 +178,7 @@ describe('DocumentLogPersistence (sqlite-backed)', () => {
       record({
         id: 'matching-run-and-execution',
         timestamp: timestamp - 3000,
-        fields: { runId: 'run-1', executionId: 'exec-1' },
+        fields: { runId: 'run-1', executionId: 'exec-1', traceId: 'trace-1' },
       }),
       record({
         id: 'same-run-other-execution',
@@ -190,11 +190,16 @@ describe('DocumentLogPersistence (sqlite-backed)', () => {
         timestamp: timestamp - 1000,
         fields: { runId: 'run-2', executionId: 'exec-1' },
       }),
+      record({
+        id: 'same-run-execution-other-trace',
+        timestamp: timestamp - 500,
+        fields: { runId: 'run-1', executionId: 'exec-1', traceId: 'trace-2' },
+      }),
     ]);
     await new Promise((resolve) => setTimeout(resolve, 120));
 
     const result = await persistence.query(
-      { runId: 'run-1', executionId: 'exec-1' },
+      { runId: 'run-1', executionId: 'exec-1', traceId: 'trace-1' },
       { limit: 1, offset: 0 },
     );
 
