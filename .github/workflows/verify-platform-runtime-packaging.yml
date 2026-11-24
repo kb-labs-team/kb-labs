@@ -265,16 +265,18 @@ jobs:
         run: |
           set -euo pipefail
           container=registry-clean-docker-smoke
+          smoke_secret="$(openssl rand -hex 32)"
           cleanup() { docker logs "$container" 2>/dev/null || true; docker rm -f "$container" >/dev/null 2>&1 || true; }
           trap cleanup EXIT
           docker run --detach --name "$container" --publish 127.0.0.1::5071/tcp \
-            --env GATEWAY_INTERNAL_SECRET=ci-smoke-only \
+            --env GATEWAY_INTERNAL_SECRET="$smoke_secret" \
             --env KB_REGISTRY_HOST=0.0.0.0 --env KB_REGISTRY_PORT=5071 \
             --env KB_REGISTRY_URL=http://127.0.0.1:5071 "$IMAGE_REF" >/dev/null
           host_port="$(docker port "$container" 5071/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
           healthy=false
           for _ in $(seq 1 30); do
-            if curl --fail --silent "http://127.0.0.1:${host_port}/health" > "$RUNNER_TEMP/registry-health.json"; then healthy=true; break; fi
+            if curl --fail --silent --header "x-internal-secret: $smoke_secret" \
+              "http://127.0.0.1:${host_port}/health" > "$RUNNER_TEMP/registry-health.json"; then healthy=true; break; fi
             sleep 1
           done
           if [ "$healthy" != true ]; then docker logs "$container" >&2 || true; exit 1; fi
