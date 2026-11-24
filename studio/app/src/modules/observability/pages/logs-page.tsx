@@ -51,6 +51,7 @@ const LEVEL_COLORS: Record<string, string> = {
  * Time range presets for quick filtering
  */
 const TIME_RANGES = {
+  all: { label: 'All time', minutes: 0 },
   '5m': { label: 'Last 5 minutes', minutes: 5 },
   '15m': { label: 'Last 15 minutes', minutes: 15 },
   '1h': { label: 'Last hour', minutes: 60 },
@@ -255,7 +256,9 @@ export function LogsPage() {
     sources.observability,
     streamFilters,
   );
-  const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
+  const [viewMode, setViewMode] = useState<'live' | 'history'>(
+    searchParams.get('mode') === 'history' ? 'history' : 'live',
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [historyPage, setHistoryPage] = useState(1);
@@ -281,7 +284,7 @@ export function LogsPage() {
   // Filters
   const [levelFilter, setLevelFilter] = useState<string | null>(null);
   const [pluginFilter, setPluginFilter] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('15m');
+  const [timeRange, setTimeRange] = useState<string>(requestedRunId ? 'all' : '15m');
   const [customTimeRange, setCustomTimeRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [groupBy, setGroupBy] = useState<'none' | 'trace' | 'execution' | 'plugin'>('none');
 
@@ -341,8 +344,8 @@ export function LogsPage() {
           query.search = searchQuery.trim();
         }
 
-        if (timeRange !== 'custom') {
-          const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes || 15;
+        if (timeRange !== 'custom' && timeRange !== 'all') {
+          const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes ?? 15;
           query.from = dayjs().subtract(rangeMinutes, 'minutes').toISOString();
           query.to = dayjs().toISOString();
         } else if (customTimeRange) {
@@ -415,8 +418,8 @@ export function LogsPage() {
         filtered = filtered.filter((log) => log.plugin === pluginFilter);
       }
 
-      if (timeRange !== 'custom') {
-        const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes || 15;
+      if (timeRange !== 'custom' && timeRange !== 'all') {
+        const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes ?? 15;
         const cutoff = Date.now() - rangeMinutes * 60 * 1000;
         filtered = filtered.filter((log) => new Date(log.time).getTime() >= cutoff);
       } else if (customTimeRange) {
