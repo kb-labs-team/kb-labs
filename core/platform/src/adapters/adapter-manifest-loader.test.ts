@@ -45,6 +45,23 @@ describe('loadAdapterManifest', () => {
     expect(result.manifest.configSchema?.directory?.type).toBe('string');
   });
 
+  // case: S-321.6
+  it('refuses to import an adapter manifest symlink that resolves outside the package', async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-symlink-'));
+    const packageRoot = path.join(tempRoot, 'package');
+    const outsideManifest = path.join(tempRoot, 'outside.mjs');
+    const sideEffectPath = path.join(tempRoot, 'manifest-imported');
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'linked-adapter', type: 'module', kb: { adapter: { manifest: './manifest.mjs' } },
+    }));
+    await fs.writeFile(outsideManifest, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(sideEffectPath)}, 'executed'); export const manifest = {};`);
+    await fs.symlink(outsideManifest, path.join(packageRoot, 'manifest.mjs'));
+
+    await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({ kind: 'failed' });
+    await expect(fs.access(sideEffectPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it.each([
     ['array', ['storage']],
     ['non-array entrypoint', { storage: 'database' }],

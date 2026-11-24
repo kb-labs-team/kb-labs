@@ -3,6 +3,7 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import { create as pack } from 'tar';
 import { RegistryPackageSource } from './registry-source.js';
 
 describe('RegistryPackageSource', () => {
@@ -103,7 +104,7 @@ describe('RegistryPackageSource', () => {
       code: 'TRANSPORT_FAILED', message: 'Registry redirects are not followed for authenticated requests',
     });
     expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0][1]).toMatchObject({
+    expect(request.mock.calls[0]?.[1]).toMatchObject({
       redirect: 'manual', headers: { 'X-Share-Token': 'share-sentinel' },
     });
     expect(JSON.stringify(request.mock.calls)).not.toContain('attacker.test');
@@ -123,6 +124,38 @@ describe('RegistryPackageSource', () => {
         primaryKind: 'plugin', downloadUrl: 'https://registry.test/plugin.tgz',
       }, root)).rejects.toMatchObject({ name: 'RegistryPackageError', code: 'INTEGRITY_MISMATCH' });
       await expect(fs.access(packageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('does not reuse an installed manifest when a fresh Registry archive omits package.json', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-fresh-stage-'));
+    const packageRoot = path.join(root, 'node_modules', 'author', 'adapter');
+    const archiveRoot = path.join(root, 'archive', 'package');
+    const archivePath = path.join(root, 'registry.tgz');
+    const oldManifest = JSON.stringify({
+      name: 'author/adapter', version: '1.0.0', kb: { adapter: { manifest: './manifest.mjs' } },
+    });
+    try {
+      await fs.mkdir(packageRoot, { recursive: true });
+      await fs.writeFile(path.join(packageRoot, 'package.json'), oldManifest);
+      await fs.writeFile(path.join(packageRoot, 'manifest.mjs'), 'export const manifest = {};');
+      await fs.mkdir(archiveRoot, { recursive: true });
+      await fs.writeFile(path.join(archiveRoot, 'README.md'), 'no package metadata');
+      await pack({ cwd: path.dirname(archiveRoot), file: archivePath, gzip: true }, ['package']);
+      const tarball = await fs.readFile(archivePath);
+      const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(tarball, { status: 200 })));
+
+      await expect(source.install({
+        id: 'author/adapter', version: '1.0.0', integrity: `sha256-${createHash('sha256').update(tarball).digest('base64')}`,
+        source: 'marketplace', primaryKind: 'adapter', downloadUrl: 'https://registry.test/adapter.tgz',
+      }, root)).rejects.toMatchObject({ code: 'PACKAGE_INVALID' });
+
+      expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toBe(oldManifest);
+      expect(await fs.readFile(path.join(packageRoot, 'manifest.mjs'), 'utf8')).toContain('export const manifest');
+      expect(await fs.readdir(path.dirname(packageRoot))).toEqual(['adapter']);
     } finally {
       await fs.rm(root, { recursive: true, force: true });
     }

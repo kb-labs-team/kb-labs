@@ -4,11 +4,10 @@
  * Resolves/installs packages from the KB Registry (kb:handle/name spec).
  */
 
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { extract } from 'tar';
-import * as os from 'node:os';
 import type { MarketplaceSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
 
 export class RegistryPackageError extends Error {
@@ -39,7 +38,12 @@ export class RegistryPackageSource implements MarketplaceSource {
   private readonly baseUrl: string;
   private readonly authToken?: string;
   private readonly shareToken?: string;
-  private readonly pendingInstalls = new Map<string, { packageRoot: string; backupPath?: string }>();
+  private readonly pendingInstalls = new Map<string, {
+    packageRoot: string;
+    stagingRoot: string;
+    backupPath?: string;
+    activated: boolean;
+  }>();
 
   constructor(opts: RegistrySourceOptions) {
     this.baseUrl = opts.registryUrl.replace(/\/$/, '');
@@ -49,6 +53,10 @@ export class RegistryPackageSource implements MarketplaceSource {
       throw new RegistryPackageError('KB_CONFIG_SECRET_MISSING', 'Registry signing public key is required by marketplace.sources.', 'unknown');
     }
     this.verificationKey = opts.signingPublicKey;
+  }
+
+  get registrySourceUrl(): string {
+    return this.baseUrl;
   }
 
   async resolveIdentity(identity: string) {
@@ -71,6 +79,7 @@ export class RegistryPackageSource implements MarketplaceSource {
       ...result,
       package: {
         ...result.package,
+        canonicalIdentity: result.package.canonicalIdentity ?? result.package.id,
         ...(downloadUrl ? { downloadUrl } : {}),
       },
     };
@@ -104,36 +113,53 @@ export class RegistryPackageSource implements MarketplaceSource {
     }
 
     // Extract to node_modules (write tarball to temp file first — tar requires a path)
-    const packageRoot = path.join(root, 'node_modules', pkg.id);
-    const key = `${path.resolve(root)}\0${pkg.id}`;
-    const backupPath = path.join(os.tmpdir(), `kb-registry-before-${createHash('sha256').update(key).digest('hex')}`);
-    await fs.rm(backupPath, { recursive: true, force: true });
-    let hadPrevious = false;
-    try {
-      await fs.access(packageRoot);
-      await fs.cp(packageRoot, backupPath, { recursive: true, dereference: false });
-      hadPrevious = true;
-    } catch (error) {
-      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {throw error;}
+    const nodeModulesRoot = path.resolve(root, 'node_modules');
+    const packageRoot = path.resolve(nodeModulesRoot, pkg.id);
+    if (!packageRoot.startsWith(`${nodeModulesRoot}${path.sep}`)) {
+      throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry package identity is not a safe package path', pkg.id);
     }
-    this.pendingInstalls.set(key, { packageRoot, ...(hadPrevious ? { backupPath } : {}) });
-    const tmpFile = path.join(os.tmpdir(), `kb-registry-${Date.now()}.tgz`);
+    const key = `${path.resolve(root)}\0${pkg.id}`;
+    const nodeModulesParent = path.dirname(packageRoot);
+    const stageName = `.kb-registry-stage-${randomUUID()}`;
+    const stagingRoot = path.join(nodeModulesParent, stageName);
+    const tmpFile = path.join(nodeModulesParent, `${stageName}.tgz`);
     try {
-      await fs.mkdir(packageRoot, { recursive: true });
+      await fs.mkdir(nodeModulesParent, { recursive: true });
+      await fs.mkdir(stagingRoot, { recursive: false });
       await fs.writeFile(tmpFile, tarball);
-      await extract({ file: tmpFile, cwd: packageRoot, strip: 1 });
-    } catch (error) {
+      await extract({ file: tmpFile, cwd: stagingRoot, strip: 1, strict: true });
+      const packageJsonPath = path.join(stagingRoot, 'package.json');
+      let packageJsonStat: Awaited<ReturnType<typeof fs.lstat>>;
       try {
-        await this.rollbackInstall(pkg.id, root);
-      } catch (rollbackError) {
-        throw new AggregateError([error, rollbackError], `Marketplace could not restore package files after installing ${pkg.id}.`);
+        packageJsonStat = await fs.lstat(packageJsonPath);
+      } catch {
+        throw new RegistryPackageError('PACKAGE_INVALID', 'Registry artifact does not contain package.json', pkg.id);
       }
+      if (!packageJsonStat.isFile()) {
+        throw new RegistryPackageError('PACKAGE_INVALID', 'Registry artifact package.json must be a regular file', pkg.id);
+      }
+      let packageJson: { name?: unknown; version?: unknown };
+      try {
+        packageJson = JSON.parse(await fs.readFile(packageJsonPath, 'utf8')) as { name?: unknown; version?: unknown };
+      } catch {
+        throw new RegistryPackageError('PACKAGE_INVALID', 'Registry artifact package.json is not valid JSON', pkg.id);
+      }
+      if (packageJson.name !== pkg.id || packageJson.version !== pkg.version) {
+        throw new RegistryPackageError(
+          'PACKAGE_INVALID',
+          `Registry artifact package.json must match ${pkg.id}@${pkg.version}`,
+          pkg.id,
+        );
+      }
+      this.pendingInstalls.set(key, { packageRoot, stagingRoot, activated: false });
+    } catch (error) {
+      await fs.rm(stagingRoot, { recursive: true, force: true });
       throw error;
     } finally {
       await fs.rm(tmpFile, { force: true });
     }
 
-    return { id: pkg.id, version: pkg.version, packageRoot, integrity: actualIntegrity };
+    return { id: pkg.id, version: pkg.version, packageRoot: stagingRoot, integrity: actualIntegrity };
   }
 
   /** Resolve path references at the configured source and refuse cross-origin tarball targets. */
@@ -174,15 +200,41 @@ export class RegistryPackageSource implements MarketplaceSource {
     this.pendingInstalls.delete(key);
   }
 
+  async activateInstall(packageId: string, root: string): Promise<string> {
+    const key = `${path.resolve(root)}\0${packageId}`;
+    const pending = this.pendingInstalls.get(key);
+    if (!pending) {throw new RegistryPackageError('PACKAGE_INVALID', 'Registry package staging state is missing', packageId);}
+    if (pending.activated) {return pending.packageRoot;}
+    const backupPath = path.join(path.dirname(pending.packageRoot), `.${path.basename(pending.packageRoot)}.kb-backup-${randomUUID()}`);
+    let hadPrevious = false;
+    try {
+      await fs.rename(pending.packageRoot, backupPath);
+      hadPrevious = true;
+    } catch (error) {
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'ENOENT') {throw error;}
+    }
+    if (hadPrevious) {pending.backupPath = backupPath;}
+    try {
+      await fs.rename(pending.stagingRoot, pending.packageRoot);
+    } catch (error) {
+      if (hadPrevious) {
+        await fs.rename(backupPath, pending.packageRoot);
+        delete pending.backupPath;
+      }
+      throw error;
+    }
+    pending.activated = true;
+    return pending.packageRoot;
+  }
+
   async rollbackInstall(packageId: string, root: string): Promise<void> {
     const key = `${path.resolve(root)}\0${packageId}`;
     const pending = this.pendingInstalls.get(key);
     if (!pending) {return;}
-    await fs.rm(pending.packageRoot, { recursive: true, force: true });
+    await fs.rm(pending.activated ? pending.packageRoot : pending.stagingRoot, { recursive: true, force: true });
     if (pending.backupPath) {
       await fs.mkdir(path.dirname(pending.packageRoot), { recursive: true });
-      await fs.cp(pending.backupPath, pending.packageRoot, { recursive: true, dereference: false });
-      await fs.rm(pending.backupPath, { recursive: true, force: true });
+      await fs.rename(pending.backupPath, pending.packageRoot);
     }
     this.pendingInstalls.delete(key);
   }
