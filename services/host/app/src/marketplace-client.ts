@@ -1,3 +1,5 @@
+import { forwardedIdentityHeaders } from "@kb-labs/gateway-contracts";
+
 /**
  * @module @kb-labs/host-app/marketplace-client
  *
@@ -46,6 +48,12 @@ export interface UninstallPackagesParams {
   projectRoot?: string;
 }
 
+export interface InstallRegistryPackageParams {
+  spec: string;
+  scope: "project";
+  projectRoot: string;
+}
+
 /** Thrown when the marketplace responds with a non-2xx status. */
 export class MarketplaceClientError extends Error {
   constructor(
@@ -58,7 +66,10 @@ export class MarketplaceClientError extends Error {
 }
 
 export class MarketplaceClient {
-  constructor(private readonly baseUrl: string) {}
+  constructor(
+    private readonly baseUrl: string,
+    private readonly internalSecret?: string,
+  ) {}
 
   private endpoint(path: string): URL {
     return new URL(`/api/v1/marketplace${path}`, this.baseUrl);
@@ -99,6 +110,18 @@ export class MarketplaceClient {
     return this.request<unknown>(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(params),
+    });
+  }
+
+  async installRegistryPackage(params: InstallRegistryPackageParams): Promise<unknown> {
+    const url = this.endpoint("/packages/registry/install");
+    return this.request<unknown>(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...forwardedIdentityHeaders(undefined, this.internalSecret),
+      },
       body: JSON.stringify(params),
     });
   }
