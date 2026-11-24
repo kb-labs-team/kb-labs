@@ -74,7 +74,7 @@ jobs:
           done
           (
             cd .kb/deploy/state-daemon
-            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/core-state-daemon')"
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/core-state-broker')"
           )
           (
             cd .kb/deploy/gateway-app

@@ -1,0 +1,289 @@
+name: Verify platform runtime packaging
+
+# Rebuild State from the already prepared deploy trees, then smoke the three
+# immutable images in a clean hosted Docker daemon. Gateway/Registry artifacts
+# come from the successful source-7b824 image build run.
+on:
+  push:
+    branches:
+      - 'verify/platform-runtime-packaging-fix'
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+env:
+  SOURCE_SHA: 7b8240395009fc3a055916bb4cef00c1821bf4b3
+  STATE_IMAGE: ghcr.io/kb-labs-team/kb-state-daemon:7b8240395009fc3a055916bb4cef00c1821bf4b3
+
+jobs:
+  state-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 7b8240395009fc3a055916bb4cef00c1821bf4b3
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: platform-image-inputs-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          repository: kb-labs-team/kb-labs
+          run-id: 45456213368
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/platform-image-inputs/
+
+      - name: Restore and verify existing State deploy tree
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/platform-image-inputs"
+          sha256sum -c platform-deploy.tar.gz.sha256
+          mkdir -p "$GITHUB_WORKSPACE/.kb"
+          tar -xzf platform-deploy.tar.gz -C "$GITHUB_WORKSPACE/.kb"
+          expected_links="$(cat symlink-count.txt)"
+          actual_links="$(find "$GITHUB_WORKSPACE/.kb/deploy" -type l -print | wc -l | tr -d ' ')"
+          test "$actual_links" = "$expected_links"
+          cd "$GITHUB_WORKSPACE/.kb/deploy/state-daemon"
+          node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/core-state-broker')"
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Build State image from source SHA
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: services/state/daemon/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.STATE_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.version=${{ env.SOURCE_SHA }}
+
+      - name: Start State daemon and check /health
+        run: |
+          set -euo pipefail
+          container=state-runtime-smoke
+          cleanup() {
+            docker logs "$container" 2>/dev/null || true
+            docker rm -f "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name "$container" \
+            --publish 127.0.0.1::7777/tcp \
+            --env KB_STATE_DAEMON_HOST=0.0.0.0 \
+            --env KB_STATE_DAEMON_PORT=7777 \
+            --env KB_STATE_DAEMON_DATA_ROOT=/tmp/kb-state-smoke \
+            "$STATE_IMAGE" >/dev/null
+          host_port="$(docker port "$container" 7777/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
+          test -n "$host_port"
+          healthy=false
+          for _ in $(seq 1 30); do
+            if curl --fail --silent --show-error "http://127.0.0.1:${host_port}/health" > "$RUNNER_TEMP/state-health.json" 2>/dev/null; then
+              healthy=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$healthy" != true ]; then
+            echo 'State daemon did not become healthy within 30 seconds' >&2
+            docker logs "$container" >&2 || true
+            exit 1
+          fi
+          jq -e '.status == "ok"' "$RUNNER_TEMP/state-health.json" >/dev/null
+
+      - name: Export State image with verified identity
+        id: export
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/image-export"
+          mkdir -p "$out"
+          archive="$out/kb-state-daemon.tar.gz"
+          image_id="$(docker image inspect --format '{{.Id}}' "$STATE_IMAGE")"
+          docker save "$STATE_IMAGE" | gzip -1 > "$archive"
+          gzip -t "$archive"
+          manifest="$(tar -xOzf "$archive" manifest.json)"
+          config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+          repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$STATE_IMAGE" '.[0].RepoTags[] | select(. == $ref)')"
+          config_digest="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
+          case "$config_file" in
+            blobs/sha256/*) declared="sha256:${config_file##*/}" ;;
+            *.json) declared="sha256:${config_file%.json}" ;;
+            *) echo "Unsupported Docker archive config path: $config_file" >&2; exit 1 ;;
+          esac
+          test "$repo_tag" = "$STATE_IMAGE"
+          test "$config_digest" = "$declared"
+          docker image rm "$STATE_IMAGE" >/dev/null
+          docker load --input "$archive" >/dev/null
+          loaded_id="$(docker image inspect --format '{{.Id}}' "$STATE_IMAGE")"
+          test "$loaded_id" = "$image_id"
+          (cd "$out" && sha256sum kb-state-daemon.tar.gz > kb-state-daemon.tar.gz.sha256)
+          archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          {
+            echo "image_id=$image_id"
+            echo "config_digest=$config_digest"
+            echo "archive_sha=$archive_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish State image to GHCR when available
+        id: ghcr_login
+        continue-on-error: true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push State image tag
+        id: push
+        if: steps.ghcr_login.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          push_output="$(docker push "$STATE_IMAGE" 2>&1)" || { printf '%s\n' "$push_output"; exit 1; }
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | sed -nE 's/.*digest: (sha256:[0-9a-f]+).*/\1/p' | tail -1)"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Write State image identity
+        env:
+          IMAGE_ID: ${{ steps.export.outputs.image_id }}
+          CONFIG_DIGEST: ${{ steps.export.outputs.config_digest }}
+          ARCHIVE_SHA: ${{ steps.export.outputs.archive_sha }}
+          GHCR_DIGEST: ${{ steps.push.outputs.digest }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr_login.outcome }}
+          GHCR_PUSH_OUTCOME: ${{ steps.push.outcome }}
+        run: |
+          set -euo pipefail
+          registry_status=artifact-only
+          if [ "$GHCR_LOGIN_OUTCOME" = success ] && [ "$GHCR_PUSH_OUTCOME" = success ]; then registry_status=published; fi
+          jq -n \
+            --arg image "$STATE_IMAGE" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg image_id "$IMAGE_ID" \
+            --arg config_digest "$CONFIG_DIGEST" \
+            --arg archive_sha "$ARCHIVE_SHA" \
+            --arg registry_status "$registry_status" \
+            --arg registry_digest "$GHCR_DIGEST" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{schemaVersion:1,image:$image,sourceSHA:$source_sha,platform:"linux/amd64",imageID:$image_id,configDigest:$config_digest,archiveSHA256:$archive_sha,registryStatus:$registry_status,registryDigest:$registry_digest,runID:$run_id,runURL:$run_url}' \
+            > "$RUNNER_TEMP/image-export/kb-state-daemon.identity.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kb-state-daemon-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          path: ${{ runner.temp }}/image-export/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-images:
+    needs: state-image
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - kb-state-daemon
+          - kb-gateway
+          - kb-marketplace-registry
+    steps:
+      - name: Download rebuilt State artifact
+        if: matrix.image == 'kb-state-daemon'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: kb-state-daemon-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          path: ${{ runner.temp }}/image-artifact
+
+      - name: Download successful Gateway or Registry artifact
+        if: matrix.image != 'kb-state-daemon'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ matrix.image }}-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          path: ${{ runner.temp }}/image-artifact
+          repository: kb-labs-team/kb-labs
+          run-id: 45456213368
+          github-token: ${{ github.token }}
+
+      - name: Verify image artifact in clean Docker
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+          IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:7b8240395009fc3a055916bb4cef00c1821bf4b3
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/image-artifact"
+          archive="${IMAGE_NAME}.tar.gz"
+          identity="${IMAGE_NAME}.identity.json"
+          sha256sum -c "${archive}.sha256"
+          test "$(jq -r '.image' "$identity")" = "$IMAGE_REF"
+          test "$(jq -r '.sourceSHA' "$identity")" = "$SOURCE_SHA"
+          test "$(jq -r '.platform' "$identity")" = linux/amd64
+          test "$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$(jq -r '.archiveSHA256' "$identity")"
+          manifest="$(tar -xOzf "$archive" manifest.json)"
+          config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+          repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$IMAGE_REF" '.[0].RepoTags[] | select(. == $ref)')"
+          test "$repo_tag" = "$IMAGE_REF"
+          config_digest="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
+          case "$config_file" in
+            blobs/sha256/*) declared="sha256:${config_file##*/}" ;;
+            *.json) declared="sha256:${config_file%.json}" ;;
+            *) echo "Unsupported Docker archive config path: $config_file" >&2; exit 1 ;;
+          esac
+          test "$config_digest" = "$declared"
+          test "$config_digest" = "$(jq -r '.configDigest' "$identity")"
+          docker load --input "$archive" >/dev/null
+          loaded_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          test "$loaded_id" = "$(jq -r '.imageID' "$identity")"
+
+      - name: Start State daemon and check /health
+        if: matrix.image == 'kb-state-daemon'
+        env:
+          IMAGE_REF: ghcr.io/kb-labs-team/kb-state-daemon:7b8240395009fc3a055916bb4cef00c1821bf4b3
+        run: |
+          set -euo pipefail
+          container=state-clean-docker-smoke
+          cleanup() { docker logs "$container" 2>/dev/null || true; docker rm -f "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run --detach --name "$container" --publish 127.0.0.1::7777/tcp \
+            --env KB_STATE_DAEMON_HOST=0.0.0.0 --env KB_STATE_DAEMON_PORT=7777 \
+            --env KB_STATE_DAEMON_DATA_ROOT=/tmp/kb-state-smoke "$IMAGE_REF" >/dev/null
+          host_port="$(docker port "$container" 7777/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
+          healthy=false
+          for _ in $(seq 1 30); do
+            if curl --fail --silent "http://127.0.0.1:${host_port}/health" > "$RUNNER_TEMP/state-health.json"; then healthy=true; break; fi
+            sleep 1
+          done
+          test "$healthy" = true
+          jq -e '.status == "ok"' "$RUNNER_TEMP/state-health.json" >/dev/null
+
+      - name: Start Registry and check /health
+        if: matrix.image == 'kb-marketplace-registry'
+        env:
+          IMAGE_REF: ghcr.io/kb-labs-team/kb-marketplace-registry:7b8240395009fc3a055916bb4cef00c1821bf4b3
+        run: |
+          set -euo pipefail
+          container=registry-clean-docker-smoke
+          cleanup() { docker logs "$container" 2>/dev/null || true; docker rm -f "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker run --detach --name "$container" --publish 127.0.0.1::5071/tcp \
+            --env GATEWAY_INTERNAL_SECRET=ci-smoke-only \
+            --env KB_REGISTRY_HOST=0.0.0.0 --env KB_REGISTRY_PORT=5071 \
+            --env KB_REGISTRY_URL=http://127.0.0.1:5071 "$IMAGE_REF" >/dev/null
+          host_port="$(docker port "$container" 5071/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
+          healthy=false
+          for _ in $(seq 1 30); do
+            if curl --fail --silent "http://127.0.0.1:${host_port}/health" > "$RUNNER_TEMP/registry-health.json"; then healthy=true; break; fi
+            sleep 1
+          done
+          if [ "$healthy" != true ]; then docker logs "$container" >&2 || true; exit 1; fi
+          jq -e '.status == "ok"' "$RUNNER_TEMP/registry-health.json" >/dev/null
+
+      - name: Smoke Gateway modules in clean Docker
+        if: matrix.image == 'kb-gateway'
+        env:
+          IMAGE_REF: ghcr.io/kb-labs-team/kb-gateway:7b8240395009fc3a055916bb4cef00c1821bf4b3
+        run: >-
+          docker run --rm --entrypoint node "$IMAGE_REF"
+          --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/gateway-core')"
