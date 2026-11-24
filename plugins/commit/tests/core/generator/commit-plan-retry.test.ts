@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { useLogger } from '@kb-labs/sdk';
-import { retryLLMCall } from './commit-plan.js';
+import { retryLLMCall } from '../../../src/core/generator/commit-plan.js';
 
 describe('Commit LLM cancellation', () => {
   // case: S-030.3
