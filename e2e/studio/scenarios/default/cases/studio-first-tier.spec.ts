@@ -24,7 +24,7 @@ async function signInIfSecured(page: import('@playwright/test').Page) {
   await expect(page).not.toHaveURL(/\/login$/)
 }
 
-test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ page }) => {
+test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
 
@@ -45,6 +45,7 @@ test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ p
   await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
   await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+  await expect(page.getByText('No registered project', { exact: true })).toBeVisible()
 
   const studioRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/studio/registry`)
   expect(studioRegistryResponse.status()).toBe(200)
