@@ -11,11 +11,22 @@ import type {
   PluginAskResponse
 } from './plugins-source';
 
+type PluginsRegistryEnvelope = { ok: true; data: PluginsRegistryResponse };
+
+function isPluginsRegistryEnvelope(
+  response: PluginsRegistryResponse | PluginsRegistryEnvelope,
+): response is PluginsRegistryEnvelope {
+  return 'ok' in response && response.ok === true && 'data' in response;
+}
+
 export class HttpPluginsSource implements PluginsDataSource {
   constructor(private readonly client: HttpClient) {}
 
   async getPlugins(): Promise<PluginsRegistryResponse> {
-    return this.client.fetch<PluginsRegistryResponse>('/plugins/registry');
+    const response = await this.client.fetch<
+      PluginsRegistryResponse | PluginsRegistryEnvelope
+    >('/plugins/registry');
+    return isPluginsRegistryEnvelope(response) ? response.data : response;
   }
 
   async askAboutPlugin(pluginId: string, request: PluginAskRequest): Promise<PluginAskResponse> {

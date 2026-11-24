@@ -16,8 +16,8 @@ import {
   mountEventStreams,
   mountWebSocketChannels,
 } from "@kb-labs/plugin-execution";
-import { combineManifestsToRegistry, manifestToRegistryEntry } from "@kb-labs/rest-api-core";
 import { platform } from "@kb-labs/core-runtime";
+import { registerPluginRegistryRoutes } from "@kb-labs/shared-http";
 import {
   logDiagnosticEvent,
   type DiagnosticLogLevel,
@@ -661,6 +661,16 @@ export async function registerPluginSnapshotRoutes(
 ): Promise<void> {
   const basePath = config.basePath;
 
+  await registerPluginRegistryRoutes(server, {
+    apiBasePath: basePath,
+    includePluginDocs: false,
+    getSnapshot: () => restDomainOperationMetrics.observeOperation(
+      "plugin.registry.snapshot",
+      async () => registry.snapshot(),
+    ),
+    validateManifest,
+  });
+
   server.post(`${basePath}/plugins/refresh`, { schema: { querystring: { type: 'object', additionalProperties: false }, body: noBodySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { rev: { type: 'integer' }, total: { type: 'integer' }, generatedAt: { type: 'string', format: 'date-time' }, partial: { type: 'boolean' }, stale: { type: 'boolean' } }, required: ['rev', 'total', 'generatedAt', 'partial', 'stale'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } }, async (_request, reply) => {
     try {
       await restDomainOperationMetrics.observeOperation(
@@ -704,74 +714,6 @@ export async function registerPluginSnapshotRoutes(
       reply.code(500).send({
         ok: false,
         error: "Failed to refresh plugin registry",
-        message: error instanceof Error ? error.message : String(error),
-      });
-    }
-  });
-
-  // Raw manifests endpoint for Studio/debug consumers
-  server.get(`${basePath}/plugins/registry`, { schema: { querystring: { type: 'object', additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { manifests: { type: 'array', items: { type: 'object', properties: { pluginId: { type: 'string' }, manifest: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, version: { type: 'string' } }, additionalProperties: true }, pluginRoot: { type: 'string' }, source: { type: 'object', properties: { kind: { type: 'string' }, packageName: { type: 'string' }, path: { type: 'string' } }, additionalProperties: true }, discoveredAt: { type: 'string', format: 'date-time' }, buildTimestamp: { type: 'string', format: 'date-time' }, validation: { type: 'object', properties: { valid: { type: 'boolean' }, errors: { type: 'array', items: { type: 'string' } } }, required: ['valid', 'errors'], additionalProperties: true } }, required: ['pluginId', 'manifest', 'pluginRoot', 'source', 'discoveredAt', 'validation'], additionalProperties: true } }, apiBasePath: { type: 'string' }, diagnostics: { type: 'object', properties: { total: { type: 'integer' }, items: { type: 'array', items: { type: 'object', properties: { severity: { type: 'string' }, code: { type: 'string' }, reasonCode: { type: 'string' }, message: { type: 'string' }, pluginId: { type: 'string' }, filePath: { type: 'string' }, remediation: { type: 'string' }, ts: { type: 'string' } }, required: ['severity', 'code', 'reasonCode', 'message', 'ts'], additionalProperties: true } } }, required: ['total', 'items'], additionalProperties: true } }, required: ['manifests', 'apiBasePath', 'diagnostics'], additionalProperties: false } }) } }, async (_request, reply) => {
-    try {
-      const snapshot = await restDomainOperationMetrics.observeOperation(
-        "plugin.registry.snapshot",
-        async () => registry.snapshot(),
-      );
-
-      // Get build timestamps and validate manifests
-      const manifestsWithTimestamps = await Promise.all(
-        snapshot.manifests.map(async (entry) => {
-          let buildTimestamp: string | undefined;
-          try {
-            const distPath = path.join(entry.pluginRoot, "dist");
-            const stats = await fs.stat(distPath);
-            buildTimestamp = stats.mtime.toISOString();
-          } catch {
-            // dist/ doesn't exist or not accessible, skip
-          }
-
-          // Validate manifest structure
-          const validation = validateManifest(entry.manifest);
-
-          return {
-            pluginId: entry.pluginId,
-            manifest: entry.manifest,
-            pluginRoot: entry.pluginRoot,
-            source: entry.source,
-            discoveredAt: snapshot.generatedAt,
-            buildTimestamp,
-            validation: {
-              valid: validation.valid,
-              errors: validation.errors,
-            },
-          };
-        }),
-      );
-
-      reply.type("application/json");
-      return {
-        manifests: manifestsWithTimestamps,
-        apiBasePath: basePath,
-        diagnostics: {
-          total: snapshot.diagnostics?.length ?? 0,
-          items: (snapshot.diagnostics ?? []).map((diagnostic) => ({
-            severity: diagnostic.severity,
-            code: diagnostic.code,
-            reasonCode: mapRegistryDiagnosticReasonCode(diagnostic.code),
-            message: diagnostic.message,
-            pluginId: diagnostic.context?.pluginId,
-            filePath: diagnostic.context?.filePath,
-            remediation: diagnostic.remediation,
-            ts: diagnostic.ts,
-          })),
-        },
-      };
-    } catch (error) {
-      platform.logger.error(
-        "Failed to get plugin registry",
-        error instanceof Error ? error : new Error(String(error)),
-      );
-      reply.code(500).send({
-        error: "Failed to load plugin registry",
         message: error instanceof Error ? error.message : String(error),
       });
     }
@@ -866,136 +808,6 @@ export async function registerPluginSnapshotRoutes(
         }
         return reply.code(500).send({ error: "Failed to read CHANGELOG.md" });
       }
-    },
-  );
-
-  // Studio Registry V2 — returns plugin pages and menus for Module Federation
-  server.get(
-    `${basePath}/studio/registry`,
-    {
-      config: { uxFixture: { validResult: 'error-envelope' } },
-      schema: {
-        tags: ["Studio"],
-        summary: "Get Studio Registry V2 (plugin pages for Module Federation)",
-        querystring: { type: 'object', additionalProperties: false },
-        response: withUxErrorResponses({ 200: { type: 'object', properties: { version: { type: 'string' }, generatedAt: { type: 'string', format: 'date-time' }, plugins: { type: 'array', items: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'], additionalProperties: true } } }, required: ['version', 'generatedAt', 'plugins'], additionalProperties: false } }),
-      },
-    },
-    async (_request, reply) => {
-      try {
-        const snapshot = await restDomainOperationMetrics.observeOperation(
-          "plugin.studio.registry",
-          async () => registry.snapshot(),
-        );
-        const manifests = extractSnapshotManifests(snapshot);
-
-        // Only plugins with studio V2 config
-        const studioManifests = manifests
-          .filter((entry) => entry.manifest.studio?.version === 2)
-          .map((entry) => ({
-            manifest: entry.manifest,
-            pluginRoot: entry.pluginRoot,
-          }));
-
-        const studioRegistry = combineManifestsToRegistry(studioManifests);
-
-        reply.type("application/json");
-        return studioRegistry;
-      } catch (error) {
-        platform.logger.error(
-          "Failed to generate studio registry",
-          error instanceof Error ? error : new Error(String(error)),
-        );
-        reply.code(500).send({
-          error: "Failed to generate studio registry",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      }
-    },
-  );
-
-  // Widget bundle static files — serves dist/widgets/ from plugin packages
-  server.get<{
-    Params: { scope: string; name: string; "*": string };
-  }>(
-    "/plugins/@:scope/:name/widgets/*",
-    {
-      config: { ux: "raw" },
-      schema: { hide: true },
-    },
-    async (request, reply) => {
-      const { scope, name } = request.params;
-      const filePath = request.params["*"];
-
-      if (!scope || !name || !filePath || filePath.includes("..")) {
-        return reply.code(400).send({ error: "Invalid path" });
-      }
-
-      const pluginId = `@${scope}/${name}`;
-
-      // Find the plugin's widgetBundleDir from registry
-      const snapshot = registry.snapshot();
-      const manifests = extractSnapshotManifests(snapshot);
-      const entry = manifests.find(
-        (e) => e.manifest.id === pluginId && e.manifest.studio?.version === 2,
-      );
-
-      if (!entry) {
-        return reply
-          .code(404)
-          .send({ error: `No widget bundle for ${pluginId}` });
-      }
-
-      const { join, extname } = await import("node:path");
-      const { createReadStream, existsSync, statSync } =
-        await import("node:fs");
-
-      const studioEntry = manifestToRegistryEntry(entry.manifest, entry.pluginRoot);
-      if (!studioEntry) {
-        return reply
-          .code(404)
-          .send({ error: `No widget bundle for ${pluginId}` });
-      }
-
-      const bundleDir = studioEntry.widgetBundleDir;
-      const fullPath = join(bundleDir, filePath);
-
-      if (!fullPath.startsWith(bundleDir)) {
-        return reply.code(400).send({ error: "Invalid path" });
-      }
-
-      if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
-        return reply
-          .code(404)
-          .send({
-            error: `Widget file not found: ${pluginId}/widgets/${filePath}`,
-          });
-      }
-
-      const MIME: Record<string, string> = {
-        ".js": "application/javascript",
-        ".mjs": "application/javascript",
-        ".css": "text/css",
-        ".json": "application/json",
-        ".map": "application/json",
-      };
-
-      const ext = extname(filePath);
-      const isEntry = filePath === "remoteEntry.js";
-
-      return reply
-        .code(200)
-        .header("Content-Type", MIME[ext] ?? "application/octet-stream")
-        .header("Content-Length", statSync(fullPath).size)
-        .header(
-          "Cache-Control",
-          isEntry
-            ? "public, max-age=10, must-revalidate"
-            : process.env.NODE_ENV === "production"
-              ? "public, max-age=31536000, immutable"
-              : "no-cache",
-        )
-        .send(createReadStream(fullPath));
     },
   );
 

@@ -17,11 +17,12 @@ import {
 } from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
 import { useProjectContext } from '@/providers/project-context-provider';
+import { EmptyState } from '@/components/empty-state';
 
 export function InstalledProjectPlugins() {
   const { projectId } = useProjectContext();
   const { projectPlugins: source } = useDataSources();
-  const { data: plugins, isLoading } = useProjectPlugins(source, projectId);
+  const { data: plugins, isLoading, isError, refetch } = useProjectPlugins(source, projectId);
   const setEnabled = useSetProjectPluginEnabled(source, projectId);
   const uninstallPlugin = useUninstallProjectPlugin(source, projectId);
 
@@ -100,6 +101,13 @@ export function InstalledProjectPlugins() {
         <UIEmptyState title="Select a project" description="Choose a registered project to see and manage its installed plugins." />
       ) : isLoading ? (
         <UISpin />
+      ) : isError ? (
+        <EmptyState
+          kind="unavailable"
+          title="Plugins unavailable"
+          description="Installed plugins for this project could not be loaded. Try again when the Gateway is available."
+          action={{ label: 'Retry', onClick: () => { void refetch(); } }}
+        />
       ) : !plugins || plugins.length === 0 ? (
         <UIEmptyState title="No plugins installed" description="Open the marketplace to find a package for this project." />
       ) : (

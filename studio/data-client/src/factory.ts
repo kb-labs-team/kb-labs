@@ -9,6 +9,7 @@ import type { PluginsDataSource } from './sources/plugins-source';
 import type { ProjectsDataSource } from './sources/projects-source';
 import type { ProjectPluginsDataSource } from './sources/project-plugins-source';
 import type { MarketplaceRegistryDataSource } from './sources/marketplace-registry-source';
+import type { MarketplaceInventoryDataSource } from './sources/marketplace-inventory-source';
 import { MockSystemSource } from './mocks/mock-system-source';
 import { MockWorkflowSource } from './mocks/mock-workflow-source';
 import { MockCacheSource } from './mocks/mock-cache-source';
@@ -20,6 +21,7 @@ import { MockPluginsSource } from './mocks/mock-plugins-source';
 import { MockProjectsSource } from './mocks/mock-projects-source';
 import { MockProjectPluginsSource } from './mocks/mock-project-plugins-source';
 import { MockMarketplaceRegistrySource } from './mocks/mock-marketplace-registry-source';
+import { MockMarketplaceInventorySource } from './mocks/mock-marketplace-inventory-source';
 import { HttpSystemSource } from './sources/http-system-source';
 import { HttpWorkflowSource } from './sources/http-workflow-source';
 import { HttpCacheSource } from './sources/http-cache-source';
@@ -31,6 +33,7 @@ import { HttpPluginsSource } from './sources/http-plugins-source';
 import { HttpProjectsSource } from './sources/http-projects-source';
 import { HttpProjectPluginsSource } from './sources/http-project-plugins-source';
 import { HttpMarketplaceRegistrySource } from './sources/http-marketplace-registry-source';
+import { HttpMarketplaceInventorySource } from './sources/http-marketplace-inventory-source';
 import { HttpClient } from './client/http-client';
 
 export interface DataSourcesConfig {
@@ -54,6 +57,7 @@ export interface DataSources {
   projects: ProjectsDataSource;
   projectPlugins: ProjectPluginsDataSource;
   marketplaceRegistry: MarketplaceRegistryDataSource;
+  marketplaceInventory: MarketplaceInventoryDataSource;
 }
 
 export function createDataSources(config: DataSourcesConfig): DataSources {
@@ -70,6 +74,7 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
       projects: new MockProjectsSource(),
       projectPlugins: new MockProjectPluginsSource(),
       marketplaceRegistry: new MockMarketplaceRegistrySource(),
+      marketplaceInventory: new MockMarketplaceInventorySource(),
     };
   }
 
@@ -88,5 +93,6 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
     projects: new HttpProjectsSource(client),
     projectPlugins: new HttpProjectPluginsSource(client),
     marketplaceRegistry: new HttpMarketplaceRegistrySource(client),
+    marketplaceInventory: new HttpMarketplaceInventorySource(client),
   };
 }

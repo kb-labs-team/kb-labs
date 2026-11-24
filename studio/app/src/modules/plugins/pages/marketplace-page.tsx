@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { UIButton, UIPage, UIPageHeader } from '@kb-labs/studio-ui-kit';
 import { InstalledProjectPlugins } from '../components/installed-project-plugins';
+import { InstalledPlatformAdapters } from '../components/installed-platform-adapters';
 
 export function PluginsPage() {
   const navigate = useNavigate();
@@ -17,6 +18,7 @@ export function PluginsPage() {
         )}
       />
       <InstalledProjectPlugins />
+      <InstalledPlatformAdapters />
     </UIPage>
   );
 }

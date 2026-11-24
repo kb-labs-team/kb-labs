@@ -60,6 +60,23 @@ describe('InstalledProjectPlugins', () => {
     await screen.findByText('No plugins installed');
   });
 
+  // case: S-182.7
+  it('shows unavailable with retry instead of treating a failed request as empty', async () => {
+    const listPlugins = vi.fn()
+      .mockRejectedValueOnce(new Error('project plugin inventory unavailable'))
+      .mockResolvedValueOnce([]);
+    renderPanel({ projectPlugins: { listPlugins } as never });
+
+    expect(await screen.findByText('Plugins unavailable')).toBeDefined();
+    expect(screen.getByLabelText('unavailable state')).toBeDefined();
+    expect(screen.queryByText('No plugins installed')).toBeNull();
+    expect(listPlugins).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('No plugins installed')).toBeDefined();
+    expect(listPlugins).toHaveBeenCalledTimes(2);
+  });
+
   // case: S-182.6
   it('enables and disables an installed project plugin', async () => {
     const listPlugins = vi.fn().mockResolvedValue([makePlugin({ enabled: false })]);
