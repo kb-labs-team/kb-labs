@@ -8,8 +8,10 @@ const dockerfile = readFileSync(resolve(__dirname, '../../Dockerfile'), 'utf-8')
 const entrypoint = readFileSync(resolve(__dirname, '../../docker-entrypoint.sh'), 'utf-8');
 
 describe('gateway production image contract', () => {
-  it('bakes the generated cloud config default into the release image', () => {
+  // case: S-321.5
+  it('bakes the generated cloud config and kb-create platform data layout into the release image', () => {
     expect(dockerfile).toContain('COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json');
+    expect(dockerfile).toContain('COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json /app/.kb/v2/platform-layout.json');
     expect(dockerfile).not.toContain('kb.config.prod.json');
     expect(dockerfile).not.toContain('marketplace.prod.lock');
     expect(dockerfile).not.toContain('kb.config.default.json');
