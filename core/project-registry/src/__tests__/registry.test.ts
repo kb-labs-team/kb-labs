@@ -330,6 +330,21 @@ describe('file lock', () => {
     const registry = createProjectRegistry({ root, lock: { timeoutMs: 2_000 } });
     await expect(registry.add(makeProject('after-crash'))).resolves.toBeDefined();
   });
+
+  it('preserves a live owner beyond staleMs when requested', async () => {
+    mkdirSync(root, { recursive: true });
+    const lockPath = join(root, 'long-running.lock');
+    const lock = JSON.stringify({ pid: process.pid, token: 'live', createdAt: Date.now() - 60_000 });
+    writeFileSync(lockPath, lock);
+
+    await expect(withFileLock(lockPath, async () => undefined, {
+      timeoutMs: 30,
+      retryMs: 1,
+      staleMs: 1,
+      preserveLiveOwner: true,
+    })).rejects.toMatchObject({ code: 'KB_PROJECT_REGISTRY_LOCKED' });
+    expect(readFileSync(lockPath, 'utf8')).toBe(lock);
+  });
 });
 
 describe('unreadable registry file', () => {

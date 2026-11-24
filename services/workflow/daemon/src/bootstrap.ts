@@ -89,14 +89,19 @@ export async function setup({
         status: migration.status,
         imported: migration.imported,
         alreadyPresent: migration.alreadyPresent,
+        alreadyDecided: migration.alreadyDecided,
         skipped: migration.skipped,
         conflicts: migration.conflicts,
         ...(migration.reason ? { reason: migration.reason } : {}),
       });
+      if (migration.status === 'retryable-failure' || migration.status === 'blocked') {
+        throw new Error('Workflow legacy history migration could not complete safely; refusing to start.')
+      }
     } else if (migration.status === 'imported' && migration.imported > 0) {
       bootstrapLogger.info('Imported legacy workflow history into project-scoped storage', {
         imported: migration.imported,
         alreadyPresent: migration.alreadyPresent,
+        alreadyDecided: migration.alreadyDecided,
       });
     }
   }

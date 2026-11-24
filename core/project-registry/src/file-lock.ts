@@ -9,6 +9,8 @@ export interface FileLockOptions {
   staleMs?: number;
   /** Base delay between attempts (jittered). Default 15ms. */
   retryMs?: number;
+  /** Do not expire a lock whose recorded owner process is still alive. */
+  preserveLiveOwner?: boolean;
 }
 
 interface LockPayload {
@@ -17,7 +19,7 @@ interface LockPayload {
   createdAt: number;
 }
 
-const DEFAULTS = { timeoutMs: 10_000, staleMs: 30_000, retryMs: 15 } as const;
+const DEFAULTS = { timeoutMs: 10_000, staleMs: 30_000, retryMs: 15, preserveLiveOwner: false } as const;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((done) => {
@@ -69,14 +71,14 @@ async function readLock(lockPath: string): Promise<{ raw: string; ageMs: number 
  * with an atomic rename, so of several concurrent breakers only one wins; if
  * the file we moved turns out to be a different (live) lock, it is put back.
  */
-async function breakIfStale(lockPath: string, staleMs: number): Promise<boolean> {
+async function breakIfStale(lockPath: string, staleMs: number, preserveLiveOwner: boolean): Promise<boolean> {
   const observed = await readLock(lockPath);
   if (!observed) {
     return true; // vanished: the caller can simply retry
   }
   const payload = parsePayload(observed.raw);
   const abandoned = payload
-    ? !isProcessAlive(payload.pid) || Date.now() - payload.createdAt > staleMs
+    ? !isProcessAlive(payload.pid) || (!preserveLiveOwner && Date.now() - payload.createdAt > staleMs)
     : observed.ageMs > staleMs;
   if (!abandoned) {
     return false;
@@ -117,7 +119,7 @@ async function acquire(lockPath: string, options: Required<FileLockOptions>): Pr
         throw error;
       }
     }
-    if (await breakIfStale(lockPath, options.staleMs)) {
+    if (await breakIfStale(lockPath, options.staleMs, options.preserveLiveOwner)) {
       continue;
     }
     if (Date.now() >= deadline) {
