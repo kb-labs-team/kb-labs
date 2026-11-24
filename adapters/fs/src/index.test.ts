@@ -29,6 +29,7 @@ describe("FilesystemStorageAdapter", () => {
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
+    await rm(`${tmpDir}-sibling`, { recursive: true, force: true });
   });
 
   it("stores default data under the platform state directory for an unregistered project", async () => {
@@ -130,6 +131,15 @@ describe("FilesystemStorageAdapter", () => {
       await expect(
         storage.write("/etc/passwd", Buffer.from("bad")),
       ).rejects.toThrow("Path traversal detected");
+    });
+
+    it("should prevent absolute sibling paths that only share the baseDir prefix", async () => {
+      const siblingFile = join(`${tmpDir}-sibling`, "outside.txt");
+
+      await expect(
+        storage.write(siblingFile, Buffer.from("bad")),
+      ).rejects.toThrow("Path traversal detected");
+      await expect(access(siblingFile)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 
