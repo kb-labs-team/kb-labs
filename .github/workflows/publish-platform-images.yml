@@ -70,8 +70,7 @@ jobs:
           set -euo pipefail
           for service in state-daemon gateway-app marketplace-registry-app; do
             tree=".kb/deploy/$service"
-            test -L "$tree/node_modules/@kb-labs/plugin-runtime"
-            test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+            test -e "$tree/node_modules/@kb-labs/plugin-runtime/package.json"
           done
           (
             cd .kb/deploy/state-daemon
@@ -86,6 +85,7 @@ jobs:
             node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/marketplace-registry-core')"
           )
           mkdir -p "$RUNNER_TEMP/platform-deploy-artifacts"
+          find .kb/deploy -type l -print | wc -l | tr -d ' ' > "$RUNNER_TEMP/platform-deploy-artifacts/symlink-count.txt"
           tar -C .kb -czf "$RUNNER_TEMP/platform-deploy-artifacts/platform-deploy-artifacts.tar.gz" deploy
           (cd "$RUNNER_TEMP/platform-deploy-artifacts" && sha256sum platform-deploy-artifacts.tar.gz > platform-deploy-artifacts.tar.gz.sha256)
 
@@ -137,10 +137,15 @@ jobs:
           sha256sum -c platform-deploy-artifacts.tar.gz.sha256
           mkdir -p "$GITHUB_WORKSPACE/.kb"
           tar -xzf platform-deploy-artifacts.tar.gz -C "$GITHUB_WORKSPACE/.kb"
+          expected_links="$(cat symlink-count.txt)"
+          actual_links="$(find "$GITHUB_WORKSPACE/.kb/deploy" -type l -print | wc -l | tr -d ' ')"
+          if [ "$actual_links" != "$expected_links" ]; then
+            echo "Release deploy archive symlink count changed: before=$expected_links after=$actual_links" >&2
+            exit 1
+          fi
           for service in state-daemon gateway-app marketplace-registry-app; do
             tree="$GITHUB_WORKSPACE/.kb/deploy/$service"
-            test -L "$tree/node_modules/@kb-labs/plugin-runtime"
-            test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+            test -e "$tree/node_modules/@kb-labs/plugin-runtime/package.json"
           done
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
       - name: Login to GHCR

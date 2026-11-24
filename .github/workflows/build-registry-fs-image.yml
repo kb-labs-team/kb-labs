@@ -48,8 +48,7 @@ jobs:
           node tools/release/generate-platform-image-default.mjs
           for service in state-daemon gateway-app marketplace-registry-app; do
             tree=".kb/deploy/$service"
-            test -L "$tree/node_modules/@kb-labs/plugin-runtime"
-            test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+            test -e "$tree/node_modules/@kb-labs/plugin-runtime/package.json"
           done
           (
             cd .kb/deploy/state-daemon
@@ -64,6 +63,7 @@ jobs:
             node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/marketplace-registry-core')"
           )
           mkdir -p "$RUNNER_TEMP/platform-image-inputs"
+          find .kb/deploy -type l -print | wc -l | tr -d ' ' > "$RUNNER_TEMP/platform-image-inputs/symlink-count.txt"
           tar -C .kb -czf "$RUNNER_TEMP/platform-image-inputs/platform-deploy.tar.gz" deploy
           (cd "$RUNNER_TEMP/platform-image-inputs" && sha256sum platform-deploy.tar.gz > platform-deploy.tar.gz.sha256)
 
@@ -114,8 +114,13 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/.kb/deploy"
           tar -xzf platform-deploy.tar.gz -C "$GITHUB_WORKSPACE/.kb"
           tree="$GITHUB_WORKSPACE/.kb/deploy/${{ matrix.deploy_tree }}"
-          test -L "$tree/node_modules/@kb-labs/plugin-runtime"
-          test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+          expected_links="$(cat symlink-count.txt)"
+          actual_links="$(find "$GITHUB_WORKSPACE/.kb/deploy" -type l -print | wc -l | tr -d ' ')"
+          if [ "$actual_links" != "$expected_links" ]; then
+            echo "Deploy archive symlink count changed: before=$expected_links after=$actual_links" >&2
+            exit 1
+          fi
+          test -e "$tree/node_modules/@kb-labs/plugin-runtime/package.json"
           cd "$tree"
           node --input-type=module -e "${{ matrix.smoke_imports }}"
 
