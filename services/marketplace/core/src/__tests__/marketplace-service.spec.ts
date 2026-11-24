@@ -30,6 +30,8 @@ type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources' |
   sources?: MarketplaceSource[];
   source?: PackageSource;
   registrySource?: PackageSource;
+  catalogRegistrySource?: PackageSource;
+  catalogRegistryUrl?: string;
   resolveSelectedAdapterSlot?: MarketplaceServiceOptions['resolveSelectedAdapterSlot'];
 };
 
@@ -60,13 +62,20 @@ function makeMarketplaceService(options: TestServiceOptions): MarketplaceService
     ...(options.registrySource ? [asMarketplaceSource(options.registrySource, 'registry')] : []),
     ...(options.source ? [asMarketplaceSource(options.source, 'npm')] : []),
   ];
-  const registrySource = sources.find(source => source.kind === 'registry' && source.registrySourceUrl);
+  const catalogRegistrySource = options.catalogRegistrySource
+    ? asMarketplaceSource(options.catalogRegistrySource, 'registry')
+    : undefined;
+  if (catalogRegistrySource && options.catalogRegistryUrl) {
+    catalogRegistrySource.registrySourceUrl = options.catalogRegistryUrl;
+  }
+  const registrySource = catalogRegistrySource ?? sources.find(source => source.kind === 'registry' && source.registrySourceUrl);
   return new MarketplaceService({
     platformRoot: options.platformRoot,
     projectRoot: options.projectRoot,
     extensionStore: options.extensionStore,
     strategies: options.strategies,
     sources,
+    ...(catalogRegistrySource ? { registryCatalogSource: catalogRegistrySource } : {}),
     ...(registrySource?.registrySourceUrl ? { registryCatalog: {
       registryUrl: registrySource.registrySourceUrl,
       async listPackages() {return [];},
@@ -86,6 +95,7 @@ async function createPluginDir(
   name: string,
   id: string,
   version = '1.0.0',
+  manifestId = id,
 ): Promise<{ dir: string; integrity: string }> {
   const dir = path.join(tmpDir, 'packages', name);
   await fs.mkdir(path.join(dir, 'dist'), { recursive: true });
@@ -97,7 +107,7 @@ async function createPluginDir(
     path.join(dir, 'kb.plugin.json'),
     JSON.stringify({
       schema: 'kb.plugin/3',
-      id,
+      id: manifestId,
       version,
       cli: { commands: [{ id: 'hello', path: 'hello', describe: 'hi', handler: './h.js' }] },
     }),
@@ -187,6 +197,119 @@ describe('MarketplaceService', () => {
   });
 
   // ── install ──────────────────────────────────────────────────────────
+
+  // case: S-323.2, S-323.3
+  it('uses the dedicated trusted catalog source only for catalog installs', async () => {
+    const projectRoot = path.join(tmpDir, 'catalog-source-project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    const canonicalId = '@kb-labs/canonical-catalog-plugin';
+    const packageName = '@publisher/catalog-display-name';
+    const registrySpec = `${canonicalId}@1.2.3`;
+    const registryPackage = await createPluginDir(projectRoot, 'catalog-plugin', packageName, '1.2.3', canonicalId);
+    const npmPackageId = '@kb-labs/npm-only-plugin';
+    const npmPackage = await createPluginDir(projectRoot, 'npm-plugin', npmPackageId);
+    const registryResolved: ResolvedPackage = {
+      id: packageName,
+      canonicalIdentity: canonicalId,
+      version: '1.2.3',
+      integrity: registryPackage.integrity,
+      source: 'marketplace',
+      primaryKind: 'plugin',
+    };
+    const catalogSource: PackageSource = {
+      resolve: vi.fn(async () => registryResolved),
+      install: vi.fn(async () => ({
+        id: packageName,
+        version: '1.2.3',
+        packageRoot: registryPackage.dir,
+        integrity: registryPackage.integrity,
+      })),
+      async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+    };
+    const npmSource = createMockSource(new Map([[npmPackageId, {
+      dir: npmPackage.dir,
+      version: '1.0.0',
+      integrity: npmPackage.integrity,
+    }]]));
+    const service = makeMarketplaceService({
+      platformRoot: tmpDir,
+      projectRoot,
+      sources: [asMarketplaceSource(npmSource, 'npm')],
+      catalogRegistrySource: catalogSource,
+      catalogRegistryUrl: 'https://production-registry.example/api/v1/marketplace-registry',
+    });
+
+    expect(service.registryCatalogStatus()).toEqual({ trustedInstallAvailable: true });
+    const catalogInstall = await service.installRegistryPlugin({ scope: 'project', projectRoot }, registrySpec);
+    expect(catalogSource.resolve).toHaveBeenCalledWith(registrySpec);
+    expect(npmSource.resolve).not.toHaveBeenCalled();
+    expect(catalogInstall.installed[0]).toMatchObject({ id: canonicalId, version: '1.2.3', signatureStatus: 'verified' });
+    expect(await readMarketplaceLock(projectRoot, new DiagnosticCollector(), 'project')).toMatchObject({
+      plugins: {
+        [canonicalId]: {
+          package: packageName,
+          marketplaceSource: 'registry',
+          marketplaceSourceUrl: 'https://production-registry.example/api/v1/marketplace-registry',
+          version: '1.2.3',
+        },
+      },
+    });
+
+    await service.install({ scope: 'project', projectRoot }, [npmPackageId]);
+    expect(npmSource.resolve).toHaveBeenCalledWith(npmPackageId);
+    expect(catalogSource.resolve).toHaveBeenCalledTimes(1);
+  });
+
+  // case: S-323.4
+  it('refuses catalog updates when the configured Registry origin changed', async () => {
+    const projectRoot = path.join(tmpDir, 'catalog-update-origin-project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    const packageId = '@kb-labs/catalog-origin-plugin';
+    const packageDir = await createPluginDir(projectRoot, 'catalog-origin-plugin', packageId, '1.0.0');
+    const makeRegistrySource = (): PackageSource => ({
+      resolve: vi.fn(async () => ({
+        id: packageId,
+        canonicalIdentity: packageId,
+        version: '1.0.0',
+        integrity: packageDir.integrity,
+        source: 'marketplace' as const,
+        primaryKind: 'plugin' as const,
+      })),
+      install: vi.fn(async () => ({ id: packageId, version: '1.0.0', packageRoot: packageDir.dir, integrity: packageDir.integrity })),
+      async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+    });
+    const npmPackage = await createPluginDir(projectRoot, 'npm-origin-plugin', '@kb-labs/npm-origin-plugin');
+    const npmSource = createMockSource(new Map([['@kb-labs/npm-origin-plugin', {
+      dir: npmPackage.dir,
+      version: '1.0.0',
+      integrity: npmPackage.integrity,
+    }]]));
+    const firstRegistrySource = makeRegistrySource();
+    const firstService = makeMarketplaceService({
+      platformRoot: tmpDir,
+      sources: [asMarketplaceSource(npmSource, 'npm')],
+      catalogRegistrySource: firstRegistrySource,
+      catalogRegistryUrl: 'https://registry-a.example/api/v1/marketplace-registry',
+    });
+    await firstService.installRegistryPlugin({ scope: 'project', projectRoot }, packageId);
+    const lockBeforeUpdate = await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8');
+    const packageBeforeUpdate = await fs.readFile(path.join(packageDir.dir, 'package.json'), 'utf8');
+
+    const replacementRegistrySource = makeRegistrySource();
+    const replacementService = makeMarketplaceService({
+      platformRoot: tmpDir,
+      sources: [asMarketplaceSource(npmSource, 'npm')],
+      catalogRegistrySource: replacementRegistrySource,
+      catalogRegistryUrl: 'https://registry-b.example/api/v1/marketplace-registry',
+    });
+    await expect(replacementService.update({ scope: 'project', projectRoot }, [packageId]))
+      .rejects.toMatchObject({ envelope: { code: 'KB_CONFIG_INVALID' } });
+
+    expect(replacementRegistrySource.resolve).not.toHaveBeenCalled();
+    expect(npmSource.resolve).not.toHaveBeenCalled();
+    expect(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')).toBe(lockBeforeUpdate);
+    expect(await fs.readFile(path.join(packageDir.dir, 'package.json'), 'utf8')).toBe(packageBeforeUpdate);
+  });
 
   describe('install', () => {
     // case: S-268.14

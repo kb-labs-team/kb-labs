@@ -20,6 +20,7 @@ vi.mock("@kb-labs/core-extension-store", () => ({ createExtensionStore: mocks.cr
 vi.mock("@kb-labs/marketplace-npm", () => ({
   NpmPackageSource: class NpmPackageSource { constructor(public options: unknown) {} },
   RegistryPackageSource: class RegistryPackageSource { constructor(public options: unknown) {} },
+  RegistryCatalogClient: class RegistryCatalogClient { constructor(public registryUrl: string) {} },
 }));
 
 const workspaceRoot = fileURLToPath(new URL("../../../../../", import.meta.url));
@@ -33,6 +34,47 @@ afterEach(async () => {
 });
 
 describe("Marketplace image default config", () => {
+  // case: S-323.1
+  it("configures the trusted Registry catalog separately from generic npm sources", async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kb-marketplace-catalog-default-"));
+    const configPath = path.join(tempRoot, ".kb", "kb.config.json");
+    execFileSync(process.execPath, [producerPath, configPath], { cwd: workspaceRoot });
+    const generatedConfig = JSON.parse(await fs.readFile(configPath, "utf8")) as {
+      marketplace: {
+        sources: Array<{ kind: string; url: string }>;
+        catalogRegistry?: { url: string; signingPublicKey: string };
+      };
+    };
+    mocks.createServer.mockResolvedValue({ listen: vi.fn(), close: vi.fn() });
+    mocks.MarketplaceService.mockImplementation(function (options) { return options; });
+    mocks.createExtensionStore.mockReturnValue({});
+
+    const { setup } = await import("../bootstrap.js");
+    const context = {
+      logger: { info: vi.fn() },
+      port: 5070,
+      host: "127.0.0.1",
+      platformRoot: tempRoot,
+      netOffset: 0,
+      platform: {},
+      runtime: {},
+    } as unknown as Parameters<typeof setup>[0];
+    await setup(context);
+
+    expect(generatedConfig.marketplace.sources).toEqual([
+      { kind: "npm", url: "https://registry.npmjs.org" },
+    ]);
+    expect(generatedConfig.marketplace.catalogRegistry).toEqual({
+      url: "https://api.kblabs.ru/api/v1/marketplace-registry",
+      signingPublicKey: "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAc6RfAt8enkIaGnnfnYmzI8NnhEVnFU4lIXnzrT5IpFM=\n-----END PUBLIC KEY-----\n",
+    });
+    expect(mocks.MarketplaceService).toHaveBeenCalledWith(expect.objectContaining({
+      sources: [expect.objectContaining({ options: { registryUrl: "https://registry.npmjs.org" } })],
+      registryCatalogSource: expect.objectContaining({ options: generatedConfig.marketplace.catalogRegistry }),
+      registryCatalog: expect.objectContaining({ registryUrl: generatedConfig.marketplace.catalogRegistry?.url }),
+    }));
+  });
+
   // case: S-268.11
   it("resolves generated release sources during Marketplace setup", async () => {
     tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), "kb-marketplace-image-default-"));
