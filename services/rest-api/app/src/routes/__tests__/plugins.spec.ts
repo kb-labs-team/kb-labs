@@ -3,6 +3,9 @@ import Fastify from 'fastify';
 import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/plugin-contracts';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as fsSync from 'node:fs';
 import {
   registerPluginRoutes,
   registerPluginSnapshotRoutes,
@@ -1047,6 +1050,22 @@ describe('registerPluginSnapshotRoutes', () => {
   });
 
   describe('widget bundle Cache-Control headers', () => {
+    let pluginRoot: string;
+
+    beforeEach(async () => {
+      pluginRoot = fsSync.mkdtempSync(path.join(os.tmpdir(), 'rest-api-widget-cache-'));
+      const widgetsDir = path.join(pluginRoot, 'dist', 'widgets');
+      fsSync.mkdirSync(widgetsDir, { recursive: true });
+      fsSync.writeFileSync(path.join(widgetsDir, 'remoteEntry.js'), 'remote entry');
+      fsSync.writeFileSync(path.join(widgetsDir, '162.js'), 'widget chunk');
+      vi.mocked(fs.realpath).mockImplementation(async (filePath) => path.resolve(String(filePath)));
+      vi.mocked(fs.stat).mockImplementation(async (filePath) => fsSync.statSync(filePath));
+    });
+
+    afterEach(async () => {
+      fsSync.rmSync(pluginRoot, { recursive: true, force: true });
+    });
+
     function makeWidgetSnapshot(pluginRoot: string) {
       const manifest = createMockManifest({
         id: '@kb-labs/workflow',
@@ -1058,7 +1077,7 @@ describe('registerPluginSnapshotRoutes', () => {
     }
 
     it('serves remoteEntry.js with short-lived revalidation header', async () => {
-      const cliApi = { snapshot: vi.fn(() => makeWidgetSnapshot('/fake/plugin')) } as unknown as IEntityRegistry;
+      const cliApi = { snapshot: vi.fn(() => makeWidgetSnapshot(pluginRoot)) } as unknown as IEntityRegistry;
       await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
       const response = await app.inject({
@@ -1074,7 +1093,7 @@ describe('registerPluginSnapshotRoutes', () => {
       const original = process.env.NODE_ENV;
       process.env.NODE_ENV = 'development';
       try {
-        const cliApi = { snapshot: vi.fn(() => makeWidgetSnapshot('/fake/plugin')) } as unknown as IEntityRegistry;
+        const cliApi = { snapshot: vi.fn(() => makeWidgetSnapshot(pluginRoot)) } as unknown as IEntityRegistry;
         await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
         const response = await app.inject({
@@ -1093,7 +1112,7 @@ describe('registerPluginSnapshotRoutes', () => {
       const original = process.env.NODE_ENV;
       process.env.NODE_ENV = 'production';
       try {
-        const cliApi = { snapshot: vi.fn(() => makeWidgetSnapshot('/fake/plugin')) } as unknown as IEntityRegistry;
+        const cliApi = { snapshot: vi.fn(() => makeWidgetSnapshot(pluginRoot)) } as unknown as IEntityRegistry;
         await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
         const response = await app.inject({
