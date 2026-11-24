@@ -204,7 +204,8 @@ Marketplace Registry packages remains required before S-182's discovery steps
 are covered. This increment does not display adapter lifecycle controls or
 adapter rows without platform Marketplace data; adapters remain platform-scope
 packages, and selecting/configuring adapter slots stays with platform owners.
-Cases: S-120.1, S-182.
+An unavailable installed-plugin request has its own retry state and never
+renders as an empty installation. Cases: S-120.1, S-182.7.
 
 ## 2026-10-21
 

@@ -31,6 +31,7 @@ area without changing another project.
 | S-182.4 | Choose project B in the detail page's **Project** selector, return to Marketplace, and inspect its **Plugins** category | Project B remains unchanged and does not report Commit as installed. |
 | S-182.5 | Choose project A, search the package catalog for `@kb-labs/unknown-package`, and request installation | Studio shows an actionable package-not-found alert using the error message and hint; project A's lock/config and installed list remain unchanged. |
 | S-182.6 | On Marketplace for project A, disable Commit, re-enable it, then remove it | Each action updates the visible enabled state; after removal Commit is absent from the Plugins category, and project B remains unchanged. |
+| S-182.7 | Make Marketplace's installed-plugin request for project A fail, inspect **Plugins**, then restore the request and retry | Marketplace shows `Plugins unavailable` with a `Retry` action instead of `No plugins installed`; retry displays the returned plugin list or the true empty state. |
 
 ## Pass criteria
 
