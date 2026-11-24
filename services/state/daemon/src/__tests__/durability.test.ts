@@ -231,7 +231,8 @@ describe('StateBroker durability', () => {
   });
 
   // case: S-280.10
-  it.skipIf(process.platform !== 'linux')('serializes container writers with flock and recovers after a killed owner', async () => {
+  it('serializes container writers with flock and recovers after a killed owner', async ({ skip }) => {
+    if (process.platform !== 'linux') {skip();}
     const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-flock-'));
     const stateDirectory = path.join(root, 'state-broker');
     const flockPath = path.join(stateDirectory, 'journal.jsonl.flock');
@@ -351,7 +352,8 @@ describe('StateBroker durability', () => {
   });
 
   // case: S-280.10
-  it.skipIf(process.platform !== 'linux')('fails closed on a legacy lock marker under the kernel lock', async () => {
+  it('fails closed on a legacy lock marker under the kernel lock', async ({ skip }) => {
+    if (process.platform !== 'linux') {skip();}
     const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-legacy-lock-'));
     const stateDirectory = path.join(root, 'state-broker');
     const flockPath = path.join(stateDirectory, 'journal.jsonl.flock');
