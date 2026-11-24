@@ -82,12 +82,17 @@ services:
       start_period: 15s
     restart: unless-stopped
     logging: *registry-json-logging
+    # Host Nginx reaches this API over the loopback-only published port.
+    # Registry and State stay isolated on the internal network below.
     networks:
       - registry_private
+      - gateway_edge
 
 networks:
   registry_private:
     internal: true
+  gateway_edge:
+    driver: bridge
 
 volumes:
   registry_storage_data:
