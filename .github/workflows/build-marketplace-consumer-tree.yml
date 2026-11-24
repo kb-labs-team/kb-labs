@@ -1,12 +1,9 @@
 name: Build Marketplace consumer tree
 
 on:
-  workflow_dispatch:
-    inputs:
-      source_sha:
-        description: Source commit to prepare for the install smoke
-        required: true
-        type: string
+  push:
+    branches:
+      - 'verify/marketplace-consumer-tree'
 
 permissions:
   contents: read
@@ -16,8 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ inputs.source_sha }}
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with:
@@ -44,7 +39,7 @@ jobs:
 
       - name: Create artifact identity and checksum
         env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           cd .kb/deploy
@@ -63,7 +58,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: marketplace-app-consumer-${{ inputs.source_sha }}
+          name: marketplace-app-consumer-${{ github.sha }}
           path: |
             .kb/deploy/marketplace-app.tar.gz
             .kb/deploy/marketplace-app.tar.gz.sha256
