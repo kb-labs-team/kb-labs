@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -189,6 +190,47 @@ try { /* setup returning a stop function proves the service listened successfull
 	}
 }
 
+// case: S-323.1
+func TestDefaultInstallRendersTrustedCatalogRegistryBesideGenericSources(t *testing.T) {
+	testworkspace.Require(t)
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("could not locate render test source")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	plan := testPlan(t.TempDir())
+	plan.ConfigPatches = append(plan.ConfigPatches,
+		contracts.ConfigPatch{Path: "/marketplace/sources", JSON: string(releaseMarketplaceSources(t, root)), Owner: "release:marketplace.sources"},
+		contracts.ConfigPatch{Path: "/marketplace/catalogRegistry", JSON: string(releaseMarketplaceCatalogRegistry(t, root)), Owner: "release:marketplace.catalogRegistry"},
+	)
+	output, err := Build(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Marketplace struct {
+			Sources         []map[string]string `json:"sources"`
+			CatalogRegistry struct {
+				URL              string `json:"url"`
+				SigningPublicKey string `json:"signingPublicKey"`
+			} `json:"catalogRegistry"`
+		} `json:"marketplace"`
+	}
+	if err := json.Unmarshal(output.Config, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(config.Marketplace.Sources, []map[string]string{{"kind": "npm", "url": "https://registry.npmjs.org"}}) {
+		t.Fatalf("generic Marketplace sources changed: %#v", config.Marketplace.Sources)
+	}
+	if config.Marketplace.CatalogRegistry.URL != "https://api.kblabs.ru/api/v1/marketplace-registry" {
+		t.Fatalf("catalog Registry URL = %q", config.Marketplace.CatalogRegistry.URL)
+	}
+	if !strings.Contains(config.Marketplace.CatalogRegistry.SigningPublicKey, "BEGIN PUBLIC KEY") {
+		t.Fatal("catalog Registry trust pin is missing from the rendered config")
+	}
+	validateRenderedMarketplaceSources(t, root, output.Config)
+}
+
 func releaseMarketplaceSources(t *testing.T, root string) []byte {
 	t.Helper()
 	script := fmt.Sprintf(`import { readPlatformReleaseConfig } from %q;
@@ -201,6 +243,22 @@ process.stdout.write(JSON.stringify(config.marketplaceSources));`,
 	data, err := command.Output()
 	if err != nil {
 		t.Fatalf("read release-declared Marketplace sources: %v", err)
+	}
+	return data
+}
+
+func releaseMarketplaceCatalogRegistry(t *testing.T, root string) []byte {
+	t.Helper()
+	script := fmt.Sprintf(`import { readPlatformReleaseConfig } from %q;
+const config = readPlatformReleaseConfig(%q);
+process.stdout.write(JSON.stringify(config.marketplaceCatalogRegistry ?? {}));`,
+		"file://"+filepath.ToSlash(filepath.Join(root, "tools/kb-create/scripts/platform-release-config.mjs")),
+		filepath.Join(root, "tools/kb-create/config/platform-release.jsonc"))
+	command := exec.Command("node", "--input-type=module", "-e", script)
+	command.Dir = root
+	data, err := command.Output()
+	if err != nil {
+		t.Fatalf("read release-declared trusted Marketplace catalog Registry: %v", err)
 	}
 	return data
 }

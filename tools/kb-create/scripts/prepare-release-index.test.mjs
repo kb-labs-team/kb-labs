@@ -100,6 +100,7 @@ test('prepares a sealed index from staged plugin, service and adapter manifests'
     { id: 'platform.adapters', path: '/platform/adapters', default: '{"serviceTransport":"@kb-labs/adapters-service-transport-http"}' },
     { id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: '{"serviceTransport":{"services":{"workflow":{"url":"http://127.0.0.1:7778"}}}}' },
     { id: 'marketplace.sources', path: '/marketplace/sources', default: '[{"kind":"npm","url":"https://registry.npmjs.org"}]' },
+    { id: 'marketplace.catalogRegistry', path: '/marketplace/catalogRegistry', default: '{"url":"https://api.kblabs.ru/api/v1/marketplace-registry","signingPublicKey":"-----BEGIN PUBLIC KEY-----\\nMCowBQYDK2VwAyEAc6RfAt8enkIaGnnfnYmzI8NnhEVnFU4lIXnzrT5IpFM=\\n-----END PUBLIC KEY-----\\n"}' },
   ]);
   assert.deepEqual(index.platforms[0].members.map(({ package: packageName }) => packageName), ['@kb-labs/workflow-daemon', '@kb-labs/host-app', '@kb-labs/core-contracts', '@kb-labs/scaffold', '@kb-labs/release', '@kb-labs/adapters-service-transport-http', '@kb-labs/adapters-sqlite', '@kb-labs/adapters-openai']);
   // Regression coverage for the members[]-id divergence bug: this array used

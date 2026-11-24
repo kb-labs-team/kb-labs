@@ -7,6 +7,10 @@ test('the platform release config binds every persistent built-in used by a fres
   const releaseConfigPath = fileURLToPath(new URL('../config/platform-release.jsonc', import.meta.url));
   const config = readPlatformReleaseConfig(releaseConfigPath);
   assert.deepEqual(config.marketplaceSources, [{ kind: 'npm', url: 'https://registry.npmjs.org' }]);
+  assert.deepEqual(config.marketplaceCatalogRegistry, {
+    url: 'https://api.kblabs.ru/api/v1/marketplace-registry',
+    signingPublicKey: '-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAc6RfAt8enkIaGnnfnYmzI8NnhEVnFU4lIXnzrT5IpFM=\n-----END PUBLIC KEY-----\n',
+  });
   assert.deepEqual(config.platformRequires, [...Object.keys(config.adapters), 'llm']);
   assert.ok(config.platformRequires.includes('llm'), 'the default install must include the implicit OpenAI provider');
   assert.equal(config.adapters.llm, undefined, 'llm remains selected by its adapter manifest default');

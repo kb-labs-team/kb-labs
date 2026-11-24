@@ -119,13 +119,20 @@ func TestWriteLockCarriesMarketplacePluginIdentityAcrossPlatformUpdate(t *testin
 		t.Fatal(err)
 	}
 	writeRaw(t, activeRoot, Lock{Schema: Schema, Plugins: map[string]Item{
-		"@kb-labs/commit": {Version: "2.1.0", Integrity: "sha256-commit", Package: "@kb-labs/commit", Source: "marketplace", MarketplaceSource: "registry", SignatureStatus: "verified", Enabled: true},
+		"@kb-labs/commit": {
+			Version: "2.1.0", Integrity: "sha256-commit", Package: "@kb-labs/commit", Source: "marketplace",
+			MarketplaceSource: "registry", MarketplaceSourceURL: "https://api.kblabs.ru/api/v1/marketplace-registry",
+			MarketplaceSourceChannel: "catalog", MarketplaceSourceKeyFingerprint: strings.Repeat("a", 64),
+			SignatureStatus: "verified", Enabled: true,
+		},
 	}})
 	if err := WriteLock(targetRoot, activeRoot, nil, time.Now()); err != nil {
 		t.Fatalf("WriteLock: %v", err)
 	}
 	entry, ok := readBack(t, targetRoot).Plugins["@kb-labs/commit"]
-	if !ok || entry.Source != "marketplace" || entry.MarketplaceSource != "registry" || entry.Version != "2.1.0" {
+	if !ok || entry.Source != "marketplace" || entry.MarketplaceSource != "registry" || entry.Version != "2.1.0" ||
+		entry.MarketplaceSourceURL != "https://api.kblabs.ru/api/v1/marketplace-registry" ||
+		entry.MarketplaceSourceChannel != "catalog" || entry.MarketplaceSourceKeyFingerprint != strings.Repeat("a", 64) {
 		t.Fatalf("updated Marketplace entry = %#v, present=%v", entry, ok)
 	}
 }

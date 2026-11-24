@@ -6,7 +6,7 @@
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { getListenOptions } from "@kb-labs/shared-http";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
-import { readKbConfig, type MarketplaceSourcesConfig } from "@kb-labs/core-config";
+import { readKbConfig, type MarketplaceCatalogRegistryConfig, type MarketplaceSourcesConfig } from "@kb-labs/core-config";
 import { createErrorEnvelope, ErrorEnvelopeError } from "@kb-labs/core-platform/error-envelope";
 import { createServer } from "@kb-labs/marketplace-api";
 import { MarketplaceService } from "@kb-labs/marketplace-core";
@@ -34,8 +34,14 @@ export async function setup({
   const repoRoot = platformRoot;
 
   const kbConfig = await readKbConfig(repoRoot, { required: true });
-  const marketplace = (kbConfig?.data as { marketplace?: { sources?: MarketplaceSourcesConfig } } | undefined)?.marketplace;
+  const marketplace = (kbConfig?.data as {
+    marketplace?: {
+      sources?: MarketplaceSourcesConfig;
+      catalogRegistry?: MarketplaceCatalogRegistryConfig;
+    };
+  } | undefined)?.marketplace;
   const sourcesConfig = marketplace?.sources;
+  const catalogRegistryConfig = marketplace?.catalogRegistry;
   if (!sourcesConfig?.length) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', { details: { path: 'marketplace.sources' } }));
   }
@@ -57,13 +63,21 @@ export async function setup({
     sources.push(new NpmPackageSource({ registryUrl: source.url }));
   }
   const registryCatalogUrl = configuredRegistryUrl ?? process.env.KB_MARKETPLACE_CATALOG_URL ?? 'https://api.kblabs.ru/api/v1/registry';
+  const trustedCatalogRegistryUrl = catalogRegistryConfig?.url ?? registryCatalogUrl;
+  const registryCatalogSource = catalogRegistryConfig
+    ? new RegistryPackageSource({
+      registryUrl: catalogRegistryConfig.url,
+      signingPublicKey: catalogRegistryConfig.signingPublicKey,
+    })
+    : undefined;
 
   const service = new MarketplaceService({
     platformRoot,
     logger,
     extensionStore: createExtensionStore({ platformRoot }),
     sources,
-    registryCatalog: new RegistryCatalogClient(registryCatalogUrl),
+    registryCatalog: new RegistryCatalogClient(trustedCatalogRegistryUrl),
+    ...(registryCatalogSource ? { registryCatalogSource } : {}),
     resolveSelectedAdapterSlot: async (packageId) => {
       const currentConfig = await readKbConfig(repoRoot);
       const data = isRecord(currentConfig?.data) ? currentConfig.data : {};

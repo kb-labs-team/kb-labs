@@ -79,6 +79,8 @@ export interface MarketplaceServiceOptions {
   sources: MarketplaceSource[];
   /** Public Registry catalog target; browsing is allowed without an install key. */
   registryCatalog?: MarketplaceRegistryCatalog;
+  /** Trusted Registry source used only for explicit catalog installs and their updates. */
+  registryCatalogSource?: MarketplaceSource;
   /** Shared machine store. When set, packages never enter project node_modules. */
   extensionStore?: IExtensionStore;
   /** Platform logger used by lifecycle strategies. */
@@ -155,6 +157,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   private readonly roots: ServiceRoots;
   private readonly sources: MarketplaceSource[];
   private readonly registryCatalog?: MarketplaceRegistryCatalog;
+  private readonly registryCatalogSource?: MarketplaceSource;
   private readonly extensionStore?: IExtensionStore;
   private readonly logger: ILogger;
   private readonly strategies = new Map<EntityKind, EntityKindStrategy>();
@@ -171,6 +174,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     this.roots = { platformRoot: opts.platformRoot, projectRoot: opts.projectRoot };
     this.sources = opts.sources;
     this.registryCatalog = opts.registryCatalog;
+    this.registryCatalogSource = opts.registryCatalogSource;
     this.extensionStore = opts.extensionStore;
     this.logger = opts.logger;
 
@@ -207,18 +211,85 @@ export class MarketplaceService implements MarketplaceServiceAPI {
   private hasTrustedRegistryInstallSource(): boolean {
     const catalogUrl = this.registryCatalog?.registryUrl;
     const normalizedCatalogUrl = catalogUrl ? normalizeSourceUrl(catalogUrl) : undefined;
-    return Boolean(normalizedCatalogUrl && this.sources.some(source =>
+    return Boolean(normalizedCatalogUrl && this.registryInstallSources().some(source =>
       source.kind === 'registry' && source.verificationKey?.trim() && source.registrySourceUrl &&
       normalizeSourceUrl(source.registrySourceUrl) === normalizedCatalogUrl));
   }
 
-  private requireTrustedRegistryInstallSource(): void {
-    if (!this.hasTrustedRegistryInstallSource()) {throw this.registryCatalogConfigurationError();}
+  private registryInstallSources(): MarketplaceSource[] {
+    return [
+      ...(this.registryCatalogSource ? [this.registryCatalogSource] : []),
+      ...this.sources.filter(source => source.kind === 'registry'),
+    ];
+  }
+
+  private requireTrustedRegistryInstallSource(): MarketplaceSource {
+    const catalogUrl = normalizeSourceUrl(this.registryCatalog?.registryUrl ?? '');
+    const source = this.registryInstallSources().find(candidate =>
+      candidate.kind === 'registry' && candidate.verificationKey?.trim() && candidate.registrySourceUrl &&
+      normalizeSourceUrl(candidate.registrySourceUrl) === catalogUrl);
+    if (!source) {throw this.registryCatalogConfigurationError();}
+    return source;
+  }
+
+  private registryUpdateSource(packageId: string, entry: Extract<MarketplaceLockEntry, { source: 'marketplace' }>): MarketplaceSource {
+    const genericSources = this.sources.filter(source => source.kind === 'registry');
+    if (entry.marketplaceSourceChannel === 'catalog') {
+      const source = this.registryCatalogSource;
+      if (source && entry.marketplaceSourceUrl && source.registrySourceUrl &&
+        normalizeSourceUrl(source.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl) &&
+        this.registrySourceKeyMatches(source, entry)) {return source;}
+      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl, entry.marketplaceSourceKeyFingerprint);
+    }
+    if (entry.marketplaceSourceChannel === 'ordered') {
+      const matchingSources = entry.marketplaceSourceUrl
+        ? genericSources.filter(candidate => candidate.registrySourceUrl && normalizeSourceUrl(candidate.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl!))
+        : [];
+      if (matchingSources.length === 1 && this.registrySourceKeyMatches(matchingSources[0]!, entry)) {return matchingSources[0]!;}
+      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl, entry.marketplaceSourceKeyFingerprint);
+    }
+    if (entry.marketplaceSourceUrl) {
+      const expectedUrl = normalizeSourceUrl(entry.marketplaceSourceUrl);
+      const candidates = this.registryInstallSources().filter(candidate => candidate.kind === 'registry' && candidate.registrySourceUrl &&
+        normalizeSourceUrl(candidate.registrySourceUrl) === expectedUrl && this.registrySourceKeyMatches(candidate, entry));
+      if (candidates.length === 1) {return candidates[0]!;}
+      throw this.registrySourceChangedError(packageId, entry.marketplaceSourceUrl, entry.marketplaceSourceKeyFingerprint);
+    }
+
+    // Older lock entries have no channel, URL, or key fingerprint. Restrict
+    // their update to one unambiguous generic ordered Registry source.
+    if (genericSources.length === 1) {return genericSources[0]!;}
+    throw this.registrySourceChangedError(packageId, undefined);
+  }
+
+  private registrySourceKeyMatches(source: MarketplaceSource, entry: Extract<MarketplaceLockEntry, { source: 'marketplace' }>): boolean {
+    return !entry.marketplaceSourceKeyFingerprint || this.registrySourceKeyFingerprint(source) === entry.marketplaceSourceKeyFingerprint;
+  }
+
+  private registrySourceKeyFingerprint(source: MarketplaceSource): string | undefined {
+    if (!source.verificationKey?.trim()) {return undefined;}
+    const key = crypto.createPublicKey(source.verificationKey).export({ type: 'spki', format: 'der' });
+    return crypto.createHash('sha256').update(key).digest('hex');
+  }
+
+  private registrySourceChangedError(packageId: string, expectedUrl?: string, expectedKeyFingerprint?: string): ErrorEnvelopeError {
+    return new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', {
+      details: {
+        path: 'marketplace.catalogRegistry.url',
+        package: packageId,
+        ...(expectedUrl ? { expectedUrl } : {}),
+        ...(expectedKeyFingerprint ? { expectedKeyFingerprint } : {}),
+      },
+      hint: expectedUrl
+        ? `Restore the Registry source and signing key${expectedKeyFingerprint ? ` (${expectedKeyFingerprint})` : ''} for ${expectedUrl} before updating this package.`
+        : 'Keep exactly one Registry source configured to update this older package, whose original Registry URL is not recorded.',
+    }));
   }
 
   private registryCatalogConfigurationError(): ErrorEnvelopeError {
     return new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', {
-      details: { path: 'marketplace.sources' },
+      details: { path: 'marketplace.catalogRegistry' },
+      hint: 'Configure a trusted Registry URL and signing public key for the Marketplace catalog.',
     }));
   }
 
@@ -237,17 +308,17 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 
   /** Install a Registry-resolved adapter into the platform graph only. */
   async installAdapter(spec: string, opts?: { shareToken?: string }): Promise<InstallResult> {
-    this.requireTrustedRegistryInstallSource();
+    const source = this.requireTrustedRegistryInstallSource();
     const ctx: ScopeContext = { scope: 'platform' };
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], opts, false, 'adapter', 'registry'));
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], opts, false, 'adapter', 'registry', [source]));
   }
 
   /** Install a project plugin from the configured Marketplace Registry only. */
   async installRegistryPlugin(ctx: ScopeContext, spec: string): Promise<InstallResult> {
-    this.requireTrustedRegistryInstallSource();
+    const source = this.requireTrustedRegistryInstallSource();
     const scopeRoot = resolveScopeRoot(this.roots, ctx);
-    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], undefined, false, 'plugin', 'registry'));
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], undefined, false, 'plugin', 'registry', [source]));
   }
 
   private async installInScope(
@@ -258,17 +329,21 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     isUpdate = false,
     expectedKind?: EntityKind,
     requiredSource?: MarketplaceSourceKind,
+    sourceOverrides?: Array<MarketplaceSource | undefined>,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
     const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
-    for (const spec of specs) {
+    for (const [specIndex, spec] of specs.entries()) {
       let source: MarketplaceSource | undefined;
+      let sourceChannel: 'catalog' | 'ordered' | undefined;
       let resolved: Awaited<ReturnType<MarketplaceSource['resolve']>> | undefined;
       const sourceResults: string[] = [];
-      for (const configuredSource of this.sources) {
+      const sourceOverride = sourceOverrides?.[specIndex];
+      const configuredSources = sourceOverride ? [sourceOverride] : this.sources;
+      for (const configuredSource of configuredSources) {
         if (requiredSource && configuredSource.kind !== requiredSource) {continue;}
         const candidateSource = opts?.shareToken && configuredSource.withShareToken
           ? configuredSource.withShareToken(opts.shareToken)
@@ -283,17 +358,24 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         }
         sourceResults.push(`${candidateSource.kind}: found`);
         source = candidateSource;
+        sourceChannel = configuredSource === this.registryCatalogSource ? 'catalog' : 'ordered';
         resolved = { ...result.package, source: 'marketplace' };
         break;
       }
       if (!source || !resolved) {
-        if (requiredSource === 'registry' && !this.sources.some((candidate) => candidate.kind === 'registry')) {
+        if (requiredSource === 'registry' && !this.registryInstallSources().some((candidate) => candidate.kind === 'registry')) {
           throw new InvalidEntityError('Marketplace Registry source is not configured for Registry catalog installs.');
         }
         throw new ErrorEnvelopeError(createErrorEnvelope('KB_PLUGIN_NOT_FOUND', {
           details: { plugin: spec },
           cause: sourceResults.join('; '),
         }));
+      }
+      if (isUpdate && sourceOverride && source.kind === 'registry' &&
+        stripSpecVersion(spec) !== (resolved.canonicalIdentity ?? resolved.id)) {
+        throw new InvalidEntityError(
+          `Registry resolved "${resolved.canonicalIdentity ?? resolved.id}" while updating pinned identity "${stripSpecVersion(spec)}".`,
+        );
       }
       if (expectedKind === 'adapter' && source.kind !== 'registry') {
         throw new InvalidEntityError(
@@ -324,7 +406,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       }
       const verification = verifyResolvedArtifact(resolved, source, ctx.scope);
       const canonicalIdentity = resolved.canonicalIdentity ?? resolved.id;
-      const installedPin = findInstalledPin(lock, resolved.id, canonicalIdentity);
+      const exactRegistryPin = isUpdate && sourceOverride && source.kind === 'registry'
+        ? lock?.plugins[stripSpecVersion(spec)]
+        : undefined;
+      if (isUpdate && sourceOverride && source.kind === 'registry' &&
+        (!exactRegistryPin || exactRegistryPin.source !== 'marketplace' || exactRegistryPin.marketplaceSource !== 'registry')) {
+        throw new InvalidEntityError(\`Marketplace lock has no Registry version pin for "\${stripSpecVersion(spec)}".\`);
+      }
+      const installedPin = exactRegistryPin && exactRegistryPin.source !== 'local'
+        ? { version: exactRegistryPin.version, integrity: exactRegistryPin.integrity }
+        : findInstalledPin(lock, resolved.id, canonicalIdentity);
       if (installedPin) {
         const installedVersion = installedPin.version;
         if (!semver.valid(installedVersion) || !semver.valid(resolved.version)) {
@@ -405,6 +496,8 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         : result.packageRoot;
 
       const trust: 'trusted' | 'untrusted' = verification.signatureStatus === 'verified' ? 'trusted' : 'untrusted';
+      const registryKeyFingerprint = source.kind === 'registry' ? this.registrySourceKeyFingerprint(source) : undefined;
+      const registrySourceUrl = source.kind === 'registry' ? normalizeSourceUrl(source.registrySourceUrl ?? '') : undefined;
 
       // Write to marketplace.lock
       const entryOptions = {
@@ -415,6 +508,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         trust,
         signature: resolved.signature,
         marketplaceSource: source.kind,
+        ...(registrySourceUrl ? { marketplaceSourceUrl: registrySourceUrl } : {}),
+        ...(source.kind === 'registry' ? {
+          marketplaceSourceChannel: sourceChannel ?? (source === this.registryCatalogSource ? 'catalog' as const : 'ordered' as const),
+          ...(registryKeyFingerprint ? { marketplaceSourceKeyFingerprint: registryKeyFingerprint } : {}),
+        } : {}),
         signatureStatus: verification.signatureStatus,
       };
       const packagePath = relativeToRoot(scopeRoot, installedPackageRoot);
@@ -512,7 +610,9 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       await removeFromMarketplaceLock(scopeRoot, id, ctx.scope);
       await removeCacheEntry(scopeRoot, id);
       if (!this.extensionStore && packageName) {
-        const source = entry.source === 'marketplace' ? this.sources.find(item => item.kind === entry.marketplaceSource) : this.sources[0];
+        const source = entry.source === 'marketplace'
+          ? this.sourceForLockEntry(entry)
+          : this.sources[0];
         if (source) { await source.remove(packageName, scopeRoot); }
       }
     }
@@ -617,15 +717,21 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       const warnings = packageIds
         ?.filter(id => !(id in lock.plugins))
         .map(id => `Plugin ${id} is not installed in the ${ctx.scope} scope and cannot be updated.`) ?? [];
+      const sourceOverrides: Array<MarketplaceSource | undefined> = [];
       const specs = ids.filter(id => id in lock.plugins).map(id => {
         const entry = lock.plugins[id]!;
+        if (entry.source === 'marketplace' && entry.marketplaceSource === 'registry') {
+          sourceOverrides.push(this.registryUpdateSource(id, entry));
+          return id;
+        }
+        sourceOverrides.push(undefined);
         return entry.package!;
       });
 
       // The update command operates on plugin pins. If Registry metadata changes
       // an installed identity into another kind, do not let update become an
       // implicit adapter installation path.
-      const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true, 'plugin');
+      const result = await this.installInScope(ctx, scopeRoot, specs, undefined, true, 'plugin', undefined, sourceOverrides);
       return { ...result, warnings: [...warnings, ...result.warnings] };
     });
   }
@@ -1029,6 +1135,26 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     if ('link' in entry && entry.link) {return path.resolve(scopeRoot, entry.link);}
     if ('resolvedPath' in entry && entry.resolvedPath) {return path.resolve(scopeRoot, entry.resolvedPath);}
     return undefined;
+  }
+
+  private sourceForLockEntry(entry: Extract<MarketplaceLockEntry, { source: 'marketplace' }>): MarketplaceSource | undefined {
+    if (entry.marketplaceSource === 'registry' && entry.marketplaceSourceChannel === 'catalog') {
+      return this.registryCatalogSource && (!entry.marketplaceSourceUrl || normalizeSourceUrl(this.registryCatalogSource.registrySourceUrl ?? '') === normalizeSourceUrl(entry.marketplaceSourceUrl))
+        ? this.registryCatalogSource
+        : undefined;
+    }
+    const candidates = entry.marketplaceSource === 'registry' && entry.marketplaceSourceChannel === 'ordered'
+      ? this.sources.filter(source => source.kind === 'registry')
+      : entry.marketplaceSource === 'registry'
+        ? entry.marketplaceSourceChannel === undefined
+          ? this.sources.filter(source => source.kind === 'registry')
+          : this.registryInstallSources()
+        : this.sources.filter(source => source.kind === entry.marketplaceSource);
+    if (entry.marketplaceSourceUrl) {
+      return candidates.find(source => source.registrySourceUrl && normalizeSourceUrl(source.registrySourceUrl) === normalizeSourceUrl(entry.marketplaceSourceUrl!) &&
+        this.registrySourceKeyMatches(source, entry));
+    }
+    return candidates.length === 1 ? candidates[0] : undefined;
   }
 
   // -------------------------------------------------------------------------

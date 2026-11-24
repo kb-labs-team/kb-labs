@@ -21,6 +21,21 @@ describe('config: validate product config', () => {
     expect(validateProductConfig('marketplace', { sources: [{ kind: 'npm', url: 'https://registry.npmjs.org' }] }).ok).toBe(true);
   });
 
+  // case: S-323.1
+  it('accepts a trusted catalog Registry beside the unchanged npm source list', () => {
+    expect(validateProductConfig('marketplace', {
+      sources: [{ kind: 'npm', url: 'https://registry.npmjs.org' }],
+      catalogRegistry: {
+        url: 'https://api.kblabs.ru/api/v1/marketplace-registry',
+        signingPublicKey: '-----BEGIN PUBLIC KEY-----\npublic-test-key\n-----END PUBLIC KEY-----\n',
+      },
+    }).ok).toBe(true);
+    expect(validateProductConfig('marketplace', {
+      sources: [{ kind: 'npm', url: 'https://registry.npmjs.org' }],
+      catalogRegistry: { url: 'https://api.kblabs.ru/api/v1/marketplace-registry' },
+    }).ok).toBe(false);
+  });
+
   it('validates review config with review schema', () => {
     const cfg = { rules: [], maxFiles: 10 } as any;
     const result = validateProductConfig('review' as any, cfg);
