@@ -1,0 +1,223 @@
+name: Build Gateway platform-scope image
+
+on:
+  push:
+    branches:
+      - 'verify/gateway-platform-scope-image'
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+env:
+  SOURCE_SHA: 44684b6321d99fc061d50b72c50aeb919fb506e4
+  GATEWAY_IMAGE: ghcr.io/kb-labs-team/kb-gateway:44684b6321d99fc061d50b72c50aeb919fb506e4
+  STATE_IMAGE: ghcr.io/kb-labs-team/kb-state-daemon:7b8240395009fc3a055916bb4cef00c1821bf4b3
+  REGISTRY_IMAGE: ghcr.io/kb-labs-team/kb-marketplace-registry:7b8240395009fc3a055916bb4cef00c1821bf4b3
+
+jobs:
+  gateway-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace dependencies from cached pnpm store
+        run: pnpm install --frozen-lockfile
+
+      - name: Build only Gateway and its workspace dependency closure
+        run: pnpm --filter '@kb-labs/gateway-app...' build
+
+      - name: Prepare Gateway production tree
+        run: |
+          set -euo pipefail
+          pnpm --filter @kb-labs/gateway-app --prod --config.inject-workspace-packages=true deploy .kb/deploy/gateway-app
+          node tools/release/generate-platform-image-default.mjs
+          cd .kb/deploy/gateway-app
+          node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/gateway-core'); await import('@kb-labs/adapters-sqlite')"
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Build Gateway image for linux/amd64
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: services/gateway/app/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.GATEWAY_IMAGE }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.version=${{ env.SOURCE_SHA }}
+
+      - name: Smoke Gateway runtime imports
+        run: >-
+          docker run --rm --entrypoint node "$GATEWAY_IMAGE"
+          --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/gateway-core'); await import('@kb-labs/adapters-sqlite')"
+
+      - name: Export image with verified identity
+        id: export
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/gateway-image"
+          mkdir -p "$out"
+          archive="$out/kb-gateway.tar.gz"
+          image_id="$(docker image inspect --format '{{.Id}}' "$GATEWAY_IMAGE")"
+          docker save "$GATEWAY_IMAGE" | gzip -1 > "$archive"
+          gzip -t "$archive"
+          manifest="$(tar -xOzf "$archive" manifest.json)"
+          config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+          repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$GATEWAY_IMAGE" '.[0].RepoTags[] | select(. == $ref)')"
+          config_digest="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
+          case "$config_file" in
+            blobs/sha256/*) declared="sha256:${config_file##*/}" ;;
+            *.json) declared="sha256:${config_file%.json}" ;;
+            *) echo "Unsupported Docker archive config path: $config_file" >&2; exit 1 ;;
+          esac
+          test "$repo_tag" = "$GATEWAY_IMAGE"
+          test "$config_digest" = "$declared"
+          docker image rm "$GATEWAY_IMAGE" >/dev/null
+          docker load --input "$archive" >/dev/null
+          loaded_id="$(docker image inspect --format '{{.Id}}' "$GATEWAY_IMAGE")"
+          test "$loaded_id" = "$image_id"
+          (cd "$out" && sha256sum kb-gateway.tar.gz > kb-gateway.tar.gz.sha256)
+          archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          jq -n \
+            --arg image "$GATEWAY_IMAGE" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg image_id "$image_id" \
+            --arg config_digest "$config_digest" \
+            --arg archive_sha "$archive_sha" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{schemaVersion:1,image:$image,sourceSHA:$source_sha,platform:"linux/amd64",imageID:$image_id,configDigest:$config_digest,archiveSHA256:$archive_sha,runID:$run_id,runURL:$run_url}' \
+            > "$out/kb-gateway.identity.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: kb-gateway-platform-scope-44684b6321d99fc061d50b72c50aeb919fb506e4
+          path: ${{ runner.temp }}/gateway-image/
+          if-no-files-found: error
+          retention-days: 7
+
+  verify-gateway:
+    needs: gateway-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+
+      - name: Download Gateway image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: kb-gateway-platform-scope-44684b6321d99fc061d50b72c50aeb919fb506e4
+          path: ${{ runner.temp }}/gateway-artifact
+
+      - name: Download already verified State image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: kb-state-daemon-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          repository: kb-labs-team/kb-labs
+          run-id: 45459847914
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/state-artifact
+
+      - name: Download already verified Registry image
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: kb-marketplace-registry-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          repository: kb-labs-team/kb-labs
+          run-id: 45456213368
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/registry-artifact
+
+      - name: Verify archive identities and load images in a clean Docker daemon
+        run: |
+          set -euo pipefail
+          verify_load() {
+            local dir="$1" name="$2" ref="$3" expected_source="$4"
+            cd "$dir"
+            local archive="${name}.tar.gz" identity="${name}.identity.json"
+            sha256sum -c "${archive}.sha256"
+            test "$(jq -r '.image' "$identity")" = "$ref"
+            test "$(jq -r '.sourceSHA' "$identity")" = "$expected_source"
+            test "$(jq -r '.platform' "$identity")" = linux/amd64
+            test "$(sha256sum "$archive" | cut -d ' ' -f 1)" = "$(jq -r '.archiveSHA256' "$identity")"
+            local manifest config_file config_digest declared repo_tag
+            manifest="$(tar -xOzf "$archive" manifest.json)"
+            config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+            repo_tag="$(printf '%s' "$manifest" | jq -er --arg image "$ref" '.[0].RepoTags[] | select(. == $image)')"
+            test "$repo_tag" = "$ref"
+            config_digest="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
+            case "$config_file" in
+              blobs/sha256/*) declared="sha256:${config_file##*/}" ;;
+              *.json) declared="sha256:${config_file%.json}" ;;
+              *) echo "Unsupported Docker archive config path: $config_file" >&2; return 1 ;;
+            esac
+            test "$config_digest" = "$declared"
+            test "$config_digest" = "$(jq -r '.configDigest' "$identity")"
+            docker load --input "$archive" >/dev/null
+            test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$(jq -r '.imageID' "$identity")"
+          }
+          verify_load "$RUNNER_TEMP/gateway-artifact" kb-gateway "$GATEWAY_IMAGE" "$SOURCE_SHA"
+          verify_load "$RUNNER_TEMP/state-artifact" kb-state-daemon "$STATE_IMAGE" 7b8240395009fc3a055916bb4cef00c1821bf4b3
+          verify_load "$RUNNER_TEMP/registry-artifact" kb-marketplace-registry "$REGISTRY_IMAGE" 7b8240395009fc3a055916bb4cef00c1821bf4b3
+
+      - name: Start platform services and verify Gateway readiness
+        run: |
+          set -euo pipefail
+          network=platform-smoke
+          state=platform-smoke-state
+          registry=platform-smoke-registry
+          gateway=platform-smoke-gateway
+          smoke_secret="$(openssl rand -hex 32)"
+          jwt_secret="$(openssl rand -hex 32)"
+          admin_password="$(openssl rand -hex 24)"
+          cleanup() {
+            docker rm -f "$gateway" "$registry" "$state" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker network create "$network" >/dev/null
+          docker run --detach --name "$state" --network "$network" --network-alias kb-state-daemon \
+            --env KB_STATE_DAEMON_HOST=0.0.0.0 --env KB_STATE_DAEMON_PORT=7777 \
+            --env KB_STATE_DAEMON_DATA_ROOT=/tmp/state-smoke "$STATE_IMAGE" >/dev/null
+          docker run --detach --name "$registry" --network "$network" --network-alias kb-marketplace-registry \
+            --env GATEWAY_INTERNAL_SECRET="$smoke_secret" --env KB_REGISTRY_HOST=0.0.0.0 \
+            --env KB_REGISTRY_PORT=5071 --env KB_REGISTRY_URL=http://kb-marketplace-registry:5071 \
+            "$REGISTRY_IMAGE" >/dev/null
+          docker run --detach --name "$gateway" --network "$network" --publish 127.0.0.1::4000/tcp \
+            --volume "$GITHUB_WORKSPACE/ops/marketplace-registry/gateway.override.json:/app/.kb/kb.config.override.json:ro" \
+            --env GATEWAY_PROJECT_SCOPE=platform --env GATEWAY_INTERNAL_SECRET="$smoke_secret" \
+            --env GATEWAY_JWT_SECRET="$jwt_secret" --env GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
+            --env KB_STATE_DAEMON_URL=http://kb-state-daemon:7777 "$GATEWAY_IMAGE" >/dev/null
+          host_port="$(docker port "$gateway" 4000/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
+          test -n "$host_port"
+          ready=false
+          for _ in $(seq 1 60); do
+            if curl --fail --silent --header "x-internal-secret: $smoke_secret" \
+              "http://127.0.0.1:${host_port}/ready" > "$RUNNER_TEMP/gateway-ready.json"; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            docker logs "$gateway" >&2 || true
+            docker logs "$registry" >&2 || true
+            exit 1
+          fi
+          jq -e '.ready == true or .data.ready == true' "$RUNNER_TEMP/gateway-ready.json" >/dev/null
+          docker exec "$gateway" sh -c 'test -s /app/.kb/data/gateway.sqlite'
