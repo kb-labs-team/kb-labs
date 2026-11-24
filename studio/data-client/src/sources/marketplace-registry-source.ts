@@ -30,5 +30,7 @@ export interface MarketplaceRegistryPackage {
 export interface MarketplaceRegistryDataSource {
   listPackages(query?: string): Promise<MarketplacePackageSummary[]>;
   getPackage(handle: string, name: string): Promise<MarketplaceRegistryPackage>;
+  getStatus(): Promise<{ trustedInstallAvailable: boolean }>;
+  installPlugin(projectId: string, spec: string): Promise<unknown>;
   installAdapter(spec: string): Promise<unknown>;
 }

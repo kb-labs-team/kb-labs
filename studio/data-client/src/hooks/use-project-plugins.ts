@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { qk } from '../query-keys';
 import type { ProjectPluginsDataSource } from '../sources/project-plugins-source';
+import type { MarketplaceRegistryDataSource } from '../sources/marketplace-registry-source';
 
 export function useProjectPlugins(source: ProjectPluginsDataSource, projectId: string | null) {
   return useQuery({
@@ -27,6 +28,18 @@ export function useInstallProjectPlugin(source: ProjectPluginsDataSource, projec
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (spec: string) => source.installPlugin(projectId as string, spec),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: qk.projectPlugins.list(projectId ?? '') }); },
+  });
+}
+
+/** Install a Studio catalog plugin while forcing the trusted Registry source. */
+export function useInstallRegistryProjectPlugin(source: MarketplaceRegistryDataSource, projectId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (spec: string) => {
+      if (!projectId) throw new Error('Select a project before installing a plugin.');
+      return source.installPlugin(projectId, spec);
+    },
     onSuccess: () => { void queryClient.invalidateQueries({ queryKey: qk.projectPlugins.list(projectId ?? '') }); },
   });
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   UIButton,
@@ -8,40 +8,66 @@ import {
   UIMessage,
   UIPage,
   UIPageHeader,
+  UIAlert,
   UISkeleton,
   UITag,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
 import { useProjectContext } from '@/providers/project-context-provider';
-import { useInstallProjectPlugin } from '@kb-labs/studio-data-client';
+import { useInstallRegistryProjectPlugin } from '@kb-labs/studio-data-client';
 import type { MarketplacePackageSummary, MarketplaceRegistryPackage } from '@kb-labs/studio-data-client';
 
 export function MarketplaceCatalogPage() {
   const { handle, name } = useParams<{ handle?: string; name?: string }>();
+
+  if (handle && name) {
+    return <MarketplacePackageDetail handle={handle} name={name} />;
+  }
+
+  return <MarketplaceCatalogListPage />;
+}
+
+function MarketplaceCatalogListPage() {
   const { marketplaceRegistry } = useDataSources();
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
   const [packages, setPackages] = useState<MarketplacePackageSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [trustedInstallAvailable, setTrustedInstallAvailable] = useState<boolean | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
+  const requestSequence = useRef(0);
 
-  const loadPackages = useCallback(async (search: string) => {
-    try {
-      setLoading(true);
-      setError(null);
-      setPackages(await marketplaceRegistry.listPackages(search));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load the Marketplace Registry catalog.');
-    } finally {
-      setLoading(false);
-    }
-  }, [marketplaceRegistry]);
+  useEffect(() => {
+    const requestId = ++requestSequence.current;
+    let active = true;
+    setLoading(true);
+    setError(null);
+    void marketplaceRegistry.listPackages(query).then((result) => {
+      if (active && requestSequence.current === requestId) setPackages(result);
+    }).catch((err: unknown) => {
+      if (active && requestSequence.current === requestId) {
+        setError(err instanceof Error ? err.message : 'Could not load the Marketplace Registry catalog.');
+      }
+    }).finally(() => {
+      if (active && requestSequence.current === requestId) setLoading(false);
+    });
+    return () => {
+      active = false;
+      if (requestSequence.current === requestId) requestSequence.current += 1;
+    };
+  }, [marketplaceRegistry, query, retryCount]);
 
-  useEffect(() => { void loadPackages(query); }, [loadPackages, query]);
-
-  if (handle && name) {
-    return <MarketplacePackageDetail handle={handle} name={name} />;
-  }
+  useEffect(() => {
+    let active = true;
+    setTrustedInstallAvailable(null);
+    void marketplaceRegistry.getStatus().then((status) => {
+      if (active) setTrustedInstallAvailable(status.trustedInstallAvailable);
+    }).catch(() => {
+      if (active) setTrustedInstallAvailable(null);
+    });
+    return () => { active = false; };
+  }, [marketplaceRegistry, retryCount]);
 
   return (
     <UIPage width="full">
@@ -50,8 +76,26 @@ export function MarketplaceCatalogPage() {
         <Link to="/marketplace">Back to Marketplace</Link>
         <UIInputSearch aria-label="Search Marketplace Registry" placeholder="Search public packages..." value={query} onChange={(event) => setQuery(event.target.value)} allowClear style={{ width: 320 }} />
       </div>
+      {trustedInstallAvailable === false && (
+        <UIAlert
+          variant="warning"
+          message="Registry packages are available to browse, but installation is disabled."
+          description="This host has no trusted Marketplace Registry source configured. Configure a Registry URL and signing key on the host to enable installs."
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {trustedInstallAvailable === null && (
+        <UIAlert
+          variant="warning"
+          message="Registry installation availability could not be verified."
+          description="Packages remain browseable, but installs are disabled until the host confirms its trusted Registry configuration."
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
       {loading ? <UISkeleton active avatar lines={5} /> : error ? (
-        <UIEmptyState title="Catalog unavailable" description={error} />
+        <UIEmptyState title="Catalog unavailable" description={error} action={<UIButton onClick={() => setRetryCount((value) => value + 1)}>Retry</UIButton>} />
       ) : packages.length === 0 ? (
         <UIEmptyState title="No packages found" description={query ? 'Try another search.' : 'The public Registry catalog is empty.'} />
       ) : (
@@ -75,13 +119,25 @@ export function MarketplaceCatalogPage() {
 }
 
 function MarketplacePackageDetail({ handle, name }: { handle: string; name: string }) {
-  const { marketplaceRegistry, projectPlugins } = useDataSources();
+  const { marketplaceRegistry } = useDataSources();
   const { projectId } = useProjectContext();
-  const installPlugin = useInstallProjectPlugin(projectPlugins, projectId);
+  const installPlugin = useInstallRegistryProjectPlugin(marketplaceRegistry, projectId);
   const [pkg, setPkg] = useState<MarketplaceRegistryPackage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [installing, setInstalling] = useState(false);
+  const [trustedInstallAvailable, setTrustedInstallAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    setTrustedInstallAvailable(null);
+    void marketplaceRegistry.getStatus().then((status) => {
+      if (active) setTrustedInstallAvailable(status.trustedInstallAvailable);
+    }).catch(() => {
+      if (active) setTrustedInstallAvailable(null);
+    });
+    return () => { active = false; };
+  }, [marketplaceRegistry]);
 
   useEffect(() => {
     let active = true;
@@ -123,7 +179,9 @@ function MarketplacePackageDetail({ handle, name }: { handle: string; name: stri
         <p><strong>Version</strong>: {pkg.meta.version}</p>
         <p><strong>Canonical identity</strong>: <code>{pkg.meta.identity}</code></p>
         {pkg.meta.permissions?.length ? <p><strong>Permissions</strong>: {pkg.meta.permissions.join(', ')}</p> : null}
-        <UIButton variant="primary" loading={installing || installPlugin.isPending} disabled={pkg.primaryKind === 'plugin' && !projectId} onClick={onInstall}>
+        {trustedInstallAvailable === false && <UIAlert variant="warning" message="Installation is unavailable" description="This host has no trusted Marketplace Registry source configured." showIcon />}
+        {trustedInstallAvailable === null && <UIAlert variant="warning" message="Installation is unavailable" description="The host could not verify its trusted Registry configuration." showIcon />}
+        <UIButton variant="primary" loading={installing || installPlugin.isPending} disabled={trustedInstallAvailable !== true || (pkg.primaryKind === 'plugin' && !projectId)} onClick={onInstall}>
           Install {pkg.primaryKind}
         </UIButton>
       </UICard>

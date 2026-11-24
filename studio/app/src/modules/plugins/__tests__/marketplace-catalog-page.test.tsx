@@ -30,7 +30,7 @@ describe('MarketplaceCatalogPage', () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     const listPackages = vi.fn().mockResolvedValue([packageSummary('plugin'), packageSummary('adapter')]);
     const sources = {
-      marketplaceRegistry: { listPackages, getPackage: vi.fn(), installAdapter: vi.fn() },
+      marketplaceRegistry: { listPackages, getPackage: vi.fn(), getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: true }), installPlugin: vi.fn(), installAdapter: vi.fn() },
       projectPlugins: { listPlugins: vi.fn().mockResolvedValue([]) },
     } as unknown as DataSources;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -65,6 +65,8 @@ describe('MarketplaceCatalogPage', () => {
       marketplaceRegistry: {
         listPackages: vi.fn().mockResolvedValue([packageSummary('plugin'), adapter]),
         getPackage: vi.fn(),
+        getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: true }),
+        installPlugin: vi.fn(),
         installAdapter: vi.fn(),
       },
     } as unknown as DataSources;
@@ -90,13 +92,72 @@ describe('MarketplaceCatalogPage', () => {
     expect(sources.marketplaceRegistry.listPackages).toHaveBeenCalledWith('');
   });
 
+  it('keeps the newest search result when earlier requests finish later', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    let resolveSlow: ((packages: ReturnType<typeof packageSummary>[]) => void) | undefined;
+    const listPackages = vi.fn((query: string) => {
+      if (query === 'slow') return new Promise<ReturnType<typeof packageSummary>[]>((resolve) => { resolveSlow = resolve; });
+      if (query === 'fast') return Promise.resolve([packageSummary('adapter')]);
+      return Promise.resolve([]);
+    });
+    const sources = { marketplaceRegistry: { listPackages, getPackage: vi.fn(), getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: true }), installPlugin: vi.fn(), installAdapter: vi.fn() } } as unknown as DataSources;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourcesContext.Provider value={sources}>
+          <ProjectContextProvider>
+            <MemoryRouter initialEntries={['/marketplace/catalog']}>
+              <Routes><Route path="/marketplace/catalog" element={<MarketplaceCatalogPage />} /></Routes>
+            </MemoryRouter>
+          </ProjectContextProvider>
+        </DataSourcesContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    const search = await screen.findByLabelText('Search Marketplace Registry');
+    fireEvent.change(search, { target: { value: 'slow' } });
+    fireEvent.change(search, { target: { value: 'fast' } });
+    expect(await screen.findByText('adapter-one')).toBeDefined();
+
+    resolveSlow?.([packageSummary('plugin')]);
+    await waitFor(() => expect(screen.queryByText('plugin-one')).toBeNull());
+    expect(screen.getByText('adapter-one')).toBeDefined();
+  });
+
+  it('shows a retry action when the public Registry catalog is unavailable', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const listPackages = vi.fn()
+      .mockRejectedValueOnce(new Error('Registry is unavailable'))
+      .mockResolvedValueOnce([packageSummary('plugin')]);
+    const sources = { marketplaceRegistry: { listPackages, getPackage: vi.fn(), getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: false }), installPlugin: vi.fn(), installAdapter: vi.fn() } } as unknown as DataSources;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourcesContext.Provider value={sources}>
+          <ProjectContextProvider>
+            <MemoryRouter initialEntries={['/marketplace/catalog']}>
+              <Routes><Route path="/marketplace/catalog" element={<MarketplaceCatalogPage />} /></Routes>
+            </MemoryRouter>
+          </ProjectContextProvider>
+        </DataSourcesContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('Registry is unavailable')).toBeDefined();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('plugin-one')).toBeDefined();
+    expect(listPackages).toHaveBeenCalledTimes(2);
+  });
+
   it('installs an adapter using canonical meta.identity and the selected version', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     const adapter = packageSummary('adapter');
     const installAdapter = vi.fn().mockResolvedValue({ installed: [] });
     const getPackage = vi.fn().mockResolvedValue({ name: adapter.name, authorHandle: adapter.handle, primaryKind: 'adapter', versions: [{ version: '1.2.3', publishedAt: '2026-01-01', integrity: 'sha512-test' }], meta: { name: adapter.name, version: '1.2.3', identity: '@kb-labs/canonical-adapter' } });
     const sources = {
-      marketplaceRegistry: { listPackages: vi.fn().mockResolvedValue([]), getPackage, installAdapter },
+      marketplaceRegistry: { listPackages: vi.fn().mockResolvedValue([]), getPackage, getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: true }), installPlugin: vi.fn(), installAdapter },
     } as unknown as DataSources;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -129,9 +190,11 @@ describe('MarketplaceCatalogPage', () => {
       marketplaceRegistry: {
         listPackages: vi.fn().mockResolvedValue([]),
         getPackage: vi.fn().mockResolvedValue({ name: plugin.name, authorHandle: plugin.handle, primaryKind: 'plugin', versions: [{ version: '1.2.3', publishedAt: '2026-01-01', integrity: 'sha512-test' }], meta: { name: plugin.name, version: '1.2.3', identity: '@kb-labs/canonical-plugin' } }),
+        getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: true }),
+        installPlugin,
         installAdapter: vi.fn(),
       },
-      projectPlugins: { listPlugins: vi.fn().mockResolvedValue([]), installPlugin },
+      projectPlugins: { listPlugins: vi.fn().mockResolvedValue([]) },
     } as unknown as DataSources;
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -151,5 +214,38 @@ describe('MarketplaceCatalogPage', () => {
 
     await waitFor(() => expect(installPlugin).toHaveBeenCalledWith('project-a', '@kb-labs/canonical-plugin@1.2.3'));
     expect(installPlugin).not.toHaveBeenCalledWith('project-a', 'kb-labs/display-name@1.2.3');
+  });
+
+  it('keeps Registry packages browseable but blocks installation without trusted Registry config', async () => {
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const adapter = packageSummary('adapter');
+    const installAdapter = vi.fn();
+    const sources = {
+      marketplaceRegistry: {
+        listPackages: vi.fn().mockResolvedValue([]),
+        getPackage: vi.fn().mockResolvedValue({ name: adapter.name, authorHandle: adapter.handle, primaryKind: 'adapter', versions: [{ version: '1.2.3', publishedAt: '2026-01-01', integrity: 'sha512-test' }], meta: { name: adapter.name, version: '1.2.3', identity: '@kb-labs/canonical-adapter' } }),
+        getStatus: vi.fn().mockResolvedValue({ trustedInstallAvailable: false }),
+        installPlugin: vi.fn(),
+        installAdapter,
+      },
+    } as unknown as DataSources;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourcesContext.Provider value={sources}>
+          <ProjectContextProvider>
+            <MemoryRouter initialEntries={['/marketplace/catalog/kb-labs/adapter-one']}>
+              <Routes><Route path="/marketplace/catalog/:handle/:name" element={<MarketplaceCatalogPage />} /></Routes>
+            </MemoryRouter>
+          </ProjectContextProvider>
+        </DataSourcesContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText('@kb-labs/canonical-adapter')).toBeDefined();
+    expect(screen.getByText(/no trusted Marketplace Registry source configured/i)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Install adapter' }).hasAttribute('disabled')).toBe(true);
+    expect(installAdapter).not.toHaveBeenCalled();
   });
 });
