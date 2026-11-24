@@ -45,6 +45,21 @@ async function mockRegistryCatalog(page: import('@playwright/test').Page) {
   })
 }
 
+async function mockMarketplaceHost(page: import('@playwright/test').Page) {
+  await page.route('**/api/v1/projects', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([
+      { id: 'project-a', name: 'Project A' },
+      { id: 'project-b', name: 'Project B' },
+    ]) })
+  })
+  await page.route('**/api/v1/plugins?*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify([]) })
+  })
+  await page.route('**/api/v1/marketplace/packages?*', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ entries: [], total: 0 }) })
+  })
+}
+
 async function signInIfSecured(page: import('@playwright/test').Page) {
   if (accessMode !== 'secured') return
   const email = process.env.KB_STUDIO_ADMIN_EMAIL
@@ -95,6 +110,7 @@ test('Marketplace opens on installed project plugins @S-182.1', async ({ page })
 })
 
 test('browse the public Registry catalog and inspect canonical identity @S-322.1 @S-322.2', async ({ page }) => {
+  await mockMarketplaceHost(page)
   await mockRegistryCatalog(page)
   await openMarketplace(page)
   await page.getByRole('button', { name: 'Open marketplace', exact: true }).click()
@@ -107,6 +123,7 @@ test('browse the public Registry catalog and inspect canonical identity @S-322.1
 })
 
 test('install a Registry plugin using its canonical identity @S-322.3', async ({ page }) => {
+  await mockMarketplaceHost(page)
   await mockRegistryCatalog(page)
   let installRequest: { projectId?: string; spec?: string } | undefined
   await page.route('**/api/v1/plugins/install-from-registry', async (route) => {
@@ -124,6 +141,7 @@ test('install a Registry plugin using its canonical identity @S-322.3', async ({
 })
 
 test('install a Registry adapter using its canonical identity @S-322.4', async ({ page }) => {
+  await mockMarketplaceHost(page)
   await mockRegistryCatalog(page)
   let installRequest: { spec?: string } | undefined
   await page.route('**/api/v1/marketplace/packages/adapters/install', async (route) => {
