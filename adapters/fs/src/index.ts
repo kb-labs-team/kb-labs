@@ -85,7 +85,9 @@ export class FilesystemStorageAdapter implements IStorage {
   async write(filepath: string, data: Buffer): Promise<void> {
     const absolutePath = this.resolvePath(filepath);
     const directory = path.dirname(absolutePath);
-    const temporaryPath = path.join(directory, `.${path.basename(absolutePath)}.${randomUUID()}.tmp`);
+    // Keep the temporary basename independent of the target length so valid
+    // filenames near the filesystem's NAME_MAX remain writable.
+    const temporaryPath = path.join(directory, `.kb-${randomUUID()}.tmp`);
 
     await fs.ensureDir(directory);
     let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
@@ -100,12 +102,18 @@ export class FilesystemStorageAdapter implements IStorage {
 
       await fs.rename(temporaryPath, absolutePath);
 
-      // Persist the directory entry as well as file contents across power loss.
-      const directoryHandle = await open(directory, "r");
-      try {
-        await directoryHandle.sync();
-      } finally {
-        await directoryHandle.close();
+      // Persist each directory entry up to the storage root as well as file
+      // contents, including newly-created nested directories.
+      let currentDirectory = directory;
+      while (true) {
+        const directoryHandle = await open(currentDirectory, "r");
+        try {
+          await directoryHandle.sync();
+        } finally {
+          await directoryHandle.close();
+        }
+        if (currentDirectory === this.baseDir) { break; }
+        currentDirectory = path.dirname(currentDirectory);
       }
     } finally {
       await fileHandle?.close();

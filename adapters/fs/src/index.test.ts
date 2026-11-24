@@ -77,6 +77,15 @@ describe("FilesystemStorageAdapter", () => {
       expect(await fs.readdir(join(tmpDir, "registry"))).toEqual(["meta.json"]);
     });
 
+    it("writes valid long filenames using a bounded temporary name", async () => {
+      const filepath = `${"f".repeat(240)}.json`;
+      const content = Buffer.from("complete");
+
+      await storage.write(filepath, content);
+
+      expect(await storage.read(filepath)).toEqual(content);
+    });
+
     it("should return null when reading nonexistent file", async () => {
       const result = await storage.read("nonexistent.txt");
 
