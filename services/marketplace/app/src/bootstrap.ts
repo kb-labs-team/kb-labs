@@ -39,15 +39,22 @@ export async function setup({
   if (!sourcesConfig?.length) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_CONFIG_INVALID', { details: { path: 'marketplace.sources' } }));
   }
-  const sources = sourcesConfig.flatMap(source => source.kind === 'registry'
-    ? [new RegistryPackageSource({
-      registryUrl: source.url,
-      signingPublicKey: source.signingPublicKey,
-      authToken: source.authToken,
-    })]
-    : [new NpmPackageSource({ registryUrl: source.url })]);
-  const registrySourceConfig = sourcesConfig.find(source => source.kind === 'registry');
-  const registryCatalogUrl = registrySourceConfig?.url ?? process.env.KB_MARKETPLACE_CATALOG_URL ?? 'https://api.kblabs.ru/api/v1/registry';
+  const sources: ConstructorParameters<typeof MarketplaceService>[0]['sources'] = [];
+  let configuredRegistryUrl: string | undefined;
+  for (const source of sourcesConfig) {
+    if (!source) continue;
+    if (source.kind === 'registry') {
+      configuredRegistryUrl ??= source.url;
+      sources.push(new RegistryPackageSource({
+        registryUrl: source.url,
+        signingPublicKey: source.signingPublicKey,
+        authToken: source.authToken,
+      }));
+      continue;
+    }
+    sources.push(new NpmPackageSource({ registryUrl: source.url }));
+  }
+  const registryCatalogUrl = configuredRegistryUrl ?? process.env.KB_MARKETPLACE_CATALOG_URL ?? 'https://api.kblabs.ru/api/v1/registry';
 
   const service = new MarketplaceService({
     platformRoot,
