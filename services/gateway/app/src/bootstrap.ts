@@ -71,7 +71,10 @@ export async function bootstrap(
     },
     setup: scope.configScope === "project"
       ? setup
-      : (ctx) => startGateway(ctx, { configScope: scope.configScope }),
+      : (ctx) => startGateway(ctx, {
+        configScope: scope.configScope,
+        readinessMode: "configured",
+      }),
   });
 }
 
@@ -131,6 +134,8 @@ export interface GatewayEmbedOptions {
   hostRoutes?: HostRoutes;
   /** Private loopback control endpoint reported only through readiness. */
   readinessControlAddress?: string;
+  /** Require each configured static upstream instead of the legacy standalone REST upstream. */
+  readinessMode?: "configured" | "rest";
 }
 
 /** Select the config root using the same scope contract for preflight and startup. */
@@ -531,6 +536,7 @@ export async function startGateway(
     options.projectServices,
     options.projectServiceTransport,
     options.readinessControlAddress,
+    options.readinessMode,
   );
 
   // 11. Listen

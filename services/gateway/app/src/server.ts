@@ -145,6 +145,7 @@ export async function createServer(
   projectServices?: readonly ProjectServiceDeclaration[],
   projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">,
   readinessControlAddress?: string,
+  readinessMode?: "configured" | "rest",
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -644,10 +645,13 @@ export async function createServer(
           (health.upstreams as
             | Record<string, { status?: string }>
             | undefined) ?? {};
-        // Runtime readiness follows the upstreams this Gateway actually routes
-        // to. Project runtimes are started lazily, so they are not represented
-        // here unless configured as static upstreams.
-        const requiredUpstreams = Object.keys(config.upstreams);
+        // Project runtimes are lazy. Platform Gateway can explicitly opt into
+        // readiness over its static upstream graph; retain the legacy REST
+        // requirement for standalone project mode.
+        const requiredUpstreams =
+          readinessMode === "configured" || projectRouting
+            ? Object.keys(config.upstreams)
+            : ["rest"];
         const missingRequiredUpstreams = requiredUpstreams.filter(
           (id) => (upstreams[id]?.status ?? "down") !== "up",
         );
