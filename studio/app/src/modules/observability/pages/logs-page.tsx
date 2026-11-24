@@ -298,7 +298,7 @@ export function LogsPage() {
     stackTraces: true,
   });
   const [summarizing, setSummarizing] = useState(false);
-  const [summaryResult, setSummaryResult] = useState<LogSummarizeResponse['data'] | null>(null);
+  const [summaryResult, setSummaryResult] = useState<LogSummarizeResponse | null>(null);
 
   useEffect(() => {
     if (viewMode !== 'history' || !requestedProjectSelected) {return;}
@@ -518,7 +518,7 @@ export function LogsPage() {
       const result = await sources.observability.summarizeLogs(request);
 
       // Store the full result data for structured rendering
-      setSummaryResult(result.data);
+      setSummaryResult(result);
     } catch (err: any) {
       UIMessage.error('Failed to generate summary: ' + err.message);
     } finally {

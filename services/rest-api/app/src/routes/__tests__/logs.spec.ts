@@ -457,7 +457,7 @@ describe('Log Routes Integration Tests', () => {
 
   describe('POST /api/v1/logs/summarize', () => {
     // case: S-122.3
-    it('keeps AI summaries scoped to the selected workflow run without adding a time window', async () => {
+    it('passes workflow run and step execution filters to storage before its limit', async () => {
       const mockLogs = [createMockLog('log-old-run', 'error', 'RUN_DIAGNOSTIC_MARKER')];
       (mockLogService.query as any).mockResolvedValue({
         logs: mockLogs,
@@ -474,13 +474,13 @@ describe('Log Routes Integration Tests', () => {
         url: '/api/v1/logs/summarize',
         payload: {
           question: 'Summarize this workflow run',
-          filters: { runId: 'run-old' },
+          filters: { runId: 'run-old', executionId: 'step-old' },
         },
       });
 
       expect(response.statusCode).toBe(200);
       expect(mockLogService.query).toHaveBeenCalledWith(
-        expect.objectContaining({ runId: 'run-old', from: undefined, to: undefined }),
+        expect.objectContaining({ runId: 'run-old', executionId: 'step-old', from: undefined, to: undefined }),
         { limit: 1000 },
       );
     });

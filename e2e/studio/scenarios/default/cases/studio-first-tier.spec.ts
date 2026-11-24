@@ -280,12 +280,13 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
   expect(previousProjectLogRequests).toBe(0)
 
   await page.getByRole('button', { name: 'AI Summarize', exact: true }).click()
-  await page.getByPlaceholder('Ask anything about these logs... (e.g., \'What went wrong in the last 5 minutes?\')').fill('Summarize this workflow run')
+  await page.getByPlaceholder(/Ask anything about these logs/).fill('Summarize this workflow run')
   const summarizeRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/summarize')))
   await page.getByRole('button', { name: 'Generate Summary', exact: true }).click()
   const summaryBody = (await summarizeRequest).postDataJSON()
   expect(summaryBody.filters.runId).toBe('run-studio-diagnostic')
   expect(summaryBody.timeRange).toBeUndefined()
+  await expect(page.getByText('Run-specific summary', { exact: true })).toBeVisible()
 })
 
 test('S-122.5: unavailable observability logs name the source and doctor command', async ({ page }) => {

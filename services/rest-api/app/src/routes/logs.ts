@@ -698,25 +698,20 @@ export async function registerLogRoutes(
             : undefined,
           to: timeRange?.to ? new Date(timeRange.to).getTime() : undefined,
           runId: filters?.runId,
+          executionId: filters?.executionId,
         };
 
         // Query logs using unified service
         const result = await platform.logs.query(query, { limit: 1000 });
         const frontendLogs = result.logs.map(toFrontendLogRecord);
 
-        // Additional filters (traceId, executionId)
+        // Trace IDs are not part of LogQuery, so apply that filter to the bounded result.
         let filteredLogs = frontendLogs;
         if (filters?.traceId) {
           filteredLogs = filteredLogs.filter(
             (log) => log.traceId === filters.traceId,
           );
         }
-        if (filters?.executionId) {
-          filteredLogs = filteredLogs.filter(
-            (log) => log.executionId === filters.executionId,
-          );
-        }
-
         // Calculate aggregated statistics
         const stats = {
           total: filteredLogs.length,

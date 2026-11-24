@@ -339,23 +339,20 @@ export interface LogStats {
  * Log summarization response
  */
 export interface LogSummarizeResponse {
-  ok: boolean;
-  data: {
-    summary: {
-      question: string;
-      timeRange: {
-        from: string | null;
-        to: string | null;
-      };
-      total: number;
-      stats: LogStats;
-      groups: Record<string, any[]> | null;
+  summary: {
+    question: string;
+    timeRange: {
+      from: string | null;
+      to: string | null;
     };
-    /** AI-generated summary (null if LLM unavailable) */
-    aiSummary: string | null;
-    /** Info message if AI not available */
-    message?: string | null;
+    total: number;
+    stats: LogStats;
+    groups: Record<string, any[]> | null;
   };
+  /** AI-generated summary (null if LLM unavailable) */
+  aiSummary: string | null;
+  /** Info message if AI not available */
+  message?: string | null;
 }
 
 /**
