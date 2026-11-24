@@ -11,7 +11,6 @@ on:
       - '**'
       - '!ops/**'
       - '!docs/**'
-      - '!.github/workflows/build-platform-service-images.yml'
 
 permissions:
   contents: read
@@ -59,9 +58,9 @@ jobs:
       - name: Prepare production dependency trees
         run: |
           set -euo pipefail
-          pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon
-          pnpm deploy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app
-          pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
+          pnpm deploy --filter @kb-labs/core-state-daemon --prod --legacy .kb/deploy/state-daemon
+          pnpm deploy --filter @kb-labs/gateway-app --prod --legacy .kb/deploy/gateway-app
+          pnpm deploy --filter @kb-labs/marketplace-registry-app --prod --legacy .kb/deploy/marketplace-registry-app
           node tools/release/generate-platform-image-default.mjs
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
