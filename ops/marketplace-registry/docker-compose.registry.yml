@@ -1,32 +1,135 @@
-# Production overlay for infra/docker-compose.backend.yml.
-# Gateway and Registry are reachable from host Nginx only; State Daemon stays
-# on the private Compose network and its journal survives container recreation.
+name: kb-marketplace-registry
+
+# Independent, single-replica Registry stack. It deliberately does not attach
+# to the existing web compose project or publish State/MinIO/Registry ports.
 services:
-  kb-state-daemon:
-    ports: !reset []
+  kb-minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
     environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in the registry env file}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in the registry env file}
+    volumes:
+      - registry_minio_data:/data
+    restart: unless-stopped
+    logging: &registry-json-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - registry_private
+
+  kb-minio-ready:
+    image: node:24-slim
+    command:
+      - node
+      - -e
+      - >-
+        (async () => {
+          const deadline = Date.now() + 60000;
+          while (Date.now() < deadline) {
+            try {
+              const response = await fetch('http://kb-minio:9000/minio/health/ready');
+              if (response.ok) process.exit(0);
+            } catch {}
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+          console.error('MinIO did not become ready within 60 seconds');
+          process.exit(1);
+        })().catch(() => process.exit(1));
+    depends_on:
+      - kb-minio
+    restart: "no"
+    logging: *registry-json-logging
+    networks:
+      - registry_private
+
+  kb-state-daemon:
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-state-daemon:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
+    environment:
+      NODE_ENV: production
+      KB_STATE_DAEMON_PORT: "7777"
+      KB_STATE_DAEMON_HOST: 0.0.0.0
       KB_STATE_DAEMON_DATA_ROOT: /app/.kb/data/state
     volumes:
-      - registry_state:/app/.kb/data/state
-
-  kb-gateway:
-    ports: !override
-      - 127.0.0.1:4000:4000
-    environment:
-      KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
-    volumes:
-      - ../ops/marketplace-registry/gateway.override.json:/app/.kb/kb.config.override.json:ro
+      - registry_state_data:/app/.kb/data/state
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:7777/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    logging: *registry-json-logging
+    networks:
+      - registry_private
 
   kb-marketplace-registry:
-    ports: !override
-      - 127.0.0.1:5071:5071
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-marketplace-registry:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
     environment:
+      NODE_ENV: production
       KB_REGISTRY_HOST: 0.0.0.0
+      KB_REGISTRY_PORT: "5071"
       KB_REGISTRY_URL: https://api.kblabs.ru/api/v1/marketplace-registry
+      KB_SITE_URL: https://kblabs.ru
       KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
-      KB_REGISTRY_SIGNING_KEY: ${KB_REGISTRY_SIGNING_KEY:?set KB_REGISTRY_SIGNING_KEY in the deployment secret configuration}
+      KB_REGISTRY_SIGNING_KEY: ${KB_REGISTRY_SIGNING_KEY:?set KB_REGISTRY_SIGNING_KEY in the registry env file}
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in the registry env file}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in the registry env file}
     volumes:
-      - ../ops/marketplace-registry/registry.override.json:/app/.kb/kb.config.override.json:ro
+      - ./registry.override.json:/app/.kb/kb.config.override.json:ro
+    depends_on:
+      kb-minio-ready:
+        condition: service_completed_successfully
+      kb-state-daemon:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:5071/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    logging: *registry-json-logging
+    networks:
+      - registry_private
+
+  kb-gateway:
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-gateway:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
+    ports:
+      - 127.0.0.1:4000:4000
+    environment:
+      NODE_ENV: production
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET in the registry env file}
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
+      GATEWAY_BOOTSTRAP_ADMIN_PASSWORD: ${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:?set GATEWAY_BOOTSTRAP_ADMIN_PASSWORD in the registry env file}
+      KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
+    volumes:
+      - registry_gateway_data:/app/.kb/data
+      - ./gateway.override.json:/app/.kb/kb.config.override.json:ro
+    depends_on:
+      kb-marketplace-registry:
+        condition: service_healthy
+      kb-state-daemon:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    logging: *registry-json-logging
+    networks:
+      - registry_private
+
+networks:
+  registry_private:
+    internal: true
 
 volumes:
-  registry_state:
+  registry_minio_data:
+  registry_state_data:
+  registry_gateway_data:
