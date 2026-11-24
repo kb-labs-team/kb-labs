@@ -1,5 +1,19 @@
 # Product decisions log
 
+## 2026-11-24
+
+### The trusted Marketplace catalog is separate from generic package sources
+
+Fresh Release 1 installs keep `marketplace.sources` on its existing npm default
+and configure the public signed Registry independently as
+`marketplace.catalogRegistry`. Studio catalog selections install through that
+trusted Registry source only; ordinary Marketplace installs continue to use
+the configured generic source order. Registry installs record their source URL
+in the lock, and updates fail with a typed configuration error if that origin
+is no longer configured. This supersedes the Registry rollout portion of the
+2026-10-23 Marketplace default decision without changing its generic source
+compatibility rule. Case: S-323.
+
 ## 2026-11-23
 
 ### Higher config layers replace arrays consistently
