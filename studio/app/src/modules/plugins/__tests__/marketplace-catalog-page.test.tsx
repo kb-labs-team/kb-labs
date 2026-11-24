@@ -7,6 +7,7 @@ import type { DataSources } from '@kb-labs/studio-data-client';
 import { DataSourcesContext } from '../../../providers/data-sources-provider';
 import { ProjectContextProvider } from '../../../providers/project-context-provider';
 import { MarketplaceCatalogPage } from '../pages/marketplace-catalog-page';
+import { PluginsPage } from '../pages/marketplace-page';
 
 const packageSummary = (primaryKind: 'plugin' | 'adapter') => ({
   handle: 'kb-labs',
@@ -23,6 +24,39 @@ const packageSummary = (primaryKind: 'plugin' | 'adapter') => ({
 
 describe('MarketplaceCatalogPage', () => {
   afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); });
+
+  it('opens the Registry catalog from the installed Marketplace overview', async () => {
+    localStorage.setItem('kb-studio-active-project', 'project-a');
+    vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
+    const listPackages = vi.fn().mockResolvedValue([packageSummary('plugin'), packageSummary('adapter')]);
+    const sources = {
+      marketplaceRegistry: { listPackages, getPackage: vi.fn(), installAdapter: vi.fn() },
+      projectPlugins: { listPlugins: vi.fn().mockResolvedValue([]) },
+    } as unknown as DataSources;
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DataSourcesContext.Provider value={sources}>
+          <ProjectContextProvider>
+            <MemoryRouter initialEntries={['/marketplace']}>
+              <Routes>
+                <Route path="/marketplace" element={<PluginsPage />} />
+                <Route path="/marketplace/catalog" element={<MarketplaceCatalogPage />} />
+              </Routes>
+            </MemoryRouter>
+          </ProjectContextProvider>
+        </DataSourcesContext.Provider>
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open marketplace' }));
+
+    expect(await screen.findByRole('heading', { name: 'Marketplace catalog' })).toBeDefined();
+    expect(await screen.findByText('plugin-one')).toBeDefined();
+    expect(await screen.findByText('adapter-one')).toBeDefined();
+    expect(listPackages).toHaveBeenCalledWith('');
+  });
 
   it('lists Registry plugins and adapters', async () => {
     vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({ matches: false, media: query, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
