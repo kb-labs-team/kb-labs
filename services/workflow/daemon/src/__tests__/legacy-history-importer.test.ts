@@ -230,13 +230,32 @@ describe('legacy workflow history import', () => {
     ).resolves.toEqual(validBytes)
   })
 
-  it('fails closed on a symlinked legacy directory', async () => {
+  it('reports a symlinked legacy directory without blocking scoped workflow history', async () => {
     const root = await fixture()
     await rm(join(root, 'workflows'), { recursive: true })
     await symlink(tmpdir(), join(root, 'workflows'))
     await expect(
       importLegacyWorkflowHistory(root, projectId),
+    ).resolves.toMatchObject({ status: 'conflict' })
+  })
+
+  it('blocks on an unsafe scoped run link even when no legacy history exists', async () => {
+    const root = await fixture()
+    const external = join(root, 'foreign-run.json')
+    await writeFile(external, JSON.stringify(run('foreign-run')))
+    const destination = join(
+      root,
+      ...workflowRunRecordPath(projectId, 'foreign-run').split('/'),
+    )
+    await mkdir(join(destination, '..'), { recursive: true })
+    await symlink(external, destination)
+
+    await expect(
+      importLegacyWorkflowHistory(root, projectId),
     ).resolves.toMatchObject({ status: 'blocked' })
+    await expect(readFile(external, 'utf8')).resolves.toBe(
+      JSON.stringify(run('foreign-run')),
+    )
   })
 
   it('skips symlinked and hard-linked legacy records', async () => {

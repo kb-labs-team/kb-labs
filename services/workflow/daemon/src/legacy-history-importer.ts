@@ -1,4 +1,4 @@
-import { constants } from 'node:fs'
+import { constants, type Dirent } from 'node:fs'
 import { createHash, randomUUID } from 'node:crypto'
 import {
   link,
@@ -9,7 +9,7 @@ import {
   readdir,
   unlink,
 } from 'node:fs/promises'
-import { dirname, join, parse, relative, sep } from 'node:path'
+import { dirname, join, parse } from 'node:path'
 import {
   canonicalizeProjectPath,
   deriveProjectId,
@@ -171,37 +171,44 @@ export async function importLegacyWorkflowHistory(
       lockPath,
       async () => {
         const sourceDirectory = join(storageRoot, 'workflows')
+        const runDirectory = join(
+          storageRoot,
+          ...workflowRunRecordPath(projectId, 'valid-id').split('/').slice(0, -1),
+        )
+        if (
+          !(await ensureSafeDirectories(
+            storageRoot,
+            workflowRunRecordPath(projectId, 'valid-id').split('/').slice(0, -1),
+          ))
+        ) {
+          return blocked(counters, 'unsafe-project-run-directory')
+        }
+        const decisionDirectory = join(storageRoot, ...decisionDirectoryRelative.split('/'))
+        await cleanupImporterTemporaryFiles(runDirectory)
+        await cleanupImporterTemporaryFiles(decisionDirectory)
+        if (!(await validateScopedRunDirectory(runDirectory))) {
+          return blocked(counters, 'unsafe-project-run-record')
+        }
         const sourceState = await directoryState(sourceDirectory)
         if (
           sourceState === 'symlink' ||
           sourceState === 'not-directory' ||
           sourceState === 'unreadable'
         ) {
-          return blocked(counters, `unsafe-legacy-directory-${sourceState}`)
+          return conflict(counters, `unsafe-legacy-directory-${sourceState}`)
         }
 
         if (sourceState === 'directory') {
-          const canonicalSource = await realpath(sourceDirectory)
-          if (canonicalSource !== sourceDirectory)
-            return blocked(counters, 'legacy-directory-alias')
-          const entries = await readdir(sourceDirectory, {
-            withFileTypes: true,
-          })
-          const runDirectory = dirname(
-            join(
-              storageRoot,
-              ...workflowRunRecordPath(projectId, 'valid-id').split('/'),
-            ),
-          )
-          const runDirectoryRelative = relative(storageRoot, runDirectory)
-          if (
-            !(await ensureSafeDirectories(
-              storageRoot,
-              runDirectoryRelative.split(sep),
-            ))
-          ) {
-            return blocked(counters, 'unsafe-project-run-directory')
+          let canonicalSource: string
+          let entries: Dirent[]
+          try {
+            canonicalSource = await realpath(sourceDirectory)
+            entries = await readdir(sourceDirectory, { withFileTypes: true })
+          } catch {
+            return conflict(counters, 'unreadable-legacy-directory')
           }
+          if (canonicalSource !== sourceDirectory)
+            return conflict(counters, 'legacy-directory-alias')
           for (const entry of entries) {
             if (
               entry.isSymbolicLink() ||
@@ -223,7 +230,7 @@ export async function importLegacyWorkflowHistory(
             )
             if (source.status !== 'file') {
               if (source.status === 'read-error')
-                return retryable(counters, 'legacy-record-read-failed')
+                counters.conflicts += 1
               counters.skipped += 1
               continue
             }
@@ -249,8 +256,7 @@ export async function importLegacyWorkflowHistory(
             )
             const priorDecision = await readRegularFile(decisionPath)
             if (priorDecision.status === 'unsafe') {
-              counters.conflicts += 1
-              continue
+              return blocked(counters, 'unsafe-migration-decision')
             }
             if (priorDecision.status === 'read-error')
               return retryable(counters, 'unreadable-migration-decision')
@@ -280,14 +286,14 @@ export async function importLegacyWorkflowHistory(
             if (existing.status === 'read-error')
               return retryable(counters, 'scoped-record-read-failed')
             if (existing.status === 'unsafe') {
-              counters.conflicts += 1
-              continue
+              return blocked(counters, 'unsafe-scoped-run-record')
             }
             let disposition: 'imported' | 'alreadyPresent'
             if (existing.status === 'file') {
-              if (existing.bytes.equals(source.bytes))
+              if (existing.bytes.equals(source.bytes)) {
                 disposition = 'alreadyPresent'
-              else {
+                await syncDirectory(dirname(destination))
+              } else {
                 counters.conflicts += 1
                 continue
               }
@@ -442,6 +448,29 @@ async function ensureSafeDirectories(
   return true
 }
 
+async function cleanupImporterTemporaryFiles(directory: string): Promise<void> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!/^\.workflow-import-\d+-[a-f0-9-]+\.tmp$/.test(entry.name) || !entry.isFile()) {
+      continue
+    }
+    const path = join(directory, entry.name)
+    const file = await lstat(path)
+    if (file.isFile() && !file.isSymbolicLink()) await unlink(path)
+  }
+}
+
+async function validateScopedRunDirectory(directory: string): Promise<boolean> {
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    if (!entry.name.endsWith('.json')) continue
+    const runId = entry.name.slice(0, -'.json'.length)
+    if (!isSafeWorkflowRunId(runId)) continue
+    if (entry.isSymbolicLink() || !entry.isFile()) return false
+    const record = await readRegularFile(join(directory, entry.name), true)
+    if (record.status !== 'file') return false
+  }
+  return true
+}
+
 async function ensureAbsoluteDirectory(path: string): Promise<boolean> {
   const absolute = join(path)
   const pathRoot = parse(absolute).root
@@ -498,22 +527,25 @@ async function writeFileExclusive(
       }
       return 'failed'
     }
-    const directoryHandle = await open(directory, constants.O_RDONLY)
-    try {
-      await directoryHandle.sync()
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (!['EINVAL', 'ENOTSUP', 'EISDIR', 'EBADF'].includes(code ?? ''))
-        throw error
-    } finally {
-      await directoryHandle.close()
-    }
+    await syncDirectory(directory)
     return 'written'
   } catch {
     return 'failed'
   } finally {
     await file?.close().catch(() => undefined)
     await unlink(temporary).catch(() => undefined)
+  }
+}
+
+async function syncDirectory(directory: string): Promise<void> {
+  const directoryHandle = await open(directory, constants.O_RDONLY)
+  try {
+    await directoryHandle.sync()
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    if (!['EINVAL', 'ENOTSUP', 'EISDIR', 'EBADF'].includes(code ?? '')) throw error
+  } finally {
+    await directoryHandle.close()
   }
 }
 
