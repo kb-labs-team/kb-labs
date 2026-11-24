@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-import { generateKeyPairSync } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { generateKeyPairSync, randomBytes } from 'node:crypto';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
-const { createEmptyLock, validateMarketplaceLock } = await import(path.join(root, 'core/discovery/dist/index.js'));
 const { validateProductConfig } = await import(path.join(root, 'core/config/dist/index.js'));
+const { createRegistryJourneyConfig } = await import('./registry-journey-config.mjs');
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -23,32 +23,26 @@ if (!outputRoot || !registryUrl) {
 const { publicKey, privateKey } = generateKeyPairSync('ed25519');
 const publicPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 const privatePem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-const config = {
-  marketplace: {
-    sources: [{ kind: 'registry', url: registryUrl, signingPublicKey: publicPem }],
-  },
-};
+const config = createRegistryJourneyConfig({ registryUrl, signingPublicKey: publicPem });
 const configValidation = validateProductConfig('marketplace', config.marketplace);
 if (!configValidation.ok) {
   process.stderr.write(`Registry journey config is invalid: ${JSON.stringify(configValidation.errors)}\n`);
   process.exit(1);
 }
 
-const lock = createEmptyLock();
-const lockValidation = validateMarketplaceLock(lock, 'platform');
-if (!lockValidation.valid) {
-  process.stderr.write(`Registry journey lock is invalid: ${lockValidation.reason}\n`);
-  process.exit(1);
-}
-
 const kbRoot = path.join(path.resolve(outputRoot), '.kb');
 await mkdir(kbRoot, { recursive: true, mode: 0o700 });
-await writeFile(path.join(kbRoot, 'kb.config.jsonc'), `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
-await writeFile(path.join(kbRoot, 'marketplace.lock'), `${JSON.stringify(lock, null, 2)}\n`, { mode: 0o600 });
+const configOverridePath = path.join(kbRoot, 'kb.config.override.json');
+await writeFile(configOverridePath, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
 await writeFile(path.join(kbRoot, 'registry.env'), `KB_REGISTRY_SIGNING_KEY='${privatePem.trimEnd()}\n'\n`, { mode: 0o600 });
+const gatewaySecretPath = path.join(kbRoot, 'gateway-internal.env');
+await writeFile(gatewaySecretPath, `GATEWAY_INTERNAL_SECRET=${randomBytes(32).toString('hex')}\n`, { mode: 0o600 });
+await chmod(gatewaySecretPath, 0o600);
 
 const composeOverlay = `services:
   runner:
+    env_file:
+      - ${JSON.stringify(gatewaySecretPath)}
     environment:
       KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(`${registryUrl}/api/v1`)}
       KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
@@ -71,15 +65,17 @@ const composeOverlay = `services:
       marketplace-state:
         condition: service_started
     env_file:
+      - ${JSON.stringify(gatewaySecretPath)}
       - ${JSON.stringify(path.join(kbRoot, 'registry.env'))}
     environment:
       KB_REGISTRY_HOST: 0.0.0.0
       KB_REGISTRY_PORT: "5071"
-      KB_REGISTRY_URL: http://marketplace-tamper:8081
-      GATEWAY_INTERNAL_SECRET: journey-marketplace-internal-secret
+      # Registry metadata emits a Gateway-relative public tarball path; the
+      # Marketplace client resolves it against the configured Gateway source.
+      KB_REGISTRY_URL: /api/v1/marketplace-registry
+      KB_STATE_DAEMON_URL: http://marketplace-state:7777
     volumes:
-      - ${JSON.stringify(`${path.join(kbRoot, 'kb.config.jsonc')}:/app/.kb/kb.config.jsonc:ro`)}
-      - ${JSON.stringify(`${path.join(kbRoot, 'marketplace.lock')}:/app/.kb/marketplace.lock:ro`)}
+      - ${JSON.stringify(`${configOverridePath}:/app/.kb/kb.config.override.json:ro`)}
     networks: [journey]
 
   marketplace-tamper:
@@ -99,5 +95,6 @@ const composeOverlayPath = path.join(path.resolve(outputRoot), 'docker-compose.r
 await writeFile(composeOverlayPath, composeOverlay, { mode: 0o600 });
 process.stdout.write(`${JSON.stringify({
   composeOverlayPath,
+  configOverridePath,
   signingPublicKeyBase64: Buffer.from(publicPem).toString('base64'),
 })}\n`);

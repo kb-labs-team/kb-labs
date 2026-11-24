@@ -1,18 +1,18 @@
 /**
  * @module @kb-labs/project-runtime-app/args
  *
- * Command line and environment of the `kb-project-runtime` executable.
- * The shared secret is read from the environment only: argv is visible to
- * every local user through `ps`.
+ * Command line and one-shot inherited credential pipe of the executable.
+ * The shared secret is not put in argv or the initial process environment.
  */
 
 import { stat } from "node:fs/promises";
+import { closeSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
   canonicalizeProjectPath,
   deriveProjectId,
 } from "@kb-labs/core-project-registry";
-import { RUNTIME_ARGS, RUNTIME_TOKEN_ENV } from "./protocol.js";
+import { RUNTIME_ARGS } from "./protocol.js";
 
 const MIN_TOKEN_LENGTH = 16;
 
@@ -102,7 +102,9 @@ export function parseListen(value: string): RuntimeListenAddress {
 export async function parseRuntimeArgs(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
+  runtimeToken?: string,
 ): Promise<RuntimeArgs> {
+  void env;
   const rawRoot = requireFlag(argv, RUNTIME_ARGS.projectRoot);
   if (!isAbsolute(rawRoot)) {
     throw new RuntimeArgsError(
@@ -127,10 +129,12 @@ export async function parseRuntimeArgs(
 
   const listen = parseListen(requireFlag(argv, RUNTIME_ARGS.listen));
 
-  const token = env[RUNTIME_TOKEN_ENV];
+  // The credential is supplied over a dedicated inherited pipe. An env
+  // fallback would make it visible to in-process plugins via /proc/self/environ.
+  const token = runtimeToken;
   if (!token || token.length < MIN_TOKEN_LENGTH) {
     throw new RuntimeArgsError(
-      `${RUNTIME_TOKEN_ENV} must be set to a secret of at least ${MIN_TOKEN_LENGTH} characters`,
+      `runtime guard credential must be supplied on FD 3 and contain at least ${MIN_TOKEN_LENGTH} characters`,
     );
   }
 
@@ -152,4 +156,14 @@ export async function parseRuntimeArgs(
     token,
     ...(parentPid !== undefined ? { parentPid } : {}),
   };
+}
+
+export function readRuntimeTokenFromFd(fd: number): string | undefined {
+  try {
+    return readFileSync(fd, "utf8").trim() || undefined;
+  } catch {
+    return undefined;
+  } finally {
+    try { closeSync(fd); } catch { /* FD may be absent for direct invocations. */ }
+  }
 }

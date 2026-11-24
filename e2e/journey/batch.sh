@@ -7,7 +7,7 @@ BASELINE=${BATCH_BASELINE:-j28}
 SCRIPT_DIR="$ROOT/e2e/journey"
 
 usage() {
-  echo "usage: batch.sh prepare <output-dir> [baseline] | mode <local|secured> <producer-artifact> <output-dir> [--cases <case-ids>] | summarize <output-dir> <producer-artifact> <local-artifact> <secured-artifact> | <output-dir> [baseline]" >&2
+  echo "usage: batch.sh prepare <output-dir> [baseline] | mode <local|secured> <producer-artifact> <output-dir> [--cases <case-ids> | --area <qa-area>] | summarize <output-dir> <producer-artifact> <local-artifact> <secured-artifact> [--selection <case-ids|@area:<qa-area>>] | area <qa-area> <output-dir> [baseline]" >&2
   exit 2
 }
 absolute() { case "$1" in /*) printf '%s\n' "$1" ;; *) printf '%s/%s\n' "$ROOT" "$1" ;; esac; }
@@ -69,7 +69,8 @@ run_prepare() {
   trap 'prepare_interrupted=1; exit 143' TERM
   reset_started=$(date +%s)
   reset_rc=0
-  "$SCRIPT_DIR/run.sh" --down > "$shared/reset.log" 2>&1 || reset_rc=$?
+  "$SCRIPT_DIR/tee-stage.sh" "$shared/reset.log" 'Reset journey services' \
+    "$SCRIPT_DIR/run.sh" --down || reset_rc=$?
   reset_seconds=$(($(date +%s) - reset_started))
   if [ "$reset_rc" -ne 0 ]; then
     printf '\n- Failed stage: `reset`\n- Stage log: `reset.log`\n- Result: FAIL\n' >> "$shared/summary.md"
@@ -113,9 +114,11 @@ run_prepare() {
         esac
         [ ! -d "$package_path/dist" ] || printf './%s/dist\n' "$package_path" >> "$shared/archive-files.txt"
       done < "$shared/workspace-packages.txt"
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/candidate_archive.py" "$ROOT" >> "$shared/archive-files.txt"
       for item in .journey/runner-inputs .journey/release .journey/kb-create-release-index e2e/packages; do
         [ ! -e "$item" ] || printf '%s\n' "./$item" >> "$shared/archive-files.txt"
       done
+      LC_ALL=C sort -u "$shared/archive-files.txt" -o "$shared/archive-files.txt"
     } &&
     tar -cf "$archive" -T "$shared/archive-files.txt"
   ) > "$shared/candidate-package.log" 2>&1; then
@@ -139,8 +142,11 @@ run_prepare() {
 run_mode() {
   mode=$1 producer=$(absolute "$2") out=$(absolute "$3")
   selected_cases=$4
+  selected_area=${5:-}
+  selected_area_uncovered=""
   case "$mode" in local|secured) ;; *) usage ;; esac
   shared="$producer/shared"; mode_dir="$out/$mode"
+  rm -rf "$mode_dir"
   mkdir -p "$mode_dir"
   cd "$ROOT"
   if [ ! -s "$shared/build-candidate.tar" ]; then
@@ -165,6 +171,16 @@ run_mode() {
     echo "journey producer build-candidate.tar could not be extracted; see $mode_dir/archive-extract.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
     return 1
   fi
+  if [ -n "$selected_area" ]; then
+    selected_cases=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --claim-step-ids-for-area "$selected_area" "$mode") || {
+      echo "journey product area could not resolve claimable QA steps: $selected_area" >&2
+      return 1
+    }
+    selected_area_uncovered=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" --uncovered-step-ids-for-area "$selected_area" "$mode") || {
+      echo "journey product area could not resolve uncovered QA steps: $selected_area" >&2
+      return 1
+    }
+  fi
   for log in reset build unit candidate release-build-output-check; do
     if [ ! -f "$shared/$log.log" ]; then
       echo "journey producer artifact is missing shared/$log.log; next: rerun the producer with e2e/journey/batch.sh prepare" >&2
@@ -180,19 +196,33 @@ run_mode() {
     return 1
   fi
   run_started=$(date +%s)
+  if [ -n "$selected_area" ] && [ -z "$selected_cases" ]; then
+    printf 'product area has no claimable steps in %s mode\n' "$mode"
+    printf 'product area has no claimable steps in %s mode\nexit=0\n' "$mode" > "$mode_dir/batch.log"
+    duration=$(($(date +%s) - run_started))
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
+      "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS \
+      "$duration" "" "" "$selected_area" "$selected_area_uncovered" || return 1
+    return 0
+  fi
   if [ -n "$selected_cases" ]; then
-    selected_runners_json=$("${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py" \
-      --runners-for-mode "$mode" "$selected_cases") || {
+    selection_plan=$(KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/select_from_cases.py") || {
       echo "journey $mode mode could not resolve selected claim owners; next: rerun e2e/journey/batch.sh mode $mode $producer $out --cases $selected_cases" >&2
       return 1
     }
-    runner_selectors=$(printf '%s' "$selected_runners_json" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)))')
+    printf '%s\n' "$selection_plan" > "$mode_dir/selection-plan.json"
+    if [ -n "$selected_area" ]; then
+      selected_cases=$(printf '%s' "$selection_plan" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)["steps"]))')
+    fi
+    runner_selectors=$(printf '%s' "$selection_plan" | "${BATCH_PYTHON:-python3}" -c 'import json,sys; print(",".join(json.load(sys.stdin)["runners"]))')
     if [ -z "$runner_selectors" ]; then
       printf 'no selected claims in this mode\n'
       printf 'no selected claims in this mode\nexit=0\n' > "$mode_dir/batch.log"
       duration=$(($(date +%s) - run_started))
       "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
-        "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS "$duration" || return 1
+        "$shared/batch-metadata.json" "$mode_dir/batch-metadata.json" "$mode" NO_SELECTED_CLAIMS \
+        "$duration" "$selected_cases" "" "$selected_area" "$selected_area_uncovered" || return 1
       return 0
     fi
   else
@@ -210,6 +240,12 @@ run_mode() {
       printf 'KB_JOURNEY_ONLY=%s e2e/journey/run.sh --no-build' "$runner_selectors"
     fi
   }
+  rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
+  rm -rf .journey/reports/invocations
+  if [ -n "$selected_cases" ]; then
+    mkdir -p .journey/reports
+    cp "$mode_dir/selection-plan.json" .journey/reports/selection-plan.json || return 1
+  fi
   rc=0
   KB_JOURNEY_CASES="$selected_cases" KB_JOURNEY_SELECTION_MODE="$mode" \
     KB_JOURNEY_ONLY="$runner_selectors" "$SCRIPT_DIR/run.sh" --no-build > "$mode_dir/batch.log" 2>&1 || rc=$?
@@ -232,15 +268,43 @@ run_mode() {
   rm -f .journey/reports/*.json .journey/reports/*.log .journey/reports/*.md
   rm -rf .journey/reports/invocations
   duration=$(($(date +%s) - run_started))
+  if [ "$rc" -eq 0 ] && [ -n "$selected_cases" ] && [ -n "$runner_selectors" ]; then
+    if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" verify-selection-evidence \
+      "$mode_dir" "$mode"; then
+      printf 'selected owning-step evidence is missing or incomplete\n' >> "$mode_dir/batch.log"
+      echo "journey $mode mode selected owning-step evidence is missing or incomplete; see $mode_dir/batch.log" >&2
+      rc=1
+    fi
+  fi
   result=PASS; [ "$rc" -eq 0 ] || result=FAIL
   scoreboard_missing=0
   if [ ! -s "$mode_dir/case-scoreboard.json" ]; then
     scoreboard_missing=1
     result=FAIL
+  elif [ -n "$selected_cases" ]; then
+    if ! "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" record-selection \
+      "$mode_dir/case-scoreboard.json" "$selected_cases" "$ROOT/docs/qa/scenarios"; then
+      echo "journey $mode mode could not preserve its requested selection in the scoreboard; next: $(next_runner_command)" >&2
+      return 1
+    fi
+  fi
+  if [ -n "$selected_cases" ] && [ "$scoreboard_missing" -eq 0 ]; then
+    gate_rc=0
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-gating \
+      "$mode_dir" "$mode" "$producer" "$out" "$selected_cases" || gate_rc=$?
+    if [ "$gate_rc" -ne 0 ]; then
+      echo "journey $mode mode has an invalid releaseGate declaration; see $mode_dir/case-scoreboard.json" >&2
+      return 1
+    fi
   fi
   source_meta="$shared/batch-metadata.json"
+  failure_reason=""
+  if [ "$scoreboard_missing" -eq 1 ]; then
+    failure_reason="mode produced no case scoreboard (runner exited $rc)"
+  fi
   "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" mode-metadata \
-    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" || return 1
+    "$source_meta" "$mode_dir/batch-metadata.json" "$mode" "$result" "$duration" "$selected_cases" \
+    "$failure_reason" "$selected_area" "$selected_area_uncovered" || return 1
   if [ "$scoreboard_missing" -eq 1 ]; then
     echo "journey $mode mode produced no case scoreboard (entry exited with $rc); see $mode_dir/batch.log for the cause. Next: $(next_runner_command)" >&2
     return 1
@@ -264,23 +328,45 @@ case "${1:-}" in
     run_prepare "$2" "${3:-$BASELINE}"
     ;;
   mode)
+    selected_cases=""; selected_area=""
     case "$#" in
-      4) selected_cases="" ;;
+      4) ;;
       6)
-        [ "$5" = "--cases" ] || usage
-        selected_cases=$6
-        case "$selected_cases" in
-          *[![:space:]]*) ;;
-          *) echo "journey batch --cases requires at least one case or step ID; an empty selection cannot mean a full batch; next: node ./cli/bin/dist/bin.js qa cases list --json" >&2; exit 2 ;;
+        case "$5" in
+          --cases) selected_cases=$6 ;;
+          --area) selected_area=$6 ;;
+          *) usage ;;
         esac
+        if [ "$5" = "--cases" ]; then
+          case "$selected_cases" in
+            *[![:space:]]*) ;;
+            *) echo "journey batch --cases requires at least one case or step ID; an empty selection cannot mean a full batch; next: node ./cli/bin/dist/bin.js qa cases list --json" >&2; exit 2 ;;
+          esac
+        fi
         ;;
       *) usage ;;
     esac
-    run_mode "$2" "$3" "$4" "$selected_cases"
+    run_mode "$2" "$3" "$4" "$selected_cases" "$selected_area"
+    ;;
+  area)
+    [ "$#" -ge 3 ] && [ "$#" -le 4 ] || usage
+    selected_area=$2; full_out=$(absolute "$3"); baseline=${4:-$BASELINE}
+    BATCH_SELECTION="area:$selected_area" run_prepare "$full_out" "$baseline" || prepare_rc=$?
+    producer="$full_out"
+    if [ "${prepare_rc:-0}" -eq 0 ]; then
+      for mode in local secured; do
+        mode_out="$full_out/.artifact-$mode"
+        run_mode "$mode" "$producer" "$mode_out" "" "$selected_area" || mode_rc=1
+      done
+      "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$full_out" "$producer" \
+        "$full_out/.artifact-local" "$full_out/.artifact-secured" "@area:$selected_area" || summary_rc=1
+    fi
+    [ "${prepare_rc:-0}" -eq 0 ] && [ "${summary_rc:-0}" -eq 0 ] && [ "${mode_rc:-0}" -eq 0 ]
     ;;
   summarize)
-    [ "$#" -eq 5 ] || usage
-    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$2" "$3" "$4" "$5"
+    [ "$#" -ge 5 ] && [ "$#" -le 7 ] || usage
+    if [ "$#" -eq 7 ]; then [ "$6" = "--selection" ] || usage; fi
+    "${BATCH_PYTHON:-python3}" "$SCRIPT_DIR/batch_summary.py" "$2" "$3" "$4" "$5" "${7:-}"
     ;;
   *)
     [ "$#" -ge 1 ] && [ "$#" -le 2 ] || usage

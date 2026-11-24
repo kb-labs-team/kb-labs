@@ -62,7 +62,7 @@ export {
 // Flags
 // ---------------------------------------------------------------------------
 
-export { parseArgs } from './flags.js';
+export { parseArgs, coerceCommandFlags } from './flags.js';
 
 // ---------------------------------------------------------------------------
 // Platform Logger

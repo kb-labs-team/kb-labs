@@ -224,6 +224,9 @@ Examples:
 			if len(result.SkippedBuilds) > 0 {
 				payload["skippedBuilds"] = result.SkippedBuilds
 			}
+			if len(result.SkippedManualTasks) > 0 {
+				payload["skippedManualTasks"] = result.SkippedManualTasks
+			}
 			if !result.OK {
 				return taskFailure(failedTaskResult(result.Results), payload)
 			}
@@ -234,16 +237,22 @@ Examples:
 			clikitcommand.Printf("\n  %s\n", o.dim.Render(fmt.Sprintf("skipped build of %d product app packages (category defaultBuild: false); build them with `kb-devkit run build --packages %s`",
 				len(result.SkippedBuilds), strings.Join(result.SkippedBuilds, ","))))
 		}
+		if len(result.SkippedManualTasks) > 0 {
+			for _, task := range result.SkippedManualTasks {
+				clikitcommand.Printf("  %s\n", o.warning.Render(fmt.Sprintf("skipped manual-only task %s:%s (%s)", task.Package, task.Task, task.Reason)))
+			}
+		}
 
 		// Summary line.
 		s := summary
-		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  %s not affected  — %s\n\n",
+		clikitcommand.Printf("\n  %s scheduled  %s  %s  %s  %s  %s not affected  %s skipped manual  — %s\n\n",
 			o.dim.Render(fmt.Sprintf("%d", s.Scheduled)),
 			o.healthy.Render(fmt.Sprintf("%d passed", s.Passed)),
 			o.dim.Render(fmt.Sprintf("%d cached", s.Cached)),
 			colorCount(s.Failed, o),
 			o.warning.Render(fmt.Sprintf("%d blocked", s.Blocked)),
 			o.dim.Render(fmt.Sprintf("%d", s.NotAffected)),
+			o.warning.Render(fmt.Sprintf("%d", s.SkippedManual)),
 			elapsed.Round(time.Millisecond),
 		)
 		if len(s.BlockedTasks) <= 10 {

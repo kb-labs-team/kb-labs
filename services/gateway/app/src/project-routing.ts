@@ -26,6 +26,7 @@ import { createErrorEnvelope, getCatalogEntry, isErrorCode, isErrorEnvelope, nor
 import type { IServiceTransport, ProjectServiceConnectionInfo } from "@kb-labs/core-platform";
 import { validateProjectServiceDeclarations, type ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import { createUxFailureResult, createUxSuccessResult } from "@kb-labs/core-platform/ux-result";
+import { isTrustedGatewayOrigin, type ProjectOriginTrustOptions } from "./project-origin.js";
 
 /** Path prefix under which project-scoped APIs are served. */
 export const PROJECT_ROUTE_PREFIX = "/api/v1/projects";
@@ -96,6 +97,7 @@ const HOP_BY_HOP = new Set([
 function buildRequestHeaders(
   request: FastifyRequest,
   upstream: ProjectUpstream,
+  suppressTrustedOrigin: boolean,
 ): IncomingHttpHeaders {
   const supplied = new Set(
     Object.keys(upstream.headers).map((name) => name.toLowerCase()),
@@ -104,7 +106,10 @@ function buildRequestHeaders(
   for (const [name, value] of Object.entries(request.headers)) {
     const lower = name.toLowerCase();
     // Client-supplied copies of the runtime control headers are never forwarded.
-    if (HOP_BY_HOP.has(lower) || lower === "host" || supplied.has(lower)) {
+    if (
+      HOP_BY_HOP.has(lower) || lower === "host" || supplied.has(lower) ||
+      (lower === "origin" && suppressTrustedOrigin)
+    ) {
       continue;
     }
     headers[lower] = value;
@@ -151,6 +156,7 @@ function sendError(
 function forward(
   request: FastifyRequest,
   upstream: ProjectUpstream,
+  suppressTrustedOrigin: boolean,
   path: string,
   timeoutMs: number,
   signal: AbortSignal,
@@ -170,7 +176,7 @@ function forward(
         ...(upstream.socketPath ? { socketPath: upstream.socketPath } : {}),
         method: request.method,
         path,
-        headers: buildRequestHeaders(request, upstream),
+        headers: buildRequestHeaders(request, upstream, suppressTrustedOrigin),
       },
       (response) => {
         if (settled) {
@@ -209,6 +215,7 @@ export async function registerProjectRoutes(
   services: readonly ProjectServiceDeclaration[],
   projectTransport: Pick<IServiceTransport, "resolveProjectService">,
   timeoutMs = 30_000,
+  originTrust: ProjectOriginTrustOptions = { publicUrl: process.env.GATEWAY_PUBLIC_URL, authEnabled: true },
 ): Promise<void> {
   validateProjectServiceDeclarations(services);
   await app.register(async function projectRoutes(scope) {
@@ -227,6 +234,12 @@ export async function registerProjectRoutes(
       },
       handler: async (request, reply) => {
         const { projectId, serviceId } = request.params;
+        const suppressTrustedOrigin = isTrustedGatewayOrigin({
+          origin: typeof request.headers.origin === "string" ? request.headers.origin : undefined,
+          host: typeof request.raw.headers.host === "string" ? request.raw.headers.host : undefined,
+          peerAddress: request.raw.socket.remoteAddress,
+          localPort: request.raw.socket.localPort,
+        }, originTrust);
         const service = services.find((candidate) => candidate.serviceId === serviceId);
         if (!service) {
           const error = createErrorEnvelope("KB_PROJECT_SERVICE_NOT_FOUND", {
@@ -302,7 +315,7 @@ export async function registerProjectRoutes(
             ...(upstream.socketPath ? { socketPath: upstream.socketPath } : {}),
             headers: upstream.headers ?? {},
             release,
-          }, path, timeoutMs, abortController.signal);
+          }, suppressTrustedOrigin, path, timeoutMs, abortController.signal);
         } catch (error) {
           release();
           if (isHealthRequest) {
@@ -374,11 +387,14 @@ export async function registerProjectRoutes(
               : upstreamStatus === 401 ? "KB_AUTH_REQUIRED"
                 : upstreamStatus === 403 ? "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
                   : "KB_RUNTIME_COMMAND_FAILED";
-          const route = `${request.method} ${path}`;
+          const route = `${request.method} ${path.split("?", 1)[0]}`;
           const error = createErrorEnvelope(code, {
+            ...(code === "KB_RUNTIME_COMMAND_FAILED" ? { templateValues: { binary: "kb" } } : {}),
             details: code === "KB_RUNTIME_GATEWAY_PROTOCOL_FAILURE"
               ? { requestStage: route, httpStatus: String(upstreamStatus) }
-              : { upstreamStatus: String(upstreamStatus), route },
+              : code === "KB_RUNTIME_COMMAND_FAILED"
+                ? { upstreamStatus: String(upstreamStatus), route }
+                : { upstreamStatus: String(upstreamStatus) },
             correlationId: String(request.id),
           });
           return reply.code(upstreamStatus).send(createUxFailureResult(error));

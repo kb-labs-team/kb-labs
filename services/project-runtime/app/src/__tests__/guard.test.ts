@@ -3,7 +3,7 @@ import { connect } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { createContextLogger } from "@kb-labs/core-platform";
 import { NoOpLogger } from "@kb-labs/core-platform/noop";
-import { reserveLoopbackPorts, type ActiveWorkItem } from "@kb-labs/shared-daemon";
+import { createProjectCommandExecutionProof, matchesProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER, reserveLoopbackPorts, type ActiveWorkItem } from "@kb-labs/shared-daemon";
 import { createRuntimeGuard, tokenMatches, type RuntimeGuard } from "../guard.js";
 import {
   RUNTIME_ACTIVE_WORK_PATH,
@@ -110,6 +110,7 @@ describe("runtime guard", () => {
       headers: {
         ...authed,
         [RUNTIME_PROJECT_HEADER]: "prj_forged",
+        [PROJECT_COMMAND_EXECUTION_PROOF_HEADER]: "client-forged",
         "content-type": "application/json",
         "x-custom": "kept",
       },
@@ -127,6 +128,14 @@ describe("runtime guard", () => {
     });
     expect(seen[0]?.headers[RUNTIME_TOKEN_HEADER]).toBeUndefined();
     expect(seen[0]?.headers[RUNTIME_PROJECT_HEADER]).toBe("prj_0123456789abcdef");
+    const proof = seen[0]?.headers[PROJECT_COMMAND_EXECUTION_PROOF_HEADER];
+    expect(typeof proof).toBe("string");
+    expect(typeof proof === "string" && proof.split(".")).toHaveLength(3);
+    expect(typeof proof === "string" && proof.split(".")[0]).toMatch(/^\d{13}$/);
+    expect(typeof proof === "string" && proof.split(".")[2]).toMatch(/^[a-f0-9]{64}$/);
+    expect(matchesProjectCommandExecutionProof(TOKEN, proof, { projectId: "prj_0123456789abcdef", method: "POST", path: "/api/v1/items?limit=2" })).toBe(true);
+    expect(matchesProjectCommandExecutionProof(TOKEN, proof, { projectId: "prj_0123456789abcdef", method: "POST", path: "/api/v1/other" })).toBe(false);
+    expect(createProjectCommandExecutionProof(TOKEN, { projectId: "prj_0123456789abcdef", method: "POST", path: "/api/v1/items?limit=2" })).not.toBe(proof);
     expect(seen[0]?.headers["x-custom"]).toBe("kept");
   });
 

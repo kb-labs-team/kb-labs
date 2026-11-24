@@ -10,6 +10,12 @@ describe('UserCronSchema', () => {
     })).toMatchObject({ id: 'nightly', enabled: true, workflow: 'release', input: { channel: 'stable' } });
   });
 
+  it('accepts standard cron field ranges', () => {
+    expect(UserCronSchema.parse({
+      id: 'weekday-report', schedule: '0 9 * * 1-5', workflow: 'report',
+    })).toMatchObject({ schedule: '0 9 * * 1-5', workflow: 'report' });
+  });
+
   it('accepts handler targets and rejects invalid schedules or missing/duplicate targets', () => {
     expect(() => UserCronSchema.parse({ id: 'nightly', schedule: 'bad', workflow: 'release' })).toThrow();
     expect(UserCronSchema.parse({ id: 'nightly', schedule: '0 2 * * *', handler: 'plugin:job' }))

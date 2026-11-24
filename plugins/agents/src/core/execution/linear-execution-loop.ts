@@ -112,6 +112,17 @@ export class LinearExecutionLoop implements ExecutionLoop {
 
       // ── Middleware beforeIteration ──────────────────────────────────────────
       const action = await ctx.beforeIteration();
+
+      // Preserve the typed budget outcome when BudgetMiddleware both records
+      // exhaustion and requests an immediate stop.
+      if (run.meta.get<boolean>('budget', 'exhausted')) {
+        return complete({
+          priority: PRIORITY.HARD_BUDGET,
+          reasonCode: 'hard_budget',
+          reason: run.meta.get<string>('budget', 'exhaustedReason') ?? 'Token budget exhausted',
+        });
+      }
+
       if (action === 'stop') {
         return complete({
           priority: PRIORITY.HARD_BUDGET,
@@ -121,15 +132,6 @@ export class LinearExecutionLoop implements ExecutionLoop {
       }
       if (action === 'escalate') {
         return { outcome: 'escalate', reason: 'Middleware requested tier escalation' };
-      }
-
-      // ── Hard budget (set by BudgetMiddleware via meta) ───────────────────────
-      if (run.meta.get<boolean>('budget', 'exhausted')) {
-        return complete({
-          priority: PRIORITY.HARD_BUDGET,
-          reasonCode: 'hard_budget',
-          reason: run.meta.get<string>('budget', 'exhaustedReason') ?? 'Token budget exhausted',
-        });
       }
 
       // ── LLM call ──────────────────────────────────────────────────────────────

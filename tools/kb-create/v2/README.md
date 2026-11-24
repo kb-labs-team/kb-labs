@@ -48,6 +48,27 @@ as `--platform-root`, `--platform-version`/`--platform-channel`,
 the same `InstallRequest` before resolution; flags never build a separate
 shell-level install sequence.
 
+A request file can also declare a validated platform Gateway address. For
+example, save this as `request.json` (replace `platformRoot` with the isolated
+installation directory):
+
+```json
+{
+  "schema": "kb.create/v2",
+  "platform": { "channel": "stable" },
+  "serviceProfile": "default",
+  "gatewayUrl": "http://127.0.0.1:45100",
+  "platformRoot": "/srv/kb-platform"
+}
+```
+
+Preview and apply the same request with `kb-create plan --input request.json
+--index release-index.json` and `kb-create apply --input request.json
+--index release-index.json`. `gatewayUrl` must be an HTTP loopback origin with
+an explicit port; the resolver derives the host health URL and dependent
+service ports from it. It is a platform topology input and does not configure
+Marketplace plugin or adapter sources.
+
 For a human, run `kb-create install`. The platform supports exactly one Node.js
 major, the latest LTS major declared by the root `package.json` `engines.node`.
 On a mismatch, the installer prints the exact command to switch to that major.

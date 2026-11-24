@@ -5,18 +5,27 @@ from kb_invocation import kb_command
 
 from project_service_path import project_service_path
 
+import base64
 import json
-import hashlib
 import os
+import re
+import shutil
 import tempfile
+import tarfile
 import time
+from urllib.parse import urlencode, urlsplit, urlunsplit
 import urllib.request
 from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Callable
 
 from journey_resources import active_platform_root, workspace_resource
+from installed_fixture import layout_value
+from platform_snapshot import _platform_snapshot
+from journey_selection import read_journey_selection
 from hermetic_cli import run_hermetic_cli
 from service_steps import Journey
+from gateway_sessions import gateway_session
 from invocations import (
     CompletedProcess,
     catalogued_error_hint,
@@ -30,6 +39,7 @@ from invocations import (
     read_ux_http_result,
     run_command,
     run_with_runner,
+    store_report_secret,
 )
 from plugin_author_steps import preflight_installed_plugin_command, run_commit_case_steps
 from commit_fixture import commit_fixture_source_version
@@ -38,8 +48,52 @@ from commit_fixture import commit_fixture_source_version
 CommandRunner = Callable[..., CompletedProcess[str]]
 
 
-def commit_publish_command(workspace_root: str | Path) -> list[str]:
-    return ["hub", "publish", "--path", str(Path(workspace_root) / "plugins" / "commit"), "--json"]
+def _installed_gateway_url(env: dict[str, str]) -> str:
+    """Read the active install's verified Gateway URL, as the CLI auth gate does."""
+    platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not platform_root:
+        raise RuntimeError("secured marketplace journey cannot resolve its installed Gateway receipt")
+    receipt_path = active_platform_root(Path(platform_root)) / ".kb" / "v2" / "receipt.json"
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("secured marketplace journey cannot read the active Gateway receipt") from error
+    health_url = receipt.get("verification", {}).get("hostHealthUrl")
+    if not isinstance(health_url, str) or not health_url:
+        raise RuntimeError("secured marketplace journey receipt has no verified Gateway URL")
+    parsed = urlsplit(health_url)
+    path = parsed.path.removesuffix("/health").rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
+
+
+def marketplace_platform_config_path(platform_root: Path) -> Path:
+    """Resolve the installed config through the active version's shared-state link."""
+    return active_platform_root(platform_root) / layout_value(
+        "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
+
+
+def _assert_registry_gateway_config(env: dict[str, str]) -> None:
+    platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    registry_upstream = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL")
+    if not platform_root or not registry_upstream:
+        raise RuntimeError("Registry journey has no installed Gateway route fixture")
+    config_path = active_platform_root(Path(platform_root)) / ".kb" / "kb.config.jsonc"
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    route = config.get("gateway", {}).get("upstreams", {}).get("marketplaceRegistry")
+    transport = (config.get("platform", {}).get("adapterOptions", {})
+                 .get("serviceTransport", {}).get("services", {}).get("marketplace-registry"))
+    sources = config.get("marketplace", {}).get("sources", [])
+    if (route != {"serviceId": "marketplace-registry",
+                  "prefix": "/api/v1/marketplace-registry", "rewritePrefix": ""}
+            or not isinstance(transport, dict) or transport.get("url") != registry_upstream
+            or not isinstance(sources, list) or not sources
+            or not isinstance(sources[0], dict)
+            or sources[0].get("url") != f"{_installed_gateway_url(env)}/api/v1/marketplace-registry"):
+        raise RuntimeError("Registry source, Gateway route, and isolated upstream do not form one route")
+
+
+def commit_publish_command(package_root: str | Path) -> list[str]:
+    return ["hub", "publish", "--path", str(Path(package_root)), "--json"]
 
 
 def _publish_fixture_command(workspace_root: str | Path, package_path: str) -> list[str]:
@@ -56,16 +110,82 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
     publish = _publish_fixture_command(workspace_root, package_path)
     command = ["node", str(workspace_cli), *publish]
     publish_env = dict(env)
-    publish_env["KB_REGISTRY_URL"] = registry_url
+    publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
+    gateway_login = None
+    if read_journey_selection(env).runner_selector.endswith(":secured"):
+        email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+        password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+        if not email or not password:
+            raise RuntimeError("secured Registry fixture publishing needs the journey administrator credentials")
+        gateway_login = (_installed_gateway_url(env), email, password)
+    journey_platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not journey_platform_root:
+        raise RuntimeError("Registry fixture publishing needs the active installed platform root")
     return run_hermetic_cli(
         command, cwd=workspace_root, env=publish_env, runner=runner,
+        workspace_root=workspace_root,
+        installed_platform_root=active_platform_root(Path(journey_platform_root)),
+        gateway_login=gateway_login,
     )
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
          input: str | None = None) -> CompletedProcess[str]:
     return run_with_runner(runner, command, cwd=cwd, env=env, timeout=300, input=input)
+
+
+def _publish_npm_fixture_package(package_dir: Path, registry: str, cwd: Path,
+                                 env: dict[str, str], runner: CommandRunner, *,
+                                 http_opener: Callable[..., object] = urllib.request.urlopen) -> None:
+    """Register a throwaway Verdaccio user and publish with registry-scoped auth."""
+    parsed_registry = urlsplit(registry)
+    if parsed_registry.scheme not in {"http", "https"} or not parsed_registry.netloc:
+        raise RuntimeError("S-010.8 requires an HTTP npm fixture registry")
+
+    username = "kb-journey"
+    password = "kb-journey"
+    user_url = f"{registry.rstrip('/')}/-/user/org.couchdb.user:{username}"
+    body = json.dumps({"name": username, "password": password, "email": "kb-journey@local"}).encode()
+    request = urllib.request.Request(
+        user_url, data=body, headers={"Content-Type": "application/json"}, method="PUT")
+    try:
+        with http_opener(request, timeout=10) as response:
+            status = getattr(response, "status", None)
+            if status is None:
+                status = response.getcode()
+    except urllib.error.HTTPError as error:
+        status = error.code
+    if status not in (200, 201, 409):
+        raise RuntimeError(f"S-010.8 Verdaccio user registration failed (status {status})")
+
+    auth = base64.b64encode(f"{username}:{password}".encode()).decode("ascii")
+    userconfig = cwd / ".kb-journey-npmrc"
+    userconfig.write_text(
+        f"//{parsed_registry.netloc}/:_auth={auth}\n"
+        f"//{parsed_registry.netloc}/:always-auth=true\n"
+        f"registry={registry.rstrip('/')}/\n",
+        encoding="utf-8",
+    )
+    userconfig.chmod(0o600)
+    publish_env = dict(env)
+    publish_env["npm_config_userconfig"] = str(userconfig)
+    command = ["npm", "publish", str(package_dir), "--json", f"--registry={registry}"]
+    _output(_run(command, cwd=cwd, env=publish_env, runner=runner), command)
+
+
+def _transitive_npm_fixture_ids(suffix: str) -> tuple[str, str]:
+    """Return a platform plugin id and an ordinary npm dependency id."""
+    return (f"@kb-labs/journey-transitive-plugin-{suffix}",
+            f"journey-transitive-dependency-{suffix}")
+
+
+def _transitive_npm_fixture_dependencies(dependency_id: str, sdk_version: str) -> dict[str, dict[str, str]]:
+    """Keep the private npm dependency distinct from the platform-provided SDK peer."""
+    return {
+        "dependencies": {dependency_id: "1.0.0"},
+        "peerDependencies": {"@kb-labs/sdk": sdk_version},
+    }
 
 
 def _output(result: CompletedProcess[str], command: list[str]) -> str:
@@ -283,24 +403,6 @@ def configured_marketplace_source_kinds(status: dict) -> tuple[str, ...]:
     return source_kinds
 
 
-def _platform_snapshot(platform_root: Path) -> tuple[str, tuple[tuple[str, str], ...]]:
-    """Capture the sealed receipt and every installed package version."""
-    content_root = active_platform_root(platform_root)
-    receipt = content_root / ".kb" / "v2" / "receipt.json"
-    receipt_hash = hashlib.sha256(receipt.read_bytes()).hexdigest()
-    packages = []
-    for package_file in sorted((content_root / "node_modules").rglob("package.json")):
-        try:
-            package = json.loads(package_file.read_text())
-        except (OSError, json.JSONDecodeError):
-            continue
-        name = package.get("name")
-        version = package.get("version")
-        if isinstance(name, str) and isinstance(version, str):
-            packages.append((str(package_file.relative_to(content_root / "node_modules")), f"{name}@{version}"))
-    return receipt_hash, tuple(packages)
-
-
 def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[str, str],
                                      runner: CommandRunner) -> None:
     """Clear both credential stores, prove the auth refusal, then log in as admin."""
@@ -313,8 +415,10 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     if logout_result.returncode != 0:
         raise RuntimeError("could not clear saved Gateway credentials before unauthenticated marketplace checks")
 
-    def assert_auth_required(step_id: str) -> None:
-        command = kb_command([ "marketplace", "plugins", "list", "--scope", "platform", "--json"])
+    gateway = _installed_gateway_url(env)
+
+    def assert_auth_required(step_id: str, scope_args: list[str]) -> None:
+        command = kb_command(["marketplace", "plugins", "list", *scope_args, "--json"])
         with invocation_context(step_id=step_id):
             result = _run(command, cwd=project, env=env, runner=runner)
         try:
@@ -322,21 +426,26 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
         except (json.JSONDecodeError, ValueError) as error:
             raise RuntimeError(f"unauthenticated marketplace list returned an invalid UX result: {error}") from error
         failure = decode_ux_error_result(payload) if result.returncode else None
+        details = failure.get("details") if isinstance(failure, dict) else None
         if (result.returncode == 0 or not isinstance(failure, dict)
                 or failure.get("code") != "KB_AUTH_REQUIRED"
                 or failure.get("message") != catalogued_error_message("KB_AUTH_REQUIRED")
                 or failure.get("hint") != catalogued_error_hint(
-                    "KB_AUTH_REQUIRED", gatewayUrl=env.get("KB_JOURNEY_BASE_URL", "<url>"))):
+                    "KB_AUTH_REQUIRED", gatewayUrl=gateway)
+                or not isinstance(details, dict) or details.get("gatewayUrl") != gateway):
             raise RuntimeError("unauthenticated marketplace list did not return KB_AUTH_REQUIRED with the login hint")
 
+    def assert_both_marketplace_scopes_require_auth() -> None:
+        for scope in ([], ["--scope", "platform"]):
+            assert_auth_required("S-041.7", scope)
+
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
-                 lambda: assert_auth_required("S-041.7"), cases=["S-041.7"])
+                 assert_both_marketplace_scopes_require_auth, cases=["S-041.7"])
 
 
     journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
-                 lambda: assert_auth_required("S-010.6"), cases=["S-010.6"])
+                 lambda: assert_auth_required("S-010.6", ["--scope", "platform"]), cases=["S-010.6"])
 
-    gateway = env.get("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000")
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
     if not password:
@@ -351,7 +460,7 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
     status = kb_command([ "auth", "status", "--json"])
     with invocation_context(step_id="marketplace.authenticated-session"):
         auth_status = _json(_run(status, cwd=project, env=env, runner=runner), status)
-    session = auth_status.get("session")
+    session = gateway_session(auth_status, gateway)
     if not isinstance(session, dict) or session.get("authenticated") is not True:
         raise RuntimeError("secured marketplace CLI login did not save a user session")
 
@@ -374,6 +483,8 @@ def prepare_commit_project_fixture(journey: Journey, project_root: str | Path, r
     captured: dict[str, dict] = {}
 
     def install_fixture() -> None:
+        if base_env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
+            _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         version = commit_fixture_source_version(workspace)
@@ -446,6 +557,204 @@ def publish_commit_update_fixture(registry: str, source_version: str, env: dict[
     return update_version
 
 
+def _release_version_tuple(version: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version)
+    if not match:
+        raise RuntimeError("Registry Commit fixture requires a stable semantic package version")
+    return tuple(int(part) for part in match.groups())
+
+
+def _registry_resolve_exact_commit_version(env: dict[str, str], version: str) -> dict | None:
+    gateway_url = _installed_gateway_url(env).rstrip("/")
+    registry_api = f"{gateway_url}/api/v1/marketplace-registry/api/v1"
+    query = urlencode({"identity": "@kb-labs/commit", "version": version})
+    request = urllib.request.Request(f"{registry_api}/resolve?{query}", headers={"Accept": "application/json"})
+    status, body, _ = open_http(urllib.request.urlopen, request, timeout=30, env=env)
+    try:
+        payload = json.loads(body)
+    except (json.JSONDecodeError, TypeError) as error:
+        raise RuntimeError("Gateway Registry version probe returned invalid JSON") from error
+    if status == 200 and isinstance(payload, dict) and payload.get("status") == "found":
+        package = payload.get("package")
+        if isinstance(package, dict) and package.get("id") == "@kb-labs/commit" and package.get("version") == version:
+            return package
+        raise RuntimeError("Gateway Registry version probe returned a mismatched Commit package")
+    if (status == 200 and isinstance(payload, dict)
+            and payload.get("status") in {"not-found-owned", "not-found-unowned"}):
+        return None
+    raise RuntimeError("Gateway Registry could not confirm whether the Commit fixture version is available")
+
+
+def _registry_commit_base_versions(workspace: Path, active_platform: Path, env: dict[str, str]) -> list[str]:
+    source_version = commit_fixture_source_version(workspace)
+    versions = [source_version]
+    active_root = Path(active_platform)
+    platform_lock = active_root / layout_value("versionStatePaths.kb_marketplace_lock")
+    if platform_lock.is_file():
+        try:
+            lock = json.loads(platform_lock.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("active platform Marketplace lock is unreadable") from error
+        plugins = lock.get("plugins") if isinstance(lock, dict) else None
+        commit = plugins.get("@kb-labs/commit") if isinstance(plugins, dict) else None
+        pinned_version = commit.get("version") if isinstance(commit, dict) else None
+        if isinstance(pinned_version, str) and pinned_version:
+            versions.append(pinned_version)
+
+    kb_home_value = env.get("KB_HOME", "").strip()
+    kb_home = (Path(kb_home_value).expanduser().resolve() if kb_home_value
+               else (Path(env.get("HOME", str(Path.home()))) / ".kb").resolve())
+    entries = kb_home / "store" / "entries"
+    key_prefix = "@kb-labs+commit@"
+    if entries.is_dir():
+        for entry in entries.glob(f"{key_prefix}*"):
+            version = entry.name[len(key_prefix):]
+            if version:
+                versions.append(version)
+    for version in versions:
+        _release_version_tuple(version)
+    return versions
+
+
+def _next_free_registry_commit_version(workspace: Path, active_platform: Path,
+                                        env: dict[str, str]) -> str:
+    base_versions = _registry_commit_base_versions(workspace, active_platform, env)
+    base = max(base_versions, key=_release_version_tuple)
+    major, minor, patch = _release_version_tuple(base)
+    for _ in range(100):
+        patch += 1
+        candidate = f"{major}.{minor}.{patch}"
+        store_entries = (Path(env.get("KB_HOME", str(Path(env.get("HOME", str(Path.home()))) / ".kb")))
+                         / "store" / "entries")
+        if (store_entries / f"@kb-labs+commit@{candidate}").exists():
+            continue
+        if _registry_resolve_exact_commit_version(env, candidate) is None:
+            return candidate
+    raise RuntimeError("could not find an unused higher Commit version in the Registry and extension store")
+
+
+def _prepare_registry_commit_publish_package(workspace: Path, fixture_parent: Path,
+                                            active_platform: Path, env: dict[str, str],
+                                            runner: CommandRunner = run_command) -> tuple[Path, str]:
+    source_root = workspace / "plugins" / "commit"
+    if not source_root.resolve().is_relative_to(workspace.resolve()):
+        raise RuntimeError("active Commit fixture package is outside the journey workspace")
+    source_package_path = source_root / "package.json"
+    try:
+        source_package = json.loads(source_package_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("active Commit fixture package manifest is unavailable") from error
+    package_name = source_package.get("name")
+    source_version = source_package.get("version")
+    if package_name != "@kb-labs/commit" or not isinstance(source_version, str):
+        raise RuntimeError("active Commit fixture package identity is invalid")
+    fixture_version = _next_free_registry_commit_version(workspace, active_platform, env)
+    manifest_field = source_package.get("kb", {}).get("manifest") if isinstance(source_package.get("kb"), dict) else None
+    if not isinstance(manifest_field, str):
+        raise RuntimeError("active Commit fixture package does not declare its compiled manifest")
+    manifest_js = (source_root / manifest_field).resolve()
+    manifest_json = manifest_js.with_suffix(".json")
+    if (source_root.resolve() not in manifest_js.parents or not manifest_js.is_file()
+            or not manifest_json.is_file()):
+        raise RuntimeError("active Commit fixture compiled manifest files are unavailable")
+    try:
+        static_manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("active Commit fixture static manifest is invalid") from error
+    if static_manifest.get("id") != package_name:
+        raise RuntimeError("active Commit package name and compiled manifest identity differ")
+
+    fixture_root = fixture_parent / "commit"
+    fixture_root.mkdir(parents=True, exist_ok=False)
+    # Run the same workspace-aware pack step used by release staging before
+    # moving the package outside the workspace. pnpm resolves workspace:*
+    # references only while packing from the real workspace package root.
+    pack_dir = fixture_parent / "workspace-pack"
+    pack_dir.mkdir(parents=True, exist_ok=False)
+    pack = run_with_runner(runner, ["pnpm", "pack", "--pack-destination", str(pack_dir)],
+                           cwd=source_root, env=env, timeout=300)
+    if pack.returncode != 0:
+        raise RuntimeError("pnpm workspace pack failed for the active Commit fixture")
+    packed_name = (pack.stdout or "").strip().splitlines()
+    if not packed_name:
+        raise RuntimeError("pnpm workspace pack returned no Commit tarball path")
+    tarball = Path(packed_name[-1].strip())
+    if not tarball.is_absolute():
+        tarball = pack_dir / tarball
+    try:
+        tarball = tarball.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError("pnpm workspace pack did not create its Commit tarball") from error
+    if pack_dir.resolve() not in tarball.parents or not tarball.is_file():
+        raise RuntimeError("pnpm workspace pack returned a tarball outside its isolated output directory")
+    try:
+        with tarfile.open(tarball, "r:gz") as archive:
+            for member in archive.getmembers():
+                member_path = PurePosixPath(member.name)
+                if (member_path.is_absolute() or ".." in member_path.parts
+                        or not member_path.parts or member_path.parts[0] != "package"):
+                    raise RuntimeError("pnpm workspace pack returned an unsafe package path")
+                relative = Path(*member_path.parts[1:])
+                if not relative.parts:
+                    continue
+                destination = fixture_root / relative
+                if member.isdir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                if member.isfile():
+                    source = archive.extractfile(member)
+                    if source is None:
+                        raise RuntimeError("pnpm workspace pack returned an unreadable Commit file")
+                    with source, destination.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+                    destination.chmod(member.mode & 0o777)
+                    continue
+                raise RuntimeError("pnpm workspace pack returned an unsupported Commit archive entry")
+    except (OSError, tarfile.TarError) as error:
+        raise RuntimeError("pnpm workspace pack returned an invalid Commit tarball") from error
+    finally:
+        tarball.unlink(missing_ok=True)
+    try:
+        packed_package = json.loads((fixture_root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("pnpm workspace pack did not include a valid Commit package manifest") from error
+    if (packed_package.get("name") != package_name or packed_package.get("version") != source_version):
+        raise RuntimeError("pnpm workspace pack changed the active Commit package identity or version")
+    for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies"):
+        dependencies = packed_package.get(section)
+        if isinstance(dependencies, dict) and any(
+                isinstance(spec, str) and spec.startswith("workspace:") for spec in dependencies.values()):
+            raise RuntimeError("pnpm workspace pack left an unresolved workspace dependency in the Commit artifact")
+    packed_package["version"] = fixture_version
+    (fixture_root / "package.json").write_text(
+        json.dumps(packed_package, indent=2) + "\n", encoding="utf-8")
+    packed_manifest_field = packed_package.get("kb", {}).get("manifest")
+    if not isinstance(packed_manifest_field, str):
+        raise RuntimeError("pnpm workspace pack omitted the active Commit compiled manifest path")
+    packed_manifest = Path(packed_manifest_field)
+    if packed_manifest.is_absolute() or ".." in packed_manifest.parts:
+        raise RuntimeError("pnpm workspace pack returned an unsafe Commit manifest path")
+    manifest_js = fixture_root / packed_manifest
+    manifest_json = manifest_js.with_suffix(".json")
+    if not manifest_js.is_file() or not manifest_json.is_file():
+        raise RuntimeError("pnpm workspace pack omitted the active Commit compiled manifest files")
+    try:
+        packed_static_manifest = json.loads(manifest_json.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("pnpm workspace pack returned an invalid Commit static manifest") from error
+    if packed_static_manifest.get("id") != package_name:
+        raise RuntimeError("pnpm workspace pack changed the active Commit manifest identity")
+    installed_node_modules = Path(active_platform) / "node_modules"
+    if not installed_node_modules.is_dir():
+        raise RuntimeError("active platform package dependencies are unavailable for the Commit publisher")
+    (fixture_root / "node_modules").symlink_to(installed_node_modules, target_is_directory=True)
+    package = json.loads((fixture_root / "package.json").read_text(encoding="utf-8"))
+    package["version"] = fixture_version
+    (fixture_root / "package.json").write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    return fixture_root, fixture_version
+
+
 def prepare_registry_commit_project_fixture(journey: Journey, project_root: str | Path, registry: str,
                                             env: dict[str, str] | None = None,
                                             runner: CommandRunner = run_command) -> dict | None:
@@ -455,14 +764,57 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     export_project_identity_to_child_environment(base_env, project_root=str(project))
     captured: dict[str, dict] = {}
 
+    def assert_direct_registry_denied() -> None:
+        registry_api = base_env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL", "").removesuffix("/api/v1")
+        if not registry_api:
+            raise RuntimeError("journey Registry direct-access check has no service URL")
+        direct_request = urllib.request.Request(
+            f"{registry_api}/api/v1/resolve?identity=%40kb-labs%2Fcommit")
+        status, body, _ = open_http(urllib.request.urlopen, direct_request, timeout=30, env=base_env)
+        direct_payload = read_ux_http_result(body, status)
+        direct_error = direct_payload.get("error") if isinstance(direct_payload, dict) else None
+        if status != 401 or not isinstance(direct_error, dict) or direct_error.get("code") != "KB_AUTH_REQUIRED":
+            raise RuntimeError("direct Registry resolve was not denied without the Gateway internal secret")
+
+    journey.step("direct Registry access is denied without Gateway identity", "marketplace-fixtures",
+                 assert_direct_registry_denied, cases=["S-268.1"], role="lifecycle",
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
+    def assert_gateway_registry_ready() -> None:
+        gateway_request = urllib.request.Request(f"{_installed_gateway_url(base_env)}/ready")
+        status, body, _ = open_http(urllib.request.urlopen, gateway_request, timeout=30, env=base_env)
+        payload = read_ux_http_result(body, status)
+        data = payload.get("data") if isinstance(payload, dict) else None
+        components = data.get("components") if isinstance(data, dict) else None
+        registry_component = components.get("upstream:marketplaceRegistry") if isinstance(components, dict) else None
+        if (status != 200 or not isinstance(data, dict) or data.get("ready") is not True
+                or not isinstance(registry_component, dict) or registry_component.get("ready") is not True):
+            raise RuntimeError("Gateway readiness did not report the protected Marketplace Registry upstream as ready")
+
+    journey.step("Gateway reports protected Registry ready", "marketplace-fixtures",
+                 assert_gateway_registry_ready, cases=["S-268.23"], role="lifecycle",
+                 runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
+
     def install_fixture() -> None:
+        _assert_registry_gateway_config(base_env)
         wait_for_marketplace_ready(project, base_env, runner)
+        base_env["KB_REGISTRY_URL"] = (
+            f"{_installed_gateway_url(base_env)}/api/v1/marketplace-registry/api/v1")
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
-        published = _json(_publish_workspace_fixture(workspace, "plugins/commit", base_env, runner),
-                           commit_publish_command(workspace))
+        active_platform = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
+        with tempfile.TemporaryDirectory(
+                prefix="kb-registry-commit-publish-", dir=base_env.get("HOME")) as fixture_directory:
+            commit_package, expected_version = _prepare_registry_commit_publish_package(
+                workspace, Path(fixture_directory), active_platform, base_env, runner)
+            published = _json(_publish_workspace_fixture(workspace, str(commit_package), base_env, runner),
+                               commit_publish_command(commit_package))
         version = published.get("version")
-        if not isinstance(version, str) or not version:
-            raise RuntimeError("kb hub publish did not return the published Commit version")
+        if version != expected_version:
+            raise RuntimeError("Registry publisher returned a Commit version different from the prepared package")
+        resolved_package = _registry_resolve_exact_commit_version(base_env, version)
+        if (not isinstance(resolved_package, dict) or resolved_package.get("id") != "@kb-labs/commit"
+                or resolved_package.get("version") != version or not resolved_package.get("integrity")):
+            raise RuntimeError("Registry resolve did not return the published Commit package and integrity")
         for fixture_path in ("e2e/journey/fixtures/analytics-emitter", "plugins/qa"):
             publication = _json(_publish_workspace_fixture(workspace, fixture_path, base_env, runner),
                                 _publish_fixture_command(workspace, fixture_path))
@@ -481,6 +833,8 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
                                               signature_status="verified")
         if entry is None:
             raise RuntimeError("Registry fixture install did not record the verified Commit lock entry")
+        if entry.get("integrity") != resolved_package.get("integrity"):
+            raise RuntimeError("Registry install lock integrity differs from the published exact-version resolution")
         captured["entry"] = dict(entry)
 
     journey.step("publish and install Commit through Registry", "marketplace-fixtures", install_fixture,
@@ -583,6 +937,37 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
 
     def assert_signature_and_integrity_fail_closed() -> None:
         original_lock = lock_path.read_bytes()
+        workspace = Path(env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+        active_platform = active_platform_root(Path(env["KB_JOURNEY_PLATFORM_ROOT"]))
+        publish_env = dict(env)
+        publish_env["KB_REGISTRY_URL"] = (
+            f"{_installed_gateway_url(env).rstrip('/')}/api/v1/marketplace-registry/api/v1")
+        with tempfile.TemporaryDirectory(prefix="kb-registry-integrity-test-",
+                                         dir=env.get("HOME")) as fixture_directory:
+            fixture_package, test_version = _prepare_registry_commit_publish_package(
+                workspace, Path(fixture_directory), active_platform, publish_env, runner)
+            publication = _json(
+                _publish_workspace_fixture(workspace, str(fixture_package), publish_env, runner),
+                commit_publish_command(fixture_package))
+        if publication.get("version") != test_version:
+            raise RuntimeError("Registry integrity fixture published a different Commit version")
+        resolved = _registry_resolve_exact_commit_version(publish_env, test_version)
+        if (not isinstance(resolved, dict) or resolved.get("id") != package
+                or resolved.get("version") != test_version or not resolved.get("integrity")):
+            raise RuntimeError("Registry did not resolve the uncached integrity test version and its pin")
+        previous_lock = json.loads(original_lock)
+        previous_entry = previous_lock.get("plugins", {}).get(package)
+        previous_version = previous_entry.get("version") if isinstance(previous_entry, dict) else None
+        if (not isinstance(previous_version, str)
+                or _release_version_tuple(test_version) <= _release_version_tuple(previous_version)):
+            raise RuntimeError("Registry integrity test version is not higher than the installed project pin")
+
+        kb_home_value = env.get("KB_HOME", "").strip()
+        kb_home = (Path(kb_home_value).expanduser() if kb_home_value
+                   else Path(env.get("HOME", str(Path.home()))) / ".kb")
+        test_store_entry = kb_home / "store" / "entries" / f"@kb-labs+commit@{test_version}"
+        if test_store_entry.exists():
+            raise RuntimeError("Registry integrity test version is already installed in the extension store")
         try:
             for fault, code in (("signature", "KB_MARKETPLACE_SIGNATURE_INVALID"),
                                 ("integrity", "KB_MARKETPLACE_INTEGRITY_MISMATCH")):
@@ -590,6 +975,8 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
                 _assert_catalogued_marketplace_failure(project, env, runner, package, code)
                 if lock_path.read_bytes() != original_lock:
                     raise RuntimeError(f"{fault} failure changed the Marketplace lock")
+                if test_store_entry.exists():
+                    raise RuntimeError(f"{fault} failure installed the unverified Commit version")
         finally:
             _set_marketplace_proxy_faults(project, env, runner, {})
 
@@ -616,11 +1003,14 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
         args[0] = env.get("KB_JOURNEY_KB_CREATE_PATH", args[0])
         result = run_with_runner(runner, args, cwd=project, env=env, timeout=1200)
         _output(result, args)
-        expected_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
+        store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
+                            "journey-registry-token-reference-test-value",
+                            "journey Marketplace Registry redaction test credential")
+        expected_url = f"{_installed_gateway_url(env)}/api/v1/marketplace-registry"
         token = env.get("KB_JOURNEY_MARKETPLACE_TOKEN", "")
         if not expected_url or not key or not token:
             raise RuntimeError("journey Marketplace source URL or secret references are absent from the installer environment")
-        config_path = platform_root / ".kb" / "kb.config.jsonc"
+        config_path = marketplace_platform_config_path(platform_root)
         raw_config = config_path.read_text()
         if ("${KB_JOURNEY_MARKETPLACE_PUBLIC_KEY}" not in raw_config
                 or "${KB_JOURNEY_MARKETPLACE_TOKEN}" not in raw_config
@@ -740,6 +1130,131 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         commit_install_package = (fixture_entry or {}).get("package")
         if not isinstance(commit_install_package, str) or not commit_install_package:
             raise RuntimeError("published Commit fixture has no package identity to pin in lifecycle checks")
+
+    def install_npm_plugin_with_private_transitive_dependency() -> None:
+        suffix = str(time.time_ns())
+        plugin_id, dependency_id = _transitive_npm_fixture_ids(suffix)
+        version = "1.0.0"
+        marker = f"configured-npm-source-{suffix}"
+        sdk_package = active_platform_root(platform_root) / "node_modules" / "@kb-labs" / "sdk" / "package.json"
+        try:
+            sdk_version = json.loads(sdk_package.read_text(encoding="utf-8")).get("version")
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError("S-010.8 cannot read the installed SDK version for its fixture plugin") from error
+        if not isinstance(sdk_version, str) or not sdk_version:
+            raise RuntimeError("S-010.8 fixture plugin requires the installed platform SDK version")
+
+        fixture_root = Path(tempfile.mkdtemp(prefix="kb-marketplace-transitive-dependency-"))
+        dependency_dir = fixture_root / "dependency"
+        plugin_dir = fixture_root / "plugin"
+        (dependency_dir / "dist").mkdir(parents=True)
+        (plugin_dir / "dist" / "commands").mkdir(parents=True)
+        try:
+            (dependency_dir / "package.json").write_text(json.dumps({
+                "name": dependency_id,
+                "version": version,
+                "type": "module",
+                "main": "./index.js",
+                "exports": {".": "./index.js"},
+                "files": ["index.js"],
+                "license": "UNLICENSED",
+            }), encoding="utf-8")
+            (dependency_dir / "index.js").write_text(
+                f"export const marker = {json.dumps(marker)};\n", encoding="utf-8")
+            manifest = {
+                "schema": "kb.plugin/3",
+                "id": plugin_id,
+                "version": version,
+                "display": {
+                    "name": "Marketplace transitive dependency fixture",
+                    "description": "Verifies a package dependency published only to the configured npm source.",
+                },
+                "permissions": {"platform": {}},
+                "platform": {"requires": []},
+                "cli": {
+                    "groupMeta": [{"path": "journey", "describe": "Journey fixture commands"}],
+                    "commands": [{
+                        "path": "journey transitive show",
+                        "describe": "Return a marker imported from the transitive fixture dependency",
+                        "operationType": "execute",
+                        "handler": "./commands/show.js#default",
+                    }],
+                },
+            }
+            (plugin_dir / "package.json").write_text(json.dumps({
+                "name": plugin_id,
+                "version": version,
+                "type": "module",
+                "main": "./dist/manifest.js",
+                "exports": {".": "./dist/manifest.js"},
+                "files": ["dist/manifest.js", "dist/manifest.json", "dist/commands/*.js"],
+                "kb": {
+                    "manifest": "./dist/manifest.js",
+                    "requiredOutputs": ["./dist/manifest.json", "./dist/commands/show.js"],
+                },
+                **_transitive_npm_fixture_dependencies(dependency_id, sdk_version),
+                "license": "UNLICENSED",
+            }), encoding="utf-8")
+            (plugin_dir / "dist" / "manifest.js").write_text(
+                f"export const manifest = {json.dumps(manifest)};\n", encoding="utf-8")
+            (plugin_dir / "dist" / "commands" / "show.js").write_text(
+                "import { defineCommand } from '@kb-labs/sdk';\n"
+                f"import {{ marker }} from {json.dumps(dependency_id)};\n"
+                "export default defineCommand({ id: 'journey:transitive-show', description: 'Check dependency resolution', "
+                "handler: { async execute() { return { ok: true, result: { marker } }; } } });\n",
+                encoding="utf-8")
+
+            workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+            manifest_command = [
+                "node", str(workspace / "infra" / "devkit" / "tsup" / "emit-manifest-json.mjs"),
+                "--module", str(plugin_dir / "dist" / "manifest.js"),
+                "--output", str(plugin_dir / "dist" / "manifest.json"),
+            ]
+            _output(_run(manifest_command, cwd=project, env=base_env, runner=runner), manifest_command)
+            for package_dir in (dependency_dir, plugin_dir):
+                _publish_npm_fixture_package(package_dir, registry, fixture_root,
+                                             base_env, runner)
+
+            install = ["marketplace", "install", f"{plugin_id}@{version}", "--scope", "project", "--json"]
+            installed_result = _json(cli(install), install)
+            installed = installed_result.get("installed")
+            if (installed_result.get("scope") != "project" or not isinstance(installed, list)
+                    or not any(isinstance(item, dict) and item.get("id") == plugin_id
+                               and item.get("version") == version and item.get("source") == "npm"
+                               for item in installed)):
+                raise RuntimeError("S-010.8 Marketplace did not report the npm fixture plugin as installed")
+
+            lock_path = project / ".kb" / "marketplace.lock"
+            lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            entry = lock.get("plugins", {}).get(plugin_id) if isinstance(lock, dict) else None
+            if (not isinstance(entry, dict) or entry.get("package") != plugin_id
+                    or entry.get("version") != version or entry.get("marketplaceSource") != "npm"
+                    or not entry.get("integrity")):
+                raise RuntimeError("S-010.8 install did not record the plugin's npm source and integrity in the project lock")
+
+            listed = ["marketplace", "plugins", "list", "--scope", "project", "--json"]
+            entries = _entries(_json(cli(listed), listed))
+            if not any(item.get("id") == plugin_id and item.get("version") == version for item in entries):
+                raise RuntimeError("S-010.8 fixture plugin was not discoverable in the project plugin list")
+
+            show = ["journey", "transitive", "show", "--json"]
+            output = _json(cli(show), show)
+            if marker not in json.dumps(output, sort_keys=True):
+                raise RuntimeError("S-010.8 fixture command did not load its dependency from the configured npm source")
+        finally:
+            try:
+                lock = json.loads((project / ".kb" / "marketplace.lock").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                lock = {}
+            plugins = lock.get("plugins", {}) if isinstance(lock, dict) else {}
+            if isinstance(plugins, dict) and plugin_id in plugins:
+                uninstall = ["marketplace", "uninstall", plugin_id, "--scope", "project", "--json"]
+                _output(_run(kb_command(uninstall), cwd=project, env=base_env, runner=runner), uninstall)
+            shutil.rmtree(fixture_root, ignore_errors=True)
+
+    register_transitive_npm_dependency_step(
+        journey, install_npm_plugin_with_private_transitive_dependency)
+
     # S-047 requires a second project plugin to survive target uninstall.
     unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
     install_unrelated = ["marketplace", "install", f"{unrelated_package}@{unrelated_version}", "--json"]
@@ -1092,7 +1607,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         update_fixture["version"] = publish_commit_update_fixture(
             registry, commit_fixture_source_version(workspace), base_env, runner)
     journey.step("publish next-major Commit update fixture", "marketplace-fixtures", publish_update_fixture,
-                 role="lifecycle", requires=("step:install Commit into the project for the route lifecycle",))
+                 requires=("step:install Commit into the project for the route lifecycle",))
 
     def update_commit() -> None:
         command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
@@ -1234,6 +1749,20 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
     journey.step("reject REST's internal API mount in public URLs", "marketplace",
                  reject_rest_internal_mount_prefix, cases=["S-192.6"],
                  requires=("step:reinstall Commit and call its project REST route",))
+
+
+def register_transitive_npm_dependency_step(
+    journey: Journey,
+    check: Callable[[], str | None],
+):
+    """Register S-010.8 on the service journeys that execute Marketplace lifecycle flows."""
+    return journey.step(
+        "install npm plugin with dependency from configured npm source",
+        "marketplace",
+        check,
+        cases=["S-010.8"],
+        runners=("service-local:explore", "service-secured:explore"),
+    )
 
 
 def run_marketplace_steps(journey: Journey, project_root: str | Path, project_id: str, registry: str,

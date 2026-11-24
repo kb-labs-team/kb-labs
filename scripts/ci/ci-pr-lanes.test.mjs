@@ -21,6 +21,20 @@ test('devkit.yaml declares exactly one non-shipped lane for the CI split to name
   assert.deepEqual(internalLane, ['internal-tool']);
 });
 
+// case: S-262.7
+test('workspace package tests run the declared test script for plugin-entry packages', () => {
+  const pluginTest = devkit.tasks.test.find((task) => task.categories?.includes('plugin-entry'));
+
+  assert.ok(pluginTest, 'plugin-entry packages must have a workspace test task');
+  assert.equal(pluginTest.command, 'pnpm run test');
+  assert.deepEqual(pluginTest.deps, ['build']);
+
+  const registryPackage = JSON.parse(readFileSync(join(root, 'plugins/marketplace-registry/package.json'), 'utf8'));
+  assert.match(registryPackage.scripts.test, /vitest run/);
+  assert.match(registryPackage.scripts['test:cli'], /vitest run --config vitest\.cli\.config\.ts/);
+  assert.notEqual(pluginTest.command, 'pnpm run test:cli');
+});
+
 test('test (full) gates the shipped lane only', () => {
   const full = ciPr.jobs['full-unit-tests'];
   const steps = devkitTestRuns(full);

@@ -171,6 +171,42 @@ describe('DocumentLogPersistence (sqlite-backed)', () => {
     expect(result.logs.map((l) => l.id).sort()).toEqual(['e1', 'w1']);
   });
 
+  // case: S-122.3
+  it('filters workflow run and step execution before applying pagination', async () => {
+    const timestamp = Date.now();
+    await persistence.writeBatch([
+      record({
+        id: 'matching-run-and-execution',
+        timestamp: timestamp - 3000,
+        fields: { runId: 'run-1', executionId: 'exec-1', traceId: 'trace-1' },
+      }),
+      record({
+        id: 'same-run-other-execution',
+        timestamp: timestamp - 2000,
+        fields: { runId: 'run-1', executionId: 'exec-2' },
+      }),
+      record({
+        id: 'other-run-same-execution',
+        timestamp: timestamp - 1000,
+        fields: { runId: 'run-2', executionId: 'exec-1' },
+      }),
+      record({
+        id: 'same-run-execution-other-trace',
+        timestamp: timestamp - 500,
+        fields: { runId: 'run-1', executionId: 'exec-1', traceId: 'trace-2' },
+      }),
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+
+    const result = await persistence.query(
+      { runId: 'run-1', executionId: 'exec-1', traceId: 'trace-1' },
+      { limit: 1, offset: 0 },
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.logs.map((log) => log.id)).toEqual(['matching-run-and-execution']);
+  });
+
   it('search finds substring matches in message', async () => {
     await persistence.writeBatch([
       record({ id: '1', message: 'database connection lost' }),

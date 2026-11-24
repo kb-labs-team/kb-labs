@@ -22,6 +22,7 @@ import (
 	packageartifacts "github.com/kb-labs/create/v2/artifacts"
 	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/semrange"
 	"github.com/kb-labs/create/v2/versionroot"
 )
@@ -74,23 +75,9 @@ func (verified verifiedPlanCatalog) plan(request contracts.InstallRequest, optio
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
-	request.MarketplaceInstallSpecs = append([]string(nil), request.MarketplaceInstallSpecs...)
-	for index, spec := range request.MarketplaceInstallSpecs {
-		matched := false
-		for _, plugin := range source.Plugins {
-			if plugin.ID == spec || plugin.ID+"@"+plugin.Version == spec {
-				if _, err := semrange.ParseVersion(plugin.Version); err != nil {
-					return contracts.ResolvedInstallPlan{}, fmt.Errorf("invalid release-index version for %s: %w", spec, err)
-				}
-				request.MarketplaceInstallSpecs[index] = plugin.ID + "@" + plugin.Version
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return contracts.ResolvedInstallPlan{}, fmt.Errorf("scenario Marketplace plugin %s is absent from release index", spec)
-		}
-	}
+	// MarketplaceInstallSpecs are requests for the independent Marketplace
+	// source resolver. They are not platform artifacts and must not be pinned or
+	// required to appear in this release index.
 	sealedCatalog, err := json.Marshal(source)
 	if err != nil {
 		return contracts.ResolvedInstallPlan{}, err
@@ -240,6 +227,9 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 		if err := annotateArtifactResolution(request, clientArtifacts, options.BinarySource, options.Registry); err != nil {
 			return contracts.ResolvedInstallPlan{}, err
 		}
+		if err := attachAndValidatePackageProvenance(source, clientArtifacts); err != nil {
+			return contracts.ResolvedInstallPlan{}, err
+		}
 		plan := contracts.ResolvedInstallPlan{
 			Schema: contracts.ResolvedPlanSchema, BinarySource: options.BinarySource, Registry: options.Registry, Request: request, Artifacts: clientArtifacts,
 			ServiceGraph: graph, PlatformChannel: resolvedChannel(source, request.Platform, platform.Version),
@@ -333,25 +323,8 @@ func planWith(request contracts.InstallRequest, source catalog.Catalog, options 
 	if err := annotateArtifactResolution(request, artifacts, options.BinarySource, options.Registry); err != nil {
 		return contracts.ResolvedInstallPlan{}, err
 	}
-	provenanceByPackage := make(map[string]catalog.ArtifactProvenance, len(source.Provenance))
-	for _, item := range source.Provenance {
-		provenanceByPackage[item.Package+"@"+item.Version] = item
-	}
-	for index := range artifacts {
-		if artifacts[index].IsBinary() {
-			continue
-		}
-		key := artifacts[index].Package + "@" + artifacts[index].Version
-		if item, ok := provenanceByPackage[key]; ok {
-			artifacts[index].Provenance = contracts.ArtifactProvenance{
-				SourceRevision: item.SourceRevision, Integrity: item.Integrity,
-				DistSHA256: item.DistSHA256, ContentScope: item.ContentScope, PackageSHA256: item.PackageSHA256,
-			}
-		}
-		packagePath := filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(artifacts[index].Package)))
-		if err := packageartifacts.ValidatePackageProvenance(artifacts[index], packagePath); err != nil {
-			return contracts.ResolvedInstallPlan{}, err
-		}
+	if err := attachAndValidatePackageProvenance(source, artifacts); err != nil {
+		return contracts.ResolvedInstallPlan{}, err
 	}
 	bindings = uniqueBindings(bindings)
 	patches, err := configPatches(platform, artifacts, bindings, source, request, allowMissingRequiredInputs)
@@ -551,7 +524,7 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 			return kindErr
 		}
 		if request.Source == contracts.SourceOffline {
-			layout, err := versionroot.New(request.PlatformRoot)
+			layout, err := offlineCacheLayout(request.PlatformRoot)
 			if err != nil {
 				return err
 			}
@@ -614,6 +587,36 @@ func annotateArtifactResolution(request contracts.InstallRequest, artifacts []co
 	return nil
 }
 
+// offlineCacheLayout uses the installation-wide cache for an install root or
+// its exact active-version spelling. A path merely nested under a directory
+// named "versions" is not enough to establish that relationship.
+func offlineCacheLayout(platformRoot string) (versionroot.Layout, error) {
+	requested, err := versionroot.New(platformRoot)
+	if err != nil {
+		return versionroot.Layout{}, err
+	}
+	container, err := versionroot.ForPlatformPath(platformRoot)
+	if err != nil {
+		return versionroot.Layout{}, err
+	}
+	if requested.InstallRoot() == container.InstallRoot() {
+		return container, nil
+	}
+	active, err := container.Active()
+	if err != nil || requested.InstallRoot() != active {
+		return requested, nil
+	}
+	installationID, err := versionroot.InstallationIDForPath(container.InstallRoot())
+	if err != nil {
+		return requested, nil
+	}
+	installed, err := receipt.Read(requested.InstallRoot())
+	if err != nil || installed.InstallationID == "" || installed.InstallationID != installationID {
+		return requested, nil
+	}
+	return container, nil
+}
+
 func memberContains(members []catalog.Component, request contracts.ComponentRequest) bool {
 	for _, member := range members {
 		if member.ID == request.ID && (request.Version.Version == "" || request.Version.Version == member.Version) {
@@ -656,6 +659,31 @@ func registryKind(source catalog.Catalog, pkg string) string {
 func artifact(c catalog.Component, kind string) contracts.Artifact {
 	return contracts.Artifact{ID: c.ID, Kind: kind, Package: c.Package, Version: c.Version, SHA256: c.SHA256, SizeBytes: c.SizeBytes, Tarball: c.Tarball, Config: c.Config, PlatformRange: c.PlatformRange, SDKRange: c.SDKRange}
 }
+
+func attachAndValidatePackageProvenance(source catalog.Catalog, artifacts []contracts.Artifact) error {
+	provenanceByPackage := make(map[string]catalog.ArtifactProvenance, len(source.Provenance))
+	for _, item := range source.Provenance {
+		provenanceByPackage[item.Package+"@"+item.Version] = item
+	}
+	for index := range artifacts {
+		if artifacts[index].IsBinary() {
+			continue
+		}
+		key := artifacts[index].Package + "@" + artifacts[index].Version
+		if item, ok := provenanceByPackage[key]; ok {
+			artifacts[index].Provenance = contracts.ArtifactProvenance{
+				SourceRevision: item.SourceRevision, Integrity: item.Integrity,
+				DistSHA256: item.DistSHA256, ContentScope: item.ContentScope, PackageSHA256: item.PackageSHA256,
+			}
+		}
+		packagePath := filepath.ToSlash(filepath.Join("node_modules", filepath.FromSlash(artifacts[index].Package)))
+		if err := packageartifacts.ValidatePackageProvenance(artifacts[index], packagePath); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func findPlatform(items []catalog.PlatformBundle, version string) (catalog.PlatformBundle, bool) {
 	for _, v := range items {
 		if v.Version == version {

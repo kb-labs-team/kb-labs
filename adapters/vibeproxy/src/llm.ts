@@ -148,9 +148,11 @@ export class VibeProxyLLM implements ILLM {
     endpoint: string,
     body: unknown,
     headers?: Record<string, string>,
+    signal?: AbortSignal,
   ): Promise<T> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const requestSignal = signal ? AbortSignal.any([controller.signal, signal]) : controller.signal;
 
     try {
       const response = await fetch(`${this.baseURL}${endpoint}`, {
@@ -161,7 +163,7 @@ export class VibeProxyLLM implements ILLM {
           ...headers,
         },
         body: JSON.stringify(body),
-        signal: controller.signal,
+        signal: requestSignal,
       });
 
       if (!response.ok) throw await this.providerHttpError(response);
@@ -363,6 +365,7 @@ export class VibeProxyLLM implements ILLM {
         ...this.buildExecutionHeaders(options?.execution),
         ...this.buildTraceHeaders(options),
       },
+      options?.signal,
     );
 
     return {
@@ -393,6 +396,7 @@ export class VibeProxyLLM implements ILLM {
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), this.timeout);
+    const requestSignal = options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     try {
       const response = await fetch(`${this.baseURL}/v1/messages`, {
@@ -404,7 +408,7 @@ export class VibeProxyLLM implements ILLM {
           ...this.buildTraceHeaders(options),
         },
         body: JSON.stringify(requestBody),
-        signal: controller.signal,
+        signal: requestSignal,
       });
       if (!response.ok) throw await this.providerHttpError(response);
       if (!response.body) {
@@ -494,6 +498,7 @@ export class VibeProxyLLM implements ILLM {
         ...this.buildExecutionHeaders(options?.execution),
         ...this.buildTraceHeaders(options),
       },
+      options.signal,
     );
     const textContent = this.extractTextContent(response);
     const toolCalls = this.extractToolCalls(response);

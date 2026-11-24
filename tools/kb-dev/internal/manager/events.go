@@ -20,13 +20,40 @@ type Event struct {
 
 // Action describes what was done for a single service during an operation.
 type Action struct {
-	Service  string   `json:"service"`
-	Action   string   `json:"action"`             // started, stopped, skipped, failed, restarted
-	Reason   string   `json:"reason,omitempty"`   // why skipped
-	Elapsed  string   `json:"elapsed,omitempty"`  // how long the action took
-	Error    string   `json:"error,omitempty"`    // error if failed
-	LogsTail []string `json:"logsTail,omitempty"` // last log lines on failure
+	Service          string              `json:"service"`
+	Action           string              `json:"action"` // started, stopped, skipped, failed, restarted
+	ErrorCode        ActionErrorCode     `json:"errorCode,omitempty"`
+	HealthReason     HealthFailureReason `json:"healthReason,omitempty"`
+	LastProbeReason  HealthFailureReason `json:"lastProbeReason,omitempty"`
+	HealthStatusCode int                 `json:"healthStatusCode,omitempty"`
+	Reason           string              `json:"reason,omitempty"`   // why skipped
+	Elapsed          string              `json:"elapsed,omitempty"`  // how long the action took
+	Error            string              `json:"error,omitempty"`    // error if failed
+	LogsTail         []string            `json:"logsTail,omitempty"` // last log lines on failure
 }
+
+// HealthFailureReason is a bounded category safe for structured diagnostics.
+type HealthFailureReason string
+
+const (
+	HealthFailureProbeFailed   HealthFailureReason = "probe_failed"
+	HealthFailureHTTPStatus    HealthFailureReason = "http_status"
+	HealthFailureTimeout       HealthFailureReason = "timeout"
+	HealthFailureProcessExited HealthFailureReason = "process_exited"
+	HealthFailureCancelled     HealthFailureReason = "cancelled"
+)
+
+// ActionErrorCode is an allowlisted category safe to expose in structured output.
+// Error and LogsTail can contain arbitrary process output and remain human-only.
+type ActionErrorCode string
+
+const (
+	ActionErrorPortInUse          ActionErrorCode = "port_in_use"
+	ActionErrorDockerUnavailable  ActionErrorCode = "docker_unavailable"
+	ActionErrorProcessStartFailed ActionErrorCode = "process_start_failed"
+	ActionErrorHealthCheckFailed  ActionErrorCode = "health_check_failed"
+	ActionErrorServiceStartFailed ActionErrorCode = "service_start_failed"
+)
 
 // Result is the unified response from any Manager operation.
 type Result struct {

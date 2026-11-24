@@ -64,6 +64,9 @@ import {
   HandlerNotFoundError,
   TimeoutError,
 } from '../errors.js';
+import { withLoaderOutputSink } from '@kb-labs/shared-cli-ui';
+import { withProcessSensitiveValues } from '@kb-labs/core-platform';
+import { withInProcessOutputCapture, withoutInProcessOutputCapture } from './in-process-output-capture.js';
 
 /**
  * InProcessBackend options.
@@ -253,20 +256,41 @@ export class InProcessBackend implements RawExecutionBackend {
         : this.platform;
 
       const adapterMiddlewares = await this.getMiddlewares();
-      const runResult = await runInProcess({
-        descriptor: requestToExecute.descriptor,  // Direct pass-through!
-        platform: effectivePlatform,
-        ui,
-        pluginInvoker,
-        eventEmitter,
-        handlerPath: `${handlerPath}${exportSelector}`,
-        input: requestToExecute.input,
-        environment: requestToExecute.env,
-        signal: executionSignal,
-        cwd: lease.cwd,           // From WorkspaceLease
-        outdir: undefined,        // Optional, defaults to cwd/.kb/output
-        adapterMiddlewares,
-      });
+      const executionCwd = lease.cwd;
+      let loaderLineNo = 0;
+      const sensitiveValues = Array.isArray(requestToExecute.context?.sensitiveValues)
+        ? requestToExecute.context.sensitiveValues.filter((value): value is string => typeof value === 'string')
+        : [];
+      const emitCapturedOutput = (message: string, stream: 'stdout' | 'stderr') => {
+        const jsonMode = Boolean((requestToExecute.input as { flags?: Record<string, unknown> } | undefined)?.flags?.json);
+        const outputStream = jsonMode && stream === 'stdout' ? 'stderr' : stream;
+        withoutInProcessOutputCapture(() => options?.onLog?.({ level: outputStream === 'stderr' ? 'warn' : 'info', message, stream: outputStream, lineNo: ++loaderLineNo, timestamp: new Date().toISOString() }));
+      };
+      const jsonMode = Boolean((requestToExecute.input as { flags?: Record<string, unknown> } | undefined)?.flags?.json);
+      const runResult = await withInProcessOutputCapture(
+        sensitiveValues,
+        emitCapturedOutput,
+        () => withProcessSensitiveValues(sensitiveValues, () => withLoaderOutputSink(
+          (message) => emitCapturedOutput(message, 'stdout'),
+          () => runInProcess({
+            descriptor: requestToExecute.descriptor,
+            platform: effectivePlatform,
+            ui,
+            pluginInvoker,
+            eventEmitter,
+            handlerPath: `${handlerPath}${exportSelector}`,
+            input: requestToExecute.input,
+            platformRoot: requestToExecute.platformRoot,
+            environment: requestToExecute.env,
+            signal: executionSignal,
+            cwd: executionCwd,
+            outdir: undefined,
+            adapterMiddlewares,
+          }),
+          jsonMode,
+        )),
+        jsonMode,
+      );
 
       if (timeoutExpired) {
         throw new TimeoutError(`Execution timed out after ${request.timeoutMs}ms`, request.timeoutMs);

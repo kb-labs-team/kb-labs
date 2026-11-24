@@ -2,6 +2,7 @@ import { appendFileSync, readFileSync, readdirSync, renameSync, writeFileSync } 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resourcePeaks, sampleRunnerResources } from './remote-build-resources.mjs';
+import { devkitCasSizeBytes } from './devkit-cas-size.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -33,11 +34,19 @@ function cacheStatus(value) {
   return 'unavailable';
 }
 
+function devkitCacheStatus(cache) {
+  if (cache.devkitMode === 'off') return 'disabled';
+  if (cache.devkit === 'true') return 'exact-hit';
+  if (cache.devkit === 'false') return 'restore-prefix-hit';
+  if (cache.devkit === '') return 'miss';
+  return 'unavailable';
+}
+
 export async function runStage({
   stage, packageNames, packages, selectedPackageCount, shard, runCommand, now = Date.now, cache = {},
   resourceSamplePath, partialResultPath, sampleIntervalMs = 30_000,
   sampleResources = () => sampleRunnerResources({ workspaceRoot: root, now }),
-  affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit',
+  affectedBuild = false, devkitExecutable = './tools/kb-devkit/kb-devkit', devkitCacheStorePath,
 }) {
   const definition = stageDefinitions.find((entry) => entry.id === stage);
   if (!definition) throw new Error(`Unknown verification stage ${stage}; use the registered stages in scripts/ci/verification-profile.json.`);
@@ -56,7 +65,12 @@ export async function runStage({
       return {
         name, status: 'pass', failures: [], logTail: 'kb-devkit selected no affected workspace packages; build had no work.',
         selectedPackageCount: 0,
-        startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0, cache: cacheRecord(cache),
+        startedAt: new Date(at).toISOString(), finishedAt: new Date(at).toISOString(), durationMs: 0,
+        cache: cacheRecord(cache),
+        devkitTaskCache: {
+          scheduled: 0, cached: 0, executed: 0, blocked: 0, notAffected: 0, skippedManual: 0, skippedBuildPackages: null,
+        },
+        devkitCasSizeBytes: devkitCasSizeBytes(devkitCacheStorePath),
       };
     }
     command = devkitExecutable;
@@ -92,6 +106,8 @@ export async function runStage({
       finishedAt: null, durationMs: Math.max(0, now() - startedAt),
       ...(stage === profile.buildStage ? { resourcePeaks: resourcePeaks(buildSamples), lastResourceSample: buildSamples.at(-1) } : {}),
       cache: cacheRecord(cache),
+      ...(stage === profile.buildStage ? { devkitTaskCache: null } : {}),
+      ...(stage === profile.buildStage ? { devkitCasSizeBytes: null } : {}),
     };
     writeAtomicJSON(partialResultPath, partial);
   };
@@ -147,12 +163,13 @@ export async function runStage({
   if (isBuild) captureResourceSample();
   const finishedAt = now();
   const log = [result.stdout, result.stderr, result.error?.message].filter(Boolean).join('\n');
-  const taskFailures = devkitTaskFailures(stage, result);
+  const taskFailures = devkitTaskFailures(stage, result, stage === profile.buildStage ? packages : packageNames);
   const taskLogOutput = taskFailures.map((failure) => {
     const label = [failure.package, failure.task].filter(Boolean).join(':');
     return [label, failure.logPath, failure.logTail || failure.error].filter(Boolean).join('\n');
   }).join('\n\n');
   const isDevkitStage = stage === profile.buildStage || stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package';
+  const devkitTaskCache = stage === profile.buildStage ? devkitTaskCacheRecord(result.stdout) : undefined;
   const visibleLog = taskFailures.length ? taskLogOutput : isDevkitStage ? (result.stderr || '') : log;
   const failures = internalToolStage
     ? result.internalToolFailures
@@ -173,6 +190,8 @@ export async function runStage({
     durationMs: Math.max(0, finishedAt - startedAt),
     ...(stage === profile.packageTestStage || internalToolStage || definition.runner === 'kb-devkit-test-package' ? { packages: packageNames } : {}),
     cache: cacheRecord(cache),
+    ...(stage === profile.buildStage ? { devkitTaskCache } : {}),
+    ...(stage === profile.buildStage ? { devkitCasSizeBytes: devkitCasSizeBytes(devkitCacheStorePath) } : {}),
     ...(stage === profile.buildStage ? {
       resourcePeaks: resourcePeaks(buildSamples),
       lastResourceSample: buildSamples.at(-1),
@@ -180,6 +199,26 @@ export async function runStage({
   };
   if (partialResultPath) writeAtomicJSON(partialResultPath, stageResult);
   return stageResult;
+}
+
+function devkitTaskCacheRecord(stdout) {
+  try {
+    const envelope = JSON.parse(stdout);
+    const summary = envelope?.data?.summary;
+    if (!summary || !Number.isSafeInteger(summary.scheduled) || !Number.isSafeInteger(summary.cached)
+      || !Number.isSafeInteger(summary.passed) || !Number.isSafeInteger(summary.failed)) return null;
+    return {
+      scheduled: summary.scheduled,
+      cached: summary.cached,
+      executed: summary.passed + summary.failed,
+      blocked: Number.isSafeInteger(summary.blocked) ? summary.blocked : null,
+      notAffected: Number.isSafeInteger(summary.notAffected) ? summary.notAffected : null,
+      skippedManual: Number.isSafeInteger(summary.skippedManual) ? summary.skippedManual : null,
+      skippedBuildPackages: Array.isArray(envelope.data.skippedBuilds) ? envelope.data.skippedBuilds.length : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function writeAtomicJSON(file, value) {
@@ -195,7 +234,7 @@ function packageNameFromManifest(stage, definition) {
   return manifest.name;
 }
 
-function devkitTaskFailures(stage, result) {
+function devkitTaskFailures(stage, result, selectedPackages = []) {
   const taskStage = stage === profile.buildStage || stage === profile.packageTestStage
     || stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package';
   if (!taskStage) return [];
@@ -207,6 +246,13 @@ function devkitTaskFailures(stage, result) {
   }
   const results = envelope?.data?.results;
   if (!Array.isArray(results)) {
+    if (envelope?.ok === true && envelope?.data?.summary?.scheduled === 0) {
+      const packageList = selectedPackages.length > 0 ? `: ${selectedPackages.join(', ')}` : '';
+      const taskKind = stage === profile.packageTestStage || stageDefinitions.find((entry) => entry.id === stage)?.runner === 'kb-devkit-test-package'
+        ? 'test tasks'
+        : 'tasks';
+      return [{ error: `kb-devkit scheduled no ${taskKind} for the selected package${selectedPackages.length === 1 ? '' : 's'}${packageList}.` }];
+    }
     return [{ error: 'kb-devkit run --json returned no structured task results.' }];
   }
   if (result.status === 0 && envelope?.ok !== true) {
@@ -270,6 +316,6 @@ export function cacheRecord(cache) {
   return {
     pnpm: cacheStatus(cache.pnpm),
     go: cacheStatus(cache.go),
-    devkit: cacheStatus(cache.devkit),
+    devkit: devkitCacheStatus(cache),
   };
 }

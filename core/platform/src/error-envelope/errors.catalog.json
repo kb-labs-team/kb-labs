@@ -17,6 +17,7 @@
     "KB_ENV_SHELL",
     "KB_HOME",
     "KB_HOST_CONTROL_TOKEN",
+    "KB_INSTALLATION_ID",
     "KB_LOG_FILE",
     "KB_NET_OFFSET",
     "KB_PLATFORM_ROOT",
@@ -1409,6 +1410,11 @@
       "processExitClass": "operation-failure",
       "message": "Artifact {artifact} is unavailable from the local cache.",
       "hint": "Run without --offline to download the artifact, or restore its checksum-verified entry in the V2 cache.",
+      "structuredDetailFields": ["cachePath"],
+      "requiredStructuredDetailFields": ["cachePath"],
+      "structuredDetailSchemas": {
+        "cachePath": {"type": "string", "minLength": 1}
+      },
       "httpStatus": 500
     },
     {
@@ -2665,7 +2671,9 @@
         "clickUpCode",
         "clickUpStatus",
         "command",
-        "inboxCode"
+        "inboxCode",
+        "route",
+        "upstreamStatus"
       ],
       "runtimeTemplateParameters": {
         "binary": "required"

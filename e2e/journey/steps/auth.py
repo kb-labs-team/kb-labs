@@ -16,6 +16,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
+from gateway_sessions import gateway_session
 from invocations import (
     CompletedProcess,
     decode_ux_error_result,
@@ -133,7 +134,14 @@ def run_cli_auth_status(cli_path: str, env: dict[str, str], *, authenticated: bo
         status_payload = decode_ux_success_result(read_ux_cli_result(status))
     except (json.JSONDecodeError, ValueError) as error:
         raise AssertionError(f"kb auth status --json did not return JSON: {status.stdout[-400:]}") from error
-    session = status_payload.get("session", {})
+    if authenticated:
+        session = gateway_session(status_payload, base_url) or {}
+    else:
+        sessions = status_payload.get("sessions")
+        if (not isinstance(sessions, list) or len(sessions) != 1
+                or sessions[0].get("authenticated") is not False):
+            raise AssertionError("kb auth status reported an unexpected saved human session")
+        return
     if status.returncode != 0 or session.get("authenticated") is not authenticated:
         raise AssertionError(f"kb auth status returned unexpected JSON: {status_payload!r}")
     if email and session.get("email") != email:

@@ -58,9 +58,15 @@ while IFS= read -r pkg_json; do
     continue
   fi
 
+  package_started=$SECONDS
+  printf '[%s] package-pack=start name=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$pkg_name"
   if (cd "$pkg_dir" && pnpm pack --pack-destination "$OUT_DIR" --silent 2>/dev/null); then
     PACKED=$((PACKED+1))
+    printf '[%s] package-pack=complete name=%s elapsed_seconds=%d\n' \
+      "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$pkg_name" "$((SECONDS - package_started))"
   else
+    printf '[%s] package-pack=failed name=%s elapsed_seconds=%d\n' \
+      "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$pkg_name" "$((SECONDS - package_started))"
     echo "  WARN pack failed: $pkg_name"
     FAILED=$((FAILED+1))
   fi
@@ -83,9 +89,15 @@ done < <(cd "$REPO_ROOT" && find . \
 while IFS= read -r extra; do
   fixture_dir="$REPO_ROOT/$(jq -r '.directory' <<< "$extra")"
   fixture_name="$(jq -r '.name' "$fixture_dir/package.json")"
+  package_started=$SECONDS
+  printf '[%s] package-pack=start name=%s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$fixture_name"
   if (cd "$fixture_dir" && pnpm pack --pack-destination "$OUT_DIR" --silent); then
     PACKED=$((PACKED+1))
+    printf '[%s] package-pack=complete name=%s elapsed_seconds=%d\n' \
+      "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$fixture_name" "$((SECONDS - package_started))"
   else
+    printf '[%s] package-pack=failed name=%s elapsed_seconds=%d\n' \
+      "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$fixture_name" "$((SECONDS - package_started))"
     echo "ERROR: could not pack $fixture_name"
     exit 1
   fi
@@ -105,6 +117,7 @@ fi
 # boundary so a broken tarball cannot poison a registry snapshot or an E2E
 # cache and only fail much later inside a customer's fresh install.
 echo "==> Validating published package metadata"
+package_validation_started=$SECONDS
 INVALID=0
 for tarball in "$OUT_DIR"/*.tgz; do
   [ -f "$tarball" ] || continue
@@ -118,4 +131,6 @@ if [ "$INVALID" -gt 0 ]; then
   echo "ERROR: $INVALID published tarballs contain workspace:* references"
   exit 1
 fi
+printf '[%s] package-metadata-validation=complete elapsed_seconds=%d\n' \
+  "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$((SECONDS - package_validation_started))"
 echo "    All published tarballs contain registry-resolvable dependencies"

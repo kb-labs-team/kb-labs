@@ -26,6 +26,7 @@ import {
 import { connect } from "node:net";
 import type { IContextLogger } from "@kb-labs/core-platform";
 import type { ActiveWorkItem } from "@kb-labs/shared-daemon";
+import { createProjectCommandExecutionProof, PROJECT_COMMAND_EXECUTION_PROOF_HEADER } from "@kb-labs/shared-daemon";
 import {
   RUNTIME_ACTIVE_WORK_PATH,
   RUNTIME_HEALTH_PATH,
@@ -81,6 +82,9 @@ function forwardHeaders(
   incoming: IncomingHttpHeaders,
   address: GuardModuleAddress,
   projectId: string,
+  method: string,
+  path: string,
+  runtimeToken: string,
 ): IncomingHttpHeaders {
   const headers: IncomingHttpHeaders = {};
   for (const [name, value] of Object.entries(incoming)) {
@@ -89,6 +93,7 @@ function forwardHeaders(
       HOP_BY_HOP.has(lower) ||
       lower === RUNTIME_TOKEN_HEADER ||
       lower === RUNTIME_PROJECT_HEADER ||
+      lower === PROJECT_COMMAND_EXECUTION_PROOF_HEADER ||
       lower === "host"
     ) {
       continue;
@@ -97,6 +102,11 @@ function forwardHeaders(
   }
   headers.host = `${address.host}:${address.port}`;
   headers[RUNTIME_PROJECT_HEADER] = projectId;
+  headers[PROJECT_COMMAND_EXECUTION_PROOF_HEADER] = createProjectCommandExecutionProof(runtimeToken, {
+    projectId,
+    method,
+    path,
+  });
   return headers;
 }
 
@@ -165,7 +175,7 @@ export function createRuntimeGuard(options: RuntimeGuardOptions): RuntimeGuard {
         port: address.port,
         method: req.method,
         path,
-        headers: forwardHeaders(req.headers, address, projectId),
+        headers: forwardHeaders(req.headers, address, projectId, req.method ?? "GET", path, token),
       },
       (upstreamRes) => {
         const headers: IncomingHttpHeaders = {};

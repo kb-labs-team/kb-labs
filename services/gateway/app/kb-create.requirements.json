@@ -49,6 +49,11 @@
       "hint": "Shared gateway-to-service authentication secret; kb-create generates and preserves it"
     },
     {
+      "id": "gateway.marketplaceRegistryRoute",
+      "path": "/gateway/upstreams/marketplaceRegistry",
+      "hint": "Gateway route for the optional Marketplace Registry service"
+    },
+    {
       "id": "gateway.authStorage.filename",
       "path": "/platform/adapterOptions/documentDatabase/filename",
       "default": "database/kb.sqlite",

@@ -77,6 +77,50 @@ func TestHTTPProbeFail(t *testing.T) {
 	if r.OK {
 		t.Error("expected failure for 500 response")
 	}
+	if r.FailureReason != FailureReasonHTTPStatus || r.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("failure diagnostics = (%q, %d), want http_status and 500", r.FailureReason, r.StatusCode)
+	}
+}
+
+// case: PC-003.4
+func TestCheckerTimeoutPreservesTypedLastProbeFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 150*time.Millisecond).
+		WaitHealthy(context.Background())
+	if r.OK || r.FailureReason != FailureReasonTimeout ||
+		r.LastProbeReason != FailureReasonHTTPStatus || r.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("timeout diagnostics = %#v", r)
+	}
+}
+
+// case: PC-003.4
+func TestCheckerCancelsProbeAtStartupDeadline(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	started := time.Now()
+	r := NewChecker(ClassifyProbe(srv.URL, time.Second), time.Millisecond, 50*time.Millisecond).
+		WaitHealthy(context.Background())
+	if r.OK || r.FailureReason != FailureReasonTimeout {
+		t.Fatalf("slow health response result = %#v, want startup timeout", r)
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("checker waited past its startup deadline: %s", elapsed)
+	}
+}
+
+func TestInvalidProbeHasTypedFailureReason(t *testing.T) {
+	r := (Probe{Type: ProbeType(99)}).Execute(context.Background())
+	if r.OK || r.FailureReason != FailureReasonProbeFailed {
+		t.Fatalf("invalid probe result = %#v, want probe_failed", r)
+	}
 }
 
 func TestHTTPProbeLatency(t *testing.T) {
@@ -109,6 +153,14 @@ func TestCommandProbeFail(t *testing.T) {
 	r := p.Execute(context.Background())
 	if r.OK {
 		t.Error("expected failure for 'false' command")
+	}
+}
+
+// case: PC-003.4
+func TestCommandProbeTimeoutHasTypedTimeoutReason(t *testing.T) {
+	r := ClassifyProbe("sleep 5", 20*time.Millisecond).Execute(context.Background())
+	if r.OK || r.FailureReason != FailureReasonTimeout {
+		t.Fatalf("timed command result = %#v, want timeout", r)
 	}
 }
 

@@ -70,7 +70,7 @@ of ADR-0049.
 
 ### Precedence and provenance (implemented)
 
-Lowest to highest; a higher layer wins per key (objects deep-merge, arrays concatenate across generated/platform/project, overlays replace arrays):
+Lowest to highest; a higher layer wins per key (objects deep-merge, arrays replace lower-layer arrays unless the higher layer explicitly uses `kb:merge: append`):
 
 1. **generated**: `<root>/.kb/generated/*.json|jsonc` (platform root first, then project root, files in lexicographic order). Written only by the installer/host.
 2. **platform** user config: `<platformRoot>/.kb/kb.config.jsonc`.

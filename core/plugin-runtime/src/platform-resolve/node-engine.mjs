@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseNodeEnginePolicy, readNodeEngineDeclaration } from '@kb-labs/plugin-contracts/node-engine-policy';
 
@@ -97,7 +97,8 @@ export function selectNodeExecutable(rootManifest, environment = process.env) {
   throw new Error(`No installed Node.js major matches ${requiredMajor}.x; checked ${checked}. Install Node.js ${requiredMajor}, then rerun this command.`);
 }
 
-if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const modulePath = fileURLToPath(import.meta.url);
+if (basename(modulePath) === 'node-engine.mjs' && process.argv[1] && realpathSync(process.argv[1]) === modulePath) {
   if (process.argv.length !== 4 || !['--select', '--required-major'].includes(process.argv[2])) {
     process.stderr.write('Usage: node node-engine.mjs (--select|--required-major) <root-package.json>\n');
     process.exitCode = 2;

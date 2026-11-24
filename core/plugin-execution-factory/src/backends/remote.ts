@@ -104,11 +104,16 @@ export class RemoteBackend implements RemoteExecutionBackend {
 
   /**
    * Remap handlerRef and pluginRoot from absolute host paths to /workspace paths.
-   * No-op if workspaceRootOnHost is not set.
+   * A local platformRoot is always removed; the remote host uses its own root.
    */
   private remapRequest(request: ExecutionRequest): ExecutionRequest {
+    // A caller-local platform path is meaningless to the remote host and can
+    // disclose local filesystem structure. The remote runtime uses its own
+    // KB_PLATFORM_ROOT when resolving platform peers.
+    const remoteRequest = { ...request };
+    delete remoteRequest.platformRoot;
     if (!this.workspaceRootOnHost) {
-      return request;
+      return remoteRequest;
     }
 
     const wsRoot = this.workspaceRootOnHost.replace(/\/$/, '');
@@ -117,7 +122,7 @@ export class RemoteBackend implements RemoteExecutionBackend {
       p.startsWith(wsRoot) ? '/workspace' + p.slice(wsRoot.length) : p;
 
     return {
-      ...request,
+      ...remoteRequest,
       handlerRef: remap(request.handlerRef),
       pluginRoot: remap(request.pluginRoot),
     };

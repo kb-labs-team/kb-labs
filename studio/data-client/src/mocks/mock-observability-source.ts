@@ -391,8 +391,6 @@ export class MockObservabilitySource implements ObservabilityDataSource {
     await delay(1500); // Simulate LLM processing time
 
     return {
-      ok: true,
-      data: {
         summary: {
           question: request.question,
           timeRange: {
@@ -442,7 +440,6 @@ The system has been mostly stable with info-level logs. Two connection timeout e
 
 *Note: This is mock data from MockObservabilitySource*`,
         message: null,
-      },
     };
   }
 

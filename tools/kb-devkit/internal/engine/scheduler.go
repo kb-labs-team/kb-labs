@@ -62,21 +62,23 @@ type RunOptions struct {
 
 // RunResult is the aggregate result of a scheduler run.
 type RunResult struct {
-	OK               bool
-	Results          []TaskResult
-	BlockedTasks     []BlockedTask
-	scheduledTasks   []TaskIdentity
-	notAffectedTasks []TaskIdentity
+	OK                 bool
+	Results            []TaskResult
+	BlockedTasks       []BlockedTask
+	scheduledTasks     []TaskIdentity
+	notAffectedTasks   []TaskIdentity
+	skippedManualTasks []TaskIdentity
 	// SkippedBuilds names the packages whose build was left out because their
 	// category is declared `defaultBuild: false` and nothing targeted them.
-	SkippedBuilds []string `json:"skippedBuilds,omitempty"`
+	SkippedBuilds      []string       `json:"skippedBuilds,omitempty"`
+	SkippedManualTasks []TaskIdentity `json:"skippedManualTasks,omitempty"`
 }
 
 func (r RunResult) Summary() (RunSummary, error) {
 	s := RunSummary{
 		BlockedTasks: append([]BlockedTask{}, r.BlockedTasks...),
 	}
-	accounted := make(map[nodeKey]struct{}, len(r.Results)+len(r.BlockedTasks)+len(r.notAffectedTasks))
+	accounted := make(map[nodeKey]struct{}, len(r.Results)+len(r.BlockedTasks)+len(r.notAffectedTasks)+len(r.skippedManualTasks))
 	for _, res := range r.Results {
 		accounted[nodeKey{pkg: res.Package, task: res.Task}] = struct{}{}
 		switch {
@@ -95,7 +97,11 @@ func (r RunResult) Summary() (RunSummary, error) {
 	for _, task := range r.notAffectedTasks {
 		accounted[nodeKey{pkg: task.Package, task: task.Task}] = struct{}{}
 	}
+	for _, task := range r.skippedManualTasks {
+		accounted[nodeKey{pkg: task.Package, task: task.Task}] = struct{}{}
+	}
 	s.NotAffected = len(r.notAffectedTasks)
+	s.SkippedManual = len(r.skippedManualTasks)
 	s.Scheduled = len(r.scheduledTasks)
 	var unaccounted []TaskIdentity
 	for _, task := range r.scheduledTasks {
@@ -103,7 +109,7 @@ func (r RunResult) Summary() (RunSummary, error) {
 			unaccounted = append(unaccounted, task)
 		}
 	}
-	if len(unaccounted) > 0 || s.Passed+s.Failed+s.Cached+s.Blocked+s.NotAffected != s.Scheduled {
+	if len(unaccounted) > 0 || s.Passed+s.Failed+s.Cached+s.Blocked+s.NotAffected+s.SkippedManual != s.Scheduled {
 		sort.Slice(unaccounted, func(i, j int) bool {
 			if unaccounted[i].Package == unaccounted[j].Package {
 				return unaccounted[i].Task < unaccounted[j].Task
@@ -119,6 +125,7 @@ func (r RunResult) Summary() (RunSummary, error) {
 type TaskIdentity struct {
 	Package string
 	Task    string
+	Reason  string `json:"reason,omitempty"`
 }
 
 // RunAccountingError identifies graph nodes with no terminal scheduler outcome.
@@ -132,13 +139,14 @@ func (e *RunAccountingError) Error() string {
 
 // RunSummary partitions every scheduled task by its execution outcome.
 type RunSummary struct {
-	Scheduled    int           `json:"scheduled"`
-	Passed       int           `json:"passed"`
-	Failed       int           `json:"failed"`
-	Cached       int           `json:"cached"`
-	Blocked      int           `json:"blocked"`
-	NotAffected  int           `json:"notAffected"`
-	BlockedTasks []BlockedTask `json:"blockedTasks"`
+	Scheduled     int           `json:"scheduled"`
+	Passed        int           `json:"passed"`
+	Failed        int           `json:"failed"`
+	Cached        int           `json:"cached"`
+	Blocked       int           `json:"blocked"`
+	NotAffected   int           `json:"notAffected"`
+	SkippedManual int           `json:"skippedManual"`
+	BlockedTasks  []BlockedTask `json:"blockedTasks"`
 }
 
 // BlockedTask records a scheduled task prevented from running by a failed task.
@@ -181,6 +189,10 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		pkgs = expanded
 	}
 	selectedPackageNames := make(map[string]bool, len(pkgs))
+	allPackagesByName := make(map[string]workspace.Package, len(ws.Packages))
+	for _, pkg := range ws.Packages {
+		allPackagesByName[pkg.Name] = pkg
+	}
 	for _, pkg := range pkgs {
 		selectedPackageNames[pkg.Name] = true
 	}
@@ -207,6 +219,16 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		}
 		seed = func(pkg workspace.Package, task string) bool { return task == "build" && skipped[pkg.Name] }
 	}
+	baseSeed := seed
+	if opts.Affected {
+		seed = func(pkg workspace.Package, task string) bool {
+			if baseSeed != nil && baseSeed(pkg, task) {
+				return true
+			}
+			def := ResolvePackageTaskDef(ws, cfg, task, pkg)
+			return def != nil && def.ManualOnly
+		}
+	}
 	nodes, err := buildDAGSeeded(pkgs, opts.Tasks, cfg, ws, seed)
 	if err != nil {
 		return RunResult{}, err
@@ -215,6 +237,7 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		return RunResult{}, err
 	}
 	var notAffectedTasks []TaskIdentity
+	var skippedManualTasks []TaskIdentity
 	allNodes := nodes
 	if opts.Affected {
 		allNodes, err = buildDAG(ws.Packages, opts.Tasks, cfg, ws)
@@ -227,6 +250,12 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		for key := range allNodes {
 			if !selectedPackageNames[key.pkg] {
 				notAffectedTasks = append(notAffectedTasks, TaskIdentity{Package: key.pkg, Task: key.task})
+			} else {
+				pkg := allPackagesByName[key.pkg]
+				def := ResolvePackageTaskDef(ws, cfg, key.task, pkg)
+				if def != nil && def.ManualOnly {
+					skippedManualTasks = append(skippedManualTasks, TaskIdentity{Package: key.pkg, Task: key.task, Reason: "manual-only; run explicitly with --packages"})
+				}
 			}
 		}
 	}
@@ -417,12 +446,14 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		return blockedTasks[i].Package < blockedTasks[j].Package
 	})
 	result := RunResult{
-		OK:               ok && !failed,
-		Results:          allResults,
-		BlockedTasks:     blockedTasks,
-		SkippedBuilds:    skippedBuilds,
-		scheduledTasks:   make([]TaskIdentity, 0, len(allNodes)),
-		notAffectedTasks: notAffectedTasks,
+		OK:                 ok && !failed,
+		Results:            allResults,
+		BlockedTasks:       blockedTasks,
+		SkippedBuilds:      skippedBuilds,
+		SkippedManualTasks: append([]TaskIdentity(nil), skippedManualTasks...),
+		scheduledTasks:     make([]TaskIdentity, 0, len(allNodes)),
+		notAffectedTasks:   notAffectedTasks,
+		skippedManualTasks: skippedManualTasks,
 	}
 	for key := range allNodes {
 		result.scheduledTasks = append(result.scheduledTasks, TaskIdentity{Package: key.pkg, Task: key.task})

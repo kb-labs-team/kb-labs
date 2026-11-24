@@ -135,6 +135,7 @@ export async function setup({
     storage: platform.storage,
     events: platform.eventBus,
     logger: createWorkflowLogger("engine", "workflow.engine"),
+    analytics: platform.analytics,
     secretProvider,
     snapshotManager: platform.snapshotManager,
     workspaceRoot,

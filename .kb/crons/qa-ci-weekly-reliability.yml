@@ -1,0 +1,4 @@
+schedule: "0 9 * * 1"
+timezone: Europe/Moscow
+enabled: true
+workflow: qa-ci-weekly-reliability

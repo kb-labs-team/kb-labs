@@ -2,7 +2,7 @@ module github.com/kb-labs/kb-deploy
 
 go 1.26.0
 
-toolchain go1.26.8
+toolchain go1.26.11
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.6.1

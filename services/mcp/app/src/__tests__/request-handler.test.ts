@@ -99,6 +99,7 @@ const tool: McpTool = {
   pluginId: 'mind',
   pluginRoot: '/plugins/mind',
   handlerPath: 'dist/commands/mind-search.js',
+  commandPath: 'mind search',
   version: '1.0.0',
   operationType: 'read',
   permissions: {},

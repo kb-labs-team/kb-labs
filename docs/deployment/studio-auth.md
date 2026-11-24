@@ -236,6 +236,8 @@ proxy_set_header X-Real-IP         $remote_addr;
 
 Verify in gateway logs: each request should show the real client IP, not `127.0.0.1`.
 
+For browser requests proxied to project runtimes, the Gateway suppresses `Origin` on a configured public ingress only when it matches the operator-configured `GATEWAY_PUBLIC_URL` and the raw `Host` authority matches it exactly, including a nondefault port. Direct local loopback requests use a separate strict host, port, and peer check. Reverse proxies must preserve the full external authority in `Host`; if they rewrite the host or drop a custom port, the project runtime keeps applying its existing CORS policy. Do not use `X-Forwarded-Host` or `X-Forwarded-Proto` as a substitute for a validated `Host` authority.
+
 ---
 
 ## Cookie Attributes (verified by AUTH-02, AUTH-29)

@@ -85,7 +85,7 @@ const runFlags = {
 /**
  * Plugin permissions
  */
-const pluginPermissions = combinePermissions()
+const buildPluginPermissions = () => combinePermissions()
   .with(kbPlatformPreset)
   .withFs({
     mode: 'readWrite',
@@ -99,7 +99,13 @@ const pluginPermissions = combinePermissions()
   .withQuotas({
     timeoutMs: 1800000, // 30 min for complex tasks
     memoryMb: 1024,
-  })
+  });
+
+const pluginPermissions = buildPluginPermissions().build();
+
+const qualityReportPermissions = buildPluginPermissions()
+  .withQuotas({ timeoutMs: 5_000 })
+  .withShell({ allow: ['sqlite3'] })
   .build();
 
 export const manifest = {
@@ -296,6 +302,7 @@ export const manifest = {
           'kb agent quality report show --session-id=session-123',
           'kb agent quality report show --days=3 --json',
         ],
+        permissions: qualityReportPermissions,
       },
       // File change history commands
       {

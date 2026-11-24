@@ -19,6 +19,7 @@ import {
   baselineStatusFlags,
   baselineDiffFlags,
   qaCasesListFlags,
+  qaCasesInventoryFlags,
   qaCasesValidateFlags,
   qaCasesCoverageFlags,
 } from './cli/commands/flags.js';
@@ -171,6 +172,11 @@ export const manifest = {
       {
         path: 'qa cases list', category: 'Cases', describe: 'List the configured QA case catalog', operationType: 'read' as const,
         handler: './cli/commands/qa-cases-list.js#default', flags: defineCommandFlags(qaCasesListFlags.schema), permissions: pluginPermissions,
+      },
+      {
+        path: 'qa cases inventory', category: 'Cases', describe: 'Inventory case claims and runtime evidence matrix gaps', operationType: 'analyze' as const,
+        handler: './cli/commands/qa-cases-inventory.js#default', flags: defineCommandFlags(qaCasesInventoryFlags.schema), permissions: pluginPermissions,
+        examples: ['kb qa cases inventory --json'],
       },
       {
         path: 'qa cases validate', category: 'Cases', describe: 'Validate case catalog and test claims', operationType: 'analyze' as const,

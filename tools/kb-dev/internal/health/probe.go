@@ -3,6 +3,7 @@ package health
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,18 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+)
+
+// FailureReason is a bounded diagnostic category. It never contains probe
+// output, URLs, process arguments, or other caller-controlled text.
+type FailureReason string
+
+const (
+	FailureReasonProbeFailed   FailureReason = "probe_failed"
+	FailureReasonHTTPStatus    FailureReason = "http_status"
+	FailureReasonTimeout       FailureReason = "timeout"
+	FailureReasonProcessExited FailureReason = "process_exited"
+	FailureReasonCancelled     FailureReason = "cancelled"
 )
 
 // ProbeType classifies how to check service health.
@@ -36,9 +49,12 @@ type Probe struct {
 
 // Result of a single probe execution.
 type Result struct {
-	OK      bool          `json:"ok"`
-	Latency time.Duration `json:"latency"`
-	Error   error         `json:"-"`
+	OK              bool          `json:"ok"`
+	Latency         time.Duration `json:"latency"`
+	Error           error         `json:"-"`
+	FailureReason   FailureReason `json:"-"`
+	LastProbeReason FailureReason `json:"-"`
+	StatusCode      int           `json:"-"`
 }
 
 // ClassifyProbe determines probe type from the healthCheck string in config.
@@ -97,7 +113,7 @@ func (p Probe) Execute(ctx context.Context) Result {
 	case ProbeUnix:
 		return p.execUnix(ctx, start)
 	default:
-		return Result{OK: false, Error: fmt.Errorf("unknown probe type: %d", p.Type)}
+		return failedProbeResult(fmt.Errorf("unknown probe type: %d", p.Type), 0)
 	}
 }
 
@@ -107,14 +123,14 @@ func (p Probe) execHTTP(ctx context.Context, start time.Time) Result {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.Target, nil)
 	if err != nil {
-		return Result{OK: false, Latency: time.Since(start), Error: err}
+		return failedProbeResultForContext(ctx, err, time.Since(start))
 	}
 
 	resp, err := http.DefaultClient.Do(req)
 	latency := time.Since(start)
 
 	if err != nil {
-		return Result{OK: false, Latency: latency, Error: err}
+		return failedProbeResultForContext(ctx, err, latency)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -122,11 +138,8 @@ func (p Probe) execHTTP(ctx context.Context, start time.Time) Result {
 		return Result{OK: true, Latency: latency}
 	}
 
-	return Result{
-		OK:      false,
-		Latency: latency,
-		Error:   fmt.Errorf("HTTP %d", resp.StatusCode),
-	}
+	return Result{OK: false, Latency: latency, Error: fmt.Errorf("HTTP %d", resp.StatusCode),
+		FailureReason: FailureReasonHTTPStatus, StatusCode: resp.StatusCode}
 }
 
 func (p Probe) execTCP(ctx context.Context, start time.Time) Result {
@@ -135,7 +148,7 @@ func (p Probe) execTCP(ctx context.Context, start time.Time) Result {
 	latency := time.Since(start)
 
 	if err != nil {
-		return Result{OK: false, Latency: latency, Error: err}
+		return failedProbeResultForContext(ctx, err, latency)
 	}
 	_ = conn.Close()
 	return Result{OK: true, Latency: latency}
@@ -150,7 +163,7 @@ func (p Probe) execCommand(ctx context.Context, start time.Time) Result {
 	// target means something built a probe out of a blank/misconfigured
 	// health check, so it must fail rather than lie.
 	if strings.TrimSpace(p.Target) == "" {
-		return Result{OK: false, Latency: time.Since(start), Error: fmt.Errorf("no health check command configured")}
+		return failedProbeResult(fmt.Errorf("no health check command configured"), time.Since(start))
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, p.Timeout)
@@ -161,7 +174,7 @@ func (p Probe) execCommand(ctx context.Context, start time.Time) Result {
 	latency := time.Since(start)
 
 	if err != nil {
-		return Result{OK: false, Latency: latency, Error: err}
+		return failedProbeResultForContext(ctx, err, latency)
 	}
 	return Result{OK: true, Latency: latency}
 }
@@ -181,18 +194,34 @@ func (p Probe) execUnix(ctx context.Context, start time.Time) Result {
 	reqURL := "http://localhost" + p.Target
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return Result{OK: false, Latency: time.Since(start), Error: err}
+		return failedProbeResultForContext(ctx, err, time.Since(start))
 	}
 
 	resp, err := client.Do(req)
 	latency := time.Since(start)
 	if err != nil {
-		return Result{OK: false, Latency: latency, Error: err}
+		return failedProbeResultForContext(ctx, err, latency)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
 		return Result{OK: true, Latency: latency}
 	}
-	return Result{OK: false, Latency: latency, Error: fmt.Errorf("HTTP %d", resp.StatusCode)}
+	return Result{OK: false, Latency: latency, Error: fmt.Errorf("HTTP %d", resp.StatusCode),
+		FailureReason: FailureReasonHTTPStatus, StatusCode: resp.StatusCode}
+}
+
+func failedProbeResult(err error, latency time.Duration) Result {
+	reason := FailureReasonProbeFailed
+	if errors.Is(err, context.DeadlineExceeded) {
+		reason = FailureReasonTimeout
+	}
+	return Result{OK: false, Latency: latency, Error: err, FailureReason: reason}
+}
+
+func failedProbeResultForContext(ctx context.Context, err error, latency time.Duration) Result {
+	if contextError := ctx.Err(); contextError != nil {
+		err = contextError
+	}
+	return failedProbeResult(err, latency)
 }

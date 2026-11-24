@@ -68,6 +68,51 @@ export function validateCommandFlags(
   }
 }
 
+/** Convert raw CLI values according to the selected command's manifest schema. */
+export function coerceCommandFlags(
+  flags: Record<string, unknown>,
+  schema: Array<{ name: string; type: string }>,
+): Record<string, unknown> {
+  const normalized = { ...flags };
+  for (const definition of schema) {
+    if (definition.type !== "number") {
+      continue;
+    }
+    const camelName = kebabToCamel(definition.name);
+    const keys = [definition.name, camelName].filter((key, index, all) => all.indexOf(key) === index);
+    const presentKey = keys.find((key) => Object.hasOwn(normalized, key));
+    if (!presentKey) {
+      continue;
+    }
+    const value = normalized[presentKey];
+    let parsed: number;
+    if (typeof value === "number") {
+      parsed = value;
+    } else if (typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(value.trim())) {
+      parsed = Number(value.trim());
+    } else {
+      throw new CliError(
+        CLI_ERROR_CODES.E_INVALID_FLAGS,
+        `Invalid value for --${definition.name}: expected a finite number.`,
+        { flag: definition.name },
+      );
+    }
+    if (!Number.isFinite(parsed)) {
+      throw new CliError(
+        CLI_ERROR_CODES.E_INVALID_FLAGS,
+        `Invalid value for --${definition.name}: expected a finite number.`,
+        { flag: definition.name },
+      );
+    }
+    for (const key of keys) {
+      if (Object.hasOwn(normalized, key)) {
+        normalized[key] = parsed;
+      }
+    }
+  }
+  return normalized;
+}
+
 // eslint-disable-next-line sonarjs/cognitive-complexity
 export function parseArgs(argv: string[]): {
   cmdPath: string[];

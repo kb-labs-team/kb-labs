@@ -214,6 +214,7 @@ export class SubprocessBackend implements RawExecutionBackend {
           handlerPath,
           exportName: requestToExecute.exportName,
           input: requestToExecute.input,
+          platformRoot: requestToExecute.platformRoot,
           environment: {
             ...requestToExecute.env,
             KB_EXECUTION_ID: requestToExecute.executionId,

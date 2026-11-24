@@ -65,6 +65,18 @@ export interface GatewayClientConfig {
  * Request to execute a handler via Gateway.
  * CLI maps its argv/flags into this format.
  */
+export interface GatewayProjectCommandRequest {
+  /** Client-generated correlation key so cancellation works before the first response event. */
+  requestId: string;
+  /** Enabled plugin selected from the host's project catalog. */
+  pluginId: string;
+  /** Canonical command path selected from the host's project catalog. */
+  commandPath: string;
+  /** Bounded positional arguments and declared flags. */
+  input: { argv: string[]; flags: Record<string, unknown> };
+  timeoutMs?: number;
+}
+
 export interface GatewayExecuteRequest {
   /** Plugin ID (from plugin manifest) */
   pluginId: string;
@@ -88,6 +100,9 @@ export interface IGatewayClient {
    * Returns AsyncIterable of execution events.
    */
   execute(request: GatewayExecuteRequest): AsyncIterable<ExecutionEvent>;
+
+  /** Execute a catalog-resolved CLI command through a registered project runtime, when supported. */
+  executeProject?(projectId: string, request: GatewayProjectCommandRequest): AsyncIterable<ExecutionEvent>;
 
   /**
    * Cancel an execution.
@@ -128,10 +143,12 @@ export interface ICredentialsManager {
  * Manages human-user session credentials stored in ~/.kb/session.json.
  */
 export interface ISessionManager {
-  /** Load session from disk */
-  load(): Promise<SessionCredentials | null>;
+  /** Load the only session or the session for the requested Gateway origin. */
+  load(gatewayUrl?: string): Promise<SessionCredentials | null>;
+  /** List every saved human session. */
+  list(): Promise<SessionCredentials[]>;
   /** Save session to disk (chmod 600) */
   save(session: SessionCredentials): Promise<void>;
-  /** Clear session (logout) */
-  clear(): Promise<void>;
+  /** Clear all sessions or only the one for the requested Gateway origin. */
+  clear(gatewayUrl?: string): Promise<void>;
 }

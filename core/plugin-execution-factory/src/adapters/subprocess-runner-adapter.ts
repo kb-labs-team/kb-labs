@@ -60,6 +60,7 @@ export class SubprocessRunnerAdapter implements ISubprocessRunner {
       platform: options.platform,
       handlerPath: options.handlerPath,
       input: options.input,
+      platformRoot: options.platformRoot,
       environment: options.environment,
       timeoutMs: options.timeoutMs,
       signal: options.signal,

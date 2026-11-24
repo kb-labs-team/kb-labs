@@ -17,7 +17,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
-from nightly_report import aggregate, fingerprint, load_results, render_summary, sync_issues
 from entrypoint import run_runner
 import runner as journey_runner
 from runner import (login_and_configure_secured_admin,
@@ -27,6 +26,8 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             configure_installed_cli_path, declared_capabilities,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
+                            prepare_mcp_projects, prepare_registry_install_project,
+                            cleanup_registry_install_project,
                             request as request_result,
                             project_plugin_settings_isolation, repository_git_status,
                             _prepare_mcp_projects,
@@ -36,6 +37,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from journey_selection import JourneySelection
 from invocations import catalogued_error_hint, run_pty_command, store_report_secret
+from nightly_report import load_results
 from steps.auth import run_secured_auth_steps
 
 
@@ -43,25 +45,63 @@ def tearDownModule():
     journey_runner.cleanup()
 
 
-class FakeGitHub:
-    def __init__(self):
-        self.issues = [{"number": 10, "title": "Nightly status", "state": "open", "labels": []}]
-        self.created = 20
+class RegistryProjectFixtureTest(unittest.TestCase):
+    def test_registry_install_project_is_fresh_and_registered_separately(self):
+        with tempfile.TemporaryDirectory(prefix="journey-registry-project-") as directory:
+            home = Path(directory)
+            existing_project = home / "fresh-project"
+            existing_project.mkdir()
+            lock = existing_project / ".kb" / "marketplace.lock"
+            lock.parent.mkdir()
+            lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {"version": "2.120.1"}}}))
+            base_env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ID": "prj_existing",
+                        "KB_JOURNEY_PROJECT_ROOT": str(existing_project.resolve())}
+            env = base_env.copy()
+            calls = []
 
+            def runner(command, **kwargs):
+                calls.append((tuple(command), kwargs.get("cwd"), kwargs.get("env")))
+                if command[:3] == ["git", "init", "-q"]:
+                    return subprocess.CompletedProcess(command, 0, "", "")
+                if command[0] == "kb" and command[1:3] == ["project", "add"]:
+                    project = Path(command[3]).resolve()
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {
+                        "project": {"id": "prj_registry", "path": str(project)},
+                    }}), "")
+                self.fail(f"unexpected Registry project command: {command}")
 
-    def list_open(self):
-        return self.issues
+            project_id, project_root = prepare_registry_install_project(env, runner)
 
-    def create(self, title, body, labels):
-        issue = {"number": self.created, "title": title, "body": body, "labels": labels, "state": "open"}
-        self.created += 1
-        self.issues.append(issue)
-        return issue
+            self.assertEqual(project_id, "prj_registry")
+            self.assertEqual(env["KB_JOURNEY_PROJECT_ID"], project_id)
+            self.assertEqual(env["KB_JOURNEY_PROJECT_ROOT"], project_root)
+            self.assertEqual(project_root, str((home / "registry-marketplace-project").resolve()))
+            self.assertNotEqual(project_root, str(existing_project.resolve()))
+            self.assertTrue(Path(project_root).is_dir())
+            self.assertFalse((Path(project_root) / ".kb" / "marketplace.lock").exists())
+            self.assertIn("@kb-labs/commit", json.loads(lock.read_text())["plugins"])
+            self.assertEqual([call[0][1:3] for call in calls], [("init", "-q"), ("project", "add")])
+            self.assertEqual(base_env["KB_JOURNEY_PROJECT_ID"], "prj_existing")
+            self.assertEqual(base_env["KB_JOURNEY_PROJECT_ROOT"], str(existing_project.resolve()))
 
-    def update(self, number, **fields):
-        issue = next(item for item in self.issues if item["number"] == number)
-        issue.update(fields)
-        return issue
+            def remove_runner(command, **kwargs):
+                calls.append((tuple(command), kwargs.get("cwd"), kwargs.get("env")))
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"removed": {"id": project_id}},
+                }), "")
+
+            with self.assertRaisesRegex(RuntimeError, "refusing to clean up"):
+                cleanup_registry_install_project(
+                    project_id, project_root, project_root, env, remove_runner)
+            self.assertTrue(Path(project_root).is_dir())
+
+            cleanup_registry_install_project(
+                project_id, project_root, str(existing_project), env, remove_runner)
+
+            self.assertFalse(Path(project_root).exists())
+            self.assertTrue(existing_project.is_dir())
+            self.assertTrue(lock.is_file())
+            self.assertEqual(calls[-1][0], ("kb", "project", "remove", project_id, "--yes", "--json"))
 
 
 class UninstallShimResultTest(unittest.TestCase):
@@ -94,6 +134,164 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_commit_claims_select_only_the_marketplace_lifecycle_owner(self):
+        root = Path(__file__).resolve().parents[2]
+        cases = ("S-160.3", "S-160.5", "S-030.1")
+        from select_from_cases import _case_declarations, selection_from_coverage
+        source = "e2e/journey/plugin_author_steps.py"
+        declarations = _case_declarations(source, root)
+        for mode, runner in (("local", "service-local:explore"),
+                             ("secured", "service-secured:explore")):
+            with self.subTest(mode=mode):
+                records = []
+                for case_id in cases:
+                    if mode == "local" and case_id == "S-160.5":
+                        continue
+                    line = next((line for line, declaration in declarations.items()
+                                 if case_id in (declaration.get("cases") or ())), None)
+                    self.assertIsNotNone(line, f"{case_id} has no owning declaration in {source}")
+                    records.append({"mode": mode, "cases": [{
+                        "id": case_id.rsplit(".", 1)[0], "status": "active", "release": True,
+                        "steps": [{"stepId": case_id, "claims": [{
+                            "kind": "journey", "source": source, "line": line,
+                        }]}],
+                    }]})
+                requested_cases = cases if mode == "secured" else tuple(
+                    case_id for case_id in cases if case_id != "S-160.5"
+                )
+                selection = selection_from_coverage(records, ",".join(requested_cases))
+                self.assertEqual(selection["runners"], [runner])
+                self.assertEqual(selection["capabilities"], ["commit-plugin"])
+                self.assertEqual("S-160.5" in selection["steps"], mode == "secured")
+
+                env = os.environ.copy()
+                env.update({
+                    "KB_JOURNEY_CASES": ",".join(selection["selection"]),
+                    "KB_JOURNEY_SELECTED_STEPS": ",".join(selection["steps"]),
+                    "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selection["selectedOwningSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(selection["prerequisiteSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(selection["prerequisiteFlows"]),
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": ",".join(selection["capabilities"]),
+                    "KB_JOURNEY_RUNNER_SELECTOR": runner,
+                })
+                with patch.dict(os.environ, env, clear=True):
+                    journey = Journey(mode, f"selected-commit-lifecycle-{mode}")
+                    groups = service_selection_groups(runner_selector=runner)
+                    graph = FlowGraph(
+                        journey, {name: spec["depends_on"] for name, spec in groups.items()},
+                        states={
+                            "host-running": {"passed": True, "evidence": "host ready"},
+                            "project-registered": {"passed": True, "evidence": "project registered"},
+                            "service-api-session": {"passed": True, "evidence": "service API ready"},
+                            "marketplace-available": {"passed": True, "evidence": "Commit fixture available"},
+                        }, state_producers=STATE_PRODUCERS, groups=groups,
+                    )
+                    executed = []
+                    lifecycle = graph.flow(
+                        "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                        lambda: executed.extend(case for case in cases if case in selection["steps"]),
+                        record_empty_success=False,
+                    )
+                    unrelated_marketplace = graph.flow(
+                        "marketplace service checks", "marketplace", "marketplace",
+                        lambda: self.fail("unrelated Marketplace checks must stay out of the Commit selection"),
+                        record_empty_success=False,
+                    )
+                    plugin_author = graph.flow(
+                        "plugin author flow", "plugin-author", "plugin-author",
+                        lambda: self.fail("the generic scaffold flow must stay out of the Commit selection"),
+                        cases=["S-014.1", "S-015.1", "S-003.1"], record_empty_success=False,
+                    )
+
+                self.assertEqual(lifecycle, "PASS")
+                self.assertEqual(executed, [case for case in cases if case in selection["steps"]])
+                self.assertEqual(unrelated_marketplace, "SKIPPED")
+                self.assertEqual(plugin_author, "SKIPPED")
+
+    def test_adapter_manifest_doctor_claim_selects_its_outer_flow(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/adapter_defaults_steps.py"
+        from select_from_cases import _case_declarations, selection_from_coverage
+
+        declarations = _case_declarations(source, root)
+        line = next((line for line, declaration in declarations.items()
+                     if "S-054.13" in (declaration.get("cases") or ())), None)
+        self.assertIsNotNone(line, f"S-054.13 has no owning declaration in {source}")
+        cases = ("S-025.11", "S-054.13")
+        records = [{"mode": "secured", "cases": [{
+            "id": case_id.rsplit(".", 1)[0], "status": "active", "release": True,
+            "steps": [{"stepId": case_id, "claims": [{
+                "kind": "journey", "source": source, "line": line,
+            }]}],
+        }]} for case_id in cases]
+        selection = selection_from_coverage(records, ",".join(cases))
+        runner = "agent-secured:commit"
+        self.assertEqual(selection["runners"], [runner])
+        self.assertIn("doctor reports missing manifests read-only and repairs only with fix",
+                      selection["selectedOwningSteps"])
+
+        env = os.environ.copy()
+        env.update({
+            "KB_JOURNEY_CASES": ",".join(selection["selection"]),
+            "KB_JOURNEY_SELECTED_STEPS": ",".join(selection["steps"]),
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selection["selectedOwningSteps"]),
+            "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(selection["prerequisiteSteps"]),
+            "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(selection["prerequisiteFlows"]),
+            "KB_JOURNEY_SELECTED_CAPABILITIES": ",".join(selection["capabilities"]),
+            "KB_JOURNEY_RUNNER_SELECTOR": runner,
+        })
+        with patch.dict(os.environ, env, clear=True):
+            journey = Journey("secured", "selected-adapter-doctor")
+            groups = service_selection_groups(root, runner_selector=runner)
+            adapter_group = groups["adapters"]
+            self.assertTrue(set(cases).issubset(adapter_group["cases"]))
+            self.assertIn("doctor reports missing manifests read-only and repairs only with fix",
+                          adapter_group["steps"])
+            graph = FlowGraph(
+                journey, {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                },
+                groups=groups,
+            )
+            executed = []
+            status = graph.flow(
+                "adapter defaults flow", "adapters", "adapter",
+                lambda: executed.append(journey.step(
+                    "doctor reports missing manifests read-only and repairs only with fix",
+                    "installerStateDirectory", lambda: None, cases=cases,
+                )),
+                cases=["S-054.1", "S-048.1"], record_empty_success=False,
+            )
+
+        self.assertEqual(status, "PASS")
+        self.assertEqual(len(executed), 1)
+        self.assertEqual(executed[0].status, "PASS")
+        self.assertEqual(executed[0].cases, list(cases))
+
+    def test_cron_parity_check_prepares_fixture_and_captures_environment(self):
+        graph = FlowGraph(
+            Journey("local", "cron-parity-callback"),
+            {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+            states={
+                "project-registered": {"passed": True, "value": {"id": "project-123", "root": "/work/project"}},
+                "service-api-session": {"passed": True, "value": None},
+            },
+            groups=SERVICE_GROUPS,
+        )
+        with patch("service_runner.prepare_workflow_fixtures") as prepare, \
+             patch("service_runner.workflow_cron_invocation_parity", return_value=None) as parity, \
+             patch.dict(os.environ, {"CRON_PARITY_FIXTURE": "synthetic"}):
+            check = next(step for step in checks("local", graph)
+                         if step[0] == "workflow cron CLI and MCP state parity")
+            self.assertIsNone(check[2]())
+
+        prepare.assert_called_once_with(Path("/work/project"))
+        args = parity.call_args.args
+        self.assertEqual(args[:3], ("project-123", "", "/work/project"))
+        self.assertEqual(args[3]["CRON_PARITY_FIXTURE"], "synthetic")
+
     def test_project_mcp_tool_name_artifact_matches_producer(self):
         root = Path(__file__).parents[2]
         result = subprocess.run(
@@ -326,6 +524,35 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertTrue(any(token == "synthetic-service-token" for path, token in requests
                             if path != "/auth/me"))
 
+    def test_service_api_session_uses_runner_environment_credentials(self):
+        import service_runner
+
+        env = {
+            "KB_JOURNEY_ADMIN_EMAIL": "journey-admin@example.test",
+            "KB_JOURNEY_ADMIN_PASSWORD": "synthetic-admin-password",
+        }
+        calls = []
+
+        def fake_request(path, *, payload=None, token="", **_kwargs):
+            calls.append((path, payload, token))
+            if path == "/auth/login/cli":
+                return 200, {"accessToken": "synthetic-session-token"}, {}
+            if path == "/auth/me":
+                return 200, {"userId": "admin"}, {}
+            self.fail(f"unexpected request {path}")
+
+        graph = FlowGraph(Journey("secured", "runner-env-api-session"), {})
+        with patch("service_runner.ADMIN_EMAIL", "wrong-fallback@example.test"), \
+                patch("service_runner.ADMIN_PASSWORD", ""), \
+                patch("service_runner.request", side_effect=fake_request):
+            prepare_service_api_session(graph, "secured", env=env)
+
+        self.assertEqual(calls[0], ("/auth/login/cli", {
+            "email": "journey-admin@example.test", "password": "synthetic-admin-password"}, ""))
+        self.assertEqual(calls[1], ("/auth/me", None, "synthetic-session-token"))
+        self.assertEqual(service_api_token(graph), "synthetic-session-token")
+        self.assertEqual(env["KB_JOURNEY_SERVICE_TOKEN"], "synthetic-session-token")
+
     def test_selected_secured_checks_block_when_service_api_session_fails(self):
         journey, _graph, requests = self._selected_service_checks(
             "secured", lambda path, _token: self.fail(f"check sent unexpected request {path}"),
@@ -470,6 +697,94 @@ class ServiceJourneyTests(unittest.TestCase):
                 self.assertTrue(all(headers.get("Authorization") == f"Bearer {token}" if token
                                     else "Authorization" not in headers for headers in seen))
 
+    def test_real_resolver_keeps_unrelated_marketplace_flow_out_of_s140_and_s181(self):
+        root = Path(__file__).resolve().parents[2]
+        cases = {
+            "S-140.5": ("service-local:explore", "mcp", "project MCP cross-project isolation"),
+            "S-181.7": ("agent:commit", "platform.install",
+                        "install and reapply generated secrets from the offline artifact cache"),
+        }
+        for case_id, (runner, capability, owner) in cases.items():
+            with self.subTest(case=case_id):
+                env = os.environ.copy()
+                env.update({"KB_JOURNEY_CASES": case_id, "KB_JOURNEY_SELECTION_MODE": "local"})
+                for key in ("KB_JOURNEY_ONLY", "KB_JOURNEY_SELECTED_STEPS",
+                            "KB_JOURNEY_SELECTED_OWNING_STEPS", "KB_JOURNEY_PREREQUISITE_STEPS",
+                            "KB_JOURNEY_PREREQUISITE_FLOWS", "KB_JOURNEY_SELECTED_CAPABILITIES"):
+                    env.pop(key, None)
+                resolved = subprocess.run(
+                    ["bash", "e2e/journey/run.sh", "--resolve-only"], cwd=root, env=env,
+                    capture_output=True, text=True, check=False, timeout=120,
+                )
+                self.assertEqual(resolved.returncode, 0, resolved.stderr)
+                selection = json.loads(resolved.stdout)
+                self.assertEqual(selection["runners"], [runner])
+                self.assertIn(capability, selection["capabilities"])
+                self.assertIn(owner, selection["selectedOwningSteps"])
+                env.update({
+                    "KB_JOURNEY_CASES": ",".join(selection["selection"]),
+                    "KB_JOURNEY_SELECTED_STEPS": ",".join(selection["steps"]),
+                    "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps(selection["selectedOwningSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_STEPS": json.dumps(selection["prerequisiteSteps"]),
+                    "KB_JOURNEY_PREREQUISITE_FLOWS": json.dumps(selection["prerequisiteFlows"]),
+                    "KB_JOURNEY_SELECTED_CAPABILITIES": ",".join(selection["capabilities"]),
+                    "KB_JOURNEY_RUNNER_SELECTOR": runner,
+                })
+                with patch.dict(os.environ, env, clear=True):
+                    journey = Journey("local", f"real-selection-{case_id}")
+                    groups = service_selection_groups(runner_selector=runner)
+                    graph = FlowGraph(
+                        journey, {name: spec["depends_on"] for name, spec in groups.items()},
+                        states={
+                            "host-running": {"passed": True, "evidence": "host ready"},
+                            "project-registered": {"passed": True, "evidence": "project registered"},
+                            "service-api-session": {"passed": True, "evidence": "service API ready"},
+                            "marketplace-available": {"passed": True, "evidence": "fixture available"},
+                        }, state_producers=STATE_PRODUCERS, groups=groups,
+                    )
+                    marketplace_calls = []
+                    result = graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                                        lambda: marketplace_calls.append("ran"), record_empty_success=False)
+                    fixture_calls = []
+                    fixture_result = graph.flow("prepare MCP project fixtures", "marketplace-fixtures", "mcp",
+                                                 lambda: fixture_calls.append("MCP"),
+                                                 record_empty_success=False)
+                    graph.probe_state("fixtures-installed", "marketplace-fixtures", "project fixture handoff",
+                                      lambda: None)
+                    mcp_calls = []
+                    mcp_result = graph.flow("project MCP cross-project isolation", "mcp", "mcp",
+                                             lambda: mcp_calls.append("owner"), cases=["S-140.5"],
+                                             record_empty_success=False)
+                self.assertEqual(result, "SKIPPED")
+                self.assertEqual(marketplace_calls, [])
+                if case_id == "S-140.5":
+                    self.assertEqual(fixture_result, "PASS")
+                    self.assertEqual(fixture_calls, ["MCP"])
+                    self.assertEqual(mcp_result, "PASS")
+                    self.assertEqual(mcp_calls, ["owner"])
+                else:
+                    self.assertEqual(fixture_result, "SKIPPED")
+                    self.assertEqual(fixture_calls, [])
+                    self.assertEqual(mcp_result, "SKIPPED")
+                    self.assertEqual(mcp_calls, [])
+
+        with patch.dict(os.environ, {}, clear=True):
+            full_journey = Journey("local", "full-selection-still-runs-marketplace")
+            full_graph = FlowGraph(
+                full_journey, {name: spec["depends_on"] for name, spec in SERVICE_GROUPS.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "service API ready"},
+                    "marketplace-available": {"passed": True, "evidence": "fixture available"},
+                }, state_producers=STATE_PRODUCERS, groups=SERVICE_GROUPS,
+            )
+            full_calls = []
+            full_result = full_graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                                          lambda: full_calls.append("ran"), record_empty_success=False)
+        self.assertEqual(full_result, "PASS")
+        self.assertEqual(full_calls, ["ran"])
+
     def test_marketplace_claim_selects_its_flow_and_state_producer(self):
         calls = []
         selected = "S-010.1"
@@ -511,6 +826,25 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(journey.result().case_run["claims"], [
             {"claimId": "S-010.1", "kind": "journey", "status": "PASS"},
         ])
+
+    def test_registry_marketplace_flow_is_scoped_to_registry_runners(self):
+        service_runner_path = Path(__file__).with_name("service_runner.py")
+        tree = ast.parse(service_runner_path.read_text(encoding="utf-8"))
+        calls = [node for node in ast.walk(tree)
+                 if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "flow"
+                 and node.args
+                 and isinstance(node.args[0], ast.Constant)
+                 and node.args[0].value == "Registry ordered-source Marketplace assertions"]
+
+        self.assertEqual(len(calls), 1)
+        runners = next(keyword.value for keyword in calls[0].keywords if keyword.arg == "runners")
+        self.assertIsInstance(runners, ast.Tuple)
+        self.assertEqual(
+            tuple(element.value for element in runners.elts if isinstance(element, ast.Constant)),
+            ("service-marketplace-registry:local", "service-marketplace-registry:secured"),
+        )
 
     def test_flow_exception_and_blocked_only_run_have_named_first_failure(self):
         selected = "S-010.1"
@@ -1599,6 +1933,7 @@ raise SystemExit(1)
             root = Path(directory)
             home = root / "home"
             home.mkdir()
+            home = home.resolve()
             project = home / "fresh-project"
             project.mkdir()
             commands = []
@@ -1709,6 +2044,7 @@ raise SystemExit(1)
             root = Path(directory)
             home = root / "home"
             home.mkdir()
+            home = home.resolve()
             project_a = root / "project-a"
             project_a.mkdir()
             subprocess.run(["git", "init", "-q", str(project_a)], check=True)
@@ -1730,6 +2066,8 @@ raise SystemExit(1)
                     return subprocess.CompletedProcess(
                         command, 0,
                         json.dumps({"ok": True, "data": {"project": {"id": "prj_b", "path": registry_project_root}}}), "")
+                if command[:4] == ["kb", "marketplace", "plugins", "list"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({"ok": True, "data": {"entries": [], "total": 0}}), "")
                 return subprocess.CompletedProcess(command, 0, "{}", "")
 
             with patch("service_runner._registry_version", return_value="2.120.1"):
@@ -1746,6 +2084,9 @@ raise SystemExit(1)
 
         self.assertEqual(project_b_id, "prj_b")
         self.assertEqual(registered_project_roots, [project_b_root])
+        self.assertIn(["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--scope", "project", "--json"], calls)
+        self.assertIn(["kb", "marketplace", "plugins", "list", "--scope", "platform", "--json"], calls)
+        self.assertIn(["kb", "marketplace", "plugins", "list", "--scope", "project", "--json"], calls)
         self.assertNotIn("KB_JOURNEY_PROJECT_B_ID", env)
         self.assertNotIn("KB_JOURNEY_PROJECT_B_ROOT", env)
         self.assertEqual(handoff, {
@@ -1757,14 +2098,36 @@ raise SystemExit(1)
                 "path": str(plan_path), "planId": "journey-commit", "totalCommits": 1,
             },
         })
-        self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--json"])
+        self.assertEqual(calls[0], ["kb", "marketplace", "install", "@kb-labs/commit", "--scope", "project", "--json"])
         registration_calls = [call for call in calls if call[:3] == ["kb", "project", "add"]]
         self.assertEqual(len(registration_calls), 1)
-        self.assertEqual(calls[2], ["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--json"])
+        self.assertEqual(calls[1], ["kb", "marketplace", "install", "@kb-labs/review@2.120.1", "--scope", "project", "--json"])
         self.assertEqual(registration_calls[0][0:3], ["kb", "project", "add"])
         self.assertEqual(registered_project_exists, [True])
         self.assertEqual(plan["gitStatus"]["staged"], ["note.txt"])
         self.assertEqual(plan["commits"][0]["files"], ["note.txt"])
+
+    def test_prepare_mcp_projects_rejects_review_fixture_present_at_platform_scope(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            home.mkdir()
+            project_a = root / "project-a"
+            project_a.mkdir()
+            subprocess.run(["git", "init", "-q", str(project_a)], check=True)
+            (project_a / "note.txt").write_text("journey note\n")
+            subprocess.run(["git", "-C", str(project_a), "add", "note.txt"], check=True)
+            env = {"HOME": str(home.resolve())}
+
+            def fake_runner(command, **kwargs):
+                if command[:4] == ["kb", "marketplace", "plugins", "list"] and "platform" in command:
+                    payload = {"ok": True, "data": {"entries": [{"id": "@kb-labs/review"}], "total": 1}}
+                    return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+                return subprocess.CompletedProcess(command, 0, "{}", "")
+
+            with patch("service_runner._registry_version", return_value="2.120.1"):
+                with self.assertRaisesRegex(RuntimeError, "Review plugin is installed at platform scope"):
+                    prepare_mcp_projects(str(project_a), "http://registry.test", env, fake_runner)
 
     def test_mcp_initialize_checks_protocol_response(self):
         response = {"result": {"protocolVersion": "2025-03-26"}}
@@ -1901,134 +2264,6 @@ raise SystemExit(1)
                       (journey_dir / "Dockerfile.runner").read_text(),
                       "Dockerfile.runner must mirror the journey package under the repository resource root")
 
-    def test_aggregate_compares_previous_status_and_uses_stable_fingerprint(self):
-        bad = {"capability": "workflow", "mode": "local", "name": "run", "status": "FAIL",
-               "message": "HTTP 404 at host A", "duration_seconds": 1}
-        report = aggregate([{"steps": [bad]}])
-        self.assertEqual(report["status"], "FAIL")
-        self.assertEqual(fingerprint(bad), fingerprint({**bad, "message": "HTTP 500 at host B"}))
-        good = {**bad, "status": "PASS", "message": "passed"}
-        next_report = aggregate([{"steps": [good]}], [{"steps": [bad]}])
-        self.assertEqual(next_report["delta"]["fixed"], ["workflow:local"])
-
-    def test_yesterday_today_fixtures_report_fixed_and_new_failures(self):
-        fixtures = Path(__file__).parent / "fixtures" / "nightly"
-        report = aggregate(load_results(fixtures / "today"), load_results(fixtures / "yesterday"))
-        self.assertEqual(report["delta"]["fixed"], ["workflow:local"])
-        self.assertEqual(report["delta"]["new"], ["mcp:local"])
-        self.assertEqual(report["status"], "FAIL")
-
-    def test_empty_results_cannot_pass(self):
-        report = aggregate([])
-        self.assertEqual(report["status"], "FAIL")
-        self.assertEqual(report["capabilities"][0]["first_failure"]["name"], "result files")
-
-    def test_release_case_coverage_is_included_in_nightly_status(self):
-        capability_result = {"steps": [{"capability": "gateway", "mode": "local", "name": "ready",
-                                        "status": "PASS", "duration_seconds": 0, "message": "passed"}]}
-        coverage = {"schema": "kb.qa-case-coverage/v1", "mode": "local", "releasePassed": False,
-                    "cases": [{"id": "S-045", "release": True, "status": "active", "statusResult": "NOT COVERED"}]}
-        report = aggregate([capability_result], case_coverage=[coverage])
-        self.assertEqual(report["status"], "FAIL")
-        self.assertEqual(report["case_coverage"], [coverage])
-        self.assertIn("Case coverage (local): **FAIL**", render_summary(report))
-
-    def test_result_with_no_capability_steps_cannot_pass(self):
-        report = aggregate([{"steps": []}])
-        self.assertEqual(report["status"], "FAIL")
-        self.assertEqual(report["capabilities"][0]["first_failure"]["name"], "capability results")
-
-    def test_profile_missing_declared_capabilities_is_blocked(self):
-        result = {"steps": [{"capability": "gateway", "mode": "local", "name": "ready",
-                            "status": "PASS", "duration_seconds": 0, "message": "passed"}]}
-        report = aggregate([result], profiles={"local": {"gateway", "workflow"}})
-        workflow = next(item for item in report["capabilities"] if item["capability"] == "workflow")
-        self.assertEqual(workflow["status"], "BLOCKED")
-        self.assertIn("profile local declares workflow", workflow["first_failure"]["message"])
-        self.assertEqual(report["status"], "BLOCKED")
-
-    def test_profile_passes_only_when_each_declared_capability_passes(self):
-        steps = [{"capability": capability, "mode": "local", "name": capability,
-                  "status": "PASS", "duration_seconds": 0, "message": "passed"}
-                 for capability in ("gateway", "workflow")]
-        report = aggregate([{"steps": steps}], profiles={"local": {"gateway", "workflow"}})
-        self.assertEqual(report["status"], "PASS")
-        self.assertEqual({item["capability"] for item in report["capabilities"]}, {"gateway", "workflow"})
-
-    def test_nonzero_journey_exit_fails_even_when_result_steps_pass(self):
-        result = {"steps": [{"capability": "gateway", "mode": "secured", "name": "ready",
-                            "status": "PASS", "duration_seconds": 0, "message": "passed"}]}
-        report = aggregate([result], journey_exits={"secured": 7})
-        failure = next(item for item in report["capabilities"] if item["capability"] == "journey.runner")
-        self.assertEqual(report["status"], "FAIL")
-        self.assertEqual(failure["first_failure"]["name"], "journey process exit")
-        self.assertIn("status 7", failure["first_failure"]["message"])
-
-    def test_unparseable_result_file_is_reported_as_failure(self):
-        with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "service-local.json").write_text("{broken")
-            report = aggregate(load_results(directory))
-        failure = next(item for item in report["capabilities"] if item["capability"] == "journey.runner")
-        self.assertEqual(report["status"], "FAIL")
-        self.assertEqual(failure["first_failure"]["name"], "result file parse")
-        self.assertIn("service-local.json", failure["first_failure"]["message"])
-
-    def test_result_loader_skips_case_coverage_documents(self):
-        with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "service-local.json").write_text('{"steps":[]}')
-            Path(directory, "case-coverage-local.json").write_text('{"schema":"kb.qa-case-coverage/v1"}')
-            Path(directory, "report.json").write_text('{"schema":"kb.nightly-report/v1"}')
-            results = load_results(directory)
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0], {"steps": []})
-
-    def test_invalid_step_status_cannot_be_treated_as_pass(self):
-        with tempfile.TemporaryDirectory() as directory:
-            Path(directory, "service-local.json").write_text(
-                '{"steps":[{"capability":"workflow","mode":"local","name":"run",'
-                '"status":"SKIP","message":"missing"}]}'
-            )
-            report = aggregate(load_results(directory))
-        failure = next(item for item in report["capabilities"] if item["capability"] == "journey.runner")
-        self.assertEqual(report["status"], "FAIL")
-        self.assertIn("status must be", failure["first_failure"]["message"])
-
-    def test_declared_profile_capabilities_match_service_checks(self):
-        for mode, auth_capability in (("local", "auth.local"), ("secured", "auth.invite-reset")):
-            self.assertEqual(declared_capabilities(mode),
-                             {capability for _, capability, _, _, _, _ in checks(mode)}
-                             | {auth_capability, "plugin-author"})
-
-    def test_issue_sync_is_idempotent_updates_existing_and_closes_fixed(self):
-        client = FakeGitHub()
-        failure = {"capability": "mcp", "mode": "secured", "name": "tools/list",
-                   "status": "FAIL", "message": "HTTP 404", "duration_seconds": 2}
-        report = aggregate([{"steps": [failure]}])
-        first = sync_issues(client, report, 10)
-        self.assertEqual(len(first["created"]), 1)
-        self.assertEqual(len(client.issues), 2)
-        second = sync_issues(client, report, 10)
-        self.assertEqual(second["updated"], first["created"])
-        self.assertEqual(len(client.issues), 2)
-        green = aggregate([{"steps": [{**failure, "status": "PASS", "message": "passed"}]}])
-        closed = sync_issues(client, green, 10)
-        self.assertEqual(len(closed["closed"]), 1)
-        self.assertEqual(client.issues[1]["state"], "closed")
-
-    # case: S-261.3
-    def test_issue_sync_creates_one_pinned_status_issue_when_missing(self):
-        client = FakeGitHub()
-        client.issues.clear()
-        passed = {"capability": "gateway", "mode": "local", "name": "ready",
-                  "status": "PASS", "message": "passed", "duration_seconds": 0}
-        report = aggregate([{"steps": [passed]}])
-        changes = sync_issues(client, report, 0)
-        self.assertEqual(len(client.issues), 1)
-        self.assertIn("nightly-status", client.issues[0]["labels"])
-        self.assertEqual(changes, {"created": [], "updated": [], "closed": []})
-        sync_issues(client, report, 0)
-        self.assertEqual(len(client.issues), 1, "the nightly issue is found and updated on the next run")
-
     def test_required_mode_steps_and_workflow_fixture_are_explicit(self):
         local = {capability for _, capability, _, _, _, _ in checks("local")}
         secured = {capability for _, capability, _, _, _, _ in checks("secured")}
@@ -2037,6 +2272,7 @@ raise SystemExit(1)
         with patch("service_runner.request", return_value=(200, {"data": {"workflows": []}}, {})):
             failure = discover_workflow("prj_fixture", "")
         self.assertIn("e2e-hello fixture", failure)
+
 
 
 if __name__ == "__main__":

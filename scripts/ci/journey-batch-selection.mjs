@@ -10,9 +10,12 @@
 //   resolve <event> <ref>        -> prints `selection=full|cases:<b64>` (GITHUB_OUTPUT line)
 //   run <selection> -- <cmd...>  -> runs cmd with `--cases <ids>` appended for a `cases:` selection
 import { spawnSync } from 'node:child_process';
+import { realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const CASES_REF = /^batch\/.+\/cases\/(?<encoded>.+)$/;
+const AREA_REF = /^batch\/.+\/areas\/(?<area>.*)$/;
 
 function decodeCases(encoded) {
   return Buffer.from(encoded.replace(/_/g, '/').replace(/-/g, '+'), 'base64').toString('utf8');
@@ -22,7 +25,15 @@ function decodeCases(encoded) {
 export const TRIGGER_SELECTIONS = {
   push: ({ ref }) => {
     const match = CASES_REF.exec(ref);
-    return match ? `cases:${match.groups.encoded}` : 'full';
+    if (match) return `cases:${match.groups.encoded}`;
+    const area = AREA_REF.exec(ref);
+    if (area) {
+      if (!/^[a-z][a-z0-9-]*$/.test(area.groups.area)) {
+        throw new Error(`journey batch ref "${ref}" has an invalid or empty product area; use a lowercase QA area slug`);
+      }
+      return `area:${area.groups.area}`;
+    }
+    return 'full';
   },
   pull_request: () => 'full',
   workflow_dispatch: () => 'full',
@@ -45,6 +56,28 @@ export function resolveSelection(event, ref) {
 export function batchArguments(selection) {
   if (selection === 'full') return [];
   if (selection.startsWith('cases:')) return ['--cases', decodeCases(selection.slice(6))];
+  if (selection.startsWith('area:') && /^[a-z][a-z0-9-]*$/.test(selection.slice(5))) {
+    return ['--area', selection.slice(5)];
+  }
+  throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
+}
+
+export function sharedUnitSuiteMode(selection) {
+  if (selection === 'full') return 'run';
+  if (selection.startsWith('cases:') && decodeCases(selection.slice(6)).trim() !== '') return 'skip';
+  if (selection.startsWith('area:') && /^[a-z][a-z0-9-]*$/.test(selection.slice(5))) return 'skip';
+  throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
+}
+
+export function selectionIds(selection) {
+  if (selection === 'full') return '';
+  if (selection.startsWith('cases:')) {
+    const ids = decodeCases(selection.slice(6)).trim();
+    if (ids) return ids;
+  }
+  if (selection.startsWith('area:') && /^[a-z][a-z0-9-]*$/.test(selection.slice(5))) {
+    return `@area:${selection.slice(5)}`;
+  }
   throw new Error(`unknown journey batch selection "${selection}"; expected "full" or "cases:<encoded ids>"`);
 }
 
@@ -59,11 +92,19 @@ function main(argv) {
     const result = spawnSync(executable, [...args, ...batchArguments(selection)], { stdio: 'inherit' });
     return result.status ?? 1;
   }
-  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...>\n');
+  if (command === 'shared-unit-suite' && rest.length === 1) {
+    process.stdout.write(`${sharedUnitSuiteMode(rest[0])}\n`);
+    return 0;
+  }
+  if (command === 'ids' && rest.length === 1) {
+    process.stdout.write(`${selectionIds(rest[0])}\n`);
+    return 0;
+  }
+  process.stderr.write('usage: journey-batch-selection.mjs resolve <event> <ref> | run <selection> -- <command...> | shared-unit-suite <selection> | ids <selection>\n');
   return 2;
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(realpathSync(resolve(process.argv[1]))).href) {
   try {
     process.exit(main(process.argv.slice(2)));
   } catch (error) {

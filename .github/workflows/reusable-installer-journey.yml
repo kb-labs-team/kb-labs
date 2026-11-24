@@ -16,7 +16,8 @@ jobs:
   prepare:
     name: Build local release candidate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # One recent prepare job finished in 28m47s, leaving only 73s under 30m.
+    timeout-minutes: 45
     outputs:
       journeys: ${{ steps.matrix.outputs.journeys }}
     steps:
@@ -32,8 +33,10 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Run journey static preflight
+        run: bash e2e/journey/static-preflight.sh
       - name: Build kb-devkit
         run: make build -C tools/kb-devkit
       - name: Install workspace dependencies
@@ -73,7 +76,7 @@ jobs:
     name: Journey ${{ matrix.case }}
     needs: prepare
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -81,6 +84,8 @@ jobs:
         case: ${{ fromJSON(needs.prepare.outputs.journeys) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: installer-journey-candidate
@@ -95,11 +100,57 @@ jobs:
       - name: Add journey report to job summary
         if: always()
         run: if [ -f .journey/reports/journey-summary.md ]; then cat .journey/reports/journey-summary.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Summarize journey invocation timings
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from collections import defaultdict
+          from pathlib import Path
+
+          calls = Path('.journey/reports/invocations/calls.jsonl')
+          if calls.is_file():
+              totals = defaultdict(lambda: [0, 0.0])
+              first = last = None
+              count = 0
+              for line in calls.open(encoding='utf-8'):
+                  try:
+                      row = json.loads(line)
+                  except json.JSONDecodeError:
+                      continue
+                  step = row.get('step_id')
+                  if not isinstance(step, str):
+                      continue
+                  seconds = row.get('duration_seconds')
+                  seconds = seconds if isinstance(seconds, (int, float)) else 0
+                  totals[step][0] += 1
+                  totals[step][1] += seconds
+                  first = first or step
+                  last = step
+                  count += 1
+              print('### Journey invocation timing')
+              print(f'{count} recorded calls; first step: `{first or "unknown"}`; last step: `{last or "unknown"}`.')
+              print('Durations are cumulative subprocess time by case step (they do not include gaps between calls).')
+              for step, (calls_count, seconds) in sorted(totals.items(), key=lambda item: item[1][1], reverse=True)[:10]:
+                  print(f'- `{step}`: {calls_count} calls, {seconds:.1f}s')
+          PY
+      - id: artifact-name
+        name: Sanitize journey artifact name
+        if: always()
+        env:
+          MATRIX_OS: ${{ matrix.os }}
+          MATRIX_CASE: ${{ matrix.case }}
+        run: printf 'name=%s\n' "$(node scripts/ci/sanitize-artifact-name.mjs "$MATRIX_OS" "$MATRIX_CASE")" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: service-journey-results-${{ matrix.os }}-${{ matrix.case }}
-          path: .journey/reports/service-*.json
+          name: ${{ steps.artifact-name.outputs.name }}
+          path: |
+            .journey/reports/service-*.json
+            .journey/reports/installer-case-*.json
+            .journey/reports/qa-evidence/**
+            .journey/reports/invocations/**
+            .journey/reports/journey-summary.md
           if-no-files-found: ignore
           retention-days: 90
 
@@ -117,20 +168,31 @@ jobs:
           node-version-file: package.json
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: installer-journey-candidate
       - name: Install candidate natively and smoke the installed CLI
         run: e2e/journey/native-macos-smoke.sh
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: service-journey-results-macos-native
+          path: |
+            .journey/reports/service-native-macos.json
+            .journey/reports/invocations/native-macos/**
+          if-no-files-found: ignore
+          retention-days: 90
 
   coverage:
     name: Release case coverage
-    needs: [prepare, journey]
+    needs: [prepare, journey, native_macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with: { run_install: false }
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
@@ -139,7 +201,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Restore journey results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
@@ -162,3 +224,115 @@ jobs:
             node ./cli/bin/dist/bin.js "${args[@]}" || coverage_status=1
           done
           exit "$coverage_status"
+
+  evidence_diagnostic:
+    name: Hosted installer evidence diagnostic
+    needs: [prepare, journey]
+    if: ${{ always() && !cancelled() }}
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with: { run_install: false }
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.11'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Restore local installer reports for diagnostics
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          pattern: service-journey-results-*
+          path: .journey/reports
+          merge-multiple: true
+      - name: Restore candidate for diagnostics
+        id: restore-candidate
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
+        with:
+          name: installer-journey-candidate
+          path: .journey/candidate
+      - name: Prepare an independent diagnostic plan
+        id: evidence-inputs
+        run: |
+          mkdir -p .journey/diagnostics .journey/reports
+          index=.journey/candidate/.journey/release/release-index.json
+          if [ ! -f "$index" ]; then index=-; fi
+          if ! node scripts/ci/installer-evidence-plan.mjs "$index" \
+            tools/clikit/toolchain/node_policy_gen.json \
+            .journey/diagnostics/pc001-local-plan.json .journey/reports \
+            .journey/diagnostics/pc001-local-manifest.json; then
+            if [ -f .journey/diagnostics/pc001-local-manifest.json ]; then
+              node scripts/ci/summarize-installer-evidence.mjs - \
+                .journey/diagnostics/pc001-local-manifest.json \
+                .journey/diagnostics/pc001-local-summary.json
+            else
+              printf '{"status":"INCOMPLETE","behaviorStatus":"NOT RUN","evidenceStatus":"INCOMPLETE","releasePassed":false,"reason":"Candidate plan or retained installer report is invalid."}\n' > .journey/diagnostics/pc001-local-summary.json
+            fi
+            printf 'has_records=false\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          record_count=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(String(m.records.length))')
+          if [ "$index" = "-" ]; then
+            node scripts/ci/summarize-installer-evidence.mjs - \
+              .journey/diagnostics/pc001-local-manifest.json \
+              .journey/diagnostics/pc001-local-summary.json
+            printf 'has_records=false\n' >> "$GITHUB_OUTPUT"
+          elif [ "$record_count" -gt 0 ]; then
+            printf 'has_records=true\n' >> "$GITHUB_OUTPUT"
+          else
+            node scripts/ci/summarize-installer-evidence.mjs - \
+              .journey/diagnostics/pc001-local-manifest.json \
+              .journey/diagnostics/pc001-local-summary.json
+            printf 'has_records=false\n' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build the case coverage CLI for diagnostics
+        if: steps.evidence-inputs.outputs.has_records == 'true'
+        run: |
+          make build -C tools/kb-devkit
+          e2e/journey/install-workspace-dependencies.sh
+          ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
+      - name: Evaluate hosted PC-001.2 evidence diagnostically
+        if: steps.evidence-inputs.outputs.has_records == 'true'
+        continue-on-error: true
+        run: |
+          run_files=$(node -e 'const m=require("./.journey/diagnostics/pc001-local-manifest.json");process.stdout.write(m.records.map(r=>r.path).join(","))')
+          set +e
+          node ./cli/bin/dist/bin.js qa coverage show --level all --mode local \
+            --evidence --evidence-plan .journey/diagnostics/pc001-local-plan.json \
+            --run "$run_files" --json > .journey/diagnostics/pc001-local-evaluation.json
+          evaluation_status=$?
+          set -e
+          node scripts/ci/summarize-installer-evidence.mjs \
+            .journey/diagnostics/pc001-local-evaluation.json \
+            .journey/diagnostics/pc001-local-manifest.json \
+            .journey/diagnostics/pc001-local-summary.json
+          exit "$evaluation_status"
+      - name: Finalize an incomplete diagnostic if evaluation could not run
+        if: always()
+        run: |
+          mkdir -p .journey/diagnostics
+          if [ ! -f .journey/diagnostics/pc001-local-manifest.json ]; then
+            printf '{"records":[],"invalid":[]}\n' > .journey/diagnostics/pc001-local-manifest.json
+          fi
+          if [ ! -f .journey/diagnostics/pc001-local-summary.json ]; then
+            node scripts/ci/summarize-installer-evidence.mjs - \
+              .journey/diagnostics/pc001-local-manifest.json \
+              .journey/diagnostics/pc001-local-summary.json
+          fi
+      - name: Upload diagnostic evidence evaluation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: installer-evidence-diagnostic
+          path: .journey/diagnostics/**
+          if-no-files-found: warn
+          retention-days: 7

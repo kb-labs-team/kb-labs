@@ -1,5 +1,7 @@
 import type { ILogger, IServiceTransport } from '@kb-labs/core-platform';
-import { unexpectedMcpResult, mcpToolSuccess } from './request-handler.js';
+import { isErrorEnvelope } from '@kb-labs/core-platform';
+import type { RegisteredServiceCommandOperation } from '@kb-labs/plugin-contracts';
+import { unexpectedMcpResult, mcpToolErrorEnvelope, mcpToolSuccess, mcpToolSuccessValue } from './request-handler.js';
 import type { McpServiceTool } from './tool-builder.js';
 
 /** Invoke an enabled service command through the platform's topology-aware transport. */
@@ -41,6 +43,33 @@ export async function callServiceTool(
     }
     return mcpToolSuccess(JSON.stringify(response.payload ?? null));
   } catch (error) {
+    return unexpectedMcpResult(error, logger);
+  }
+}
+
+/** Execute a trusted host-neutral operation with a service-scoped request capability. */
+export async function callRegisteredServiceOperation(
+  input: Record<string, unknown>,
+  operation: RegisteredServiceCommandOperation,
+  servicePathPrefix: string,
+  gatewayUrl: string | undefined,
+  transport: IServiceTransport,
+  logger: ILogger,
+) {
+  try {
+    const result = await operation.execute(input, async (request) => transport.call(operation.serviceId, {
+      path: `${servicePathPrefix}${request.path}`,
+      metadata: { 'http-method': request.method, ...(request.payload === undefined ? {} : { 'content-type': 'application/json' }) },
+      ...(request.payload === undefined ? {} : { payload: request.payload }),
+    }).then((response) => ({ ...response, gatewayUrl })));
+    return mcpToolSuccessValue(result);
+  } catch (error) {
+    const envelope = typeof error === 'object' && error !== null && 'envelope' in error
+      ? error.envelope
+      : undefined;
+    if (isErrorEnvelope(envelope)) {
+      return mcpToolErrorEnvelope(envelope);
+    }
     return unexpectedMcpResult(error, logger);
   }
 }

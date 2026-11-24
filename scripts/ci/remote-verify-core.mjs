@@ -1,5 +1,4 @@
 import { parseVerdict, repositoryFromRemote, selectVerificationRun, VerificationRemoteError } from './remote-verdict.mjs';
-import { candidateIntegrationBase } from './remote-selection-base.mjs';
 
 const WORKFLOW_PATH = '.github/workflows/remote-verify.yml';
 const MAX_RETRY_DELAY_MS = 60_000;
@@ -217,9 +216,7 @@ export async function runRemoteVerification(options, executors, overrides = {}) 
         callRemote, cadenceMs: policy.pollMs,
       });
       if (options.profile === 'candidate') {
-        const branch = await git.currentBranch();
-        const baseRef = candidateIntegrationBase(branch);
-        await callRemote(() => gh.dispatchRun(repo, ref, 'candidate', baseRef), deadlineAt);
+        await callRemote(() => gh.dispatchRun(repo, ref, 'candidate'), deadlineAt);
       }
       run = await waitForRun(async () => selectVerificationRun(await gh.listRuns(repo, ref, options.profile === 'candidate' ? 'workflow_dispatch' : 'push'), { branch: ref, sha, workflowPath: WORKFLOW_PATH, event: options.profile === 'candidate' ? 'workflow_dispatch' : 'push', profile: options.profile }), { deadlineAt, policy, clock, callRemote });
       validateRun(run, ref, options.profile);

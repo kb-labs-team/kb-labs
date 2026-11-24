@@ -9,7 +9,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from platform_state_dump import (MAX_DUMP_BYTES, MAX_FILE_BYTES, PlatformStateDumpOnce,
-                                 _write_auth_state_probe, archive_service_logs, dump_platform_state,
+                                 _write_auth_state_probe, _write_state_fingerprints, archive_service_logs,
+                                 dump_platform_state,
                                  )
 from installed_fixture import layout_value
 from journey_resources import installer_record_path
@@ -231,6 +232,11 @@ class PlatformStateDumpTests(unittest.TestCase):
             fingerprints = json.loads(fingerprints_path.read_text())
             self.assertEqual(set(fingerprints), {"nested/runtime-state.bin"})
             self.assertRegex(fingerprints["nested/runtime-state.bin"], r"^[0-9a-f]{64}$")
+            fingerprint_meta = json.loads(
+                (destination / "shared-state-fingerprints.meta.json").read_text()
+            )
+            self.assertTrue(fingerprint_meta["complete"])
+            self.assertEqual(fingerprint_meta["limitReasons"], [])
             snapshot = destination / "installer/snapshots/snapshot-good.json"
             self.assertTrue(snapshot.is_file())
             self.assertNotIn("snapshot-secret", snapshot.read_text())
@@ -272,6 +278,85 @@ class PlatformStateDumpTests(unittest.TestCase):
             self.assertIn("Journey git revision: abc123def", (destination / "index.md").read_text())
             size = sum(path.stat().st_size for path in destination.rglob("*") if path.is_file())
             self.assertLessEqual(size, MAX_DUMP_BYTES)
+
+    def test_fingerprint_scan_limits_large_state_and_continues_other_checks(self):
+        with tempfile.TemporaryDirectory(prefix="journey-fingerprint-limit-") as temporary:
+            root = Path(temporary)
+            platform = root / "platform"
+            create_test_install_container(platform)
+            move_test_platform_into_container(platform)
+            state = platform / layout_value("sharedStateDirectory")
+            state.mkdir(parents=True)
+            (state / "first.bin").write_bytes(b"first")
+            (state / "second.bin").write_bytes(b"second")
+            binaries = root / "bin"
+            binaries.mkdir()
+            kb = binaries / "kb"
+            kb.write_text("#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":{}}'\n")
+            kb.chmod(0o755)
+            launcher = binaries / "kb-create"
+            launcher.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = doctor ]; then\n"
+                "  printf '%s\\n' '{\"ok\":true,\"data\":{\"retention\":{}}}'\n"
+                "else\n"
+                "  printf '%s\\n' '{\"ok\":true,\"data\":{}}'\n"
+                "fi\n"
+            )
+            launcher.chmod(0o755)
+            env = {**os.environ, "HOME": str(root / "home"),
+                   "PATH": f"{binaries}:{os.environ.get('PATH', '')}"}
+
+            with patch("platform_state_dump.STATE_FINGERPRINT_MAX_FILES", 1):
+                destination = dump_platform_state(
+                    platform, root / "reports", mode="local", front="agent", scenario="explore",
+                    variant="default", first_failure="synthetic journey failure", env=env, cwd=root,
+                )
+
+            metadata = json.loads(
+                (destination / "shared-state-fingerprints.meta.json").read_text()
+            )
+            self.assertFalse(metadata["complete"])
+            self.assertIn("file_limit", metadata["limitReasons"])
+            self.assertEqual(metadata["filesHashed"], 1)
+            self.assertTrue((destination / "kb-create-status.txt").is_file())
+            self.assertTrue((destination / "kb-create-doctor.txt").is_file())
+            self.assertTrue((destination / "kb-adapter-list.txt").is_file())
+
+    def test_unavailable_fingerprint_source_is_reported_without_aborting_dump(self):
+        with tempfile.TemporaryDirectory(prefix="journey-fingerprint-missing-") as temporary:
+            root = Path(temporary)
+            target = root / "shared-state-fingerprints.json"
+            _write_state_fingerprints(root / "missing-state", target)
+
+            metadata = json.loads(
+                (root / "shared-state-fingerprints.meta.json").read_text()
+            )
+            self.assertFalse(metadata["complete"])
+            self.assertEqual(metadata["limitReasons"], ["source_unavailable"])
+
+    def test_fingerprint_scan_reports_byte_and_time_limits(self):
+        with tempfile.TemporaryDirectory(prefix="journey-fingerprint-budget-") as temporary:
+            root = Path(temporary)
+            source = root / "state"
+            source.mkdir()
+            (source / "large.bin").write_bytes(b"large-file")
+
+            with patch("platform_state_dump.STATE_FINGERPRINT_MAX_BYTES", 4):
+                _write_state_fingerprints(source, root / "byte-limited.json")
+            byte_metadata = json.loads(
+                (root / "shared-state-fingerprints.meta.json").read_text()
+            )
+            self.assertFalse(byte_metadata["complete"])
+            self.assertEqual(byte_metadata["limitReasons"], ["byte_limit"])
+
+            with patch("platform_state_dump.STATE_FINGERPRINT_MAX_SECONDS", 0):
+                _write_state_fingerprints(source, root / "time-limited.json")
+            time_metadata = json.loads(
+                (root / "shared-state-fingerprints.meta.json").read_text()
+            )
+            self.assertFalse(time_metadata["complete"])
+            self.assertEqual(time_metadata["limitReasons"], ["time_limit"])
 
     def test_dump_reports_missing_product_directed_host_logs(self):
         with tempfile.TemporaryDirectory(prefix="journey-main-home-dump-") as temporary:

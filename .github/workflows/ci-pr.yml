@@ -150,7 +150,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: tools/kb-create/go.sum
       - name: Enforce autonomous V2 boundary
         run: |
@@ -234,7 +234,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -273,7 +273,7 @@ jobs:
           cache: pnpm
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -337,7 +337,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: go-tools
@@ -390,6 +390,10 @@ jobs:
           name: full-dist-for-devkit-checks
       - run: tar xf full-dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
+      - name: Configure job-local project registry
+        run: echo "KB_HOME=${RUNNER_TEMP}/kb-home" >> "$GITHUB_ENV"
+      - name: Register checkout for project-scoped CLI checks
+        run: pnpm kb project add "$GITHUB_WORKSPACE"
       - name: Lint workflow definitions
         run: pnpm kb workflow lint --path .kb/workflows --strict
       - name: Devkit workspace checks (structure, dependencies, boundaries)
@@ -458,7 +462,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version: '1.26.8'
+          go-version: '1.26.11'
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
@@ -598,3 +602,17 @@ jobs:
       # entire run to fail at startup (0 jobs) before anything executes.
       contents: write
       actions: read
+
+  # Optional PR feedback only. Release workflows repeat the trusted snapshot gate.
+  candidate-verification:
+    name: Full candidate verification (${{ github.event.pull_request.head.sha }})
+    if: contains(github.event.pull_request.labels.*.name, 'candidate')
+    uses: ./.github/workflows/remote-verify.yml
+    with:
+      profile: candidate
+      target_sha: ${{ github.event.pull_request.head.sha }}
+      job_prefix: 'Full candidate verification (${{ github.event.pull_request.head.sha }}) / '
+    permissions:
+      contents: read
+      actions: read
+      checks: read

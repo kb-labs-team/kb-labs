@@ -9,6 +9,10 @@
 3. **Run:** execute the relevant journey or test suite and retain its result JSON. A claim alone does not prove a step passed.
 4. **Coverage:** use `kb qa cases` to compare the catalog, claims, and run results. Steps report PASS, FAIL, NOT RUN, or NOT COVERED; a case passes only when every step passes. Unknown case or step IDs are errors.
 
+Use `kb qa cases inventory --json` to review the current obligation and claim map before planning matrix work. It reports case-step metadata and source-backed claim owners, then marks profile dimensions that the current case schema does not declare. The Release 1 inventory policy requires local runs on macOS and Linux; secured runs are supplemental and non-gating. In-process, subprocess, and worker-pool execution models are included only where a step is relevant to them. The inventory intentionally does not infer OS/runtime/backend coverage, request or config provenance, candidate identity, or run results from a source claim. Those remain explicit gaps until declared and linked to run evidence.
+
+Cases may add a `## Profile applicability` table to declare execution models for specific steps. For example, `S-243.6` and `S-243.7` each list `in-process, subprocess, worker-pool`. The inventory reports these as declared expectations with evaluation `NOT EVALUATED`; this declaration does not report a run result or imply OS coverage. OS and runtime remain separate dimensions.
+
 A test claim records its kind (`journey`, `e2e`, or `unit`). A unit claim cannot satisfy a user-flow step in a release case. Release readiness applies to cases with `status: active` and `release: true` for each listed mode. `historical` cases are retained as design records and are not release-gated.
 
 The decisions that bound the catalog (release scope, roles, adapter defaults, scheduling) are logged in [`docs/product/decisions.md`](../product/decisions.md). The step-by-step procedure for agents is the `intent-flow` skill.
@@ -104,6 +108,47 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-280](scenarios/S-280-statebroker-durability.md) | StateBroker cache survives daemon and host restarts | solo-developer | P1 | planned | false | [local] | [cli] | — |
 | [S-281](scenarios/S-281-sqlite-vector-input-contract.md) | SQLite vector storage rejects invalid dimensions and values | plugin-author | P1 | planned | false | [local] | [api] | — |
 | [S-284](scenarios/S-284-local-candidate-registry-delivery.md) | Deliver and install immutable candidates from a local registry | platform-team | P0 | planned | false | [local] | [cli] | — |
+| [S-298](scenarios/S-298-node24-marketplace-install-with-corepack.md) | Marketplace plugin install without standalone pnpm | solo-developer | P0 | active | true | [local] | [cli] | — |
+| [S-311](scenarios/S-311-marketplace-installed-tarball-local-runtime.md) | Marketplace-installed plugin tarball executes in a local project runtime | solo-developer | P1 | active | false | [local] | [api] | — |
+| [S-314](scenarios/S-314-case-evidence-inventory.md) | QA — inspect case evidence and runtime matrix gaps | developer | P1 | active | false | [local] | [cli] | — |
+| [S-315](scenarios/S-315-case-step-evidence-envelope.md) | QA release coverage links each result to its evidence | platform-team | P1 | active | false | [local] | [cli] | — |
+| [S-316](scenarios/S-316-platform-config-ownership-durability.md) | Platform config keeps generated and user ownership across updates | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
+| [S-317](scenarios/S-317-service-startup-failure-diagnostics.md) | S-317 — Diagnose a service that fails before startup completes | solo-developer | P1 | planned | true | [local] | [cli] | — |
+| [S-318](scenarios/S-318-platform-rollback-rebuilds-extension-graph.md) | Platform — rollback rebuilds the Marketplace extension graph | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
+| [S-319](scenarios/S-319-cli-large-json-result-backpressure.md) | CLI — preserve large JSON results through stdout backpressure | developer | P1 | planned | false | [local] | [cli] | — |
+| [S-320](scenarios/S-320-installed-cli-resolves-platform-sdk-peers.md) | CLI — resolve installed plugins’ SDK peers without shell setup | solo-developer | P1 | planned | true | [local] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
+
+### Evidence-backed coverage pilot
+
+`kb.qa-case-run/v2` remains supported by the existing coverage command. To require candidate, profile, configuration, and log evidence, use `--evidence` with the new `kb.qa-case-run/v3` envelope. A v2 run is rejected in this mode; missing v3 evidence stays incomplete and cannot make the release verdict pass.
+
+```json
+{
+  "schema": "kb.qa-case-run/v3",
+  "runId": "journey-local-001",
+  "mode": "local",
+  "candidateId": "sha256:release-manifest-digest",
+  "profile": { "os": "linux-x64", "runtime": "node-24", "surface": "cli" },
+  "claims": [
+    { "claimId": "PC-001.4", "kind": "journey", "status": "PASS", "configRef": "artifacts/redacted-config.json", "configDigest": "<64-character SHA-256 hex>", "logRef": "artifacts/step-PC-001.4.log", "logDigest": "<64-character SHA-256 hex>" }
+  ]
+}
+```
+
+Replace each `<64-character SHA-256 hex>` with the first field printed by `shasum -a 256 artifacts/redacted-config.json` or `shasum -a 256 artifacts/step-PC-001.4.log`. Keep those artifact files in a directory beneath the directory containing `evidence.json`; store only a redacted configuration snapshot there.
+
+The evidence plan is supplied independently of the run result:
+
+```json
+{
+  "schema": "kb.qa-evidence-plan/v1",
+  "mode": "local",
+  "candidateId": "sha256:release-manifest-digest",
+  "profile": { "os": "linux-x64", "runtime": "node-24", "surface": "cli" }
+}
+```
+
+Run `kb qa coverage show --level release --mode local --evidence --evidence-plan expected.json --run evidence.json --json`. Each reference is a relative file path from the run JSON; the CLI requires the file to exist beneath that directory and verifies its SHA-256 digest. Coverage v2 reports behavior status and evidence status separately; `FAIL` remains a product failure, while `INCOMPLETE` evidence prevents `releasePassed` even if behavior passed. Candidate and profile values must match the independent plan for every supplied run, and the required matrix must contain at least one applicable active release step. Returned artifact links include each run ID and run-record root, so repeated relative paths from different attempts remain distinguishable. The envelope contains references and digests, never configuration values or log contents.

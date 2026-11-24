@@ -95,4 +95,13 @@ describe('kb auth logout', () => {
     expect(mockCredClear).not.toHaveBeenCalled();
     expect(mockSessionClear).not.toHaveBeenCalled();
   });
+
+  it('passes an explicit Gateway target for origin-scoped logout', async () => {
+    mockLogout.mockResolvedValueOnce(true);
+    const captured = { errors: [], output: [], json: [] };
+    const exitCode = await authLogout.run(makeCtx(captured), [], { 'gateway-url': 'https://hub.example.test' });
+
+    expect(exitCode).toBe(0);
+    expect(mockLogout).toHaveBeenCalledWith('https://hub.example.test');
+  });
 });

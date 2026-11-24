@@ -43,6 +43,8 @@ type AffectedConfig struct {
 // If Categories is empty, the variant applies to all packages (catch-all).
 type TaskVariant struct {
 	Categories []string `yaml:"categories"` // e.g. ["ts-lib", "ts-app"]; empty = all
+	Packages   []string `yaml:"packages"`   // exact package names; package-scoped overrides take precedence
+	ManualOnly bool     `yaml:"manualOnly"` // omitted from --affected runs; explicit package selection still runs it
 	Command    string   `yaml:"command"`
 	Inputs     []string `yaml:"inputs"`  // glob patterns relative to package dir
 	Outputs    []string `yaml:"outputs"` // glob patterns; empty = cache exit code only
@@ -60,6 +62,9 @@ func (tc TaskConfig) ResolveVariant(pkgCategory string) *TaskVariant {
 	var catchAll *TaskVariant
 	for i := range tc {
 		v := &tc[i]
+		if len(v.Packages) > 0 {
+			continue
+		}
 		if len(v.Categories) == 0 {
 			if catchAll == nil {
 				catchAll = v
@@ -73,6 +78,32 @@ func (tc TaskConfig) ResolveVariant(pkgCategory string) *TaskVariant {
 		}
 	}
 	return catchAll
+}
+
+// ResolvePackageVariant prefers an exact package-scoped variant, then applies
+// the normal category resolution.
+func (tc TaskConfig) ResolvePackageVariant(pkgCategory, pkgName string) *TaskVariant {
+	for i := range tc {
+		v := &tc[i]
+		if len(v.Packages) == 0 {
+			continue
+		}
+		for _, name := range v.Packages {
+			if name == pkgName && (len(v.Categories) == 0 || containsString(v.Categories, pkgCategory)) {
+				return v
+			}
+		}
+	}
+	return tc.ResolveVariant(pkgCategory)
+}
+
+func containsString(values []string, value string) bool {
+	for _, candidate := range values {
+		if candidate == value {
+			return true
+		}
+	}
+	return false
 }
 
 // WorkspaceConfig describes package categories and the package manager.

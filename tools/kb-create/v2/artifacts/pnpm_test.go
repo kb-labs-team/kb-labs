@@ -188,6 +188,174 @@ func TestPnpmCommandKeepsPackageManagerStateInsideInstallRoot(t *testing.T) {
 	}
 }
 
+// case: S-318.1
+func TestPnpmRestoreRepairsMissingTransitiveLinkWithRealPnpm(t *testing.T) {
+	testworkspace.Require(t)
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skipf("real pnpm rollback regression requires Node.js: %v", err)
+	}
+	_, pnpmScript, err := toolchain.PnpmExecutable()
+	if err != nil {
+		t.Skipf("real pnpm rollback regression requires the pinned pnpm cache: %v", err)
+	}
+	home := t.TempDir()
+	root := filepath.Join(home, "kb-platform")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pluginName, childName := "fixture-plugin", "fixture-child"
+	childBytes := packageTarball(t, childName, "1.0.0", nil)
+	pluginBytes := packageTarballWithBin(t, pluginName, "1.0.0", map[string]string{childName: "1.0.0"}, pluginName)
+	pluginItem := sealArtifactTarball(t, contracts.Artifact{Package: pluginName, Version: "1.0.0"}, pluginBytes)
+	childItem := sealArtifactTarball(t, contracts.Artifact{Package: childName, Version: "1.0.0"}, childBytes)
+	serve := func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/fixture-plugin":
+			writeRegistryPackument(w, pluginName, map[string]registryTarball{"1.0.0": {URL: serverURL(r) + "/fixture-plugin.tgz", Integrity: pluginItem.Provenance.Integrity}}, map[string]string{childName: "1.0.0"})
+		case "/fixture-child":
+			writeRegistryPackument(w, childName, map[string]registryTarball{"1.0.0": {URL: serverURL(r) + "/fixture-child.tgz", Integrity: childItem.Provenance.Integrity}}, nil)
+		case "/fixture-plugin.tgz":
+			_, _ = w.Write(pluginBytes)
+		case "/fixture-child.tgz":
+			_, _ = w.Write(childBytes)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+	registry := httptest.NewServer(http.HandlerFunc(serve))
+	defer registry.Close()
+	workspaceData := []byte("packages: []\nautoInstallPeers: false\n")
+	if err := os.WriteFile(filepath.Join(root, "pnpm-workspace.yaml"), workspaceData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manager := mustPnpm(t, PnpmConfig{Root: root, CacheRoot: filepath.Join(root, "state", "cache"), PackageManagerRoot: filepath.Join(root, "state", "package-manager"), Registry: registry.URL, DefaultRegistry: registry.URL})
+	if err := manager.prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.CopyFS(filepath.Join(manager.corepackHome(), "v1", "pnpm", toolchain.SupportedPnpm), os.DirFS(filepath.Dir(filepath.Dir(pnpmScript)))); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.run("add", pluginName+"@1.0.0"); err != nil {
+		t.Fatalf("install real fixture plugin and transitive dependency: %v", err)
+	}
+	packagePath := filepath.Join(root, "package.json")
+	packageBefore, err := os.ReadFile(packagePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockPath := filepath.Join(root, "pnpm-lock.yaml")
+	lockBefore, err := os.ReadFile(lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(lockBefore, []byte(childName)) {
+		t.Fatalf("fixture plugin lock entry lacks its declared transitive dependency: %s", lockBefore)
+	}
+	pluginLink := filepath.Join(root, "node_modules", pluginName)
+	pluginRealPath, err := filepath.EvalSymlinks(pluginLink)
+	if err != nil {
+		t.Fatalf("resolve registered plugin link: %v", err)
+	}
+	resolveChild := func() error {
+		command := exec.Command("node", "-e", "const p=require('path'),{createRequire}=require('module');createRequire(p.join(process.argv[2],'package.json')).resolve(process.argv[1]+'/package.json')", childName, pluginRealPath)
+		command.Dir = root
+		return command.Run()
+	}
+	if err := resolveChild(); err != nil {
+		t.Fatalf("fixture plugin cannot resolve its transitive package before damage: %v", err)
+	}
+	shim := filepath.Join(root, "node_modules", ".bin", pluginName)
+	if output, err := exec.Command(shim).CombinedOutput(); err != nil || string(output) != "fixture-plugin-ok\n" {
+		t.Fatalf("absolute plugin shim before damage: output=%q err=%v", output, err)
+	}
+	childLinks, err := findDependencyLinks(pluginRealPath, childName)
+	if err != nil {
+		t.Fatalf("find transitive dependency symlink: %v", err)
+	}
+	for _, childLink := range childLinks {
+		if err := os.Remove(childLink); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := manager.run("install"); err != nil {
+		t.Fatalf("ordinary install after removing transitive link: %v", err)
+	}
+	for _, childLink := range childLinks {
+		if _, err := os.Lstat(childLink); !os.IsNotExist(err) {
+			t.Fatalf("fixture failed to reproduce pnpm stale installed-state hit at %s: %v", childLink, err)
+		}
+	}
+	if err := resolveChild(); err == nil {
+		t.Fatal("fixture plugin unexpectedly resolves dependency after its link is removed")
+	}
+	if output, err := exec.Command(shim).CombinedOutput(); err == nil {
+		t.Fatalf("plugin shim unexpectedly ran with missing dependency link: %q", output)
+	}
+	if err := manager.Restore(nil); err != nil {
+		t.Fatalf("real pnpm rollback rebuild: %v", err)
+	}
+	pluginRealPath, err = filepath.EvalSymlinks(pluginLink)
+	if err != nil {
+		t.Fatalf("registered plugin was lost during restore: %v", err)
+	}
+	childLinks, err = findDependencyLinks(pluginRealPath, childName)
+	if err != nil || len(childLinks) == 0 || !isSymlink(t, childLinks[0]) {
+		t.Fatalf("rollback did not recreate transitive plugin dependency: paths=%v err=%v", childLinks, err)
+	}
+	if err := resolveChild(); err != nil {
+		t.Fatalf("plugin cannot resolve transitive dependency after restore: %v", err)
+	}
+	if output, err := exec.Command(shim).CombinedOutput(); err != nil || string(output) != "fixture-plugin-ok\n" {
+		t.Fatalf("absolute plugin shim after restore: output=%q err=%v", output, err)
+	}
+	if got, err := os.ReadFile(packagePath); err != nil || string(got) != string(packageBefore) {
+		t.Fatalf("restore changed registered plugin spec: data=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(lockPath); err != nil || string(got) != string(lockBefore) {
+		t.Fatalf("restore changed exact lockfile: data=%q err=%v", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "pnpm-workspace.yaml")); err != nil || !bytes.Contains(got, []byte("autoInstallPeers: false")) {
+		t.Fatalf("restore changed unrelated workspace configuration: data=%q err=%v", got, err)
+	}
+}
+
+func isSymlink(t *testing.T, path string) bool {
+	t.Helper()
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode()&os.ModeSymlink != 0
+}
+
+func findDependencyLinks(from, name string) ([]string, error) {
+	command := exec.Command("node", "-e", "const p=require('path'),{createRequire}=require('module');process.stdout.write(JSON.stringify(createRequire(p.join(process.argv[1],'package.json')).resolve.paths(process.argv[2])))", from, name)
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("get Node module resolution paths: %w", err)
+	}
+	var searchPaths []string
+	if err := json.Unmarshal(output, &searchPaths); err != nil {
+		return nil, fmt.Errorf("decode Node module resolution paths: %w", err)
+	}
+	var links []string
+	for _, directory := range searchPaths {
+		candidate := filepath.Join(directory, name)
+		info, err := os.Lstat(candidate)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return nil, fmt.Errorf("resolved dependency path %s is not a symlink", candidate)
+		}
+		links = append(links, candidate)
+	}
+	if len(links) == 0 {
+		return nil, fmt.Errorf("dependency symlink %q not found from %s", name, from)
+	}
+	return links, nil
+}
+
 func snapshotTestTree(t *testing.T, home, root string) map[string]string {
 	t.Helper()
 	entries := make(map[string]string)
@@ -436,10 +604,17 @@ func writeRegistryPackument(w http.ResponseWriter, name string, tarballs map[str
 }
 
 func packageTarball(t *testing.T, name, version string, dependencies map[string]string) []byte {
+	return packageTarballWithBin(t, name, version, dependencies, "")
+}
+
+func packageTarballWithBin(t *testing.T, name, version string, dependencies map[string]string, binName string) []byte {
 	t.Helper()
 	manifestValue := map[string]any{"name": name, "version": version}
 	if dependencies != nil {
 		manifestValue["dependencies"] = dependencies
+	}
+	if binName != "" {
+		manifestValue["bin"] = map[string]string{binName: "dist/cli.js"}
 	}
 	manifest, err := json.Marshal(manifestValue)
 	if err != nil {
@@ -460,6 +635,15 @@ func packageTarball(t *testing.T, name, version string, dependencies map[string]
 	}
 	if _, err := archive.Write(distContent); err != nil {
 		t.Fatal(err)
+	}
+	if binName != "" {
+		binContent := []byte("#!/usr/bin/env node\nconst p=require('path'),{createRequire}=require('module');createRequire(p.join(__dirname,'..','package.json')).resolve('fixture-child/package.json');process.stdout.write('fixture-plugin-ok\\n')\n")
+		if err := archive.WriteHeader(&tar.Header{Name: "package/dist/cli.js", Mode: 0o755, Size: int64(len(binContent))}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := archive.Write(binContent); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := archive.Close(); err != nil {
 		t.Fatal(err)
@@ -490,7 +674,12 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 	root := t.TempDir()
 	cacheRoot := t.TempDir()
 	workspace := filepath.Join(root, "pnpm-workspace.yaml")
-	if err := os.WriteFile(workspace, []byte("overrides:\n  lodash: 4.17.21\n"), 0o600); err != nil {
+	if err := os.WriteFile(workspace, []byte("autoInstallPeers: false\noverrides:\n  lodash: 4.17.21\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	packageJSON := filepath.Join(root, "package.json")
+	packageData := []byte("{\"name\":\"kb-platform\",\"dependencies\":{\"@kb-labs/extra-plugin\":\"file:plugins/extra-plugin\"}}\n")
+	if err := os.WriteFile(packageJSON, packageData, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	sealed := sealedTestArtifacts(t,
@@ -520,11 +709,262 @@ func TestPnpmSealedArtifactOverridesFollowInstallUpdateAndRollback(t *testing.T)
 		t.Fatalf("update: %v", err)
 	}
 	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{updated})
+	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	runner.restore = []contracts.Artifact{old, oldRuntime}
 	if err := pm.Restore([]contracts.Artifact{old, oldRuntime}); err != nil {
 		t.Fatalf("rollback package restore: %v", err)
 	}
+	if got, err := os.ReadFile(packageJSON); err != nil || string(got) != string(packageData) {
+		t.Fatalf("rollback changed extra registered plugin specs: data=%q err=%v", got, err)
+	}
+	workspaceData, err := os.ReadFile(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workspaceConfig struct {
+		AutoInstallPeers *bool             `yaml:"autoInstallPeers"`
+		Overrides        map[string]string `yaml:"overrides"`
+	}
+	if err := yaml.Unmarshal(workspaceData, &workspaceConfig); err != nil || workspaceConfig.AutoInstallPeers == nil || *workspaceConfig.AutoInstallPeers || workspaceConfig.Overrides["lodash"] != "4.17.21" {
+		t.Fatalf("rollback lost unrelated workspace settings: config=%#v err=%v", workspaceConfig, err)
+	}
+	got := runner.calls[len(runner.calls)-1]
+	containsPurgeConfirmation := false
+	containsFrozenLockfile := false
+	for _, argument := range got.args {
+		if argument == "--config.confirmModulesPurge=false" {
+			containsPurgeConfirmation = true
+		}
+		if argument == "--frozen-lockfile" {
+			containsFrozenLockfile = true
+		}
+	}
+	if got.name != "pnpm" || !containsPurgeConfirmation || !containsFrozenLockfile {
+		t.Fatalf("rollback install args = %#v, want non-interactive frozen pnpm modules rebuild", got)
+	}
 	assertSealedArtifactOverrides(t, workspace, cacheRoot, []contracts.Artifact{old, oldRuntime})
+}
+
+// case: S-318.2
+func TestPnpmRestoreRebuildsModulesAndRestoresPriorTreeOnFailure(t *testing.T) {
+	root := t.TempDir()
+	modules := filepath.Join(root, "node_modules")
+	if err := os.MkdirAll(modules, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(modules, "preserve-on-failure")
+	if err := os.WriteFile(marker, []byte("previous graph"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{err: errors.New("pnpm fixture failure")}
+	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
+	pm := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})
+	if err := pm.Restore(items); err == nil || !strings.Contains(err.Error(), "pnpm fixture failure") {
+		t.Fatalf("restore error = %v, want fixture failure", err)
+	}
+	if data, err := os.ReadFile(marker); err != nil || string(data) != "previous graph" {
+		t.Fatalf("prior package graph was not restored: data=%q err=%v", data, err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == ".kb" {
+			transactionEntries, err := os.ReadDir(modulesRestoreTransactionsPath(root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(transactionEntries) != 0 {
+				t.Fatalf("restore left a transaction after failure: %#v", transactionEntries)
+			}
+		}
+	}
+}
+
+// case: S-318.2
+func TestPnpmRestoreFailureWithNoPriorModulesLeavesNoPartialTree(t *testing.T) {
+	root := t.TempDir()
+	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
+	pm := mustPnpm(t, PnpmConfig{Root: root, Runner: failingInstallRunner{root: root}, ReleaseCatalog: testReleaseCatalog(t, items...)})
+	if err := pm.Restore(items); err == nil || !strings.Contains(err.Error(), "pnpm fixture failure") {
+		t.Fatalf("restore error = %v, want fixture failure", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "node_modules")); !os.IsNotExist(err) {
+		t.Fatalf("failed restore left a partial modules tree: %v", err)
+	}
+	transactionEntries, err := os.ReadDir(modulesRestoreTransactionsPath(root))
+	if err != nil || len(transactionEntries) != 0 {
+		t.Fatalf("failed restore left transaction state: entries=%v err=%v", transactionEntries, err)
+	}
+}
+
+// case: S-318.2
+func TestInterruptedPnpmModulesRestoreRecoversPreviousTreeUnlessCommitted(t *testing.T) {
+	for _, scenario := range []string{"prepared", "committed", "committed_cleanup_pending", "committed_tree_missing"} {
+		t.Run(scenario, func(t *testing.T) {
+			root := t.TempDir()
+			modules := filepath.Join(root, "node_modules")
+			if scenario != "committed_tree_missing" {
+				if err := os.MkdirAll(modules, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(modules, "state"), []byte("partial"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			transactionsRoot := modulesRestoreTransactionsPath(root)
+			backup := filepath.Join(transactionsRoot, "txn-crash")
+			backupModules := filepath.Join(backup, "prior-node-modules")
+			if err := os.MkdirAll(backup, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			state := "prepared"
+			if strings.HasPrefix(scenario, "committed") {
+				state = "committed"
+			}
+			journal, _ := json.Marshal(modulesRestoreJournal{Version: 1, State: state, HadModules: true})
+			if err := os.WriteFile(filepath.Join(backup, "journal.json"), journal, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if scenario == "committed_cleanup_pending" {
+				cleanup := filepath.Join(transactionsRoot, "cleanup-crash")
+				if err := os.MkdirAll(cleanup, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(cleanup, "state"), []byte("previous"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else if scenario != "committed_cleanup_pending" {
+				if err := os.MkdirAll(backupModules, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(backupModules, "state"), []byte("previous"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := "previous"
+			if scenario == "committed" || scenario == "committed_cleanup_pending" {
+				want = "partial"
+			}
+			if err := recoverInterruptedModulesRestore(transactionsRoot, modules); err != nil {
+				t.Fatal(err)
+			}
+			if want != "absent" {
+				data, err := os.ReadFile(filepath.Join(modules, "state"))
+				if err != nil || string(data) != want {
+					t.Fatalf("recovered modules marker = %q, err=%v; want %q", data, err, want)
+				}
+			}
+			if _, err := os.Stat(backup); !os.IsNotExist(err) {
+				t.Fatalf("interrupted restore transaction remains: %v", err)
+			}
+		})
+	}
+}
+
+// case: S-318.2
+func TestPnpmModulesRestoreRejectsUnknownJournalWithoutTouchingModules(t *testing.T) {
+	for _, journal := range []string{
+		`{}`,
+		`{"version":1,"state":"prepared"}`,
+		`{"version":1,"state":"prepared","hadModules":null}`,
+		`{"version":1,"state":"prepared","hadModules":"false"}`,
+	} {
+		t.Run(journal, func(t *testing.T) {
+			root := t.TempDir()
+			modules := filepath.Join(root, "node_modules")
+			if err := os.MkdirAll(modules, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(modules, "state")
+			if err := os.WriteFile(marker, []byte("keep"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			transactionsRoot := modulesRestoreTransactionsPath(root)
+			transactionDir := filepath.Join(transactionsRoot, "txn-unknown")
+			if err := os.MkdirAll(transactionDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(transactionDir, "journal.json"), []byte(journal), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := recoverInterruptedModulesRestore(transactionsRoot, modules); err == nil {
+				t.Fatal("unknown restore journal was accepted")
+			}
+			if data, err := os.ReadFile(marker); err != nil || string(data) != "keep" {
+				t.Fatalf("unknown journal touched current modules: data=%q err=%v", data, err)
+			}
+		})
+	}
+}
+
+// case: S-318.2
+func TestPnpmRestoreRejectsNonDirectoryModulesWithoutFollowingSymlinks(t *testing.T) {
+	root := t.TempDir()
+	external := filepath.Join(t.TempDir(), "user-data")
+	if err := os.WriteFile(external, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	modules := filepath.Join(root, "node_modules")
+	if err := os.Symlink(external, modules); err != nil {
+		t.Fatal(err)
+	}
+	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
+	pm := mustPnpm(t, PnpmConfig{Root: root, Runner: &fakeRunner{}, ReleaseCatalog: testReleaseCatalog(t, items...)})
+	if err := pm.Restore(items); err == nil {
+		t.Fatal("restore accepted a symlinked modules path")
+	}
+	if target, err := os.Readlink(modules); err != nil || target != external {
+		t.Fatalf("modules symlink changed: target=%q err=%v", target, err)
+	}
+	if data, err := os.ReadFile(external); err != nil || string(data) != "keep" {
+		t.Fatalf("restore changed symlink target data: data=%q err=%v", data, err)
+	}
+}
+
+// case: S-318.2
+func TestModulesRestoreCleanupRemovesSymlinkAsLeaf(t *testing.T) {
+	root := t.TempDir()
+	transactionsRoot := modulesRestoreTransactionsPath(root)
+	if err := os.MkdirAll(transactionsRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "user-data")
+	if err := os.WriteFile(external, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cleanupLink := filepath.Join(transactionsRoot, "cleanup-old")
+	if err := os.Symlink(external, cleanupLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := recoverInterruptedModulesRestore(transactionsRoot, filepath.Join(root, "node_modules")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(cleanupLink); !os.IsNotExist(err) {
+		t.Fatalf("cleanup symlink remains: %v", err)
+	}
+	if data, err := os.ReadFile(external); err != nil || string(data) != "keep" {
+		t.Fatalf("cleanup followed symlink and changed target: data=%q err=%v", data, err)
+	}
+}
+
+type failingInstallRunner struct{ root string }
+
+func (r failingInstallRunner) Run(_ context.Context, _ io.Writer, name string, args ...string) error {
+	if name == "pnpm" && len(args) > 0 && args[0] == "install" {
+		modules := filepath.Join(r.root, "node_modules")
+		if err := os.MkdirAll(modules, 0o700); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(modules, "partial"), []byte("partial"), 0o600); err != nil {
+			return err
+		}
+		return errors.New("pnpm fixture failure")
+	}
+	return nil
 }
 
 func assertSealedArtifactOverrides(t *testing.T, workspace, cacheRoot string, artifacts []contracts.Artifact) {
@@ -1253,44 +1693,167 @@ func TestPnpmPreservesPackageManagerFailure(t *testing.T) {
 	}
 }
 
-func TestPnpmDiagnosticKeepsExitCodeAndStderrTail(t *testing.T) {
+// case: S-285.18
+func TestPnpmDiagnosticKeepsExitCodeAndStderrEvidence(t *testing.T) {
 	root := t.TempDir()
 	var transcript strings.Builder
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode: 47, stderrTail: "ERR_PNPM_FETCH_404 registry unavailable", cause: errors.New("exit status 47"),
+	}}
 	manager := mustPnpm(t, PnpmConfig{
 		Root:               root,
 		PackageManagerRoot: filepath.Join(root, "state", "package-manager"),
 		Log:                &transcript,
+		Runner:             runner,
 	})
-	err := manager.run("command-that-does-not-exist")
+	err := manager.run("install")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] == "" {
-		t.Fatalf("pnpm diagnostic = code %q details %#v; want exit code and stderr tail", failure.Code, failure.Meta)
+	stderr := fmt.Sprint(failure.Meta["packageManagerStderrTail"])
+	if failure.Code != contracts.CodeApplyFailed || failure.Meta["packageManagerExitCode"] != "47" ||
+		!strings.Contains(stderr, "ERR_PNPM_FETCH_404 registry unavailable") || strings.Contains(stderr, "omitted") {
+		t.Fatalf("pnpm diagnostic = code %q details %#v; want useful bounded stderr", failure.Code, failure.Meta)
 	}
-	if transcript.Len() == 0 {
-		t.Fatalf("installer transcript dropped pnpm output: %s", transcript.String())
+	if transcript.Len() != 0 {
+		t.Fatalf("fake runner unexpectedly wrote to transcript: %q", transcript.String())
+	}
+}
+
+// case: S-285.18
+func TestPnpmDiagnosticKeepsStdoutOverflowNoticeAlongsideFullStderr(t *testing.T) {
+	const stderr = "ERR_PNPM_FETCH_404 " + "useful stderr evidence " + "tail marker"
+	runner := &fakeRunner{err: &externalCommandFailure{
+		exitCode: 47, stderrTail: strings.Repeat("E", externalCommandStderrTailBytes-len(stderr)) + stderr,
+		stdoutOmitted: true, cause: errors.New("exit status 47"),
+	}}
+	manager := mustPnpm(t, PnpmConfig{Root: t.TempDir(), Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
+	err := manager.run("install")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
+	}
+	tail, _ := failure.Meta["packageManagerStderrTail"].(string)
+	if len(tail) > externalCommandStderrTailBytes || !strings.Contains(tail, "captured stdout omitted") ||
+		!strings.Contains(tail, "tail marker") || !strings.Contains(tail, strings.Repeat("E", 10)) {
+		t.Fatalf("diagnostic lost stdout omission marker or stderr evidence: len=%d tail=%q", len(tail), tail)
+	}
+}
+
+// case: S-285.18
+func TestCorepackTimeoutPreservesToolchainDiagnosticAndCapturedEvidence(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	bin := t.TempDir()
+	corepack := filepath.Join(bin, "corepack")
+	if err := os.WriteFile(corepack, []byte("#!/bin/sh\nprintf '%s\\n' 'corepack registry stalled' >&2\nexec sleep 10\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cache := t.TempDir() // No pinned pnpm is cached, so the real Corepack fallback runs.
+	var transcript bytes.Buffer
+	runner := CommandRunner{
+		corepackHome: cache,
+		runTool: func(_ context.Context, invocation toolchain.Invocation) (toolchain.Result, error) {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			result, err := toolchain.Run(ctx, invocation)
+			var timeout *toolchain.TimeoutError
+			if !errors.As(err, &timeout) {
+				return result, err
+			}
+			values := map[string]string{
+				"tool": "corepack", "argsSummary": "install -g pnpm", "elapsed": timeout.Elapsed.Round(time.Millisecond).String(),
+				"stderrTail": strings.TrimSpace(result.Stderr), "nextCommand": "kb-create install",
+			}
+			diagnostic, diagErr := diag.FromCatalog("KB_TOOLCHAIN_EXTERNAL_TIMEOUT", values, diag.WithMeta(map[string]any{
+				"tool": values["tool"], "argsSummary": values["argsSummary"], "elapsed": values["elapsed"],
+				"stderrTail": values["stderrTail"], "nextCommand": values["nextCommand"],
+			}))
+			if diagErr != nil {
+				return result, diagErr
+			}
+			return result, diagnostic
+		},
+	}
+	err := runner.Run(context.Background(), &transcript, "pnpm", "install")
+	var failure *diag.Diag
+	if !errors.As(err, &failure) {
+		t.Fatalf("Corepack provisioning failure = %v, want catalogued diagnostic", err)
+	}
+	if failure.Code != "KB_TOOLCHAIN_EXTERNAL_TIMEOUT" || failure.Meta["tool"] != "corepack" ||
+		failure.Meta["stderrTail"] != "corepack registry stalled" || !strings.Contains(transcript.String(), "corepack registry stalled") {
+		t.Fatalf("Corepack timeout diagnostic = code %q meta %#v transcript %q", failure.Code, failure.Meta, transcript.String())
+	}
+}
+
+// case: S-285.18
+func TestCommandRunnerRedactsSplitCredentialsFromTranscript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	const patternValue = "split-pattern-value"
+	const knownValue = "known value crossing chunk boundary"
+	fixture := filepath.Join(t.TempDir(), "failing-tool")
+	script := "#!/bin/sh\nprintf '%s' '{\"access_' >&1\nsleep 0.02\nprintf '%s' 'token\":\"" + patternValue + "\"}' >&1\nprintf '%s' 'prefix known secret ' >&2\nsleep 0.02\nprintf '%s\\n' 'with spaces suffix' >&2\nexit 47\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript bytes.Buffer
+	runner := CommandRunner{redactions: []string{knownValue}}
+	err := runner.Run(context.Background(), &transcript, fixture)
+	if err == nil {
+		t.Fatal("command unexpectedly succeeded")
+	}
+	for _, secret := range []string{patternValue, knownValue} {
+		if strings.Contains(transcript.String(), secret) {
+			t.Fatalf("captured package-manager transcript leaked %q: %q", secret, transcript.String())
+		}
+	}
+	for _, evidence := range []string{"access_token", "prefix ", "suffix", "[REDACTED]"} {
+		if !strings.Contains(transcript.String(), evidence) {
+			t.Fatalf("transcript lost safe package-manager evidence %q: %q", evidence, transcript.String())
+		}
+	}
+}
+
+// case: S-285.18
+func TestCommandRunnerDropsWholeOversizedStreamsFromTranscript(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture requires POSIX")
+	}
+	fixture := filepath.Join(t.TempDir(), "oversized-tool")
+	script := "#!/bin/sh\nprintf '%s' '" + strings.Repeat("X", 256) + "' >&1\nprintf '%s' '" + strings.Repeat("Y", 256) + "' >&2\nexit 47\n"
+	if err := os.WriteFile(fixture, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var transcript bytes.Buffer
+	err := (CommandRunner{maxCapture: 128}).Run(context.Background(), &transcript, fixture)
+	var failure *externalCommandFailure
+	if !errors.As(err, &failure) || failure.exitCode != 47 || !failure.stdoutOmitted || !failure.stderrOmitted {
+		t.Fatalf("failure = %#v, want exit code 47", err)
+	}
+	if !strings.Contains(failure.stderrTail, "omitted") || !strings.Contains(transcript.String(), "omitted") ||
+		strings.Contains(transcript.String(), strings.Repeat("X", 10)) || strings.Contains(transcript.String(), strings.Repeat("Y", 10)) {
+		t.Fatalf("oversized raw stream escaped capture: tail=%q transcript=%q", failure.stderrTail, transcript.String())
 	}
 }
 
 func TestPnpmDiagnosticCauseRetainsPackageManagerRegistryFailure(t *testing.T) {
 	root := t.TempDir()
-	runner := &fakeRunner{err: &externalCommandFailure{
-		exitCode:   1,
-		stderrTail: "ERR_PNPM_FETCH_404 GET http://127.0.0.1:4873/@kb-labs%2fcli-commands: Not Found - 404",
-		cause:      errors.New("exit status 1"),
-	}}
+	const stderr = "ERR_PNPM_FETCH_404 GET https://registry.test/@kb-labs%2fcli-commands: Not Found - 404"
+	runner := &fakeRunner{err: &externalCommandFailure{exitCode: 1, stderrTail: stderr, cause: errors.New("exit status 1")}}
 	manager := mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t)})
 	err := manager.run("add", "@kb-labs/cli-bin@2.120.1")
 	var failure *diag.Diag
 	if !errors.As(err, &failure) {
 		t.Fatalf("pnpm failure = %v, want catalogued diagnostic", err)
 	}
-	for _, expected := range []string{"@kb-labs%2fcli-commands", "http://127.0.0.1:4873"} {
-		if !strings.Contains(failure.Cause, expected) {
-			t.Fatalf("typed cause %q does not retain %q", failure.Cause, expected)
-		}
+	if failure.Meta["packageManagerExitCode"] != "1" || failure.Meta["packageManagerStderrTail"] != stderr ||
+		!strings.Contains(failure.Cause, "ERR_PNPM_FETCH_404") {
+		t.Fatalf("package-manager diagnostic = %#v", failure)
 	}
 }
 func TestPnpmSkipsReleaseManagedBinary(t *testing.T) {

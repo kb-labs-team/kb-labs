@@ -1875,7 +1875,7 @@ func TestArtifactExecutorLeavesUnprojectedStageWithoutSharedProjections(t *testi
 	defer server.Close()
 	releaseCatalog := verifiedFixtureCatalog(t, release)
 	executor, err := newArtifactExecutor(layout, stage, "https://registry.test", false, io.Discard,
-		productionPackageFixtureRunner{}, releaseCatalog, nil, "")
+		productionPackageFixtureRunner{}, releaseCatalog, nil, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

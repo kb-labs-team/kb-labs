@@ -25,6 +25,7 @@ export const LOG_CONTEXT_FIELDS = [
   "correlationId",
   "requestId",
   "traceId",
+  "runId",
   "executionId",
 ] as const;
 

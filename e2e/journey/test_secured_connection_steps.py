@@ -55,12 +55,12 @@ class SecuredConnectionContractTests(unittest.TestCase):
                 validate_local_health_response(status, body)
 
     def test_s031_session_status_requires_the_canonical_path(self):
-        payload = {"ok": True, "data": {"session": {
+        payload = {"ok": True, "data": {"sessions": [{
             "authenticated": True, "tokenExpired": True, "gatewayUrl": "https://gateway.test",
             "path": "/tmp/cli-home/.kb/session.json",
-        }}}
+        }]}}
         validate_cli_case("S-031.1", 0, "", payload, gateway="https://gateway.test")
-        payload["data"]["session"].pop("path")
+        payload["data"]["sessions"][0].pop("path")
         with self.assertRaisesRegex(AssertionError, "S-031.1"):
             validate_cli_case("S-031.1", 0, "", payload, gateway="https://gateway.test")
 
@@ -88,15 +88,38 @@ class SecuredConnectionContractTests(unittest.TestCase):
         )
 
     def test_client_apply_claim_requires_client_profile_empty_services_and_shim(self):
+        sealed_index = {"provenance": [{
+            "package": "@kb-labs/cli-bin", "version": "2.0.0", "sourceRevision": "candidate-revision",
+            "integrity": "sha512-candidate-integrity", "contentScope": "dist", "distSha256": "candidate-dist-digest",
+        }]}
         payload = {"ok": True, "data": {
             "profile": "client", "services": [], "shim": {"path": "/tmp/kb"},
-            "receipt": {"plan": {"request": {"platformRoot": "/tmp/client"}}},
+            "receipt": {"plan": {
+                "request": {"platformRoot": "/tmp/client"},
+                "artifacts": [{
+                    "package": "@kb-labs/cli-bin", "version": "2.0.0",
+                    "provenance": {
+                        "sourceRevision": "candidate-revision", "integrity": "sha512-candidate-integrity",
+                        "contentScope": "dist", "distSha256": "candidate-dist-digest",
+                    },
+                }],
+            }},
         }}
-        validate_cli_case("S-005.1", 0, "", payload, root="/tmp/client")
+        validate_cli_case("S-005.1", 0, "", payload, root="/tmp/client", sealed_index=sealed_index)
         for key, value in (("profile", "default"), ("services", ["gateway"]), ("shim", None)):
             invalid = {**payload, "data": {**payload["data"], key: value}}
             with self.subTest(key=key), self.assertRaisesRegex(AssertionError, "S-005.1"):
-                validate_cli_case("S-005.1", 0, "", invalid, root="/tmp/client")
+                validate_cli_case("S-005.1", 0, "", invalid, root="/tmp/client", sealed_index=sealed_index)
+
+        invalid_provenance = {**payload, "data": {**payload["data"], "receipt": {"plan": {
+            **payload["data"]["receipt"]["plan"], "artifacts": [{
+                **payload["data"]["receipt"]["plan"]["artifacts"][0],
+                "provenance": {"sourceRevision": "candidate-revision"},
+            }],
+        }}}}
+        with self.assertRaisesRegex(AssertionError, "S-005.1"):
+            validate_cli_case("S-005.1", 0, "", invalid_provenance,
+                              root="/tmp/client", sealed_index=sealed_index)
 
 
 if __name__ == "__main__":

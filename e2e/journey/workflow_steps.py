@@ -73,6 +73,28 @@ def _case_json_cli(step_id: str, args: list[str], *, env: dict[str, str], cwd: P
     return payload["data"]
 
 
+def _workflow_health(*, env: dict[str, str], cwd: Path) -> dict:
+    """Read the public workflow health command's raw health payload."""
+    args = ["workflow", "health", "--json"]
+    result = run_cli(args, env=env, cwd=cwd)
+    if result.returncode != 0:
+        raise AssertionError(f"`kb {' '.join(args)}` exited {result.returncode}: {' '.join(result.stdout.split())[-500:]}")
+    try:
+        envelope = read_ux_cli_result(result)
+    except json.JSONDecodeError as error:
+        raise AssertionError(f"`kb {' '.join(args)}` did not return JSON: {' '.join(result.stdout.split())[-500:]}") from error
+    health = envelope.get("data")
+    if not isinstance(health, dict):
+        raise AssertionError("`kb workflow health --json` did not return a health object in `data`")
+    if "ok" in health or "data" in health:
+        raise AssertionError("`kb workflow health --json` nested a success envelope inside its health data")
+    if health.get("status") != "ok" or health.get("service") != "workflow":
+        raise AssertionError(f"`kb workflow health --json` returned unexpected health fields: {health!r}")
+    if not isinstance(health.get("ts"), (int, float)) or isinstance(health.get("ts"), bool) or health["ts"] <= 0:
+        raise AssertionError("`kb workflow health --json` returned an invalid health timestamp")
+    return health
+
+
 def _contract_object(value: object, command: str) -> dict:
     if not isinstance(value, dict):
         raise AssertionError(f"`{command}` JSON contract expected `data` to be an object; got {type(value).__name__}")
@@ -975,6 +997,16 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             raise AssertionError("refused plugin cron enable changed the listed cron")
 
     journey.step("refuse enabling plugin cron", "workflow", refuse_plugin_enable, cases=["S-044.8"])
+
+    def accept_standard_cron_range() -> None:
+        schedule_file.write_text(_schedule_yaml(True).replace("* * * * *", "0 9 * * 1-5"), encoding="utf-8")
+        data = _case_json_cli("S-044.9", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
+        cron_data = _workflow_cron_list_data(data)
+        cron = next((item for item in cron_data["crons"] if item["id"] == "journey-cron"), None)
+        if cron is None or cron.get("schedule") != "0 9 * * 1-5":
+            raise AssertionError(f"weekday range cron was not accepted and listed: {cron_data!r}")
+
+    journey.step("accept standard cron field range", "workflow", accept_standard_cron_range, cases=["S-044.9"])
     schedule_file.unlink(missing_ok=True)
 
 
@@ -1010,6 +1042,12 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                              discover_fixtures, cases=["S-006.3"])
     if discovery.status != "PASS":
         return
+
+    def inspect_health() -> None:
+        with invocation_context(step_id="S-007.5"):
+            _workflow_health(env=env, cwd=project)
+
+    journey.step("report workflow service health", "workflow", inspect_health, cases=["S-007.5"])
     successful_id = ""
     failed_id = ""
 

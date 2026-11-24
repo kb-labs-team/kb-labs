@@ -8,11 +8,24 @@ import { createBufferedUI } from "./mcp/ui.js";
 import { McpDaemonServer } from "./server.js";
 import type { ServiceContext } from "@kb-labs/shared-daemon";
 import type { IServiceTransport } from "@kb-labs/core-platform";
-import type { ServiceManifest } from "@kb-labs/plugin-contracts";
+import type { RegisteredServiceCommandOperation, ServiceManifest } from "@kb-labs/plugin-contracts";
+
+/** Capture command UI output for the active MCP tool call. */
+export function projectMcpUiProvider() {
+  const output = callOutput.getStore();
+  return output ? createBufferedUI((text, model) => {
+    output.text.push(text);
+    if (model) {output.structured.push(model);}
+  }).ui : noopUI;
+}
 
 /** Project-runtime module setup. The runtime supplies the project root and port,
  * so the MCP process scope follows the project URL selected by the host. */
-export async function setupProjectMcp(ctx: ServiceContext, serviceManifests: readonly ServiceManifest[]): Promise<() => Promise<void>> {
+export async function setupProjectMcp(
+  ctx: ServiceContext,
+  serviceManifests: readonly ServiceManifest[],
+  options?: { operations: readonly RegisteredServiceCommandOperation[] },
+): Promise<() => Promise<void>> {
   const logger = ctx.logger.forComponent("mcp");
   const { policy } = await resolvePolicy({});
   const authMode = process.env.KB_MCP_AUTH_MODE === "local" ? "local" : "secured";
@@ -30,6 +43,7 @@ export async function setupProjectMcp(ctx: ServiceContext, serviceManifests: rea
     endpointPath: "/",
     authMode,
     serviceManifests,
+    serviceOperations: options?.operations,
     serviceTransport: ctx.platform.getAdapter<IServiceTransport>("serviceTransport"),
   });
   await server.start();
@@ -55,13 +69,7 @@ export async function bootstrap(): Promise<void> {
     defaultHost: "0.0.0.0",
     hostEnvVar: "KB_MCP_DAEMON_HOST",
     platform: {
-      uiProvider: (_hostType: string) => {
-        const output = callOutput.getStore();
-        return output ? createBufferedUI((text, model) => {
-          output.text.push(text);
-          if (model) {output.structured.push(model);}
-        }).ui : noopUI;
-      },
+      uiProvider: projectMcpUiProvider,
       assemblyHook: makeAssemblyHook(),
     },
     async setup({

@@ -1,0 +1,35 @@
+name: Sweep remote verification refs
+
+on:
+  schedule:
+    - cron: '17 4 * * *'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  sweep-verify-refs:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Delete verification refs older than three days
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          cutoff=$(date -u -d '3 days ago' +%s)
+          gh api --paginate "repos/$GH_REPO/git/matching-refs/heads/verify/" --jq '.[].ref' |
+          while IFS= read -r full_ref; do
+            branch=${full_ref#refs/heads/}
+            suffix=${branch##*/}
+            created=${suffix%%-*}
+            [[ "$created" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || continue
+            created_epoch=$(date -u -d "${created:0:8} ${created:9:6} UTC" +%s)
+            if [ "$created_epoch" -lt "$cutoff" ]; then
+              encoded=$(printf '%s' "$branch" | sed 's#/#%2F#g')
+              gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$encoded"
+            fi
+          done

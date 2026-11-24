@@ -3,7 +3,7 @@
  * Supports GitHub, GitLab, and self-hosted instances
  */
 
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import { parseGitUrl } from './git-range';
 import type { Change, GitProvider } from './types';
 

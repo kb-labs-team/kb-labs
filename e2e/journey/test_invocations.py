@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 import urllib.request
 from pathlib import Path
@@ -67,7 +68,8 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
                 key = literal_key(target.slice) if isinstance(target, ast.Subscript) else None
                 if (isinstance(target, ast.Subscript) and is_env_mapping(target.value)
                         and isinstance(target.ctx, (ast.Store, ast.Del))
-                        and key is not None and redaction.is_secret_key(key)):
+                        and key is not None and redaction.is_secret_key(key)
+                        and not (isinstance(node.value, ast.Constant) and node.value.value == "")):
                     violations.append(f"{filename}:{node.lineno}: direct secret-key assignment")
                 if (is_env_mapping(target) and contains_secret_mapping_write(node.value)):
                     violations.append(f"{filename}:{node.lineno}: secret literal assigned to environment")
@@ -103,6 +105,27 @@ def secret_environment_write_violations(source_text: str, filename: str = "<sour
 
 
 class PtyInvocationTest(unittest.TestCase):
+    # case: S-315.2
+    def test_url_userinfo_is_redacted_in_retained_evidence(self):
+        rendered = redaction.redact_text(
+            "redis://journey:redis-password@cache.internal:6379/0 "
+            "https://user%40name:encoded%3Asecret@example.test/path"
+        )
+        self.assertNotIn("redis-password", rendered)
+        self.assertNotIn("encoded%3Asecret", rendered)
+        self.assertEqual(rendered.count("[REDACTED]@"), 2)
+
+    def test_url_redaction_scales_for_large_single_line_logs(self):
+        value = "x" * (128 * 1024)
+        started = time.monotonic()
+        self.assertEqual(redaction.redact_text(value), value)
+        self.assertLess(time.monotonic() - started, 3.0)
+
+        credential = "very-long-userinfo-" + ("secret" * 4096)
+        rendered = redaction.redact_text(f"https://{credential}@registry.internal/path")
+        self.assertNotIn(credential, rendered)
+        self.assertEqual(rendered, "https://[REDACTED]@registry.internal/path")
+
     def test_failed_envelope_log_path_is_captured_bounded_and_redacted(self):
         with tempfile.TemporaryDirectory(prefix="journey-error-log-artifact-") as temp:
             root = Path(temp)
@@ -611,6 +634,9 @@ class ReportRedactionTest(unittest.TestCase):
         for source in reads:
             with self.subTest(source=source):
                 self.assertEqual(secret_environment_write_violations(source), [], source)
+
+        self.assertEqual(secret_environment_write_violations('env["KB_X_TOKEN"] = ""'), [])
+        self.assertTrue(secret_environment_write_violations('env["KB_X_TOKEN"] = token'))
 
 
 if __name__ == "__main__":

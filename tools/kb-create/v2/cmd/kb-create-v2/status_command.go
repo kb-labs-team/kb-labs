@@ -97,7 +97,7 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 		payload["runningVersion"] = status.PlatformVersion
 	}
 	if installed {
-		if pending := pendingRestart(active, status, root); pending != nil {
+		if pending := pendingRestart(active, status, layout.InstallRoot()); pending != nil {
 			payload["pendingRestart"] = pending
 		}
 	}

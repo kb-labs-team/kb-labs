@@ -107,6 +107,35 @@ describe('Log Routes Integration Tests', () => {
       );
     });
 
+    // case: S-122.3
+    it('should apply run and execution filters before paginating history', async () => {
+      const matchingLog = createMockLog('log-run', 'error', 'RUN_DIAGNOSTIC_MARKER');
+      matchingLog.fields = { runId: 'run-123', executionId: 'exec-123' };
+      mockLogService.query = vi.fn().mockResolvedValue({
+        logs: [matchingLog],
+        total: 1,
+        hasMore: false,
+        source: 'persistence',
+      });
+      mockLogService.getStats = vi.fn().mockResolvedValue({});
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/logs?runId=run-123&executionId=exec-123&limit=1&offset=0',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const payload = response.json();
+      expect(payload.data.logs).toHaveLength(1);
+      expect(payload.data.logs[0].msg).toBe('RUN_DIAGNOSTIC_MARKER');
+      expect(payload.data.filters.runId).toBe('run-123');
+      expect(payload.data.filters.executionId).toBe('exec-123');
+      expect(mockLogService.query).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: 'run-123', executionId: 'exec-123' }),
+        expect.objectContaining({ limit: 1, offset: 0 }),
+      );
+    });
+
     it('should use search when search query provided', async () => {
       const mockLogs = [
         createMockLog('log-1', 'error', 'Authentication failed'),
@@ -298,6 +327,35 @@ describe('Log Routes Integration Tests', () => {
       expect(payload.error).toMatchObject({ code: 'KB_RUNTIME_UNEXPECTED', hint: expect.any(String) });
     });
 
+    // case: S-122.3
+    it('should pass run and execution filters to the scoped log stream', async () => {
+      mockLogService.getCapabilities = vi.fn().mockReturnValue({
+        hasBuffer: true,
+        hasPersistence: true,
+        hasSearch: true,
+        hasStreaming: true,
+      });
+      mockLogService.subscribe = vi.fn((callback: (log: LogRecord) => void) => {
+        void callback;
+        return () => {};
+      });
+
+      const origin = await app.listen({ port: 0, host: '127.0.0.1' });
+      const abort = new AbortController();
+      try {
+        const response = await fetch(`${origin}/api/v1/logs/stream?runId=run-123&executionId=exec-123`, {
+          signal: abort.signal,
+        });
+        expect(response.status).toBe(200);
+        expect(mockLogService.subscribe).toHaveBeenCalledWith(
+          expect.any(Function),
+          { runId: 'run-123', executionId: 'exec-123' },
+        );
+      } finally {
+        abort.abort();
+      }
+    });
+
     // Note: SSE streaming is hard to test in unit tests
     // Would need separate E2E tests with real SSE client
   });
@@ -398,6 +456,35 @@ describe('Log Routes Integration Tests', () => {
   });
 
   describe('POST /api/v1/logs/summarize', () => {
+    // case: S-122.3
+    it('passes workflow run and step execution filters to storage before its limit', async () => {
+      const mockLogs = [createMockLog('log-old-run', 'error', 'RUN_DIAGNOSTIC_MARKER')];
+      (mockLogService.query as any).mockResolvedValue({
+        logs: mockLogs,
+        total: 1,
+        hasMore: false,
+        source: 'persistence',
+      });
+      vi.spyOn(platform, 'llm', 'get').mockReturnValue({
+        complete: vi.fn().mockResolvedValue({ content: 'Run-specific summary' }),
+      } as any);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/v1/logs/summarize',
+        payload: {
+          question: 'Summarize this workflow run',
+          filters: { runId: 'run-old', executionId: 'step-old', traceId: 'trace-old' },
+        },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(mockLogService.query).toHaveBeenCalledWith(
+        expect.objectContaining({ runId: 'run-old', executionId: 'step-old', traceId: 'trace-old', from: undefined, to: undefined }),
+        { limit: 1000 },
+      );
+    });
+
     it('should summarize logs with LLM', async () => {
       const mockLogs = [
         createMockLog('log-1', 'error', 'Database connection failed'),

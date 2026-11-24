@@ -5,6 +5,7 @@ import os from 'node:os'
 
 import { createProjectRegistry } from '@kb-labs/core-project-registry'
 import { PlatformConfigError } from '@kb-labs/core-platform'
+import { loadEffectiveConfig } from '@kb-labs/core-config'
 import { loadPlatformConfig } from '../config-loader.js'
 import { writeTestPlatformReceipt } from './platform-version-fixture.js'
 
@@ -127,6 +128,189 @@ describe('loadPlatformConfig generated layer (ADR-0047)', () => {
     expect(result.platformConfig.adapters?.cache).toBe('@kb-labs/adapters-state-broker@2.120.1')
     expect(result.platformConfig.adapterOptions?.storage).toEqual({ baseDir: 'storage' })
     expect(result.platformConfig.adapterOptions?.cache).toBeUndefined()
+  })
+
+  // case: S-316.2
+  it('keeps generated and platform user arrays consistent between structured and raw readers', async () => {
+    const platformRoot = path.join(tmpDir, 'reader-parity-platform')
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['generated'] } } },
+    })
+    write(platformRoot, '.kb/kb.config.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['user'] } } },
+    })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(raw?.data.platform).toMatchObject({
+      adapterOptions: { storage: { searchPaths: ['user'] } },
+    })
+    expect(structured.platformConfig.adapterOptions).toMatchObject({
+      storage: { searchPaths: ['user'] },
+    })
+  })
+
+  // case: S-316.2
+  it('keeps explicit array append behavior consistent between structured and raw readers', async () => {
+    const platformRoot = path.join(tmpDir, 'reader-parity-append-platform')
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['generated'] } } },
+    })
+    write(platformRoot, '.kb/kb.config.jsonc', {
+      platform: {
+        adapterOptions: {
+          storage: { searchPaths: ['user'], 'kb:merge': { searchPaths: 'append' } },
+        },
+      },
+    })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(raw?.data.platform).toMatchObject({
+      adapterOptions: { storage: { searchPaths: ['generated', 'user'] } },
+    })
+    expect(structured.platformConfig.adapterOptions).toMatchObject({
+      storage: { searchPaths: ['generated', 'user'] },
+    })
+  })
+
+  // case: S-316.2
+  it('preserves generated adapter options when the platform file omits them', async () => {
+    const platformRoot = path.join(tmpDir, 'reader-parity-omitted-options')
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', {
+      platform: { adapterOptions: { storage: { baseDir: 'generated-data' } } },
+    })
+    write(platformRoot, '.kb/kb.config.jsonc', { platform: { mode: 'operator' } })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(structured.platformConfig.adapterOptions).toMatchObject({
+      storage: { baseDir: 'generated-data' },
+    })
+    expect(raw?.data.platform).toMatchObject({
+      adapterOptions: { storage: { baseDir: 'generated-data' } },
+    })
+  })
+
+  // case: S-316.2
+  it('reads all platform user config candidates in the same precedence order', async () => {
+    const platformRoot = path.join(tmpDir, 'reader-parity-candidates')
+    makePlatformDir(platformRoot)
+    write(platformRoot, 'kb.config.jsonc', { extension: { retained: true, order: ['root'] } })
+    write(platformRoot, '.kb/kb.config.jsonc', { extension: { order: ['jsonc'] } })
+    write(platformRoot, '.kb/kb.config.json', { extension: { order: ['json'] } })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(structured.effectiveConfig?.extension).toEqual({ retained: true, order: ['jsonc'] })
+    expect(raw?.data.extension).toEqual({ retained: true, order: ['jsonc'] })
+  })
+
+  // case: S-316.2
+  it.each([
+    {
+      name: 'higher top-level options merge with generated nested platform options',
+      generated: { platform: { adapterOptions: { storage: { baseDir: 'generated' } } } },
+      user: { adapterOptions: { cache: { namespace: 'operator' } } },
+      expected: { storage: { baseDir: 'generated' }, cache: { namespace: 'operator' } },
+    },
+    {
+      name: 'higher nested platform options merge with generated top-level options',
+      generated: { adapterOptions: { cache: { namespace: 'generated' } } },
+      user: { platform: { adapterOptions: { storage: { baseDir: 'operator' } } } },
+      expected: { cache: { namespace: 'generated' }, storage: { baseDir: 'operator' } },
+    },
+  ])('merges projected adapter options from each source file: $name', async ({ generated, user, expected }) => {
+    const platformRoot = path.join(tmpDir, `adapter-option-projection-${expected.storage ? 'nested' : 'top'}`)
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', generated)
+    write(platformRoot, '.kb/kb.config.jsonc', user)
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+
+    expect(structured.platformConfig.adapterOptions).toMatchObject(expected)
+  })
+
+  // case: S-316.2
+  it.each([
+    {
+      name: 'container replacement follows a user append',
+      user: { searchPaths: ['user'], 'kb:merge': { searchPaths: 'append' } },
+      container: { searchPaths: ['container'] },
+      expected: ['container'],
+    },
+    {
+      name: 'container append retains a generated array beside user changes',
+      user: { label: 'operator' },
+      container: { searchPaths: ['container'], 'kb:merge': { searchPaths: 'append' } },
+      expected: ['generated', 'container'],
+    },
+  ])('folds generated, user, and container array sources in order: $name', async ({ user, container, expected }) => {
+    const platformRoot = path.join(tmpDir, `reader-parity-container-${expected.join('-')}`)
+    makePlatformDir(platformRoot)
+    write(platformRoot, '.kb/generated/defaults.jsonc', {
+      platform: { adapterOptions: { storage: { searchPaths: ['generated'] } } },
+    })
+    write(platformRoot, '.kb/kb.config.jsonc', {
+      platform: { adapterOptions: { storage: user } },
+    })
+    write(platformRoot, '.kb/kb.config.override.json', {
+      platform: { adapterOptions: { storage: container } },
+    })
+
+    const structured = await loadPlatformConfig({
+      startDir: platformRoot,
+      env: { KB_PLATFORM_ROOT: realpathSync(platformRoot) },
+      projectScope: 'platform',
+      loadEnvFile: false,
+    })
+    const raw = await loadEffectiveConfig({ platformRoot })
+
+    expect(structured.platformConfig.adapterOptions?.storage).toMatchObject({ searchPaths: expected })
+    expect(structured.effectiveConfig?.platform).toMatchObject({
+      adapterOptions: { storage: { searchPaths: expected } },
+    })
+    expect(raw?.data.platform).toMatchObject({
+      adapterOptions: { storage: { searchPaths: expected } },
+    })
+    const provenance = raw?.provenance['platform.adapterOptions.storage.searchPaths']
+    if (expected[0] === 'generated') {
+      expect(provenance?.contributors?.map((source) => source.layer)).toEqual(['container', 'generated'])
+    } else {
+      expect(provenance?.contributors).toBeUndefined()
+    }
   })
 
   it('rejects a malformed generated config file', async () => {

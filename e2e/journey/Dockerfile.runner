@@ -1,7 +1,7 @@
 ARG KB_JOURNEY_TOOLCHAIN_IMAGE
 ARG KB_JOURNEY_NODE_BASE_IMAGE
 
-FROM golang:1.26-bookworm AS release-index-sealer
+FROM golang:1.26.11-bookworm AS release-index-sealer
 
 WORKDIR /src/kb-create
 COPY tools/clikit /src/clikit

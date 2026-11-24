@@ -6,7 +6,7 @@
  */
 
 import catalogData from './errors.catalog.json';
-import { redactProcessSensitiveString } from '../logging/context.js';
+import { redactErrorPreview } from './sensitive-redaction.js';
 import { markValidatedErrorEnvelope, type ValidatedErrorEnvelope } from './validated-envelope.js';
 import type {
   ErrorAction,
@@ -76,7 +76,7 @@ export function describeContractValue(value: unknown): { observedType: string; o
     const causeType = cause instanceof Error ? cause.name : typeof cause;
     rendered = `[unrenderable ${observedType}; renderer threw ${causeType}]`;
   }
-  return { observedType, observedValuePreview: redactProcessSensitiveString(rendered).slice(0, 256) };
+  return { observedType, observedValuePreview: redactErrorPreview(rendered).slice(0, 256) };
 }
 
 function renderContractValue(value: unknown, visited: WeakSet<object>, depth: number): string {

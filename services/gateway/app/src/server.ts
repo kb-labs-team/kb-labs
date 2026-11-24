@@ -57,6 +57,7 @@ import { registerAggregatedDocsRoutes } from "./docs/routes.js";
 import { HostRegistry } from "./hosts/registry.js";
 import { attachGatewayWs, type SocketWsUpstream } from "./ws/gateway-ws.js";
 import { GatewayObservabilityCollector } from "./observability/collector.js";
+import { gatewayObservabilityHealthResponseSchema } from "./observability/health-response-schema.js";
 import { randomUUID } from "node:crypto";
 import { registerGatewayUxBoundary } from './ux-boundary.js';
 import { registerInternalRoutes } from "./internal/routes.js";
@@ -117,11 +118,6 @@ export interface UserAuthServerDeps {
   oauthCallbackPerIpPerMinute?: number;
   /** Evaluates auth readiness (admin present, secret sane). Enables `GET /health/auth`. */
   authReadiness?: () => Promise<AuthReadiness>;
-}
-
-/** Strip bearer tokens from query params before logging (prevents JWT leakage in access logs). */
-function redactQueryToken(url: string): string {
-  return url.replace(/([?&]access_token=)[^&]*/gi, "$1[REDACTED]");
 }
 
 /**
@@ -266,7 +262,6 @@ export async function createServer(
     reply.header("X-Request-Id", requestId);
     reply.header("X-Trace-Id", traceId);
 
-    const safeUrl = redactQueryToken(request.url);
     request.kbLogger = createHttpLogger(logger, {
       serviceId: "gateway",
       layer: "service",
@@ -274,7 +269,7 @@ export async function createServer(
       requestId,
       traceId,
       method: request.method,
-      url: safeUrl,
+      url: request.url,
       operation: "http.request",
     });
     request.kbLogger.debug("HTTP request started");
@@ -347,6 +342,7 @@ export async function createServer(
       projectServices,
       projectServiceTransport ?? serviceTransport,
       config.projectRequestTimeoutMs ?? 30_000,
+      { publicUrl: process.env.GATEWAY_PUBLIC_URL, authEnabled: access.authEnabled },
     );
     gatewayLogger.info(
       "Project routing enabled: /api/v1/projects/{projectId}/{serviceId}/*",
@@ -492,13 +488,18 @@ export async function createServer(
           async () => {
             const probeStart = Date.now();
             try {
+              const metadata = upstream.serviceId === "marketplace-registry" && process.env.GATEWAY_INTERNAL_SECRET
+                ? { "x-internal-secret": process.env.GATEWAY_INTERNAL_SECRET }
+                : undefined;
               const res = await serviceTransport.call(upstream.serviceId, {
                 path: "/health",
+                ...(metadata ? { metadata } : {}),
                 signal: AbortSignal.timeout(2000),
               });
               const latencyMs = Date.now() - probeStart;
-              upstreams[name] = { status: res.ok ? "up" : "down", latencyMs };
-              if (!res.ok) {
+              const healthy = res.ok && res.statusCode >= 200 && res.statusCode < 300;
+              upstreams[name] = { status: healthy ? "up" : "down", latencyMs };
+              if (!healthy) {
                 logDiagnosticEvent(logger, {
                   domain: "service",
                   event: "gateway.upstream.health",
@@ -736,7 +737,7 @@ export async function createServer(
           tags: ["Observability"],
           summary: "Gateway observability health snapshot",
           querystring: { type: 'object', properties: {}, additionalProperties: false },
-          response: { 200: { type: 'object' } },
+          response: { 200: gatewayObservabilityHealthResponseSchema },
         },
       },
       async () => {

@@ -91,5 +91,73 @@ class UnexpectedErrorJourneyTests(unittest.TestCase):
         self.assertTrue(any(command[1:2] == ['start'] for command in commands))
 
 
+    def test_secured_stopped_host_reports_unavailable_without_claiming_plugin_failure(self):
+        journey = RecordingJourney('secured')
+        commands = []
+        host_stopped = False
+        fixture_root = Path(__file__).parent / 'fixtures/plugin-error'
+        package_name = json.loads((fixture_root / 'package.json').read_text())['name']
+        error_catalog = json.loads((Path(__file__).parents[2] / 'core/platform/src/error-envelope/errors.catalog.json').read_text())
+        plugin_failure = next(item for item in error_catalog['codes'] if item['code'] == 'KB_PLUGIN_COMMAND_FAILED')
+        host_failure = next(item for item in error_catalog['codes'] if item['code'] == 'KB_HOST_UNREACHABLE')
+
+        def runner(command, **kwargs):
+            nonlocal host_stopped
+            commands.append(command)
+            if command[1:2] == ['stop']:
+                host_stopped = True
+                return subprocess.CompletedProcess(command, 0, '{}', '')
+            if command[1:2] == ['start']:
+                host_stopped = False
+                return subprocess.CompletedProcess(command, 0, '{}', '')
+            if command[1:3] == ['marketplace', 'install']:
+                return subprocess.CompletedProcess(command, 0, json.dumps({'ok': True, 'data': {}}), '')
+            if command[1:3] == ['logs', 'query']:
+                correlation_id = command[command.index('--correlation-id') + 1]
+                record = {
+                    'correlationId': correlation_id, 'event': 'plugin.handler.failed',
+                    'sourceErrorClass': 'Error', 'sourceMessage': 'fixture outer [REDACTED]',
+                    'serializedError': {'name': 'Error', 'message': 'fixture outer [REDACTED]', 'stack': 'outer',
+                                        'cause': {'name': 'Error', 'message': 'fixture nested [REDACTED]', 'stack': 'nested'}},
+                }
+                return subprocess.CompletedProcess(command, 0, json.dumps({'ok': True, 'data': {'data': {'logs': [record]}}}), '')
+            if command[1:3] == ['journey-error', 'throw']:
+                if host_stopped:
+                    correlation_id = 'host-down-correlation'
+                    if '--json' in command:
+                        output = json.dumps({'ok': False, 'error': {
+                            'code': 'KB_HOST_UNREACHABLE', 'correlationId': correlation_id,
+                            'message': host_failure['message'], 'hint': host_failure['hint'],
+                        }})
+                    else:
+                        hint = host_failure['hint'].replace('{correlationId}', correlation_id)
+                        output = f'KB_HOST_UNREACHABLE: connection failed\nHint: {hint}'
+                    return subprocess.CompletedProcess(command, 1, output, '')
+                correlation_id = f'plugin-correlation-{len(commands)}'
+                hint = plugin_failure['hint'].replace('{correlationId}', correlation_id)
+                if '--json' in command:
+                    output = json.dumps({'ok': False, 'error': {
+                        'code': 'KB_PLUGIN_COMMAND_FAILED', 'correlationId': correlation_id,
+                        'hint': hint, 'details': {'plugin': package_name, 'command': 'journey-error throw'},
+                    }})
+                else:
+                    output = f'KB_PLUGIN_COMMAND_FAILED: fixture failure\\nHint: {hint}'
+                return subprocess.CompletedProcess(command, 1, output, '')
+            return subprocess.CompletedProcess(command, 0, '', '')
+
+        with patch.object(unexpected_error_steps, 'run_command', side_effect=runner), \
+             patch.object(unexpected_error_steps.shutil, 'which', return_value='/installed/kb-create'):
+            unexpected_error_steps.run_unexpected_error_steps(journey, mode='secured', env={
+                'KB_JOURNEY_CLI_PATH': '/installed/kb', 'KB_JOURNEY_PLATFORM_ROOT': '/platform', 'PATH': '/bin',
+            })
+
+        self.assertTrue(all(step[3] is None for step in journey.steps), journey.steps)
+        self.assertEqual([step[2] for step in journey.steps if step[2]], [['S-203.26'], ['S-203.26']])
+        self.assertEqual(len([command for command in commands if command[1:3] == ['journey-error', 'throw']]), 4)
+        self.assertEqual(len([command for command in commands if command[1:3] == ['logs', 'query']]), 2)
+        self.assertTrue(any(command[1:2] == ['stop'] for command in commands))
+        self.assertTrue(any(command[1:2] == ['start'] for command in commands))
+
+
 if __name__ == '__main__':
     unittest.main()

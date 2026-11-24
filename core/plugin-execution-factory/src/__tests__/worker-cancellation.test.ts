@@ -6,6 +6,7 @@ import { WorkerPool } from '../backends/worker-pool/pool.js';
 import type { ExecutionRequest } from '../types.js';
 
 const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'hanging-worker-script.mjs');
+const credentialFixture = path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'runtime-credential-worker.mjs');
 
 function makeRequest(): ExecutionRequest {
   return {
@@ -41,6 +42,23 @@ describe('Worker active cancellation', () => {
     await exited;
     expect(worker.state).toBe('stopped');
   }, 10_000);
+});
+
+describe('Worker credential isolation', () => {
+  // case: S-160.1
+  it('does not inherit the project runtime guard credential', async () => {
+    const previous = process.env.KB_PROJECT_RUNTIME_TOKEN;
+    process.env.KB_PROJECT_RUNTIME_TOKEN = 'internal-runtime-guard-secret';
+    const isolatedWorker = new Worker({ workerScript: credentialFixture });
+    try {
+      await isolatedWorker.spawn();
+      expect(isolatedWorker.state).toBe('idle');
+    } finally {
+      await isolatedWorker.kill();
+      if (previous === undefined) { delete process.env.KB_PROJECT_RUNTIME_TOKEN; }
+      else { process.env.KB_PROJECT_RUNTIME_TOKEN = previous; }
+    }
+  });
 });
 
 
