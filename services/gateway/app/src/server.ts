@@ -644,12 +644,10 @@ export async function createServer(
           (health.upstreams as
             | Record<string, { status?: string }>
             | undefined) ?? {};
-        // A gateway that serves project runtimes has no project-scoped
-        // upstream to wait for: runtimes start lazily on first request. The
-        // machine-level upstreams it does route to are all required.
-        const requiredUpstreams = projectRouting
-          ? Object.keys(config.upstreams)
-          : ["rest"];
+        // Runtime readiness follows the upstreams this Gateway actually routes
+        // to. Project runtimes are started lazily, so they are not represented
+        // here unless configured as static upstreams.
+        const requiredUpstreams = Object.keys(config.upstreams);
         const missingRequiredUpstreams = requiredUpstreams.filter(
           (id) => (upstreams[id]?.status ?? "down") !== "up",
         );

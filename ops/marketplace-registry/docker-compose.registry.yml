@@ -64,6 +64,7 @@ services:
       GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET in the registry env file}
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
       GATEWAY_BOOTSTRAP_ADMIN_PASSWORD: ${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:?set GATEWAY_BOOTSTRAP_ADMIN_PASSWORD in the registry env file}
+      GATEWAY_PROJECT_SCOPE: platform
       KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
     volumes:
       - registry_gateway_data:/app/.kb/data

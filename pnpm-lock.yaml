@@ -3637,6 +3637,9 @@ importers:
 
   services/gateway/app:
     dependencies:
+      '@kb-labs/adapters-sqlite':
+        specifier: workspace:*
+        version: link:../../../adapters/sqlite
       '@kb-labs/adapters-service-transport-http':
         specifier: workspace:*
         version: link:../../../adapters/service-transport-http

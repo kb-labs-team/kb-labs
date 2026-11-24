@@ -9,6 +9,7 @@ import { resolveGatewayStandaloneScope } from "../bootstrap.js";
 
 describe("gateway entrypoints", () => {
   beforeEach(() => {
+    vi.unstubAllEnvs();
     runService.mockReset();
     requireEnvironmentSecret.mockReset();
   });

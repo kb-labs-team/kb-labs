@@ -1,10 +1,14 @@
 {
   "platform": {
     "adapters": {
+      "documentDatabase": "@kb-labs/adapters-sqlite",
       "cache": "@kb-labs/adapters-state-broker",
       "serviceTransport": "@kb-labs/adapters-service-transport-http"
     },
     "adapterOptions": {
+      "documentDatabase": {
+        "filename": "/app/.kb/data/gateway.sqlite"
+      },
       "serviceTransport": {
         "services": {
           "marketplace-registry": {

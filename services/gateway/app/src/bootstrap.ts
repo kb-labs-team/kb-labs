@@ -60,16 +60,32 @@ export async function bootstrap(
   repoRoot: string = process.cwd(),
 ): Promise<void> {
   requireEnvironmentSecret("GATEWAY_INTERNAL_SECRET");
+  const scope = resolveGatewayStandaloneScope(process.env.GATEWAY_PROJECT_SCOPE);
   await runService({
     appId: "gateway",
     ...GATEWAY_SERVICE_NETWORK,
-    projectScope: "required",
+    projectScope: scope.projectScope,
     startDir: repoRoot,
     platform: {
       assemblyHook: makeAssemblyHook(),
     },
-    setup,
+    setup: scope.configScope === "project"
+      ? setup
+      : (ctx) => startGateway(ctx, { configScope: scope.configScope }),
   });
+}
+
+/** Standalone Gateway defaults to project mode; platform mode is explicit for global API deployments. */
+export function resolveGatewayStandaloneScope(
+  value: string | undefined,
+): { projectScope: "required" | "platform"; configScope: "project" | "platform" } {
+  if (value === undefined || value === "project") {
+    return { projectScope: "required", configScope: "project" };
+  }
+  if (value === "platform") {
+    return { projectScope: "platform", configScope: "platform" };
+  }
+  throw new Error("GATEWAY_PROJECT_SCOPE must be 'project' or 'platform'");
 }
 
 /**

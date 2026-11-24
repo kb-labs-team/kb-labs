@@ -23,6 +23,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/adapters-sqlite": "workspace:*",
     "@kb-labs/adapters-service-transport-http": "workspace:*",
     "@kb-labs/adapters-state-broker": "workspace:*",
     "@fastify/cookie": "^11.0.1",
