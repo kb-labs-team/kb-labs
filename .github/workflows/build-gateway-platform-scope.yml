@@ -11,8 +11,8 @@ permissions:
   packages: write
 
 env:
-  SOURCE_SHA: 44684b6321d99fc061d50b72c50aeb919fb506e4
-  GATEWAY_IMAGE: ghcr.io/kb-labs-team/kb-gateway:44684b6321d99fc061d50b72c50aeb919fb506e4
+  SOURCE_SHA: c5ab24959020f552306fee629abacabd6f921db8
+  GATEWAY_IMAGE: ghcr.io/kb-labs-team/kb-gateway:c5ab24959020f552306fee629abacabd6f921db8
   STATE_IMAGE: ghcr.io/kb-labs-team/kb-state-daemon:7b8240395009fc3a055916bb4cef00c1821bf4b3
   REGISTRY_IMAGE: ghcr.io/kb-labs-team/kb-marketplace-registry:7b8240395009fc3a055916bb4cef00c1821bf4b3
 
@@ -106,7 +106,7 @@ jobs:
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: kb-gateway-platform-scope-44684b6321d99fc061d50b72c50aeb919fb506e4
+          name: kb-gateway-platform-scope-c5ab24959020f552306fee629abacabd6f921db8
           path: ${{ runner.temp }}/gateway-image/
           if-no-files-found: error
           retention-days: 7
@@ -122,7 +122,7 @@ jobs:
       - name: Download Gateway image artifact
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: kb-gateway-platform-scope-44684b6321d99fc061d50b72c50aeb919fb506e4
+          name: kb-gateway-platform-scope-c5ab24959020f552306fee629abacabd6f921db8
           path: ${{ runner.temp }}/gateway-artifact
 
       - name: Download already verified State image
@@ -175,22 +175,34 @@ jobs:
           verify_load "$RUNNER_TEMP/state-artifact" kb-state-daemon "$STATE_IMAGE" 7b8240395009fc3a055916bb4cef00c1821bf4b3
           verify_load "$RUNNER_TEMP/registry-artifact" kb-marketplace-registry "$REGISTRY_IMAGE" 7b8240395009fc3a055916bb4cef00c1821bf4b3
 
-      - name: Start platform services and verify Gateway readiness
+      - name: Start platform services and verify durable Gateway authentication
         run: |
           set -euo pipefail
           network=platform-smoke
           state=platform-smoke-state
           registry=platform-smoke-registry
           gateway=platform-smoke-gateway
+          gateway_data=platform-smoke-gateway-data
           smoke_secret="$(openssl rand -hex 32)"
           jwt_secret="$(openssl rand -hex 32)"
           admin_password="$(openssl rand -hex 24)"
+          admin_email=admin@example.com
+          tenant_id='registry-smoke'
           cleanup() {
             docker rm -f "$gateway" "$registry" "$state" >/dev/null 2>&1 || true
             docker network rm "$network" >/dev/null 2>&1 || true
+            docker volume rm "$gateway_data" >/dev/null 2>&1 || true
+          }
+          dump_diagnostics() {
+            docker ps -a --no-trunc >&2 || true
+            docker inspect --format 'Gateway status={{.State.Status}} exit={{.State.ExitCode}}' "$gateway" >&2 || true
+            docker logs "$gateway" >&2 || true
+            docker logs "$registry" >&2 || true
+            docker logs "$state" >&2 || true
           }
           trap cleanup EXIT
           docker network create "$network" >/dev/null
+          docker volume create "$gateway_data" >/dev/null
           docker run --detach --name "$state" --network "$network" --network-alias kb-state-daemon \
             --env KB_STATE_DAEMON_HOST=0.0.0.0 --env KB_STATE_DAEMON_PORT=7777 \
             --env KB_STATE_DAEMON_DATA_ROOT=/tmp/state-smoke "$STATE_IMAGE" >/dev/null
@@ -198,26 +210,67 @@ jobs:
             --env GATEWAY_INTERNAL_SECRET="$smoke_secret" --env KB_REGISTRY_HOST=0.0.0.0 \
             --env KB_REGISTRY_PORT=5071 --env KB_REGISTRY_URL=http://kb-marketplace-registry:5071 \
             "$REGISTRY_IMAGE" >/dev/null
-          docker run --detach --name "$gateway" --network "$network" --publish 127.0.0.1::4000/tcp \
-            --volume "$GITHUB_WORKSPACE/ops/marketplace-registry/gateway.override.json:/app/.kb/kb.config.override.json:ro" \
-            --env GATEWAY_PROJECT_SCOPE=platform --env GATEWAY_INTERNAL_SECRET="$smoke_secret" \
-            --env GATEWAY_JWT_SECRET="$jwt_secret" --env GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
-            --env KB_STATE_DAEMON_URL=http://kb-state-daemon:7777 "$GATEWAY_IMAGE" >/dev/null
-          host_port="$(docker port "$gateway" 4000/tcp | sed -E 's/.*:([0-9]+)$/\1/')"
-          test -n "$host_port"
-          ready=false
-          for _ in $(seq 1 60); do
-            if curl --fail --silent --header "x-internal-secret: $smoke_secret" \
-              "http://127.0.0.1:${host_port}/ready" > "$RUNNER_TEMP/gateway-ready.json"; then
-              ready=true
-              break
-            fi
-            sleep 1
-          done
-          if [ "$ready" != true ]; then
-            docker logs "$gateway" >&2 || true
-            docker logs "$registry" >&2 || true
-            exit 1
-          fi
-          jq -e '.ready == true or .data.ready == true' "$RUNNER_TEMP/gateway-ready.json" >/dev/null
-          docker exec "$gateway" sh -c 'test -s /app/.kb/data/gateway.sqlite'
+
+          wait_for_gateway() {
+            local ready=false
+            for _ in $(seq 1 45); do
+              if curl --fail --silent --header "x-internal-secret: $smoke_secret" \
+                http://127.0.0.1:4000/ready > "$RUNNER_TEMP/gateway-ready.json"; then
+                ready=true
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ready" != true ]; then dump_diagnostics; return 1; fi
+            jq -e '.ready == true or .data.ready == true' "$RUNNER_TEMP/gateway-ready.json" >/dev/null
+            curl --fail --silent http://127.0.0.1:4000/health/adapters > "$RUNNER_TEMP/gateway-adapters.json"
+            jq -e '(.data // .) | any(.[]; .slot == "documentDatabase" and .mode == "real" and .implementation == "@kb-labs/adapters-sqlite")' \
+              "$RUNNER_TEMP/gateway-adapters.json" >/dev/null
+            docker exec "$gateway" sh -c 'test -s /app/.kb/v2/platform-layout.json && test -s /app/.kb/data/gateway.sqlite'
+          }
+          run_gateway() {
+            docker run --detach --name "$gateway" --network "$network" --publish 127.0.0.1:4000:4000/tcp \
+              --volume "$gateway_data:/app/.kb/data" \
+              --volume "$GITHUB_WORKSPACE/ops/marketplace-registry/gateway.override.json:/app/.kb/kb.config.override.json:ro" \
+              --env GATEWAY_PROJECT_SCOPE=platform --env GATEWAY_INTERNAL_SECRET="$smoke_secret" \
+              --env GATEWAY_JWT_SECRET="$jwt_secret" --env GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="$admin_password" \
+              --env GATEWAY_BOOTSTRAP_TENANT_ID="$tenant_id" \
+              --env KB_STATE_DAEMON_URL=http://kb-state-daemon:7777 "$GATEWAY_IMAGE" >/dev/null
+          }
+
+          wait_for_service() {
+            local container="$1" check="$2"
+            for _ in $(seq 1 45); do
+              if docker exec "$container" sh -c "$check"; then return 0; fi
+              sleep 1
+            done
+            dump_diagnostics
+            return 1
+          }
+          wait_for_service "$state" "node -e \"fetch('http://127.0.0.1:7777/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+          wait_for_service "$registry" "node -e \"fetch('http://127.0.0.1:5071/health',{headers:{'x-internal-secret':process.env.GATEWAY_INTERNAL_SECRET}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
+
+          run_gateway
+          wait_for_gateway
+          login_json="$(curl --fail --silent --show-error -H 'content-type: application/json' \
+            -d "$(jq -n --arg email "$admin_email" --arg password "$admin_password" --arg tenant "$tenant_id" '{email:$email,password:$password,tenantId:$tenant}')" \
+            http://127.0.0.1:4000/auth/login/cli)"
+          access_token="$(jq -er '.data.accessToken // .accessToken' <<< "$login_json")"
+          created_json="$(curl --fail --silent --show-error -H 'content-type: application/json' \
+            -H "authorization: Bearer $access_token" \
+            -d '{"name":"restart verifier","expiresInDays":1}' \
+            http://127.0.0.1:4000/auth/tokens)"
+          api_token="$(jq -er '.data.token // .token' <<< "$created_json")"
+          token_id="$(jq -er '.data.tokenRecord.tokenId // .tokenRecord.tokenId' <<< "$created_json")"
+          curl --fail --silent --show-error -H "authorization: Bearer $api_token" \
+            http://127.0.0.1:4000/auth/me >/dev/null
+
+          docker rm --force "$gateway" >/dev/null
+          run_gateway
+          wait_for_gateway
+          curl --fail --silent --show-error -H "authorization: Bearer $api_token" \
+            http://127.0.0.1:4000/auth/me > "$RUNNER_TEMP/persisted-auth.json"
+          curl --fail --silent --show-error -H "authorization: Bearer $access_token" \
+            http://127.0.0.1:4000/auth/tokens > "$RUNNER_TEMP/persisted-tokens.json"
+          jq -e --arg id "$token_id" '(.data.tokens // .tokens) | any(.[]; .tokenId == $id)' \
+            "$RUNNER_TEMP/persisted-tokens.json" >/dev/null
