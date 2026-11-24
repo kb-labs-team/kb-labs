@@ -71,8 +71,8 @@ services:
       NODE_ENV: production
       KB_REGISTRY_HOST: 0.0.0.0
       KB_REGISTRY_PORT: "5071"
-      KB_REGISTRY_URL: https://api.kblabs.ru/api/v1/marketplace-registry
-      KB_SITE_URL: https://kblabs.ru
+      KB_REGISTRY_URL: ${KB_REGISTRY_URL:-https://api.kblabs.ru/api/v1/marketplace-registry}
+      KB_SITE_URL: ${KB_SITE_URL:-https://kblabs.ru}
       KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
       KB_REGISTRY_SIGNING_KEY: ${KB_REGISTRY_SIGNING_KEY:?set KB_REGISTRY_SIGNING_KEY in the registry env file}
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
