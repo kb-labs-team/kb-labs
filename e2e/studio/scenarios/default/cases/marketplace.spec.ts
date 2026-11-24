@@ -32,6 +32,40 @@ test('find Commit in the Studio plugin projection', async ({ page }) => {
   await expect(page.getByText(/available version/i)).toBeVisible()
 })
 
+test('browse the public Registry catalog and inspect canonical identity @S-322.1 @S-322.2', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the installed Studio marketplace journey hook')
+  await signInIfSecured(page)
+  await page.goto(`${GATEWAY}/marketplace/catalog`)
+  await expect(page.getByRole('heading', { name: 'Marketplace catalog', exact: true })).toBeVisible()
+  await expect(page.getByText('plugin', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('adapter', { exact: true }).first()).toBeVisible()
+  await page.getByLabel('Search Marketplace Registry').fill('@kb-labs/commit')
+  await page.getByRole('button', { name: 'View package', exact: true }).first().click()
+  await expect(page.getByText('Canonical identity', { exact: false })).toContainText('@kb-labs/commit')
+})
+
+test('install a Registry plugin using its canonical identity @S-322.3', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the installed Studio marketplace journey hook')
+  await signInIfSecured(page)
+  await page.goto(`${GATEWAY}/marketplace/catalog`)
+  await page.getByLabel('Search Marketplace Registry').fill('@kb-labs/commit')
+  await page.getByRole('button', { name: 'View package', exact: true }).first().click()
+  await page.getByRole('combobox', { name: 'Active project', exact: true }).click()
+  await page.getByText('Project A', { exact: true }).last().click()
+  await page.getByRole('button', { name: 'Install plugin', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('Installed @kb-labs/commit')
+})
+
+test('install a Registry adapter using its canonical identity @S-322.4', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the installed Studio marketplace journey hook')
+  await signInIfSecured(page)
+  await page.goto(`${GATEWAY}/marketplace/catalog`)
+  await page.getByLabel('Search Marketplace Registry').fill('@kb-labs/adapters-vibeproxy')
+  await page.getByRole('button', { name: 'View package', exact: true }).first().click()
+  await page.getByRole('button', { name: 'Install adapter', exact: true }).click()
+  await expect(page.getByRole('status')).toContainText('@kb-labs/adapters-vibeproxy')
+})
+
 test('inspect Commit details in the Studio plugin projection', async ({ page }) => {
   await openMarketplace(page)
   await page.getByText('@kb-labs/commit', { exact: true }).first().click()
