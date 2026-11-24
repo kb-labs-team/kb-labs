@@ -24,7 +24,75 @@ async function signInIfSecured(page: import('@playwright/test').Page) {
   await expect(page).not.toHaveURL(/\/login$/)
 }
 
-test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', async ({ page }) => {
+test('dashboard opens on a fresh host with an empty project registry @S-120.1', async ({ page }) => {
+  test.skip(!enabled || accessMode !== 'local', 'Runs before project registration in the isolated local host fixture')
+
+  const projectsResponse = await page.request.get(`${GATEWAY}/api/v1/projects`)
+  expect(projectsResponse.status()).toBe(200)
+  const projects = await projectsResponse.json() as { ok?: boolean; data?: unknown[] }
+  expect(projects.ok).toBe(true)
+  expect(projects.data).toEqual([])
+
+  const healthResponse = await page.request.get(`${GATEWAY}/api/observability/health`)
+  expect(healthResponse.status()).toBe(200)
+  expect(await healthResponse.json()).toMatchObject({
+    ok: true,
+    data: { serviceId: 'gateway', status: 'healthy', checks: expect.any(Array) },
+  })
+  const readyResponse = await page.request.get(`${GATEWAY}/api/ready`)
+  expect(readyResponse.status()).toBe(200)
+
+  await page.goto(`${GATEWAY}/`)
+  await expect(page.getByText('No registered project', { exact: true })).toBeVisible()
+  await expect(page.getByText('Intelligence Dashboard', { exact: true })).toBeVisible()
+  await expect(page.getByText('Real-time platform observability and performance analytics', { exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
+  await expect(page.getByText('Current gateway health and readiness.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway health', { exact: true })).toBeVisible()
+  await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
+  await expect(page.locator('button').filter({ has: page.locator('svg.lucide-bell') })).toBeVisible()
+  await expect(page.getByText('local-admin', { exact: true }).first()).toBeVisible()
+  await expect(page.getByText('Online', { exact: true })).toBeVisible()
+  for (const label of ['Search', 'Dashboard', 'Projects', 'Plugins', 'Marketplace', 'Analytics',
+    'Observability', 'Settings']) {
+    await expect(page.getByRole('link', { name: new RegExp(label, 'i') }).first()).toBeVisible()
+  }
+  await page.getByRole('link', { name: 'Analytics', exact: true }).click()
+  await expect(page.getByText('Adapters', { exact: true })).toBeVisible()
+  await expect(page.getByText('v0.1.0', { exact: true })).toBeVisible()
+  await expect(page.getByText('Help', { exact: true })).toBeVisible()
+
+  const studioRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/studio/registry`)
+  expect(studioRegistryResponse.status()).toBe(200)
+  const studioRegistry = await studioRegistryResponse.json() as {
+    ok?: boolean
+    data?: { schema?: string; schemaVersion?: number; plugins?: unknown[] }
+  }
+  expect(studioRegistry.ok).toBe(true)
+  expect(studioRegistry.data).toMatchObject({ schema: 'kb.studio/2', schemaVersion: 2 })
+  expect(Array.isArray(studioRegistry.data?.plugins)).toBe(true)
+
+  const pluginRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/plugins/registry`)
+  expect(pluginRegistryResponse.status()).toBe(200)
+  const pluginRegistry = await pluginRegistryResponse.json() as {
+    ok?: boolean
+    data?: { manifests?: unknown[] }
+  }
+  expect(pluginRegistry.ok).toBe(true)
+  expect(Array.isArray(pluginRegistry.data?.manifests)).toBe(true)
+  const studioPluginCount = studioRegistry.data!.plugins!.length
+  await expect(page.getByText(studioPluginCount > 0 ? 'Connected' : 'Disconnected', { exact: true })).toBeVisible()
+  if (studioPluginCount > 0) {
+    await expect(page.getByText(`${studioPluginCount} extension${studioPluginCount === 1 ? '' : 's'}`, { exact: true })).toBeVisible()
+  }
+  if (pluginRegistry.data!.manifests!.length === 0) {
+    await page.getByRole('link', { name: 'Marketplace', exact: true }).click()
+    await expect(page.getByText('No extensions found', { exact: true })).toBeVisible()
+  }
+})
+
+test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
 
@@ -45,6 +113,24 @@ test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', a
   await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
   await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+  const studioRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/studio/registry`)
+  expect(studioRegistryResponse.status()).toBe(200)
+  const studioRegistry = await studioRegistryResponse.json() as {
+    ok?: boolean
+    data?: { schema?: string; schemaVersion?: number; plugins?: unknown[] }
+  }
+  expect(studioRegistry.ok).toBe(true)
+  expect(studioRegistry.data).toMatchObject({ schema: 'kb.studio/2', schemaVersion: 2 })
+  expect(Array.isArray(studioRegistry.data?.plugins)).toBe(true)
+
+  const pluginRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/plugins/registry`)
+  expect(pluginRegistryResponse.status()).toBe(200)
+  const pluginRegistry = await pluginRegistryResponse.json() as {
+    ok?: boolean
+    data?: { manifests?: unknown[] }
+  }
+  expect(pluginRegistry.ok).toBe(true)
+  expect(Array.isArray(pluginRegistry.data?.manifests)).toBe(true)
 
   for (const [label, path, title] of [
     ['Projects', '/projects', 'Projects'],
@@ -55,6 +141,33 @@ test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', a
     await expect(page).toHaveURL(new RegExp(`${path.replaceAll('/', '\\/')}$`))
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   }
+})
+
+test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.9', async ({ page }) => {
+  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  await signInIfSecured(page)
+
+  let catalogAttempts = 0
+  await page.route('**/api/v1/plugins/registry', async (route) => {
+    catalogAttempts += 1
+    if (catalogAttempts === 1) {
+      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { manifests: [], apiBasePath: '/api/v1', diagnostics: { total: 0, items: [] } } }),
+    })
+  })
+
+  await page.goto(`${GATEWAY}/`)
+  await page.getByRole('link', { name: 'Marketplace', exact: true }).click()
+  await expect(page.getByText('Marketplace unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('No extensions found', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Retry', exact: true }).click()
+  await expect(page.getByText('No extensions found', { exact: true })).toBeVisible()
+  expect(catalogAttempts).toBe(2)
 })
 
 test('inspect, register, and safely unregister a project @S-046.4 @S-124.7', async ({ page }) => {

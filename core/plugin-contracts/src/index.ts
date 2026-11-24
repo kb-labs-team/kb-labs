@@ -327,6 +327,8 @@ export type {
   StudioConfig,
   StudioPageEntry,
   StudioMenuEntry,
+  StudioPluginEntryV2,
+  StudioRegistryV2,
 } from "./studio.js";
 
 // CLI Command Archetypes (opt-in interfaces for plugin authors)
