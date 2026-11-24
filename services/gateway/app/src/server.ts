@@ -21,6 +21,7 @@ import type { GatewayConfig } from "@kb-labs/gateway-contracts";
 import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
 import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
+import { PERMISSIONS } from "@kb-labs/core-contracts";
 import {
   AuthService,
   type JwtConfig,
@@ -207,6 +208,25 @@ export async function createServer(
       jwtConfig,
     } } : {}),
   }));
+
+  // Platform adapter installation changes the platform package graph. Keep
+  // both the generic Marketplace install route and its adapter-only operation
+  // behind the same settings permission before the request reaches the service.
+  app.addHook('preValidation', async (request, reply) => {
+    if (request.method !== 'POST') { return; }
+    const pathname = new URL(request.url, 'http://gateway.local').pathname.replace(/\/+$/, '');
+    const adapterInstall = pathname === '/api/v1/marketplace/packages/adapters/install';
+    const genericInstall = pathname === '/api/v1/marketplace/packages/install';
+    if (!adapterInstall && !genericInstall) { return; }
+    const scope = genericInstall && request.body && typeof request.body === 'object'
+      ? (request.body as { scope?: unknown }).scope
+      : 'platform';
+    if (genericInstall && scope === 'project') { return; }
+    const auth = request.authContext;
+    if (!auth || !auth.permissions.includes(PERMISSIONS.PLATFORM_SETTINGS_WRITE)) {
+      return sendAuthError(reply, 403, PERMISSIONS.PLATFORM_SETTINGS_WRITE, undefined, undefined, { durationMs: 0 });
+    }
+  });
 
   const isProduction = process.env.NODE_ENV === "production";
   const webhookHistoryStore = platform.hasResourceBroker

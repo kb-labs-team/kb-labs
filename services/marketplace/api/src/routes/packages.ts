@@ -22,12 +22,32 @@
 import '../types.js';
 import type { FastifyInstance } from 'fastify';
 import type { EntityKind } from '@kb-labs/plugin-contracts';
+import { PERMISSIONS } from '@kb-labs/core-contracts';
+import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
+import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import {
   parseMutatingScope,
   parseQueryScope,
   queryScopeBodySchemaFragment,
   scopeBodySchemaFragment,
 } from '../scope-parser.js';
+
+const PLATFORM_SETTINGS_PERMISSION = PERMISSIONS.PLATFORM_SETTINGS_WRITE;
+
+function requirePlatformSettingsWrite(
+  headers: Record<string, string | string[] | undefined>,
+  reply: import('fastify').FastifyReply,
+): boolean {
+  const forwarded = readForwardedIdentity(headers, process.env.GATEWAY_INTERNAL_SECRET);
+  if (forwarded.kind === 'identity' && forwarded.auth.permissions.includes(PLATFORM_SETTINGS_PERMISSION)) {
+    return true;
+  }
+  reply.code(403).send({
+    ok: false,
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: PLATFORM_SETTINGS_PERMISSION } }),
+  });
+  return false;
+}
 
 export function registerPackagesRoutes(app: FastifyInstance): void {
   // GET /packages — list installed packages
@@ -73,9 +93,35 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
   }, async (request, reply) => {
     const body = request.body as { specs: string[]; dev?: boolean; token?: string } & Record<string, unknown>;
     const ctx = parseMutatingScope(body);
+    if (ctx.scope === 'platform' && !requirePlatformSettingsWrite(request.headers, reply)) { return; }
     const result = await app.observability.observeOperation(
       'marketplace.install',
       () => app.marketplace.install(ctx, body.specs, { dev: body.dev, shareToken: body.token }),
+    );
+    return reply.code(201).send(result);
+  });
+
+  // POST /packages/adapters/install — install one Registry adapter at platform scope.
+  // This operation intentionally has no caller-selected scope field.
+  app.post('/packages/adapters/install', {
+    schema: {
+      tags: ['Marketplace'],
+      summary: 'Install an adapter into platform scope',
+      body: {
+        type: 'object',
+        required: ['spec'],
+        additionalProperties: false,
+        properties: {
+          spec: { type: 'string', minLength: 1, description: 'Canonical Registry adapter identity, optionally with an exact version' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const body = request.body as { spec: string };
+    if (!requirePlatformSettingsWrite(request.headers, reply)) { return; }
+    const result = await app.observability.observeOperation(
+      'marketplace.install.adapter',
+      () => app.marketplace.installAdapter(body.spec),
     );
     return reply.code(201).send(result);
   });

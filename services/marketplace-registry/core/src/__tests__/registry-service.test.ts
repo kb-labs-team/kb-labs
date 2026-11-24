@@ -1089,6 +1089,24 @@ describe('RegistryService.listPublicPackages', () => {
     expect(list.find(p => p.name === 'private-plugin')).toBeUndefined();
   });
 
+  // case: S-321.1
+  it('includes the canonical package identity and entity kind in catalog summaries', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'adapter-cache', identity: '@kb-labs/adapters-cache' }),
+      primaryKind: 'adapter',
+    }, 'adapter-author', 'ns-adapter');
+
+    await expect(svc.listPublicPackages()).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'adapter-cache',
+        fullName: 'adapter-author/adapter-cache',
+        identity: '@kb-labs/adapters-cache',
+        primaryKind: 'adapter',
+      }),
+    ]));
+  });
+
   it('ignores and invalidates the legacy warm catalog index cache key', async () => {
     const cache = createMemoryCache();
     const svc = new RegistryService({

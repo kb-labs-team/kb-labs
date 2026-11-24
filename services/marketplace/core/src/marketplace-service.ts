@@ -191,12 +191,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, specs, opts, false));
   }
 
+  /** Install a Registry-resolved adapter into the platform graph only. */
+  async installAdapter(spec: string, opts?: { shareToken?: string }): Promise<InstallResult> {
+    const ctx: ScopeContext = { scope: 'platform' };
+    const scopeRoot = resolveScopeRoot(this.roots, ctx);
+    return this.withScopeMutation(scopeRoot, () => this.installInScope(ctx, scopeRoot, [spec], opts, false, 'adapter'));
+  }
+
   private async installInScope(
     ctx: ScopeContext,
     scopeRoot: string,
     specs: string[],
     opts?: { dev?: boolean; shareToken?: string },
     isUpdate = false,
+    expectedKind?: EntityKind,
   ): Promise<InstallResult> {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
@@ -230,10 +238,20 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           cause: sourceResults.join('; '),
         }));
       }
+      if (expectedKind === 'adapter' && source.kind !== 'registry') {
+        throw new InvalidEntityError(
+          `Marketplace adapter installation requires the configured Marketplace Registry source; "${resolved.id}" resolved from "${source.kind}".`,
+        );
+      }
       if (!resolved.primaryKind) {
         throw new PackageClassificationError(
           resolved.id,
           resolved.version,
+        );
+      }
+      if (expectedKind && resolved.primaryKind !== expectedKind) {
+        throw new InvalidEntityError(
+          `Marketplace adapter installation requires a Registry package classified as "${expectedKind}"; "${resolved.id}" is "${resolved.primaryKind}".`,
         );
       }
       const verification = verifyResolvedArtifact(resolved, source, ctx.scope);
@@ -282,6 +300,11 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         );
       }
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
+      if (expectedKind && primaryKind !== expectedKind) {
+        throw new InvalidEntityError(
+          `Marketplace adapter installation requires an installed manifest classified as "${expectedKind}"; "${result.id}" is "${primaryKind}".`,
+        );
+      }
 
       const strategy = this.strategies.get(primaryKind);
       canonicalId = strategy?.resolveId

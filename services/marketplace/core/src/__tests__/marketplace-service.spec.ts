@@ -674,6 +674,74 @@ describe('MarketplaceService', () => {
       expect(lock?.adapters?.[packageId]?.resolvedPath).toBe('./packages/platform-adapter');
     });
 
+    // case: S-321.2
+    it('installs adapters through the platform-only operation without selecting them', async () => {
+      const packageId = '@kb-labs/adapters-marketplace-install';
+      const packageRoot = await createAdapterDir(tmpDir, 'marketplace-install-adapter', packageId);
+      const integrity = computeIntegrity('platform-adapter');
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.2.0', integrity, source: 'marketplace', primaryKind: 'adapter' };
+        },
+        async install(): Promise<InstalledPackage> {
+          return { id: packageId, version: '1.2.0', packageRoot, integrity };
+        },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, sources: [asMarketplaceSource(source, 'registry')] });
+
+      const result = await service.installAdapter(packageId);
+
+      expect(result.installed[0]).toMatchObject({ id: packageId, version: '1.2.0', primaryKind: 'adapter', scope: 'platform' });
+      expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.adapters?.[packageId]?.version).toBe('1.2.0');
+      expect((await readMarketplaceLock(tmpDir, new DiagnosticCollector()))?.plugins?.[packageId]).toBeUndefined();
+    });
+
+    // case: S-321.3
+    it('rejects Registry packages not classified as adapters before installing them', async () => {
+      const packageId = '@kb-labs/marketplace-plugin';
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.0.0', integrity: computeIntegrity('plugin'), source: 'marketplace', primaryKind: 'plugin' };
+        },
+        install: vi.fn(async (): Promise<InstalledPackage> => ({
+          id: packageId, version: '1.0.0', packageRoot: '/unused', integrity: computeIntegrity('plugin'),
+        })),
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, sources: [asMarketplaceSource(source, 'registry')] });
+
+      await expect(service.installAdapter(packageId)).rejects.toBeInstanceOf((await import('../marketplace-service.js')).InvalidEntityError);
+
+      expect(source.install).not.toHaveBeenCalled();
+      expect(await readMarketplaceLock(tmpDir, new DiagnosticCollector())).toBeNull();
+    });
+
+    // case: S-321.3
+    it('does not use npm fallback when installing from the adapter catalog', async () => {
+      const packageId = '@kb-labs/npm-only-adapter';
+      const source: PackageSource = {
+        async resolve(): Promise<ResolvedPackage> {
+          return { id: packageId, version: '1.0.0', integrity: computeIntegrity('adapter'), source: 'marketplace', primaryKind: 'adapter' };
+        },
+        install: vi.fn(async (): Promise<InstalledPackage> => ({
+          id: packageId, version: '1.0.0', packageRoot: '/unused', integrity: computeIntegrity('adapter'),
+        })),
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      };
+      const service = makeMarketplaceService({ platformRoot: tmpDir, source });
+
+      await expect(service.installAdapter(packageId)).rejects.toBeInstanceOf((await import('../marketplace-service.js')).InvalidEntityError);
+
+      expect(source.install).not.toHaveBeenCalled();
+    });
+
     it('rejects an adapter package whose manifest identity differs from its package name', async () => {
       const packageId = '@kb-labs/adapter-identity-mismatch';
       const packageRoot = await createAdapterDir(tmpDir, 'adapter-identity-mismatch', packageId, '@kb-labs/other-adapter');

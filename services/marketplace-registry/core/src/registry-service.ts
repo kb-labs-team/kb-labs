@@ -713,6 +713,7 @@ export class RegistryService {
         handle: entry.authorHandle,
         name: entry.name,
         fullName: `${entry.authorHandle}/${entry.name}`,
+        identity: meta.identity,
         version: latest.version,
         description: meta.description,
         author: meta.author,
