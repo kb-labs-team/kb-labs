@@ -24,6 +24,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/adapters-s3": "workspace:*",
+    "@kb-labs/adapters-state-broker": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/plugin-runtime": "workspace:*",
     "@kb-labs/shared-daemon": "workspace:*",
