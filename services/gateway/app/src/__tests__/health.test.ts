@@ -138,6 +138,7 @@ async function buildHealthApp(
   routeObserver?: Parameters<typeof import('../server.js').createServer>[10],
   projectRouting?: Parameters<typeof import('../server.js').createServer>[8],
   installationIdentity?: Parameters<typeof import('../server.js').createServer>[11],
+  readinessMode?: Parameters<typeof import('../server.js').createServer>[15],
 ) {
   // Dynamically import createServer — it uses the mocked platform
   const { createServer } = await import('../server.js');
@@ -150,7 +151,7 @@ async function buildHealthApp(
   };
 
   const cache = makeCache();
-  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, projectRouting, undefined, routeObserver, installationIdentity);
+  return createServer(fullConfig, cache, noopLogger, stubJwtConfig, undefined, transport ?? mockTransport, undefined, undefined, projectRouting, undefined, routeObserver, installationIdentity, undefined, undefined, undefined, readinessMode);
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────
@@ -349,7 +350,7 @@ describe('Gateway /health endpoint', () => {
         registry: { serviceId: 'marketplace-registry', prefix: '/api/v1/registry' },
         marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry/api/v1' },
       },
-    }, transport);
+    }, transport, undefined, undefined, undefined, 'configured');
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
     const body = response.json().data;
@@ -359,6 +360,19 @@ describe('Gateway /health endpoint', () => {
     expect(body.components['upstream:registry']).toEqual({ ready: true, status: 'up' });
     expect(body.components['upstream:marketplaceRegistry']).toEqual({ ready: true, status: 'up' });
     expect(body.components).not.toHaveProperty('upstream:rest');
+  });
+
+  it('retains the REST readiness requirement for standalone project Gateway by default', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    const transport = makeTransport({ ok: true, statusCode: 200, payload: { ok: true } });
+    app = await buildHealthApp({}, transport);
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+    const body = response.json().data;
+
+    expect(response.statusCode).toBe(503);
+    expect(body.ready).toBe(false);
+    expect(body.components['upstream:rest']).toEqual({ ready: false, status: 'down' });
   });
 
   // case: S-268.23
