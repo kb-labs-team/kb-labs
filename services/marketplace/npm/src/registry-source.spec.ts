@@ -205,6 +205,33 @@ describe('RegistryPackageSource', () => {
     }
   });
 
+  it('installs an unscoped package directly under node_modules', async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-unscoped-'));
+    const archiveRoot = path.join(root, 'archive', 'package');
+    const archivePath = path.join(root, 'registry.tgz');
+    try {
+      await fs.mkdir(archiveRoot, { recursive: true });
+      await fs.writeFile(path.join(archiveRoot, 'package.json'), JSON.stringify({ name: 'plain-plugin', version: '1.0.0' }));
+      await pack({ cwd: path.dirname(archiveRoot), file: archivePath, gzip: true }, ['package']);
+      const tarball = await fs.readFile(archivePath);
+      const source = new RegistryPackageSource({ registryUrl: 'https://registry.test', signingPublicKey: 'test-key' });
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(tarball, { status: 200 })));
+      const result = await source.install({
+        id: 'plain-plugin', version: '1.0.0', integrity: `sha256-${createHash('sha256').update(tarball).digest('base64')}`,
+        source: 'marketplace', primaryKind: 'plugin', downloadUrl: 'https://registry.test/plain-plugin.tgz',
+      }, root);
+
+      expect(await fs.readFile(path.join(result.packageRoot, 'package.json'), 'utf8'))
+        .toContain('"name":"plain-plugin"');
+      await source.activateInstall('plain-plugin', root);
+      await source.commitInstall('plain-plugin', root);
+      expect(await fs.readFile(path.join(root, 'node_modules', 'plain-plugin', 'package.json'), 'utf8'))
+        .toContain('"name":"plain-plugin"');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   // case: S-268.1
   it('resolves Registry path references against its source and rejects cross-origin absolute URLs', async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-registry-gateway-tarball-'));

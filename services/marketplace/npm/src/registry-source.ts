@@ -144,7 +144,8 @@ export class RegistryPackageSource implements MarketplaceSource {
         }
       }
       const realNodeModulesParent = await fs.realpath(nodeModulesParent);
-      if (!realNodeModulesParent.startsWith(`${realNodeModulesRoot}${path.sep}`)) {
+      if (realNodeModulesParent !== realNodeModulesRoot &&
+        !realNodeModulesParent.startsWith(`${realNodeModulesRoot}${path.sep}`)) {
         throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry package path escapes node_modules', pkg.id);
       }
       await fs.mkdir(stagingRoot, { recursive: false });

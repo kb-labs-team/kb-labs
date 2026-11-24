@@ -127,7 +127,7 @@ function verifyResolvedArtifact(
     }));
   }
   const subjectPackage = resolved.signatureSubject.slice(resolved.signatureSubject.indexOf('/') + 1);
-  if (!resolved.signatureSubject.includes('/') || subjectPackage !== resolved.id) {
+  if (!resolved.signatureSubject.includes('/') || subjectPackage.toLowerCase() !== resolved.id.toLowerCase()) {
     throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_SIGNATURE_INVALID', {
       details: { package: resolved.id, scope },
     }));

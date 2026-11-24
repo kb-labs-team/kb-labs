@@ -163,7 +163,7 @@ describe('Marketplace API error boundary', () => {
       payload: { spec: '@kb-labs/test-adapter@1.0.0' },
     });
     expect(response.statusCode).toBe(201);
-    expect(response.json()).toMatchObject({ scope: 'platform', installed: [{ primaryKind: 'adapter' }] });
+    expect(response.json()).toMatchObject({ ok: true, data: { scope: 'platform', installed: [{ primaryKind: 'adapter' }] } });
     expect(installAdapter).toHaveBeenCalledWith('@kb-labs/test-adapter@1.0.0');
 
     const callerSelectedScope = await injectAsPlatformAdmin(server, {
@@ -172,7 +172,7 @@ describe('Marketplace API error boundary', () => {
       payload: { spec: '@kb-labs/test-adapter', scope: 'project' },
     });
     expect(callerSelectedScope.statusCode).toBe(201);
-    expect(callerSelectedScope.json()).toMatchObject({ scope: 'platform' });
+    expect(callerSelectedScope.json()).toMatchObject({ ok: true, data: { scope: 'platform' } });
     expect(installAdapter).toHaveBeenCalledTimes(2);
     expect(installAdapter).toHaveBeenLastCalledWith('@kb-labs/test-adapter');
   });
@@ -253,6 +253,25 @@ describe('Marketplace API error boundary', () => {
     expect(response.statusCode).toBe(201);
     expect(response.json()).toMatchObject({ scope: 'project', installed: [{ primaryKind: 'plugin' }] });
     expect(installRegistryPlugin).toHaveBeenCalledWith({ scope: 'project', projectRoot }, '@kb-labs/plugin@1.0.0');
+  });
+
+  it('rejects platform scope on the Registry-only plugin install operation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-plugin-platform-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({ platformRoot: root, logger, source: createFailingSource(new Error('unused'), true) });
+    const installRegistryPlugin = vi.spyOn(service, 'installRegistryPlugin');
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      headers: forwardedIdentityHeaders(undefined, TEST_GATEWAY_SECRET),
+      payload: { spec: '@kb-labs/plugin', scope: 'platform', projectRoot: root },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(installRegistryPlugin).not.toHaveBeenCalled();
   });
 
   it('requires platform settings permission for update and keeps project installs unaffected', async () => {

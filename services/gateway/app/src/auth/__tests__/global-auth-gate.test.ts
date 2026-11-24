@@ -356,11 +356,19 @@ describe('Gateway global auth gate', () => {
       secret: request.headers['x-internal-secret'],
       user: request.headers['x-kb-auth-user-id'],
     }));
+    app.get('/api/v1/registry/packages', async (request) => ({
+      secret: request.headers['x-internal-secret'],
+      user: request.headers['x-kb-auth-user-id'],
+    }));
     await app.ready();
 
     const anonymous = await app.inject({ method: 'GET', url: '/api/v1/marketplace-registry/api/v1/packages/acme/widget' });
     expect(anonymous.statusCode).toBe(200);
     expect(anonymous.json()).toEqual({ secret: 'gateway-internal-secret' });
+
+    const publicAlias = await app.inject({ method: 'GET', url: '/api/v1/registry/packages' });
+    expect(publicAlias.statusCode).toBe(200);
+    expect(publicAlias.json()).toEqual({ secret: 'gateway-internal-secret' });
 
     const { token } = await signAccessToken({
       hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: ['packages:read'],

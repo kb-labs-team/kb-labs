@@ -52,7 +52,9 @@ export function isPlatformPublicRoute(method: string, routePath: string): boolea
 function isRegistryPublicReadRoute(routePath: string): boolean {
   const path = routePath.replace(/\/+$/, '') || '/';
   const reads = '(?:api/v1/resolve|api/v1/packages|api/v1/packages/[^/]+/[^/]+(?:/stats|/[^/]+/tarball)?)';
+  const publicAliasReads = '(?:resolve|packages|packages/[^/]+/[^/]+(?:/stats|/[^/]+/tarball)?)';
   return new RegExp(`^/api/v1/marketplace-registry/${reads}$`).test(path) ||
+    new RegExp(`^/api/v1/registry/${publicAliasReads}$`).test(path) ||
     new RegExp(`^/api/v1/projects/[^/]+/marketplace-registry/${reads}$`).test(path);
 }
 

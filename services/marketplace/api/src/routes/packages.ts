@@ -27,6 +27,7 @@ import { createErrorEnvelope } from '@kb-labs/core-platform/error-envelope';
 import { readForwardedIdentity } from '@kb-labs/gateway-contracts';
 import { RegistryCatalogClientError } from '@kb-labs/marketplace-npm';
 import {
+  ScopeRequestError,
   parseMutatingScope,
   parseQueryScope,
   queryScopeBodySchemaFragment,
@@ -45,7 +46,7 @@ function requirePlatformSettingsWrite(
   }
   reply.code(403).send({
     ok: false,
-    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'trusted Host service identity' } }),
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: PLATFORM_SETTINGS_PERMISSION } }),
   });
   return false;
 }
@@ -58,7 +59,7 @@ function requireGatewayServiceIdentity(
   if (forwarded.kind === 'service') { return true; }
   reply.code(403).send({
     ok: false,
-    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: PLATFORM_SETTINGS_PERMISSION } }),
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'trusted Host service identity' } }),
   });
   return false;
 }
@@ -186,7 +187,7 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
       'marketplace.install.adapter',
       () => app.marketplace.installAdapter(body.spec),
     );
-    return reply.code(201).send(result);
+    return reply.code(201).send({ ok: true, data: result });
   });
 
   // Registry catalog plugin installs are source-pinned; generic CLI installs
@@ -197,10 +198,11 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
       summary: 'Install a plugin from the Marketplace Registry only',
       body: {
         type: 'object',
-        required: ['spec'],
+        required: ['spec', 'scope', 'projectRoot'],
         properties: {
           spec: { type: 'string', minLength: 1, description: 'Canonical Registry plugin identity, optionally with an exact version' },
           ...scopeBodySchemaFragment,
+          scope: { type: 'string', const: 'project' },
         },
       },
     },
@@ -208,7 +210,9 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
     const body = request.body as { spec: string } & Record<string, unknown>;
     if (!requireGatewayServiceIdentity(request.headers, reply)) { return; }
     const ctx = parseMutatingScope(body);
-    if (ctx.scope === 'platform' && !requirePlatformSettingsWrite(request.headers, reply)) { return; }
+    if (ctx.scope !== 'project' || !ctx.projectRoot) {
+      throw new ScopeRequestError('SCOPE_INVALID', 'Registry catalog installs require project scope and a projectRoot.');
+    }
     const result = await app.observability.observeOperation(
       'marketplace.install.registry-plugin',
       () => app.marketplace.installRegistryPlugin(ctx, body.spec),
