@@ -33,7 +33,7 @@ export const pluginsRoutes: RouteObject[] = [
   },
   {
     path: '/plugins',
-    element: <Navigate to="/marketplace?tab=installed" replace />,
+    element: <Navigate to="/marketplace" replace />,
   },
   {
     path: PATHS.DETAIL,
