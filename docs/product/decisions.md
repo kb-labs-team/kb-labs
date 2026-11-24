@@ -123,15 +123,17 @@ separate owner decision. Case: S-268.9.
 
 ### Studio manages installed project plugins from Marketplace
 
-Studio has one Marketplace navigation destination. Its Installed view uses the
-selected project's Marketplace state and supports enable, disable, and
-uninstall for project plugins. The Studio runtime plugin registry remains a
-separate projection used to render plugin pages and menus; it is not the
-package catalog. Connecting Browse to Marketplace Registry packages remains
-required before S-182's package discovery steps are covered. This first
-increment does not add adapter lifecycle controls: adapters remain
-platform-scope packages, and selecting/configuring adapter slots stays with
-platform owners. Cases: S-120.1, S-182.
+Studio opens its single Marketplace navigation destination on installed
+entities grouped by type. Its Plugins category uses the selected project's
+Marketplace state and supports enable, disable, and removal; an `Open
+marketplace` action opens package search and install separately. The Studio
+runtime plugin registry remains a projection used to render plugin pages and
+menus; it is not the package catalog. Connecting the separate package view to
+Marketplace Registry packages remains required before S-182's discovery steps
+are covered. This increment does not display adapter lifecycle controls or
+adapter rows without platform Marketplace data; adapters remain platform-scope
+packages, and selecting/configuring adapter slots stays with platform owners.
+Cases: S-120.1, S-182.
 
 ## 2026-10-21
 
