@@ -101,12 +101,17 @@ case "$OUT" in
   *"GATEWAY_INTERNAL_SECRET is required"*) pass "missing internal secret name fails the render" ;;
   *) fail "missing internal secret name fails the render" "got: $OUT" ;;
 esac
+OUT="$(helm template t . --set image.tag=1.0.0 --set services.gateway.enabled=false --set services.rest-api.enabled=false 2>&1)" || true
+case "$OUT" in
+  *"GATEWAY_INTERNAL_SECRET is required"*) pass "Marketplace requires the internal secret when enabled without Gateway" ;;
+  *) fail "Marketplace requires the internal secret when enabled without Gateway" "got: $OUT" ;;
+esac
 OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret 2>&1)"
 SECRET_ENV_COUNT="$(printf '%s\n' "$OUT" | grep -c 'name: GATEWAY_INTERNAL_SECRET' || true)"
-if [ "$SECRET_ENV_COUNT" -eq 2 ] && printf '%s\n' "$OUT" | grep -q 'name: internal-secret'; then
-  pass "gateway and REST API receive GATEWAY_INTERNAL_SECRET by default"
+if [ "$SECRET_ENV_COUNT" -eq 3 ] && printf '%s\n' "$OUT" | grep -q 'name: internal-secret'; then
+  pass "gateway, REST API, and Marketplace receive GATEWAY_INTERNAL_SECRET by default"
 else
-  fail "gateway, REST API, and marketplace-registry receive GATEWAY_INTERNAL_SECRET" "found $SECRET_ENV_COUNT secret env entries"
+  fail "gateway, REST API, and Marketplace receive GATEWAY_INTERNAL_SECRET" "found $SECRET_ENV_COUNT secret env entries"
 fi
 
 summary
