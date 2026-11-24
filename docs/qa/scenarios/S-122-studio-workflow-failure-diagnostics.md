@@ -25,6 +25,6 @@ When a workflow fails or a runtime is unhealthy, use Studio to identify the affe
 |---|--------|----------|
 | S-122.1 | Select the failing project and open Workflow Runs | The failed run appears with its run ID, workflow name, failure status, and completion time. The healthy project's runs are not mixed into the selected project's list. |
 | S-122.2 | Open the failed run | The named failing step and its error message are visible, with a link or action to inspect the run's logs. |
-| S-122.3 | Follow the run's log action | Studio opens logs filtered to the selected project and run; the unique diagnostic marker and failed-step output are visible. |
+| S-122.3 | Follow the run's log action | Studio opens History for the selected project with the run ID as its execution filter. History loads successfully and shows the unique diagnostic marker from that run without entries from the healthy project's run. |
 | S-122.4 | Open Observability Metrics or service health from the same project context | The unhealthy service/runtime is named with its reported health state and recent error; the project/run context remains identifiable. |
 | S-122.5 | Request the same diagnostics when the observability service is unavailable | Studio shows a visible error naming the unavailable diagnostics source and the next command `kb-create doctor --platform-root <platform-root>`; the workflow failure detail remains available. |
