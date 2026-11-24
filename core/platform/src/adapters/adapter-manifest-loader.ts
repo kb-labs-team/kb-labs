@@ -63,10 +63,14 @@ export async function resolveAdapterManifestModulePath(source: AdapterManifestSo
   if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     throw new Error('declared manifest path escapes package root');
   }
-  const [realPackageRoot, realModulePath] = await Promise.all([
-    fs.realpath(packageRoot),
-    fs.realpath(modulePath),
-  ]);
+  const realPackageRoot = await fs.realpath(packageRoot);
+  let realModulePath: string;
+  try {
+    realModulePath = await fs.realpath(modulePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {return modulePath;}
+    throw error;
+  }
   const realRelativePath = path.relative(realPackageRoot, realModulePath);
   if (realRelativePath.startsWith('..') || path.isAbsolute(realRelativePath)) {
     throw new Error('declared manifest file resolves outside package root');

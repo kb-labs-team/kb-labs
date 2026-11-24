@@ -1119,6 +1119,16 @@ describe('RegistryService.listPublicPackages', () => {
     ]);
   });
 
+  it('keeps searching legacy summaries without a canonical identity', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'legacy-search' }), 'legacy-author', 'ns-legacy-search');
+    const legacySummary = (await svc.listPublicPackages())[0]!;
+    Reflect.deleteProperty(legacySummary, 'identity');
+    vi.spyOn(svc, 'listPublicPackages').mockResolvedValue([legacySummary]);
+
+    await expect(svc.searchPackages('legacy-search')).resolves.toEqual([legacySummary]);
+  });
+
   it('excludes yanked versions from the public package detail projection', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, {

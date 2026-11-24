@@ -603,7 +603,7 @@ export class RegistryService {
     const results = all.filter(p =>
       p.name.toLowerCase().includes(q) ||
       p.fullName.toLowerCase().includes(q) ||
-      p.identity.toLowerCase().includes(q) ||
+      p.identity?.toLowerCase().includes(q) ||
       p.description?.toLowerCase().includes(q) ||
       p.keywords?.some(k => k.toLowerCase().includes(q)),
     );

@@ -142,4 +142,17 @@ describe('loadAdapterManifest', () => {
       kind: 'failed', reason: expect.stringContaining('adapter manifest must declare schema "kb.adapter/1"'),
     });
   });
+
+  it('preserves the declared module path when its built manifest file is missing', async () => {
+    tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-adapter-manifest-missing-'));
+    const packageRoot = path.join(tempRoot, 'missing-built-manifest');
+    await fs.mkdir(packageRoot, { recursive: true });
+    await fs.writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({
+      name: 'missing-built-manifest', type: 'module', kb: { adapter: { manifest: './dist/manifest.js' } },
+    }));
+
+    await expect(loadAdapterManifest({ packageRoot })).resolves.toMatchObject({
+      kind: 'failed', modulePath: path.join(packageRoot, 'dist/manifest.js'),
+    });
+  });
 });

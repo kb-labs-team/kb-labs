@@ -31,4 +31,14 @@ describe('RegistryCatalogClient', () => {
 
     await expect(client.getPackage('author', 'removed-package')).resolves.toBeNull();
   });
+
+  it('encodes a scoped Registry name as one route segment', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response('', { status: 404 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new RegistryCatalogClient('https://api.kblabs.ru/api/v1/registry');
+
+    await expect(client.getPackage('author', '@kb-labs/adapters-openai')).resolves.toBeNull();
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe('https://api.kblabs.ru/api/v1/registry/packages/author/%40kb-labs%2Fadapters-openai');
+  });
 });

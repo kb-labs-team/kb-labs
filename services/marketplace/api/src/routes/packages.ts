@@ -45,6 +45,19 @@ function requirePlatformSettingsWrite(
   }
   reply.code(403).send({
     ok: false,
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: 'trusted Host service identity' } }),
+  });
+  return false;
+}
+
+function requireGatewayServiceIdentity(
+  headers: Record<string, string | string[] | undefined>,
+  reply: import('fastify').FastifyReply,
+): boolean {
+  const forwarded = readForwardedIdentity(headers, process.env.GATEWAY_INTERNAL_SECRET);
+  if (forwarded.kind === 'service') { return true; }
+  reply.code(403).send({
+    ok: false,
     error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: PLATFORM_SETTINGS_PERMISSION } }),
   });
   return false;
@@ -193,6 +206,7 @@ export function registerPackagesRoutes(app: FastifyInstance): void {
     },
   }, async (request, reply) => {
     const body = request.body as { spec: string } & Record<string, unknown>;
+    if (!requireGatewayServiceIdentity(request.headers, reply)) { return; }
     const ctx = parseMutatingScope(body);
     if (ctx.scope === 'platform' && !requirePlatformSettingsWrite(request.headers, reply)) { return; }
     const result = await app.observability.observeOperation(

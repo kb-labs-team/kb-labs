@@ -17,7 +17,7 @@ export async function resolveCatalogAdapters(
     result.set(id, {
       id,
       packageRoot,
-      source: 'marketplace',
+      source: entry.source === 'marketplace' ? 'marketplace' : 'platform',
       manifest: await loadAdapterManifest({ packageRoot }),
     });
   }

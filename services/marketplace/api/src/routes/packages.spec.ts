@@ -229,8 +229,24 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
+    const unauthenticated = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
+    });
+    expect(unauthenticated.statusCode).toBe(403);
+    expect(installRegistryPlugin).not.toHaveBeenCalled();
+
+    const userIdentity = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      headers: forwardedIdentityHeaders(TEST_PLATFORM_ADMIN, TEST_GATEWAY_SECRET),
+      payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
+    });
+    expect(userIdentity.statusCode).toBe(403);
+    expect(installRegistryPlugin).not.toHaveBeenCalled();
+
     const response = await server.inject({
       method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      headers: forwardedIdentityHeaders(undefined, TEST_GATEWAY_SECRET),
       payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
     });
 

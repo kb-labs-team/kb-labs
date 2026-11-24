@@ -9,6 +9,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import { extract } from 'tar';
 import type { MarketplaceSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
+import { registryEndpointUrl } from './registry-url.js';
 
 export class RegistryPackageError extends Error {
   readonly code: string;
@@ -63,7 +64,7 @@ export class RegistryPackageSource implements MarketplaceSource {
     const { identity: canonicalIdentity, version } = splitIdentityVersion(identity);
     const query = new URLSearchParams({ identity: canonicalIdentity });
     if (version) { query.set('version', version); }
-    const response = await this.fetch(`${this.baseUrl}/api/v1/resolve?${query.toString()}`, identity);
+    const response = await this.fetch(`${registryEndpointUrl(this.baseUrl, 'resolve')}?${query.toString()}`, identity);
     if (!response.ok) {
       const code = response.status === 401 || response.status === 403
         ? 'AUTH_FAILED'
@@ -125,6 +126,27 @@ export class RegistryPackageSource implements MarketplaceSource {
     const tmpFile = path.join(nodeModulesParent, `${stageName}.tgz`);
     try {
       await fs.mkdir(nodeModulesParent, { recursive: true });
+      const scopeRoot = await fs.realpath(path.resolve(root));
+      const nodeModulesStat = await fs.lstat(nodeModulesRoot);
+      if (!nodeModulesStat.isDirectory() || nodeModulesStat.isSymbolicLink()) {
+        throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry package node_modules root must be a real directory', pkg.id);
+      }
+      const realNodeModulesRoot = await fs.realpath(nodeModulesRoot);
+      if (!realNodeModulesRoot.startsWith(`${scopeRoot}${path.sep}`)) {
+        throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry package path escapes its scope root', pkg.id);
+      }
+      let current = nodeModulesRoot;
+      for (const segment of path.relative(nodeModulesRoot, nodeModulesParent).split(path.sep).filter(Boolean)) {
+        current = path.join(current, segment);
+        const stat = await fs.lstat(current);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) {
+          throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry scoped package path must not traverse symlinks', pkg.id);
+        }
+      }
+      const realNodeModulesParent = await fs.realpath(nodeModulesParent);
+      if (!realNodeModulesParent.startsWith(`${realNodeModulesRoot}${path.sep}`)) {
+        throw new RegistryPackageError('RESOLUTION_FAILED', 'Registry package path escapes node_modules', pkg.id);
+      }
       await fs.mkdir(stagingRoot, { recursive: false });
       await fs.writeFile(tmpFile, tarball);
       await extract({ file: tmpFile, cwd: stagingRoot, strip: 1, strict: true });

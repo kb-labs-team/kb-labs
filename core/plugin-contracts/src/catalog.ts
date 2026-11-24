@@ -264,7 +264,7 @@ export interface DiagnosticReport {
 export interface CatalogAdapter {
   id: string;
   packageRoot: string;
-  source: 'marketplace' | 'workspace';
+  source: 'marketplace' | 'platform' | 'workspace';
   manifest: AdapterManifestLoadResult;
 }
 

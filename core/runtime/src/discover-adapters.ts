@@ -12,7 +12,7 @@ import { loadDiscoveredAdapterModule } from './adapter-module-loader.js';
 
 export interface DiscoveredAdapter {
   packageName: string;
-  source?: 'marketplace' | 'workspace';
+  source?: 'marketplace' | 'platform' | 'workspace';
   pkgRoot: string;
   createAdapter: (config?: unknown) => unknown;
   module: Record<string, unknown> & { manifest: AdapterManifest };

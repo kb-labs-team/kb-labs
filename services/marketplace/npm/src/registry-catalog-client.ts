@@ -1,4 +1,5 @@
 import type { RegistryEntry, RegistryPackageSummary } from '@kb-labs/marketplace-registry-contracts';
+import { registryEndpointUrl } from './registry-url.js';
 
 export class RegistryCatalogClientError extends Error {
   readonly code: 'TRANSPORT_FAILED';
@@ -13,7 +14,6 @@ export class RegistryCatalogClientError extends Error {
 /** Read public Registry catalog data without sending install credentials. */
 export class RegistryCatalogClient {
   readonly registryUrl: string;
-  private readonly apiPrefix: string;
 
   constructor(registryUrl: string) {
     let base: URL;
@@ -28,15 +28,10 @@ export class RegistryCatalogClient {
     base.hash = '';
     base.search = '';
     this.registryUrl = base.toString().replace(/\/$/, '');
-    // The public production alias exposes `/packages`, while the Gateway
-    // upstream mounted for the Marketplace service exposes `/api/v1/packages`.
-    this.apiPrefix = new URL(this.registryUrl).pathname.replace(/\/$/, '').endsWith('/api/v1/registry')
-      ? ''
-      : '/api/v1';
   }
 
   async listPackages(query?: string): Promise<RegistryPackageSummary[]> {
-    const url = new URL(`${this.registryUrl}${this.apiPrefix}/packages`);
+    const url = new URL(registryEndpointUrl(this.registryUrl, 'packages'));
     if (query?.trim()) {url.searchParams.set('q', query.trim());}
     const response = await this.get(url);
     if (!response.ok) {throw new RegistryCatalogClientError(`Registry catalog request failed with HTTP ${response.status}.`);}
@@ -46,8 +41,8 @@ export class RegistryCatalogClient {
   }
 
   async getPackage(handle: string, name: string): Promise<RegistryEntry | null> {
-    const encodedName = name.split('/').map(segment => encodeURIComponent(segment)).join('/');
-    const url = new URL(`${this.registryUrl}${this.apiPrefix}/packages/${encodeURIComponent(handle)}/${encodedName}`);
+    const encodedName = encodeURIComponent(name);
+    const url = new URL(registryEndpointUrl(this.registryUrl, `packages/${encodeURIComponent(handle)}/${encodedName}`));
     const response = await this.get(url);
     if (response.status === 404) {return null;}
     if (!response.ok) {throw new RegistryCatalogClientError(`Registry package detail request failed with HTTP ${response.status}.`);}

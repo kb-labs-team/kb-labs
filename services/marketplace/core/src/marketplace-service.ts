@@ -126,6 +126,12 @@ function verifyResolvedArtifact(
       details: { package: resolved.id, scope },
     }));
   }
+  const subjectPackage = resolved.signatureSubject.slice(resolved.signatureSubject.indexOf('/') + 1);
+  if (!resolved.signatureSubject.includes('/') || subjectPackage !== resolved.id) {
+    throw new ErrorEnvelopeError(createErrorEnvelope('KB_MARKETPLACE_SIGNATURE_INVALID', {
+      details: { package: resolved.id, scope },
+    }));
+  }
   const payload = Buffer.from(JSON.stringify({ integrity: resolved.integrity, pkg: `${resolved.signatureSubject}@${resolved.version}` }));
   let valid = false;
   try {
@@ -310,8 +316,15 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           `Registry resolved "${resolved.canonicalIdentity ?? resolved.id}" for requested identity "${stripSpecVersion(spec)}".`,
         );
       }
+      const requestedVersion = getExactSpecVersion(spec);
+      if (requiredSource === 'registry' && requestedVersion && requestedVersion !== resolved.version) {
+        throw new InvalidEntityError(
+          `Registry resolved version "${resolved.version}" for explicitly requested version "${requestedVersion}".`,
+        );
+      }
       const verification = verifyResolvedArtifact(resolved, source, ctx.scope);
-      const installedPin = findInstalledPin(lock, resolved.id);
+      const canonicalIdentity = resolved.canonicalIdentity ?? resolved.id;
+      const installedPin = findInstalledPin(lock, resolved.id, canonicalIdentity);
       if (installedPin) {
         const installedVersion = installedPin.version;
         if (!semver.valid(installedVersion) || !semver.valid(resolved.version)) {
@@ -358,7 +371,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       this.assertScopeAllowsKind(ctx.scope, primaryKind);
       if (expectedKind && primaryKind !== expectedKind) {
         throw new InvalidEntityError(
-          `Marketplace adapter installation requires an installed manifest classified as "${expectedKind}"; "${result.id}" is "${primaryKind}".`,
+          `Marketplace ${expectedKind} installation requires an installed manifest classified as "${expectedKind}"; "${result.id}" is "${primaryKind}".`,
         );
       }
 
@@ -387,7 +400,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
       // only after the Marketplace has validated the artifact and manifest.
       // The source retains its backup until commitInstall so later lock/cache
       // failures still restore the previous package atomically.
-      const installedPackageRoot = source.activateInstall
+      const installedPackageRoot = !usesExtensionStore && source.activateInstall
         ? await source.activateInstall(result.id, scopeRoot)
         : result.packageRoot;
 
@@ -1101,15 +1114,16 @@ export class MarketplaceService implements MarketplaceServiceAPI {
 function findInstalledPin(
   lock: MarketplaceLock | null,
   packageId: string,
+  canonicalId = packageId,
 ): { version: string; integrity: string } | undefined {
   if (!lock) { return undefined; }
   const plugin = Object.entries(lock.plugins).find(([id, entry]) =>
-    id === packageId || (entry.source !== 'local' && entry.package === packageId),
+    id === packageId || id === canonicalId || (entry.source !== 'local' && (entry.package === packageId || entry.package === canonicalId)),
   )?.[1];
   if (plugin && plugin.source !== 'local') {
     return { version: plugin.version, integrity: plugin.integrity };
   }
-  const adapter = lock.adapters?.[packageId];
+  const adapter = lock.adapters?.[packageId] ?? lock.adapters?.[canonicalId];
   return adapter ? { version: adapter.version, integrity: adapter.integrity } : undefined;
 }
 
@@ -1208,6 +1222,14 @@ function stripSpecVersion(spec: string): string {
   const separator = spec.lastIndexOf('@');
   const identityBoundary = spec.startsWith('@') ? spec.indexOf('/') : 0;
   return separator > identityBoundary ? spec.slice(0, separator) : spec;
+}
+
+function getExactSpecVersion(spec: string): string | undefined {
+  const separator = spec.lastIndexOf('@');
+  const identityBoundary = spec.startsWith('@') ? spec.indexOf('/') : 0;
+  if (separator <= identityBoundary) {return undefined;}
+  const requested = spec.slice(separator + 1);
+  return semver.valid(requested) ? requested : undefined;
 }
 
 function normalizeSourceUrl(value: string): string | undefined {

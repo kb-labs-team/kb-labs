@@ -170,7 +170,7 @@ export async function loadCatalogAdapterEntries(
       module: { ...loaded, manifest: entry.manifest.manifest },
       entrypointManifests: { '': entry.manifest.manifest },
     };
-    for (const entrypoint of Object.values(entry.manifest.manifest.defaultFor ?? {})) {
+    for (const entrypoint of entry.source === 'marketplace' ? [] : Object.values(entry.manifest.manifest.defaultFor ?? {})) {
       const subpath = entrypoint.join('/');
       if (!subpath || adapter.entrypointManifests[subpath]) {continue;}
       const entrypointModule = await loadDiscoveredAdapterModule(adapter, `${packageName}/${subpath}`);
