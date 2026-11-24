@@ -4,8 +4,8 @@ title: Studio — Open the current dashboard
 persona: solo-developer
 area: studio
 priority: P1
-status: planned
-release: false
+status: active
+release: true
 modes: [local, secured]
 surfaces: [studio]
 ---
