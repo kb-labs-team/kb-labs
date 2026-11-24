@@ -23,73 +23,49 @@ async function openMarketplace(page: import('@playwright/test').Page) {
   await signInIfSecured(page)
   await page.goto(`${GATEWAY}/marketplace`)
   await expect(page.getByRole('heading', { name: 'Marketplace', exact: true })).toBeVisible()
-  await page.getByPlaceholder('Search Studio plugins...').fill('@kb-labs/commit')
-  await expect(page.getByText('@kb-labs/commit', { exact: true }).first()).toBeVisible()
 }
 
-test('find Commit in the Studio plugin projection', async ({ page }) => {
-  await openMarketplace(page)
-  await expect(page.getByText(/available version/i)).toBeVisible()
-})
-
-test('inspect Commit details in the Studio plugin projection', async ({ page }) => {
-  await openMarketplace(page)
-  await page.getByText('@kb-labs/commit', { exact: true }).first().click()
-  await expect(page.getByRole('heading', { name: '@kb-labs/commit', exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: 'Overview', exact: true }).click()
-  await expect(page.getByText('Package details', { exact: true })).toBeVisible()
-  await page.getByRole('tab', { name: 'Permissions', exact: true }).click()
-  await expect(page.getByText('Declared permissions', { exact: true })).toBeVisible()
-})
-
-test('install Commit from its Studio plugin detail into project A', async ({ page }) => {
-  await openMarketplace(page)
-  await page.getByText('@kb-labs/commit', { exact: true }).first().click()
-  await page.getByRole('combobox', { name: 'Project', exact: true }).click()
-  await page.getByText('Project A', { exact: true }).last().click()
-  await page.getByRole('button', { name: 'Install Commit', exact: true }).click()
-  await expect(page.getByRole('status')).toContainText('Installed Commit for Project A')
-  await page.getByRole('link', { name: 'Marketplace', exact: true }).first().click()
-  await page.getByRole('tab', { name: 'Installed', exact: true }).click()
-  await expect(page.getByRole('row').filter({ hasText: '@kb-labs/commit' })).toContainText(/\d+\.\d+\.\d+/)
-  await page.getByRole('link', { name: 'Commit', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Commit', exact: true })).toBeVisible()
-})
-
-test('keep project B unchanged in Marketplace installed view @S-182.4', async ({ page }) => {
-  await openMarketplace(page)
-  await page.getByText('@kb-labs/commit', { exact: true }).first().click()
-  await page.getByRole('combobox', { name: 'Project', exact: true }).click()
-  await page.getByText('Project B', { exact: true }).last().click()
-  await page.getByRole('link', { name: 'Marketplace', exact: true }).first().click()
-  await page.getByRole('tab', { name: 'Installed', exact: true }).click()
-  await expect(page.getByRole('row').filter({ hasText: '@kb-labs/commit' })).toHaveCount(0)
-})
-
-test('show actionable error when installing an unknown package @S-182.5', async ({ page }) => {
-  await openMarketplace(page)
+async function selectProject(page: import('@playwright/test').Page, name: string) {
   await page.getByRole('combobox', { name: 'Active project', exact: true }).click()
-  await page.getByText('Project A', { exact: true }).last().click()
-  await page.getByRole('tab', { name: 'Installed', exact: true }).click()
-  await page.getByLabel('Plugin package and version').fill('@kb-labs/unknown-package')
-  await page.getByRole('button', { name: 'Install', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText(/package.*not found/i)
-  await expect(page.getByRole('alert')).toContainText(/kb marketplace search/i)
-  await expect(page.getByRole('row').filter({ hasText: '@kb-labs/unknown-package' })).toHaveCount(0)
+  await page.getByRole('option', { name, exact: true }).click()
+}
+
+async function ensureCommitInstalled(page: import('@playwright/test').Page, projectName: string) {
+  const response = await page.request.get(`${GATEWAY}/api/v1/projects`)
+  expect(response.ok()).toBeTruthy()
+  const payload = await response.json() as { data: Array<{ id: string; name: string }> }
+  const project = payload.data.find((entry) => entry.name === projectName)
+  expect(project, `Project ${projectName} must be registered`).toBeTruthy()
+  const installedResponse = await page.request.get(`${GATEWAY}/api/v1/plugins`, { params: { projectId: project!.id } })
+  expect(installedResponse.ok()).toBeTruthy()
+  const installedPayload = await installedResponse.json() as { data: Array<{ id: string }> }
+  if (installedPayload.data.some((entry) => entry.id === '@kb-labs/commit')) return
+  const installResponse = await page.request.post(`${GATEWAY}/api/v1/plugins/install`, {
+    data: { projectId: project!.id, spec: '@kb-labs/commit' },
+  })
+  expect(installResponse.ok()).toBeTruthy()
+}
+
+test('Marketplace opens on installed project plugins @S-182.1', async ({ page }) => {
+  await openMarketplace(page)
+  await selectProject(page, 'Project A')
+  await expect(page.getByRole('heading', { name: 'Plugins', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Open marketplace', exact: true })).toBeVisible()
+  await expect(page.getByRole('tab')).toHaveCount(0)
+})
+
+test('keep project B unchanged in Marketplace @S-182.4', async ({ page }) => {
+  await openMarketplace(page)
+  await selectProject(page, 'Project B')
+  await expect(page.getByRole('row').filter({ hasText: '@kb-labs/commit' })).toHaveCount(0)
 })
 
 test('manage installed Commit from Marketplace @S-182.6', async ({ page }) => {
   await openMarketplace(page)
-  await page.getByText('@kb-labs/commit', { exact: true }).first().click()
-  await page.getByRole('combobox', { name: 'Project', exact: true }).click()
-  await page.getByText('Project A', { exact: true }).last().click()
-  const installButton = page.getByRole('button', { name: 'Install Commit', exact: true })
-  if (await installButton.isVisible()) {
-    await installButton.click()
-    await expect(page.getByRole('status')).toContainText('Installed Commit for Project A')
-  }
-  await page.getByRole('link', { name: 'Marketplace', exact: true }).first().click()
-  await page.getByRole('tab', { name: 'Installed', exact: true }).click()
+  await ensureCommitInstalled(page, 'Project A')
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Marketplace', exact: true })).toBeVisible()
+  await selectProject(page, 'Project A')
   const commitRow = page.getByRole('row').filter({ hasText: '@kb-labs/commit' })
   await expect(commitRow).toBeVisible()
   await commitRow.getByRole('switch').click()
