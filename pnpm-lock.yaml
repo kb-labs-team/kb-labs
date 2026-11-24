@@ -2314,7 +2314,7 @@ importers:
         specifier: ^1.52.0
         version: 1.59.1
       fastify:
-        specifier: ^5.12.1
+        specifier: ">=5.12.2"
         version: 5.12.5
       typescript:
         specifier: ^5.4.0
