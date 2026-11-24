@@ -7,7 +7,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { createAdapter } from "./index.js";
 import { manifest } from "./manifest.js";
 import { resolveRuntimeStatePath } from "@kb-labs/sdk/adapters";
