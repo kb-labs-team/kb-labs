@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { createCatalogErrorEnvelope, type CatalogErrorRequest } from "@kb-labs/core-platform";
 import { registerProjectRoutes } from "../project-routing.js";
+import type { ProjectOriginTrustOptions } from "../project-origin.js";
 
 const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" }];
 
@@ -44,7 +45,7 @@ describe("registerProjectRoutes", () => {
     ], transport)).rejects.toThrow(/invalid project service id/i);
   });
 
-  async function setup(transport: (port: number) => { resolveProjectService: (projectId: string, serviceId: string) => Promise<{ baseUrl: string; pathPrefix?: string; headers: Record<string, string>; release: () => void } | undefined> }, upstreamReply?: { statusCode: number; body: string; contentType?: string; headers?: Record<string, string>; stall?: boolean; stream?: boolean } | Array<{ statusCode: number; body: string; contentType?: string; headers?: Record<string, string>; stall?: boolean; stream?: boolean }>, services = PROJECT_SERVICES, timeoutMs = 30_000) {
+  async function setup(transport: (port: number) => { resolveProjectService: (projectId: string, serviceId: string) => Promise<{ baseUrl: string; pathPrefix?: string; headers: Record<string, string>; release: () => void } | undefined> }, upstreamReply?: { statusCode: number; body: string; contentType?: string; headers?: Record<string, string>; stall?: boolean; stream?: boolean } | Array<{ statusCode: number; body: string; contentType?: string; headers?: Record<string, string>; stall?: boolean; stream?: boolean }>, services = PROJECT_SERVICES, timeoutMs = 30_000, originTrust: ProjectOriginTrustOptions = { authEnabled: true }, trustProxy = false) {
     const seen: Array<{ url?: string; headers: Record<string, unknown>; body: string }> = [];
     upstream = createServer((req, res) => {
       const chunks: Buffer[] = [];
@@ -70,8 +71,8 @@ describe("registerProjectRoutes", () => {
       upstream!.listen(0, "127.0.0.1", resolve);
     });
     const port = (upstream.address() as { port: number }).port;
-    app = Fastify();
-    await registerProjectRoutes(app, services, transport(port), timeoutMs);
+    app = Fastify({ trustProxy });
+    await registerProjectRoutes(app, services, transport(port), timeoutMs, originTrust);
     await app.ready();
     return seen;
   }
@@ -127,6 +128,60 @@ describe("registerProjectRoutes", () => {
 
     expect(response.statusCode).toBe(200);
     expect(seen[0]?.url).toBe('/api/v1/crons/journey-cron/enable');
+  });
+
+  // case: S-022.2
+  it("suppresses only the exact configured Gateway origin on the private project hop", async () => {
+    const workflowServices = [{ serviceId: "workflow", rewritePrefix: "/api/v1", healthCheck: "/health" }];
+    const seen = await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: "",
+        headers: { "x-kb-runtime-token": "runtime-secret" },
+        release: () => undefined,
+      }),
+    }), undefined, workflowServices, 30_000, {
+      publicUrl: "https://studio.example.test:8443",
+      authEnabled: true,
+    }, true);
+
+    const run = (origin?: string, host = "studio.example.test:8443", forwarded?: { host: string; proto: string }) => app!.inject({
+      method: "POST",
+      url: "/api/v1/projects/prj_a/workflow/workflows/greet/runs",
+      headers: {
+        host,
+        ...(origin === undefined ? {} : { origin }),
+        ...(forwarded ? { "x-forwarded-host": forwarded.host, "x-forwarded-proto": forwarded.proto } : {}),
+        referer: "https://studio.example.test:8443/p/workflows/definitions/greet",
+        "content-type": "application/json",
+      },
+      payload: JSON.stringify({ inputs: { name: "Ada" } }),
+    });
+
+    expect((await run("https://studio.example.test:8443")).statusCode).toBe(202);
+    expect(seen[0]?.headers.origin).toBeUndefined();
+    expect(seen[0]?.url).toBe("/api/v1/workflows/greet/runs");
+    expect(seen[0]?.headers.referer).toBe("https://studio.example.test:8443/p/workflows/definitions/greet");
+    expect(seen[0]?.headers["x-kb-runtime-token"]).toBe("runtime-secret");
+
+    expect((await run("https://studio.example.test:8444")).statusCode).toBe(202);
+    expect(seen[1]?.headers.origin).toBe("https://studio.example.test:8444");
+
+    expect((await run("https://studio.example.test:8443", "tenant.example.test:8443")).statusCode).toBe(202);
+    expect(seen[2]?.headers.origin).toBe("https://studio.example.test:8443");
+
+    expect((await run("null")).statusCode).toBe(202);
+    expect(seen[3]?.headers.origin).toBe("null");
+
+    expect((await run(
+      "https://studio.example.test:8443",
+      "tenant.example.test:8443",
+      { host: "studio.example.test:8443", proto: "https" },
+    )).statusCode).toBe(202);
+    expect(seen[4]?.headers.origin).toBe("https://studio.example.test:8443");
+
+    expect((await run()).statusCode).toBe(202);
+    expect(seen[5]?.headers.origin).toBeUndefined();
   });
 
   it("routes the MCP service root without requiring a trailing slash", async () => {
