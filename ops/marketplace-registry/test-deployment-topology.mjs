@@ -44,6 +44,7 @@ assert.notEqual(config.networks.gateway_edge.internal, true);
 
 const nginxConfig = readFileSync(path.join(root, 'ops/marketplace-registry/nginx-api.kblabs.ru.conf'), 'utf8');
 const accessLogFormat = nginxConfig.match(/log_format\s+kb_api_safe\s+'([^']+)'/u)?.[1] ?? '';
+// case: S-321.6
 assert.match(accessLogFormat, /\$uri/u, 'access logs must use the query-free normalized path');
 assert.doesNotMatch(accessLogFormat, /\$(?:request_uri|request)(?:\W|$)/u, 'access logs must not include query strings');
 assert.match(nginxConfig, /limit_except GET HEAD \{ deny all; \}/u);
@@ -52,5 +53,7 @@ assert.match(nginxConfig, /limit_conn_status 429;/u);
 assert.match(nginxConfig, /proxy_set_header X-Forwarded-For \$remote_addr;/u);
 assert.match(nginxConfig, /proxy_set_header X-Forwarded-Host "";/u);
 assert.match(nginxConfig, /proxy_set_header Forwarded "";/u);
+assert.match(nginxConfig, /marketplace-registry\/api\/v1\/\(resolve\|packages/u);
+assert.match(nginxConfig, /@\[\^\/\]\+\//u, 'normalized scoped package routes must be allowlisted');
 assert.match(nginxConfig, /location \/ \{\s*return 404;/u, 'unreviewed and write routes must stay closed');
 process.stdout.write('Marketplace Registry topology and read-only Nginx edge policy are valid.\n');
