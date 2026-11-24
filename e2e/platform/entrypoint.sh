@@ -24,6 +24,9 @@ mkdir -p /workspace && cd /workspace
 # The V2 launcher consumes a sealed release index. The registry manifest still
 # controls the E2E composition, while the index carries the platform wiring.
 PLATFORM_ROOT=/workspace/kb-e2e
+# `kb-create apply` requires the selected project root to exist before it
+# starts installing the platform into that directory.
+mkdir -p "$PLATFORM_ROOT"
 
 # ── OIDC redirect-provider overlay (OAuth E2E stack only) ──────────────────────
 # When OIDC_E2E_ENABLED=true (set by docker-compose.oauth-ci.yml), register a

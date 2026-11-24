@@ -342,6 +342,7 @@ export async function createServer(
       projectServices,
       projectServiceTransport ?? serviceTransport,
       config.projectRequestTimeoutMs ?? 30_000,
+      { publicUrl: process.env.GATEWAY_PUBLIC_URL, authEnabled: access.authEnabled },
     );
     gatewayLogger.info(
       "Project routing enabled: /api/v1/projects/{projectId}/{serviceId}/*",

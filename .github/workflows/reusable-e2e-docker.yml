@@ -73,7 +73,10 @@ env:
 jobs:
   e2e:
     name: E2E / ${{ inputs.suite }}
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 does not yet support ubuntu-26.04, which is now
+    # behind ubuntu-latest on GitHub-hosted runners. Keep browser runs on the
+    # supported Ubuntu 24.04 image until Playwright adds 26.04 support.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
