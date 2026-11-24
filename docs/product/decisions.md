@@ -206,6 +206,17 @@ adapter rows without platform Marketplace data; adapters remain platform-scope
 packages, and selecting/configuring adapter slots stays with platform owners.
 Cases: S-120.1, S-182.
 
+### Studio Registry catalog is public; installs require a matching trusted source
+
+Studio's separate Marketplace catalog reads public Registry metadata through
+the configured public Registry Gateway endpoint. The default catalog remains
+read-only when the host has no explicit Registry URL and signing key. Catalog
+installation is enabled only when the host can verify that the configured
+trusted Registry is the same source as the displayed catalog. Catalog-selected
+plugins install through the Registry-only project API; adapters use the
+Registry-only platform API. Neither path silently falls back to npm, and the
+generic Marketplace source order remains unchanged. Case: S-322.
+
 ## 2026-10-21
 
 ### Marketplace management is built in; the publishing registry is optional

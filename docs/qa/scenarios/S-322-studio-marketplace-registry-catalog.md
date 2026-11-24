@@ -28,11 +28,12 @@ install the selected package using its canonical Registry identity.
 | S-322.2 | Open a package and inspect its details | The package detail shows the canonical identity returned as `meta.identity` and its version. The display name `fullName` is not used as an install identity. |
 | S-322.3 | Install a plugin package for the selected project | Studio submits the Registry identity with the selected version to the project plugin install API and reports success. |
 | S-322.4 | Install an adapter package | Studio submits the Registry identity with the selected version to the adapter install API and reports success. |
+| S-322.5 | Open the catalog when this host has no trusted Registry source configured | Public packages remain browseable, but package installation is disabled with an explanation that a trusted Registry URL and signing key are required; the catalog does not become an empty result or fall back to npm installation. |
 
 ## Pass criteria
 
 Marketplace search reads public Registry summaries and package details from
 the Marketplace Registry API. It presents both package kinds and uses the
 canonical identity from Registry metadata for installation. This case remains
-planned until Studio browser coverage exercises the Registry catalog and both
+planned until Studio browser coverage exercises catalog availability and both
 install paths.
