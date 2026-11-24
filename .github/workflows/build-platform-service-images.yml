@@ -111,6 +111,7 @@ jobs:
             org.opencontainers.image.version=${{ needs.prepare.outputs.image_tag }}
 
       - name: Export image artifact with checksum and identity
+        id: export_image
         env:
           IMAGE_NAME: ${{ matrix.image }}
           IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:${{ needs.prepare.outputs.image_tag }}
@@ -122,25 +123,15 @@ jobs:
           docker save "$IMAGE_REF" | gzip -1 > "$out/${IMAGE_NAME}.tar.gz"
           gzip -t "$out/${IMAGE_NAME}.tar.gz"
           image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          manifest="$(tar -xOzf "$out/${IMAGE_NAME}.tar.gz" manifest.json)"
+          config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+          repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$IMAGE_REF" '.[0].RepoTags[] | select(. == $ref)')"
+          test "$repo_tag" = "$IMAGE_REF"
+          test "$config_file" = "${image_id#sha256:}.json"
           (cd "$out" && sha256sum "${IMAGE_NAME}.tar.gz" > "${IMAGE_NAME}.tar.gz.sha256")
-          jq -n \
-            --arg image "$IMAGE_REF" \
-            --arg source_sha "$SOURCE_SHA" \
-            --arg platform "linux/amd64" \
-            --arg image_id "$image_id" \
-            --arg run_id "$GITHUB_RUN_ID" \
-            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
-            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{schemaVersion:1, image:$image, sourceSHA:$source_sha, platform:$platform, imageID:$image_id, runID:$run_id, runAttempt:$run_attempt, workflowRef:$workflow_ref, runURL:$run_url}' \
-            > "$out/${IMAGE_NAME}.identity.json"
-
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        with:
-          name: ${{ matrix.image }}-${{ needs.prepare.outputs.image_tag }}
-          path: ${{ runner.temp }}/image-export/
-          if-no-files-found: error
-          retention-days: 7
+          archive_sha256="$(sha256sum "$out/${IMAGE_NAME}.tar.gz" | cut -d ' ' -f 1)"
+          echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         id: ghcr_login
@@ -157,7 +148,52 @@ jobs:
         continue-on-error: true
         env:
           IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:${{ needs.prepare.outputs.image_tag }}
-        run: docker push "$IMAGE_REF"
+        run: |
+          set -euo pipefail
+          push_output="$(docker push "$IMAGE_REF" 2>&1)" || { printf '%s\n' "$push_output"; exit 1; }
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | sed -nE 's/.*digest: (sha256:[0-9a-f]+).*/\1/p' | tail -1)"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Finalize image identity
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+          IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:${{ needs.prepare.outputs.image_tag }}
+          SOURCE_SHA: ${{ needs.prepare.outputs.image_tag }}
+          IMAGE_ID: ${{ steps.export_image.outputs.image_id }}
+          ARCHIVE_SHA256: ${{ steps.export_image.outputs.archive_sha256 }}
+          GHCR_DIGEST: ${{ steps.ghcr_push.outputs.digest }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr_login.outcome }}
+          GHCR_PUSH_OUTCOME: ${{ steps.ghcr_push.outcome }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/image-export"
+          registry_status=artifact-only
+          if [ "$GHCR_LOGIN_OUTCOME" = success ] && [ "$GHCR_PUSH_OUTCOME" = success ]; then
+            registry_status=published
+          fi
+          jq -n \
+            --arg image "$IMAGE_REF" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg platform "linux/amd64" \
+            --arg image_id "$IMAGE_ID" \
+            --arg archive_sha256 "$ARCHIVE_SHA256" \
+            --arg registry_status "$registry_status" \
+            --arg registry_digest "$GHCR_DIGEST" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg workflow_ref "$GITHUB_WORKFLOW_REF" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{schemaVersion:1, image:$image, sourceSHA:$source_sha, platform:$platform, imageID:$image_id, archiveSHA256:$archive_sha256, registryStatus:$registry_status, registryDigest:$registry_digest, runID:$run_id, runAttempt:$run_attempt, workflowRef:$workflow_ref, runURL:$run_url}' \
+            > "$out/${IMAGE_NAME}.identity.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.image }}-${{ needs.prepare.outputs.image_tag }}
+          path: ${{ runner.temp }}/image-export/
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Report GHCR publish status
         if: steps.ghcr_login.outcome == 'failure' || steps.ghcr_push.outcome == 'failure'
