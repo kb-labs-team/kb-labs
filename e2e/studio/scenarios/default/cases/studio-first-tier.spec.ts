@@ -33,6 +33,8 @@ test('dashboard frame and first-tier navigation @S-120.1 @S-020.6', async ({ pag
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
   await expect(page.getByText('Gateway health', { exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Plugins', exact: true })).toHaveCount(0)
 
   for (const [label, path, title] of [
     ['Projects', '/projects', 'Projects'],
