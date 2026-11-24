@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { BigIntStats } from 'node:fs';
 import { link, lstat, mkdir, open, readFile, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { InMemoryStateBroker } from '@kb-labs/core-state-broker';
@@ -10,6 +11,7 @@ type JournalRecord =
 
 const DEFAULT_TTL_MS = 300_000;
 const COMPACT_AFTER_RECORDS = 1_000;
+const processKernelWriterLocks = new Set<string>();
 
 /** StateBroker backend that syncs every resolved mutation to a local journal. */
 export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
@@ -22,6 +24,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   private corrupted = false;
   private lockOwned = false;
   private kernelLockOwned = false;
+  private kernelLockIdentity: string | null = null;
 
   private constructor(dataRoot: string, cleanupIntervalMs: number) {
     super(cleanupIntervalMs);
@@ -37,15 +40,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
       const stateDirectory = path.dirname(broker.journalPath);
       await mkdir(stateDirectory, { recursive: true });
       await syncDirectoryChain(stateDirectory);
-      if (process.platform === 'linux' && await ownsKernelWriterLock(broker.kernelLockPath)) {
-        await broker.refuseLegacyLocks();
-        broker.kernelLockOwned = true;
-      } else {
-        if (process.platform === 'linux' && process.pid === 1) {
-          throw new Error('StateBroker persistent storage in a Linux container must be started through the journal-lock entrypoint (util-linux flock).');
-        }
-        await broker.acquireWriterLock();
-      }
+      await broker.acquireWriterLockForCurrentProcess();
       await broker.replay();
     } catch (error) {
       await broker.stop();
@@ -164,6 +159,40 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     }
   }
 
+  private async acquireWriterLockForCurrentProcess(): Promise<void> {
+    if (process.platform !== 'linux') {
+      await this.acquireWriterLock();
+      return;
+    }
+
+    const kernelLockIdentity = await getOwnedKernelWriterLockIdentity(this.kernelLockPath);
+    if (kernelLockIdentity !== null) {
+      await this.adoptKernelWriterLock(kernelLockIdentity);
+      return;
+    }
+    if (await pathExists(this.kernelLockPath)) {
+      throw new Error(`StateBroker kernel lock at ${this.kernelLockPath} exists but is not held by this process. Start the daemon through the journal-lock entrypoint (util-linux flock).`);
+    }
+    if (process.pid === 1) {
+      throw new Error('StateBroker persistent storage in a Linux container must be started through the journal-lock entrypoint (util-linux flock).');
+    }
+
+    await this.acquireWriterLock();
+    if (await pathExists(this.kernelLockPath)) {
+      throw new Error(`StateBroker kernel lock at ${this.kernelLockPath} appeared while the legacy PID lock was being acquired. Retry through the journal-lock entrypoint.`);
+    }
+  }
+
+  private async adoptKernelWriterLock(identity: string): Promise<void> {
+    if (processKernelWriterLocks.has(identity)) {
+      throw new Error(`StateBroker journal already has a writer open in process ${process.pid}.`);
+    }
+    processKernelWriterLocks.add(identity);
+    this.kernelLockIdentity = identity;
+    this.kernelLockOwned = true;
+    await this.refuseLegacyLocks();
+  }
+
   private async reclaimStaleWriterLock(observed: { pid: number; token: string }): Promise<void> {
     const reclaimPath = `${this.lockPath}.reclaim`;
     for (;;) {
@@ -209,6 +238,8 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
 
   private async releaseWriterLock(): Promise<void> {
     if (this.kernelLockOwned) {
+      if (this.kernelLockIdentity !== null) {processKernelWriterLocks.delete(this.kernelLockIdentity);}
+      this.kernelLockIdentity = null;
       this.kernelLockOwned = false;
       return;
     }
@@ -341,14 +372,14 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
  * kernel lock belongs to this process and the stable sidecar inode before
  * bypassing the legacy PID marker protocol.
  */
-async function ownsKernelWriterLock(lockPath: string): Promise<boolean> {
-  if (process.platform !== 'linux') {return false;}
+async function getOwnedKernelWriterLockIdentity(lockPath: string): Promise<string | null> {
+  if (process.platform !== 'linux') {return null;}
 
-  let lockStat: Awaited<ReturnType<typeof lstat>>;
+  let lockStat: BigIntStats;
   try {
-    lockStat = await lstat(lockPath);
+    lockStat = await lstat(lockPath, { bigint: true });
   } catch (error) {
-    if (isMissingPath(error)) {return false;}
+    if (isMissingPath(error)) {return null;}
     throw error;
   }
   if (!lockStat.isFile()) {
@@ -359,15 +390,12 @@ async function ownsKernelWriterLock(lockPath: string): Promise<boolean> {
   try {
     locks = await readFile('/proc/locks', 'utf8');
   } catch (error) {
-    if (process.pid === 1) {
-      throw new Error(`StateBroker cannot verify the Linux kernel lock through /proc/locks: ${String(error)}`);
-    }
-    return false;
+    throw new Error(`StateBroker cannot verify the Linux kernel lock through /proc/locks: ${String(error)}`);
   }
 
   const device = linuxDeviceId(lockStat.dev);
-  const identity = `${device}:${lockStat.ino}`;
-  return locks.split('\n').some((line) => {
+  const identity = `${device}:${lockStat.ino.toString(10)}`;
+  const owner = locks.split('\n').some((line) => {
     const fields = line.trim().split(/\s+/);
     return fields[1] === 'FLOCK'
       && fields[2] === 'ADVISORY'
@@ -375,13 +403,23 @@ async function ownsKernelWriterLock(lockPath: string): Promise<boolean> {
       && fields[4] === String(process.pid)
       && fields[5] === identity;
   });
+  return owner ? identity : null;
 }
 
-function linuxDeviceId(device: number): string {
-  const encoded = BigInt(device);
+function linuxDeviceId(encoded: bigint): string {
   const major = Number(((encoded >> 8n) & 0xfffn) | ((encoded >> 32n) & 0xfffff000n));
   const minor = Number((encoded & 0xffn) | ((encoded >> 12n) & 0xffffff00n));
   return `${major.toString(16).padStart(2, '0')}:${minor.toString(16).padStart(2, '0')}`;
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await lstat(filePath);
+    return true;
+  } catch (error) {
+    if (isMissingPath(error)) {return false;}
+    throw error;
+  }
 }
 
 function isJournalRecord(value: unknown): value is JournalRecord {

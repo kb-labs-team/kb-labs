@@ -243,12 +243,22 @@ describe('StateBroker durability', () => {
       import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
       const broker = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
       const role = process.env.JOURNAL_ROLE;
-      if (role === 'first') await broker.set('before-crash', 'durable', 60000);
+      if (role === 'first') {
+        await broker.set('before-crash', 'durable', 60000);
+        try {
+          const duplicate = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
+          await duplicate.stop();
+          process.stdout.write('duplicate-opened\\n');
+        } catch {
+          process.stdout.write('duplicate-rejected\\n');
+        }
+      }
       process.stdout.write('locked-' + role + '\\n');
       if (role === 'first') await new Promise((resolve) => process.stdin.once('data', resolve));
       if (role !== 'first') {
         const value = await broker.get('before-crash');
         process.stdout.write('recovered-' + value + '\\n');
+        process.stdout.write('direct-' + await broker.get('direct-contender') + '\\n');
         await broker.set('after-crash', role, 60000);
       }
       await broker.stop();
@@ -292,6 +302,27 @@ describe('StateBroker durability', () => {
       const first = startChild('first');
       children.push(first);
       await first.waitForLine('locked-first');
+      await first.waitForLine('duplicate-rejected');
+
+      const directContender = spawn(process.execPath, [
+        '--import', tsxLoader, '--input-type=module', '-e', `
+          import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
+          try {
+            const broker = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
+            await broker.set('direct-contender', 'unexpected', 60000);
+            await broker.stop();
+            process.stderr.write('unlocked contender entered\\n');
+            process.exitCode = 41;
+          } catch (error) {
+            process.stderr.write(String(error));
+          }
+        `,
+      ], { env: { ...process.env, JOURNAL_ROOT: root }, stdio: ['ignore', 'ignore', 'pipe'] });
+      const directErrors: Buffer[] = [];
+      directContender.stderr?.on('data', (chunk: Buffer) => directErrors.push(chunk));
+      const [directExit] = await once(directContender, 'exit') as [number | null];
+      expect(directExit).toBe(0);
+      expect(Buffer.concat(directErrors).toString('utf8')).toContain('exists but is not held by this process');
 
       const second = startChild('second');
       children.push(second);
@@ -302,12 +333,14 @@ describe('StateBroker durability', () => {
       await once(first.child, 'exit');
       await second.waitForLine('locked-second');
       await second.waitForLine('recovered-durable');
+      await second.waitForLine('direct-null');
       await second.waitForLine('stopped-second');
 
       const recreated = startChild('recreated');
       children.push(recreated);
       await recreated.waitForLine('locked-recreated');
       await recreated.waitForLine('recovered-durable');
+      await recreated.waitForLine('direct-null');
       await recreated.waitForLine('stopped-recreated');
       await expect(stat(flockPath)).resolves.toBeDefined();
     } finally {
