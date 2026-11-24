@@ -7,7 +7,7 @@
     },
     "adapterOptions": {
       "documentDatabase": {
-        "filename": "/app/.kb/data/gateway.sqlite"
+        "filename": "gateway.sqlite"
       },
       "serviceTransport": {
         "services": {
