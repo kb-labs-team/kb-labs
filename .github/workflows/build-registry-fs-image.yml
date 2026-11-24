@@ -1,6 +1,6 @@
-name: Build Marketplace Registry FS image
+name: Build platform runtime images with pnpm links
 
-# Build-only verification for the filesystem-backed Registry source SHA.
+# Build-only packaging/runtime verification from the filesystem-backed Registry source SHA.
 on:
   push:
     branches:
@@ -39,25 +39,63 @@ jobs:
       - name: Build workspace
         run: pnpm build
 
-      - name: Prepare Registry production tree
+      - name: Prepare service production trees
         run: |
           set -euo pipefail
+          pnpm --filter @kb-labs/core-state-daemon --prod --config.inject-workspace-packages=true deploy .kb/deploy/state-daemon
+          pnpm --filter @kb-labs/gateway-app --prod --config.inject-workspace-packages=true deploy .kb/deploy/gateway-app
           pnpm --filter @kb-labs/marketplace-registry-app --prod --config.inject-workspace-packages=true deploy .kb/deploy/marketplace-registry-app
           node tools/release/generate-platform-image-default.mjs
+          for service in state-daemon gateway-app marketplace-registry-app; do
+            tree=".kb/deploy/$service"
+            test -L "$tree/node_modules/@kb-labs/plugin-runtime"
+            test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+          done
+          (
+            cd .kb/deploy/state-daemon
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/core-state-daemon')"
+          )
+          (
+            cd .kb/deploy/gateway-app
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/gateway-core')"
+          )
+          (
+            cd .kb/deploy/marketplace-registry-app
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/marketplace-registry-core')"
+          )
+          mkdir -p "$RUNNER_TEMP/platform-image-inputs"
+          tar -C .kb -czf "$RUNNER_TEMP/platform-image-inputs/platform-deploy.tar.gz" deploy
+          (cd "$RUNNER_TEMP/platform-image-inputs" && sha256sum platform-deploy.tar.gz > platform-deploy.tar.gz.sha256)
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: registry-fs-prod-tree-7b8240395009fc3a055916bb4cef00c1821bf4b3
-          path: .kb/deploy/
-          include-hidden-files: true
+          name: platform-image-inputs-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          path: ${{ runner.temp }}/platform-image-inputs/
           retention-days: 1
 
-  image:
+  images:
     needs: prepare
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: kb-state-daemon
+            deploy_tree: state-daemon
+            dockerfile: services/state/daemon/Dockerfile
+            smoke_imports: "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/core-state-daemon')"
+          - image: kb-gateway
+            deploy_tree: gateway-app
+            dockerfile: services/gateway/app/Dockerfile
+            smoke_imports: "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/gateway-core')"
+          - image: kb-marketplace-registry
+            deploy_tree: marketplace-registry-app
+            dockerfile: services/marketplace-registry/app/Dockerfile
+            smoke_imports: "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/marketplace-registry-core')"
     env:
       SOURCE_SHA: 7b8240395009fc3a055916bb4cef00c1821bf4b3
-      IMAGE_REF: ghcr.io/kb-labs-team/kb-marketplace-registry:7b8240395009fc3a055916bb4cef00c1821bf4b3
+      IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:7b8240395009fc3a055916bb4cef00c1821bf4b3
+      IMAGE_NAME: ${{ matrix.image }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -65,8 +103,21 @@ jobs:
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: registry-fs-prod-tree-7b8240395009fc3a055916bb4cef00c1821bf4b3
-          path: .kb/deploy/
+          name: platform-image-inputs-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          path: ${{ runner.temp }}/platform-image-inputs/
+
+      - name: Restore deploy tree with pnpm links intact
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/platform-image-inputs"
+          sha256sum -c platform-deploy.tar.gz.sha256
+          mkdir -p "$GITHUB_WORKSPACE/.kb/deploy"
+          tar -xzf platform-deploy.tar.gz -C "$GITHUB_WORKSPACE/.kb"
+          tree="$GITHUB_WORKSPACE/.kb/deploy/${{ matrix.deploy_tree }}"
+          test -L "$tree/node_modules/@kb-labs/plugin-runtime"
+          test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+          cd "$tree"
+          node --input-type=module -e "${{ matrix.smoke_imports }}"
 
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
 
@@ -74,7 +125,7 @@ jobs:
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
         with:
           context: .
-          file: services/marketplace-registry/app/Dockerfile
+          file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           load: true
           tags: ${{ env.IMAGE_REF }}
@@ -83,13 +134,18 @@ jobs:
             org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
             org.opencontainers.image.version=${{ env.SOURCE_SHA }}
 
+      - name: Runtime module smoke inside the built image
+        run: >-
+          docker run --rm --entrypoint node "$IMAGE_REF"
+          --input-type=module -e "${{ matrix.smoke_imports }}"
+
       - name: Export and roundtrip verify image artifact
         id: export_image
         run: |
           set -euo pipefail
           out="${RUNNER_TEMP}/image-export"
           mkdir -p "$out"
-          archive="$out/kb-marketplace-registry.tar.gz"
+          archive="$out/${IMAGE_NAME}.tar.gz"
           image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
           docker save "$IMAGE_REF" | gzip -1 > "$archive"
           gzip -t "$archive"
@@ -114,7 +170,7 @@ jobs:
             exit 1
           fi
 
-          (cd "$out" && sha256sum kb-marketplace-registry.tar.gz > kb-marketplace-registry.tar.gz.sha256)
+          (cd "$out" && sha256sum "${IMAGE_NAME}.tar.gz" > "${IMAGE_NAME}.tar.gz.sha256")
           archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
           {
             echo "image_id=$image_id"
@@ -166,32 +222,40 @@ jobs:
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             '{schemaVersion:1,image:$image,sourceSHA:$source_sha,platform:"linux/amd64",imageID:$image_id,configDigest:$config_digest,archiveSHA256:$archive_sha,registryStatus:$registry_status,registryDigest:$registry_digest,runID:$run_id,runURL:$run_url}' \
-            > "${RUNNER_TEMP}/image-export/kb-marketplace-registry.identity.json"
+          > "${RUNNER_TEMP}/image-export/${IMAGE_NAME}.identity.json"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: kb-marketplace-registry-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          name: ${{ matrix.image }}-7b8240395009fc3a055916bb4cef00c1821bf4b3
           path: ${{ runner.temp }}/image-export/
           if-no-files-found: error
           retention-days: 7
 
   verify:
-    needs: image
+    needs: images
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - kb-state-daemon
+          - kb-gateway
+          - kb-marketplace-registry
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          name: kb-marketplace-registry-7b8240395009fc3a055916bb4cef00c1821bf4b3
+          name: ${{ matrix.image }}-7b8240395009fc3a055916bb4cef00c1821bf4b3
           path: ${{ runner.temp }}/image-artifact
 
       - name: Verify checksum, OCI config digest, tag and fresh Docker load
         env:
-          IMAGE_REF: ghcr.io/kb-labs-team/kb-marketplace-registry:7b8240395009fc3a055916bb4cef00c1821bf4b3
+          IMAGE_NAME: ${{ matrix.image }}
+          IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:7b8240395009fc3a055916bb4cef00c1821bf4b3
         run: |
           set -euo pipefail
           cd "${RUNNER_TEMP}/image-artifact"
-          archive=kb-marketplace-registry.tar.gz
-          identity=kb-marketplace-registry.identity.json
+          archive="${IMAGE_NAME}.tar.gz"
+          identity="${IMAGE_NAME}.identity.json"
           sha256sum -c "${archive}.sha256"
           test "$(jq -r '.image' "$identity")" = "$IMAGE_REF"
           test "$(jq -r '.sourceSHA' "$identity")" = "7b8240395009fc3a055916bb4cef00c1821bf4b3"

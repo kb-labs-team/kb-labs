@@ -62,10 +62,37 @@ jobs:
       - name: Prepare production image artifacts
         run: tools/release/prepare-platform-image-deploys.sh all
 
+      # Actions artifacts do not retain pnpm's directory symlinks when a tree
+      # is uploaded directly. Keep the deploy tree as a tar archive so links
+      # to .pnpm remain intact when image jobs restore it.
+      - name: Verify production pnpm links and archive deploy trees
+        run: |
+          set -euo pipefail
+          for service in state-daemon gateway-app marketplace-registry-app; do
+            tree=".kb/deploy/$service"
+            test -L "$tree/node_modules/@kb-labs/plugin-runtime"
+            test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+          done
+          (
+            cd .kb/deploy/state-daemon
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/core-state-daemon')"
+          )
+          (
+            cd .kb/deploy/gateway-app
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/gateway-core')"
+          )
+          (
+            cd .kb/deploy/marketplace-registry-app
+            node --input-type=module -e "await import('@kb-labs/plugin-runtime'); await import('@kb-labs/marketplace-registry-core')"
+          )
+          mkdir -p "$RUNNER_TEMP/platform-deploy-artifacts"
+          tar -C .kb -czf "$RUNNER_TEMP/platform-deploy-artifacts/platform-deploy-artifacts.tar.gz" deploy
+          (cd "$RUNNER_TEMP/platform-deploy-artifacts" && sha256sum platform-deploy-artifacts.tar.gz > platform-deploy-artifacts.tar.gz.sha256)
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: platform-deploy-artifacts
-          path: .kb/deploy/
+          path: ${{ runner.temp }}/platform-deploy-artifacts/
           retention-days: 7
 
   images:
@@ -102,7 +129,19 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: platform-deploy-artifacts
-          path: .kb/deploy/
+          path: ${{ runner.temp }}/platform-deploy-artifacts/
+      - name: Restore pnpm deploy trees with links intact
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/platform-deploy-artifacts"
+          sha256sum -c platform-deploy-artifacts.tar.gz.sha256
+          mkdir -p "$GITHUB_WORKSPACE/.kb"
+          tar -xzf platform-deploy-artifacts.tar.gz -C "$GITHUB_WORKSPACE/.kb"
+          for service in state-daemon gateway-app marketplace-registry-app; do
+            tree="$GITHUB_WORKSPACE/.kb/deploy/$service"
+            test -L "$tree/node_modules/@kb-labs/plugin-runtime"
+            test -e "$tree/node_modules/@kb-labs/plugin-runtime/node_modules/@kb-labs/core-platform"
+          done
       - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
       - name: Login to GHCR
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
