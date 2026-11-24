@@ -1,0 +1,72 @@
+name: Build Marketplace consumer tree
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Source commit to prepare for the install smoke
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+
+      - name: Build kb-devkit
+        run: make build -C tools/kb-devkit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Deploy Marketplace consumer production tree
+        run: pnpm --filter @kb-labs/marketplace-app --prod --config.inject-workspace-packages=true deploy .kb/deploy/marketplace-app
+
+      - name: Create artifact identity and checksum
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          cd .kb/deploy
+          tar -czf marketplace-app.tar.gz marketplace-app
+          sha256sum marketplace-app.tar.gz > marketplace-app.tar.gz.sha256
+          jq -n \
+            --arg sourceSHA "$SOURCE_SHA" \
+            --arg package "@kb-labs/marketplace-app" \
+            --arg node "24" \
+            --arg platform "linux/amd64" \
+            --arg archiveSHA256 "$(sha256sum marketplace-app.tar.gz | cut -d ' ' -f 1)" \
+            --arg runID "$GITHUB_RUN_ID" \
+            --arg runURL "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{schemaVersion:1, sourceSHA:$sourceSHA, package:$package, node:$node, platform:$platform, archiveSHA256:$archiveSHA256, runID:$runID, runURL:$runURL}' \
+            > marketplace-app.identity.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: marketplace-app-consumer-${{ inputs.source_sha }}
+          path: |
+            .kb/deploy/marketplace-app.tar.gz
+            .kb/deploy/marketplace-app.tar.gz.sha256
+            .kb/deploy/marketplace-app.identity.json
+          if-no-files-found: error
+          retention-days: 3
