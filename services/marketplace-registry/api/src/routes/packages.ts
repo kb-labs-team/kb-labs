@@ -177,21 +177,13 @@ export function registerPackageRoutes(app: FastifyInstance, registry: RegistrySe
     { config: { registryAccess: 'public' } },
     async (req, reply) => {
       const { handle, name, version } = req.params;
-      const entry = await registry.getEntry(handle, name);
-      if (!entry) { return reply.code(404).send({ error: 'Package not found' }); }
-
       const token = extractShareToken(req);
       const resolvedToken = token ? await registry.resolveShareToken(token) : null;
       const callerNs = req.authContext?.namespaceId ?? null;
-
-      const requestedVersion = entry.versions.find(candidate => candidate.version === version);
-      if (!requestedVersion || !registry.canAccess(entry, callerNs, resolvedToken, version)) {
-        return reply.code(404).send({
-          error: 'NotFound', code: 'VERSION_NOT_FOUND', message: `Version ${version} not found`,
-        });
-      }
-
-      const { tarball, signature } = await registry.getTarball(handle, name, version);
+      const { tarball, signature } = await registry.getTarball(handle, name, version, {
+        namespaceId: callerNs,
+        shareToken: resolvedToken,
+      });
       await registry.incrementInstalls(handle, name, version);
 
       return reply
