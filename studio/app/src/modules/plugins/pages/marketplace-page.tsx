@@ -10,10 +10,13 @@ import {
   UIPage,
   UIPageHeader,
   UITag,
+  UITabs,
+  type UITabItem,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
 import type { PluginManifestEntry } from '@kb-labs/studio-data-client';
 import { MarketplaceCard } from '../components/marketplace-card';
+import { InstalledProjectPlugins } from '../components/installed-project-plugins';
 
 type SurfaceFilter = 'all' | 'cli' | 'studio' | 'rest';
 
@@ -80,60 +83,68 @@ export function PluginsPage() {
     );
   }
 
+  const browseTab: UITabItem = {
+    key: 'browse',
+    label: 'Studio plugins',
+    children: (
+      <>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 6 }}>
+            {surfaceChips.map(chip => {
+              const active = surfaceFilter === chip.key;
+              return (
+                <UITag
+                  key={chip.key}
+                  variant={active ? 'info' : 'neutral'}
+                  onClick={() => setSurfaceFilter(active ? 'all' : chip.key)}
+                  style={{ margin: 0, fontSize: 12, padding: '3px 10px' }}
+                >
+                  {chip.label} <span style={{ opacity: 0.7 }}>{chip.count}</span>
+                </UITag>
+              );
+            })}
+          </div>
+          <div style={{ marginLeft: 'auto' }}>
+            <UIInputSearch
+              placeholder="Search Studio plugins..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              allowClear
+              style={{ width: 260 }}
+            />
+          </div>
+        </div>
+        {filtered.length === 0 ? (
+          <UIEmptyState
+            description={search ? 'No extensions match your search' : 'No extensions found'}
+            style={{ marginTop: 48 }}
+          />
+        ) : (
+          <UIRow gutter={[16, 16]}>
+            {filtered.map(plugin => (
+              <UICol key={plugin.pluginId} xs={24} sm={12} xl={8}>
+                <MarketplaceCard plugin={plugin} onClick={() => handleClick(plugin)} />
+              </UICol>
+            ))}
+          </UIRow>
+        )}
+      </>
+    ),
+  };
+
+  const installedTab: UITabItem = {
+    key: 'installed',
+    label: 'Installed',
+    children: <InstalledProjectPlugins />,
+  };
+
   return (
     <UIPage width="full">
       <UIPageHeader
         title="Marketplace"
-        description={`${counts.all} extension${counts.all !== 1 ? 's' : ''} in the catalog`}
+        description={`${counts.all} Studio plugin${counts.all !== 1 ? 's' : ''} discovered; manage project installs in Installed.`}
       />
-
-      {/* Filters bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
-
-        {/* Surface chips */}
-        <div style={{ display: 'flex', gap: 6 }}>
-          {surfaceChips.map(chip => {
-            const active = surfaceFilter === chip.key;
-            return (
-              <UITag
-                key={chip.key}
-                variant={active ? 'info' : 'neutral'}
-                onClick={() => setSurfaceFilter(active ? 'all' : chip.key)}
-                style={{ margin: 0, fontSize: 12, padding: '3px 10px' }}
-              >
-                {chip.label} <span style={{ opacity: 0.7 }}>{chip.count}</span>
-              </UITag>
-            );
-          })}
-        </div>
-
-        {/* Search — pushed to the right */}
-        <div style={{ marginLeft: 'auto' }}>
-          <UIInputSearch
-            placeholder="Search extensions..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            allowClear
-            style={{ width: 260 }}
-          />
-        </div>
-      </div>
-
-      {/* Grid */}
-      {filtered.length === 0 ? (
-        <UIEmptyState
-          description={search ? 'No extensions match your search' : 'No extensions found'}
-          style={{ marginTop: 48 }}
-        />
-      ) : (
-        <UIRow gutter={[16, 16]}>
-          {filtered.map(plugin => (
-            <UICol key={plugin.pluginId} xs={24} sm={12} xl={8}>
-              <MarketplaceCard plugin={plugin} onClick={() => handleClick(plugin)} />
-            </UICol>
-          ))}
-        </UIRow>
-      )}
+      <UITabs items={[browseTab, installedTab]} defaultActiveKey="browse" syncUrl="search" />
     </UIPage>
   );
 }

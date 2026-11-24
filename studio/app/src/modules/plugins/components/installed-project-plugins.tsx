@@ -1,19 +1,9 @@
-/**
- * @module @kb-labs/studio-app/modules/project-plugins/pages/project-plugins-page
- *
- * Per-project plugin enable/disable (stage 6, second slice). Studio only
- * calls the host's `/api/v1/plugins` API — it never touches
- * `.kb/marketplace.lock` itself.
- */
-
 import * as React from 'react';
 import {
   UIEmptyState,
   UIButton,
   UIInput,
   UIMessage,
-  UIPage,
-  UIPageHeader,
   UIAlert,
   UISpin,
   UISwitch,
@@ -22,12 +12,17 @@ import {
   type UITableColumn,
 } from '@kb-labs/studio-ui-kit';
 import { useDataSources } from '@/providers/data-sources-provider';
-import { useProjectPlugins, useSetProjectPluginEnabled, useInstallProjectPlugin, useUninstallProjectPlugin } from '@kb-labs/studio-data-client';
+import {
+  useProjectPlugins,
+  useSetProjectPluginEnabled,
+  useInstallProjectPlugin,
+  useUninstallProjectPlugin,
+} from '@kb-labs/studio-data-client';
 import type { ProjectPluginEntry } from '@kb-labs/studio-data-client';
 import { KBError } from '@kb-labs/studio-data-client';
 import { useProjectContext } from '@/providers/project-context-provider';
 
-export function ProjectPluginsPage() {
+export function InstalledProjectPlugins() {
   const { projectId } = useProjectContext();
   const [spec, setSpec] = React.useState('');
   const { projectPlugins: source } = useDataSources();
@@ -93,11 +88,6 @@ export function ProjectPluginsPage() {
       render: (_value, plugin) => <UITag>{plugin.source}</UITag>,
     },
     {
-      key: 'scope',
-      title: 'Scope',
-      dataIndex: 'scope',
-    },
-    {
       key: 'enabled',
       title: 'Enabled',
       width: 100,
@@ -115,32 +105,32 @@ export function ProjectPluginsPage() {
       width: 120,
       render: (_value, plugin) => (
         <UIButton variant="text" danger loading={uninstallPlugin.isPending} onClick={() => handleUninstall(plugin.id)}>
-          Uninstall
+          Remove
         </UIButton>
       ),
     },
   ];
 
   return (
-    <UIPage>
-      <UIPageHeader
-        title="Plugins"
-        description="Enable or disable plugins for the selected project."
-        actions={(
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <UIInput
-              aria-label="Plugin package and version"
-              placeholder="@scope/plugin@1.2.3"
-              value={spec}
-              onChange={setSpec}
-              style={{ width: 240 }}
-            />
-            <UIButton variant="primary" disabled={!projectId || !spec.trim()} loading={installPlugin.isPending} onClick={handleInstall}>
-              Install
-            </UIButton>
-          </div>
-        )}
-      />
+    <section aria-labelledby="installed-plugins-heading">
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, marginBottom: 16 }}>
+        <div>
+          <h2 id="installed-plugins-heading" style={{ margin: 0, fontSize: 20 }}>Installed project plugins</h2>
+          <p style={{ margin: '4px 0 0', opacity: 0.7 }}>Manage plugins for the selected project.</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <UIInput
+            aria-label="Plugin package and version"
+            placeholder="@scope/plugin@1.2.3"
+            value={spec}
+            onChange={setSpec}
+            style={{ width: 240 }}
+          />
+          <UIButton variant="primary" disabled={!projectId || !spec.trim()} loading={installPlugin.isPending} onClick={handleInstall}>
+            Install
+          </UIButton>
+        </div>
+      </div>
       {installError && (
         <UIAlert
           variant="error"
@@ -150,16 +140,15 @@ export function ProjectPluginsPage() {
           style={{ marginBottom: 16 }}
         />
       )}
-      {!projectId ? null : isLoading ? (
+      {!projectId ? (
+        <UIEmptyState title="Select a project" description="Choose a registered project to see and manage its installed plugins." />
+      ) : isLoading ? (
         <UISpin />
       ) : !plugins || plugins.length === 0 ? (
-        <UIEmptyState
-          title="No plugins found"
-          description="This project has no plugins in its marketplace.lock yet."
-        />
+        <UIEmptyState title="No plugins installed" description="Install a plugin package for the selected project to get started." />
       ) : (
         <UITable<ProjectPluginEntry> columns={columns} dataSource={plugins} rowKey="id" pagination={false} />
       )}
-    </UIPage>
+    </section>
   );
 }
