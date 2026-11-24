@@ -217,14 +217,43 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
     })
   })
 
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'logs')}**`, async (route) => {
+    if (route.request().url().includes('/stream')) {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+      return
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          logs: [{ id: 'run-log', time: '2026-11-19T10:00:00.000Z', level: 'error', msg: 'RUN_LOG_MARKER', runId: 'run-studio-diagnostic', executionId: 'step-exec-diagnostic' }],
+          total: 1,
+          hasMore: false,
+          filters: { runId: 'run-studio-diagnostic' },
+          source: 'persistence',
+          stats: {},
+        },
+      }),
+    })
+  })
+
   await page.goto(`${GATEWAY}/p/workflows/runs/run-studio-diagnostic`)
   const logsLink = page.getByRole('link', { name: 'Inspect run logs', exact: true })
   await expect(logsLink).toBeVisible()
-  await expect(logsLink).toHaveAttribute('href', `/observability/logs?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic`)
-  const logsRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/stream')))
+  await expect(logsLink).toHaveAttribute('href', `/observability/logs?projectId=${encodeURIComponent(projectId!)}&runId=run-studio-diagnostic`)
+  const streamRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/stream')))
   await logsLink.click()
-  await expect(page).toHaveURL(new RegExp(`/observability/logs\\?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic$`))
-  expect((await logsRequest).url()).toContain('executionId=run-studio-diagnostic')
+  await expect(page).toHaveURL(new RegExp(`/observability/logs\\?projectId=${encodeURIComponent(projectId!)}&runId=run-studio-diagnostic$`))
+  expect((await streamRequest).url()).toContain('runId=run-studio-diagnostic')
+  const historyRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs?')))
+  await page.getByText('History', { exact: true }).click()
+  const historyUrl = new URL((await historyRequest).url())
+  expect(historyUrl.pathname).toContain(projectServicePath(projectId!, 'rest', 'logs'))
+  expect(historyUrl.searchParams.get('runId')).toBe('run-studio-diagnostic')
+  await expect(page.getByText('Historical Logs', { exact: true })).toBeVisible()
+  await expect(page.getByText('RUN_LOG_MARKER', { exact: true })).toBeVisible()
 })
 
 test('S-122.5: unavailable observability logs name the source and doctor command', async ({ page }) => {

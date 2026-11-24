@@ -392,6 +392,41 @@ describe('HybridLogReader', () => {
       expect(userCallback).toHaveBeenCalledTimes(1); // Still 1
     });
 
+    // case: S-122.3
+    it('should require both workflow run and step execution IDs to match', () => {
+      let publish: ((log: LogRecord) => void) | undefined;
+      const mockBuffer: Partial<ILogBuffer> = {
+        subscribe: vi.fn().mockImplementation((callback) => {
+          publish = callback;
+          return vi.fn();
+        }),
+        query: vi.fn(),
+        getStats: vi.fn(),
+        append: vi.fn(),
+      };
+      const service = new HybridLogReader(undefined, mockBuffer as ILogBuffer);
+      const runFilters = {
+        runId: 'run-1',
+        executionId: 'exec-1',
+      } as Parameters<typeof service.subscribe>[1];
+      const userCallback = vi.fn();
+      service.subscribe(userCallback, runFilters);
+
+      const matchingLog = createMockLog('matching', 'info', 'matching');
+      matchingLog.fields = { runId: 'run-1', executionId: 'exec-1' };
+      const otherExecution = createMockLog('other-execution', 'info', 'other execution');
+      otherExecution.fields = { runId: 'run-1', executionId: 'exec-2' };
+      const otherRun = createMockLog('other-run', 'info', 'other run');
+      otherRun.fields = { runId: 'run-2', executionId: 'exec-1' };
+
+      publish!(matchingLog);
+      publish!(otherExecution);
+      publish!(otherRun);
+
+      expect(userCallback).toHaveBeenCalledTimes(1);
+      expect(userCallback).toHaveBeenCalledWith(matchingLog);
+    });
+
     it('should throw error when buffer unavailable', () => {
       const service = new HybridLogReader(undefined, undefined);
 

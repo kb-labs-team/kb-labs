@@ -183,6 +183,45 @@ describe("LogRingBufferAdapter", () => {
       expect(logs.every((log) => log.source === "test")).toBe(true);
       expect(logs.every((log) => log.timestamp >= now - 3500)).toBe(true);
     });
+
+    // case: S-122.3
+    it("should filter by workflow run and step execution before applying the limit", () => {
+      const scopedBuffer = new LogRingBufferAdapter({ maxSize: 5, ttl: 60_000 });
+      const timestamp = Date.now();
+      scopedBuffer.append({
+        id: "matching-run-and-execution",
+        timestamp: timestamp - 3000,
+        level: "info",
+        message: "matching workflow log",
+        fields: { runId: "run-1", executionId: "exec-1" },
+        source: "workflow",
+      });
+      scopedBuffer.append({
+        id: "same-run-other-execution",
+        timestamp: timestamp - 2000,
+        level: "info",
+        message: "other step",
+        fields: { runId: "run-1", executionId: "exec-2" },
+        source: "workflow",
+      });
+      scopedBuffer.append({
+        id: "other-run-same-execution",
+        timestamp: timestamp - 1000,
+        level: "info",
+        message: "other run",
+        fields: { runId: "run-2", executionId: "exec-1" },
+        source: "workflow",
+      });
+
+      const runFilters = {
+        runId: "run-1",
+        executionId: "exec-1",
+        limit: 1,
+      } as Parameters<typeof scopedBuffer.query>[0];
+      const logs = scopedBuffer.query(runFilters);
+
+      expect(logs.map((log) => log.id)).toEqual(["matching-run-and-execution"]);
+    });
   });
 
   describe("subscribe", () => {
