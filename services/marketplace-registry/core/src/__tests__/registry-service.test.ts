@@ -1107,6 +1107,35 @@ describe('RegistryService.listPublicPackages', () => {
     ]));
   });
 
+  it('searches catalog packages by canonical identity', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'identity-search', identity: '@kb-labs/adapters-cache' }),
+      primaryKind: 'adapter',
+    }, 'adapter-author', 'ns-adapter');
+
+    await expect(svc.searchPackages('@KB-LABS/ADAPTERS-CACHE')).resolves.toEqual([
+      expect.objectContaining({ identity: '@kb-labs/adapters-cache', primaryKind: 'adapter' }),
+    ]);
+  });
+
+  it('excludes yanked versions from the public package detail projection', async () => {
+    const svc = makeService();
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'yanked-detail', version: '1.0.0' }), visibility: 'public',
+    }, 'detail-author', 'ns-detail');
+    await svc.publish(SMALL_TARBALL, {
+      ...makePkg({ name: 'yanked-detail', version: '2.0.0' }), visibility: 'public',
+    }, 'detail-author', 'ns-detail');
+    await svc.yank('detail-author', 'yanked-detail', '2.0.0');
+
+    const entry = await svc.getEntry('detail-author', 'yanked-detail');
+    expect(entry).not.toBeNull();
+    expect(svc.getVisibleEntry(entry!, null)).toMatchObject({
+      versions: [{ version: '1.0.0' }],
+    });
+  });
+
   it('ignores and invalidates the legacy warm catalog index cache key', async () => {
     const cache = createMemoryCache();
     const svc = new RegistryService({

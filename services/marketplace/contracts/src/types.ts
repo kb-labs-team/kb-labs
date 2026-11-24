@@ -85,6 +85,8 @@ export interface PackageSource {
   /** Commit or restore the package-manager mutation after Marketplace validation and lock updates. */
   commitInstall(packageId: string, root: string): Promise<void>;
   rollbackInstall(packageId: string, root: string): Promise<void>;
+  /** Promote a staged verified package after Marketplace metadata validation. */
+  activateInstall?(packageId: string, root: string): Promise<string>;
 
   /** Remove a package from the workspace */
   remove(packageId: string, root: string): Promise<void>;
@@ -104,12 +106,21 @@ export type MarketplaceSourceResolution = MarketplaceIdentityResolution;
 
 export interface MarketplaceSource extends PackageSource {
   kind: MarketplaceSourceKind;
+  /** Configured Registry base URL, used to bind catalog picks to installs. */
+  registrySourceUrl?: string;
   /** npm registry used for project-scope package dependency resolution. */
   dependencyRegistryUrl?: string;
   /** Public verification key resolved from this Registry source's config. */
   verificationKey?: string;
   resolveIdentity(identity: string): Promise<MarketplaceSourceResolution>;
   withShareToken?(token: string): MarketplaceSource;
+}
+
+/** Read-only public Registry catalog client composed by the Marketplace app. */
+export interface MarketplaceRegistryCatalog {
+  registryUrl: string;
+  listPackages(query?: string): Promise<unknown[]>;
+  getPackage(handle: string, name: string): Promise<unknown | null>;
 }
 
 // ---------------------------------------------------------------------------

@@ -177,6 +177,98 @@ describe('Marketplace API error boundary', () => {
     expect(installAdapter).toHaveBeenLastCalledWith('@kb-labs/test-adapter');
   });
 
+  // case: S-321.1
+  it('exposes public Registry catalog data and trusted install availability without leaking keys', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-catalog-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    vi.spyOn(service, 'registryCatalogStatus').mockReturnValue({ trustedInstallAvailable: false });
+    vi.spyOn(service, 'listRegistryCatalogPackages').mockResolvedValue([{
+      handle: 'adapter-author', name: 'cache', fullName: 'adapter-author/cache',
+      identity: '@kb-labs/adapters-cache', version: '1.2.0', primaryKind: 'adapter',
+    }]);
+    vi.spyOn(service, 'getRegistryCatalogPackage').mockResolvedValue({
+      authorHandle: 'adapter-author', name: 'cache', meta: { identity: '@kb-labs/adapters-cache' },
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const status = await server.inject({ method: 'GET', url: '/api/v1/marketplace/registry/catalog/status' });
+    const packages = await server.inject({ method: 'GET', url: '/api/v1/marketplace/registry/catalog/packages?q=cache' });
+    const detail = await server.inject({ method: 'GET', url: '/api/v1/marketplace/registry/catalog/packages/adapter-author/cache' });
+
+    expect(status.statusCode).toBe(200);
+    expect(status.json()).toEqual({ trustedInstallAvailable: false });
+    expect(packages.statusCode).toBe(200);
+    expect(packages.json()[0]).toMatchObject({ identity: '@kb-labs/adapters-cache', primaryKind: 'adapter' });
+    expect(service.listRegistryCatalogPackages).toHaveBeenCalledWith('cache');
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ meta: { identity: '@kb-labs/adapters-cache' } });
+  });
+
+  it('routes Registry-only plugin installs through the project scope', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-registry-plugin-route-'));
+    roots.push(root);
+    const projectRoot = path.join(root, 'project');
+    await mkdir(projectRoot);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    const installRegistryPlugin = vi.spyOn(service, 'installRegistryPlugin').mockResolvedValue({
+      installed: [{ id: '@kb-labs/plugin', version: '1.0.0', primaryKind: 'plugin', provides: ['plugin'], packageRoot: '/project/plugin', scope: 'project', source: 'registry', signatureStatus: 'verified' }],
+      warnings: [], scope: 'project',
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/registry/install',
+      payload: { spec: '@kb-labs/plugin@1.0.0', scope: 'project', projectRoot },
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect(response.json()).toMatchObject({ scope: 'project', installed: [{ primaryKind: 'plugin' }] });
+    expect(installRegistryPlugin).toHaveBeenCalledWith({ scope: 'project', projectRoot }, '@kb-labs/plugin@1.0.0');
+  });
+
+  it('requires platform settings permission for update and keeps project installs unaffected', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'marketplace-update-auth-'));
+    roots.push(root);
+    const { logger } = makeContextLogger();
+    const service = makeMarketplaceService({
+      platformRoot: root,
+      logger,
+      source: createFailingSource(new Error('unused'), true),
+    });
+    const update = vi.spyOn(service, 'update').mockResolvedValue({ installed: [], warnings: [], scope: 'platform' });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+    const member: AuthContext = { ...TEST_PLATFORM_ADMIN, permissions: [] };
+
+    const denied = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/update',
+      headers: forwardedIdentityHeaders(member, TEST_GATEWAY_SECRET),
+      payload: { scope: 'platform' },
+    });
+    expect(denied.statusCode).toBe(403);
+    expect(update).not.toHaveBeenCalled();
+
+    const allowed = await injectAsPlatformAdmin(server, {
+      method: 'POST', url: '/api/v1/marketplace/packages/update',
+      payload: { scope: 'platform' },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(update).toHaveBeenCalledWith({ scope: 'platform', projectRoot: undefined }, undefined);
+  });
+
   // case: S-051.2
   it('keeps Marketplace plugin-not-found and logs source outcomes', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'marketplace-not-found-'));
