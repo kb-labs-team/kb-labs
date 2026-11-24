@@ -13,6 +13,9 @@ COPY --chown=kb:nodejs .kb/deploy/marketplace-registry-app/dist ./dist
 COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
 COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json /app/.kb/v2/platform-layout.json
 
+# Config-selected adapters must be importable from the production deploy tree.
+RUN node --input-type=module -e "await import('@kb-labs/adapters-fs'); await import('@kb-labs/adapters-state-broker')"
+
 # The release composition declares cloud topology; deployment-specific config
 # may be layered at runtime.
 COPY --chown=kb:nodejs services/marketplace-registry/app/docker-entrypoint.sh /app/docker-entrypoint.sh
