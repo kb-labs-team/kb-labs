@@ -21,6 +21,7 @@
     "lint:fix": "eslint src --ext .ts --fix",
     "start": "node dist/bootstrap.js",
     "test": "vitest run --passWithNoTests -c ../../vitest.config.ts",
+    "test:deployment-topology": "node ../../../ops/marketplace-registry/test-deployment-topology.mjs",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
