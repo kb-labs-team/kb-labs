@@ -7,7 +7,9 @@ import { withFileLock } from '../file-lock.js'
 let root: string
 
 afterEach(() => {
-  if (root) rmSync(root, { recursive: true, force: true })
+  if (root) {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 describe('withFileLock live owner preservation', () => {
