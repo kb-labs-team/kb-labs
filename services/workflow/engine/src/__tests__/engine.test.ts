@@ -193,7 +193,8 @@ describe('WorkflowEngine', () => {
       await engine.markStepCompleted(run.id, job.id, step.id, { message: 'persisted-after-restart' });
       await engine.markJobCompleted(run.id, job.id);
 
-      const stored = await storage.read(`workflows/${run.id}.json`);
+      const projectKey = Buffer.from('prj_0000000000000001', 'utf8').toString('hex');
+      const stored = await storage.read(`workflow/projects/project-${projectKey}/runs/${run.id}.json`);
       expect(stored).not.toBeNull();
       expect(JSON.parse(stored!.toString('utf8'))).toMatchObject({
         id: run.id, status: 'success',

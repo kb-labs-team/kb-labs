@@ -8,6 +8,7 @@ import {
 } from '@kb-labs/workflow-constants'
 import type { EngineLogger } from './types'
 import { withLock } from './lock'
+import { requireWorkflowProjectId } from './project-scoped-cache.js'
 
 /**
  * How long a daemon's liveness claim on this shared state store stays valid
@@ -46,18 +47,22 @@ export interface ActiveWorkflowWork {
 export class StateStore {
   private readonly cache: ICache
   private readonly storage: IStorage
+  private readonly projectRunPrefix: string
 
   constructor(
     cache: ICache,
     storage: IStorage,
     private readonly logger: EngineLogger,
+    projectId: string,
   ) {
     this.cache = cache
     this.storage = storage
+    const projectKey = Buffer.from(requireWorkflowProjectId(projectId), 'utf8').toString('hex')
+    this.projectRunPrefix = `workflow/projects/project-${projectKey}/runs/`
   }
 
   async saveRun(run: WorkflowRun): Promise<void> {
-    const path = runRecordPath(run.id)
+    const path = runRecordPath(this.projectRunPrefix, run.id)
     this.logger.debug('Persisting workflow run', { runId: run.id, path })
     await this.storage.write(path, Buffer.from(JSON.stringify(run), 'utf8'))
     try {
@@ -71,7 +76,7 @@ export class StateStore {
   }
 
   async getRun(runId: string): Promise<WorkflowRun | null> {
-    const payload = await this.storage.read(runRecordPath(runId))
+    const payload = await this.storage.read(runRecordPath(this.projectRunPrefix, runId))
     if (!payload) {
       return null
     }
@@ -92,7 +97,7 @@ export class StateStore {
   }
 
   async deleteRun(runId: string): Promise<void> {
-    await this.storage.delete(runRecordPath(runId))
+    await this.storage.delete(runRecordPath(this.projectRunPrefix, runId))
     try {
       await this.cache.zrem('workflow:runs:index', runId)
     } catch (error) {
@@ -104,9 +109,10 @@ export class StateStore {
   }
 
   async getAllRunIds(): Promise<string[]> {
-    const paths = await this.storage.list('workflows/')
+    const paths = await this.storage.list(this.projectRunPrefix)
     const ids = paths.flatMap((path) => {
-      const match = /^workflows\/([^/]+)\.json$/.exec(path)
+      const scopedPath = path.startsWith(this.projectRunPrefix) ? path.slice(this.projectRunPrefix.length) : ''
+      const match = /^([^/]+)\.json$/.exec(scopedPath)
       return match?.[1] ? [match[1]] : []
     })
     let indexed: string[] = []
@@ -122,16 +128,15 @@ export class StateStore {
     }
 
     const records = await Promise.all(paths.flatMap((path) => {
-      const match = /^workflows\/([^/]+)\.json$/.exec(path)
+      const scopedPath = path.startsWith(this.projectRunPrefix) ? path.slice(this.projectRunPrefix.length) : ''
+      const match = /^([^/]+)\.json$/.exec(scopedPath)
       if (!match?.[1]) { return [] }
       return [this.storage.read(path).then((payload) => {
         if (!payload) { return null }
         try {
           const run: unknown = JSON.parse(payload.toString('utf8'))
-          // The platform core runtime has a separate workflow engine and may
-          // use the shared `workflows/` prefix for its own run representation.
-          // Only records with the daemon engine's jobs array belong in this
-          // state store's history index.
+          // Other workflow engines may use the same adapter with a different record shape.
+          // Only daemon records with a jobs array belong in this history index.
           if (run && typeof run === 'object' && !Array.isArray(run) && !('jobs' in run)) {
             return null
           }
@@ -416,11 +421,11 @@ export class StateStore {
   }
 }
 
-function runRecordPath(runId: string): string {
+function runRecordPath(projectRunPrefix: string, runId: string): string {
   if (!runId || runId.includes('/') || runId.includes('\\') || runId === '.' || runId === '..') {
     throw new Error(`Invalid workflow run ID: ${runId}`)
   }
-  return `workflows/${runId}.json`
+  return `${projectRunPrefix}${runId}.json`
 }
 
 function clone<T>(value: T): T {
