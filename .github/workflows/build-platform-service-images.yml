@@ -1,0 +1,112 @@
+name: Build platform service images
+
+# Build the gateway, state daemon, and marketplace registry from verify branch
+# commits. The immutable image tag is the exact source commit SHA. This workflow
+# publishes images to GHCR but never deploys them to a server.
+on:
+  push:
+    branches:
+      - 'verify/registry-images-*'
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: build-platform-service-images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare production trees (${{ github.sha }})
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.revision.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.8'
+
+      - name: Record immutable source tag
+        id: revision
+        run: echo "image_tag=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build kb-devkit
+        run: make build -C tools/kb-devkit
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Prepare production dependency trees
+        run: |
+          set -euo pipefail
+          pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon
+          pnpm deploy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app
+          pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
+          node tools/release/generate-platform-image-default.mjs
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: platform-service-image-inputs
+          path: .kb/deploy/
+          include-hidden-files: true
+          retention-days: 1
+
+  images:
+    name: Build and publish ${{ matrix.image }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: kb-state-daemon
+            dockerfile: services/state/daemon/Dockerfile
+          - image: kb-gateway
+            dockerfile: services/gateway/app/Dockerfile
+          - image: kb-marketplace-registry
+            dockerfile: services/marketplace-registry/app/Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: platform-service-image-inputs
+          path: .kb/deploy/
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push immutable image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ghcr.io/kb-labs-team/${{ matrix.image }}:${{ needs.prepare.outputs.image_tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.prepare.outputs.image_tag }}
