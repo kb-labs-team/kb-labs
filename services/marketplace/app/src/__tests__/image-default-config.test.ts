@@ -70,7 +70,10 @@ describe("Marketplace image default config", () => {
     });
     expect(mocks.MarketplaceService).toHaveBeenCalledWith(expect.objectContaining({
       sources: [expect.objectContaining({ options: { registryUrl: "https://registry.npmjs.org" } })],
-      registryCatalogSource: expect.objectContaining({ options: generatedConfig.marketplace.catalogRegistry }),
+      registryCatalogSource: expect.objectContaining({ options: {
+        registryUrl: generatedConfig.marketplace.catalogRegistry?.url,
+        signingPublicKey: generatedConfig.marketplace.catalogRegistry?.signingPublicKey,
+      } }),
       registryCatalog: expect.objectContaining({ registryUrl: generatedConfig.marketplace.catalogRegistry?.url }),
     }));
   });
