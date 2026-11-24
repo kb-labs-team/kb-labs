@@ -32,6 +32,7 @@ type TestServiceOptions = Omit<MarketplaceServiceOptions, 'logger' | 'sources' |
   registrySource?: PackageSource;
   catalogRegistrySource?: PackageSource;
   catalogRegistryUrl?: string;
+  catalogRegistryResolution?: MarketplaceSource['resolveIdentity'];
   resolveSelectedAdapterSlot?: MarketplaceServiceOptions['resolveSelectedAdapterSlot'];
 };
 
@@ -65,6 +66,9 @@ function makeMarketplaceService(options: TestServiceOptions): MarketplaceService
   const catalogRegistrySource = options.catalogRegistrySource
     ? asMarketplaceSource(options.catalogRegistrySource, 'registry')
     : undefined;
+  if (catalogRegistrySource && options.catalogRegistryResolution) {
+    catalogRegistrySource.resolveIdentity = options.catalogRegistryResolution;
+  }
   if (catalogRegistrySource && options.catalogRegistryUrl) {
     catalogRegistrySource.registrySourceUrl = options.catalogRegistryUrl;
   }
@@ -309,6 +313,32 @@ describe('MarketplaceService', () => {
     expect(npmSource.resolve).not.toHaveBeenCalled();
     expect(await fs.readFile(path.join(projectRoot, '.kb', 'marketplace.lock'), 'utf8')).toBe(lockBeforeUpdate);
     expect(await fs.readFile(path.join(packageDir.dir, 'package.json'), 'utf8')).toBe(packageBeforeUpdate);
+  });
+
+  // case: S-323.2
+  it('does not fall back to generic npm when the trusted catalog has no matching package', async () => {
+    const projectRoot = path.join(tmpDir, 'empty-catalog-project');
+    await fs.mkdir(path.join(projectRoot, '.kb'), { recursive: true });
+    const registrySource: PackageSource = {
+      resolve: vi.fn(async () => { throw new Error('resolve should use resolveIdentity'); }),
+      install: vi.fn(async () => { throw new Error('not found packages cannot be installed'); }),
+      async remove() {}, async commitInstall() {}, async rollbackInstall() {},
+    };
+    const registryResolve = vi.fn(async () => ({ status: 'not-found-unowned' as const }));
+    const npmSource = createMockSource(new Map());
+    const service = makeMarketplaceService({
+      platformRoot: tmpDir,
+      projectRoot,
+      sources: [asMarketplaceSource(npmSource, 'npm')],
+      catalogRegistrySource: registrySource,
+      catalogRegistryUrl: 'https://production-registry.example/api/v1/marketplace-registry',
+      catalogRegistryResolution: registryResolve,
+    });
+
+    await expect(service.installRegistryPlugin({ scope: 'project', projectRoot }, '@kb-labs/missing'))
+      .rejects.toMatchObject({ envelope: { code: 'KB_PLUGIN_NOT_FOUND' } });
+    expect(registryResolve).toHaveBeenCalledWith('@kb-labs/missing');
+    expect(npmSource.resolve).not.toHaveBeenCalled();
   });
 
   describe('install', () => {

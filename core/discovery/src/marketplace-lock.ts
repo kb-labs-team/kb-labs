@@ -131,6 +131,7 @@ export async function writeMarketplaceLock(
             ...(entry.primaryKind ? { primaryKind: entry.primaryKind } : {}),
             ...(entry.provides ? { provides: entry.provides } : {}),
             marketplaceSource: entry.marketplaceSource,
+            ...(entry.marketplaceSourceUrl ? { marketplaceSourceUrl: entry.marketplaceSourceUrl } : {}),
             signatureStatus: entry.signatureStatus,
             ...(entry.signature ? { signature: entry.signature } : {}),
             ...(entry.trust ? { trust: entry.trust } : {}),
@@ -143,7 +144,11 @@ export async function writeMarketplaceLock(
         resolvedPath: entry.resolvedPath,
         enabled: entry.enabled ?? true,
         source: entry.source,
-        ...(entry.source === 'marketplace' ? { marketplaceSource: entry.marketplaceSource, signatureStatus: entry.signatureStatus } : {}),
+        ...(entry.source === 'marketplace' ? {
+          marketplaceSource: entry.marketplaceSource,
+          ...(entry.marketplaceSourceUrl ? { marketplaceSourceUrl: entry.marketplaceSourceUrl } : {}),
+          signatureStatus: entry.signatureStatus,
+        } : {}),
       }]))
     } : {})
   };
@@ -194,6 +199,7 @@ export async function addToMarketplaceLock(
       resolvedPath: entry.resolvedPath,
       enabled: existingEntry?.enabled ?? entry.enabled ?? true,
       marketplaceSource: entry.marketplaceSource,
+      ...(entry.marketplaceSourceUrl ? { marketplaceSourceUrl: entry.marketplaceSourceUrl } : {}),
       signatureStatus: entry.signatureStatus,
     } : {
       source: 'platform', version: entry.version, integrity: entry.integrity,
@@ -251,7 +257,7 @@ export function createMarketplaceEntry(opts: {
   signature?: EntitySignature;
   trust?: 'trusted' | 'untrusted';
 } & (
-  | { source: 'marketplace'; package: string; resolvedPath?: string; marketplaceSource: 'registry' | 'npm'; signatureStatus: 'verified' | 'unsigned' }
+  | { source: 'marketplace'; package: string; resolvedPath?: string; marketplaceSource: 'registry' | 'npm'; marketplaceSourceUrl?: string; signatureStatus: 'verified' | 'unsigned' }
   | { source: 'platform'; package: string; resolvedPath: string }
   | { source: 'local'; package?: never; resolvedPath: string }
 )): MarketplaceEntry {
@@ -266,7 +272,17 @@ export function createMarketplaceEntry(opts: {
     return { ...metadata, source: 'local', version: opts.version, integrity: opts.integrity, link: toUserOwnedLinkPath(opts.resolvedPath) };
   }
   if (opts.source === 'marketplace') {
-    return { ...metadata, source: 'marketplace', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: opts.resolvedPath === undefined ? undefined : toInstallOwnedRelativePath(opts.resolvedPath), marketplaceSource: opts.marketplaceSource, signatureStatus: opts.signatureStatus };
+    return {
+      ...metadata,
+      source: 'marketplace',
+      version: opts.version,
+      integrity: opts.integrity,
+      package: opts.package,
+      resolvedPath: opts.resolvedPath === undefined ? undefined : toInstallOwnedRelativePath(opts.resolvedPath),
+      marketplaceSource: opts.marketplaceSource,
+      ...(opts.marketplaceSourceUrl ? { marketplaceSourceUrl: opts.marketplaceSourceUrl } : {}),
+      signatureStatus: opts.signatureStatus,
+    };
   }
   return { ...metadata, source: 'platform', version: opts.version, integrity: opts.integrity, package: opts.package, resolvedPath: toInstallOwnedRelativePath(opts.resolvedPath) };
 }
@@ -359,10 +375,12 @@ function pluginEntryError(id: string, raw: unknown, scope: MarketplaceLockScope)
   if (!['marketplace', 'local', 'platform'].includes(String(entry.source))) {return invalidLock('source must be marketplace, local, or platform');}
   if (entry.source === 'marketplace' && entry.marketplaceSource === undefined) {return missingProvenance('marketplaceSource is required');}
   if (entry.source === 'marketplace' && !['registry', 'npm'].includes(String(entry.marketplaceSource))) {return invalidLock('marketplaceSource must be registry or npm');}
+  if (entry.marketplaceSourceUrl !== undefined && entry.marketplaceSource !== 'registry') {return invalidLock('marketplaceSourceUrl is only valid for Registry entries');}
+  if (entry.marketplaceSourceUrl !== undefined && !validRegistrySourceUrl(entry.marketplaceSourceUrl)) {return invalidLock('marketplaceSourceUrl must be an absolute HTTP or HTTPS URL');}
   if (entry.source === 'marketplace' && entry.signatureStatus === undefined) {return missingProvenance('signatureStatus is required');}
   if (entry.source === 'marketplace' && !['verified', 'unsigned'].includes(String(entry.signatureStatus))) {return invalidLock('signatureStatus must be verified or unsigned');}
   if (scope === 'project' && !['marketplace', 'local'].includes(String(entry.source))) {return invalidLock('source must be marketplace or local in project locks');}
-  const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source', 'marketplaceSource', 'signatureStatus', 'signature', 'trust', 'primaryKind', 'provides']
+  const allowed = entry.source === 'marketplace' ? ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source', 'marketplaceSource', 'marketplaceSourceUrl', 'signatureStatus', 'signature', 'trust', 'primaryKind', 'provides']
     : entry.source === 'local' ? ['link', 'enabled', 'source']
       : ['version', 'integrity', 'package', 'resolvedPath', 'enabled', 'source'];
   const unknownKey = Object.keys(entry).find((key) => !allowed.includes(key));
@@ -383,13 +401,15 @@ function adapterEntryError(id: string, raw: unknown): LockValidationFailure | un
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {return invalidLock('entry must be an object');}
   const entry = raw as Record<string, unknown>;
   const allowed = entry.source === 'marketplace'
-    ? ['version', 'integrity', 'resolvedPath', 'enabled', 'source', 'marketplaceSource', 'signatureStatus']
+    ? ['version', 'integrity', 'resolvedPath', 'enabled', 'source', 'marketplaceSource', 'marketplaceSourceUrl', 'signatureStatus']
     : ['version', 'integrity', 'resolvedPath', 'enabled', 'source'];
   const unknownKey = Object.keys(entry).find((key) => !allowed.includes(key));
   if (unknownKey) {return invalidLock(`field "${unknownKey}" is not allowed for adapter entries`);}
   if (!['platform', 'marketplace'].includes(String(entry.source))) {return invalidLock('source must be platform or marketplace');}
   if (entry.source === 'marketplace' && entry.marketplaceSource === undefined) {return missingProvenance('marketplaceSource is required');}
   if (entry.source === 'marketplace' && !['registry', 'npm'].includes(String(entry.marketplaceSource))) {return invalidLock('marketplaceSource must be registry or npm');}
+  if (entry.marketplaceSourceUrl !== undefined && entry.marketplaceSource !== 'registry') {return invalidLock('marketplaceSourceUrl is only valid for Registry entries');}
+  if (entry.marketplaceSourceUrl !== undefined && !validRegistrySourceUrl(entry.marketplaceSourceUrl)) {return invalidLock('marketplaceSourceUrl must be an absolute HTTP or HTTPS URL');}
   if (entry.source === 'marketplace' && entry.signatureStatus === undefined) {return missingProvenance('signatureStatus is required');}
   if (entry.source === 'marketplace' && !['verified', 'unsigned'].includes(String(entry.signatureStatus))) {return invalidLock('signatureStatus must be verified or unsigned');}
   if (typeof entry.version !== 'string') {return invalidLock('version must be a string');}
@@ -433,6 +453,16 @@ function toUserOwnedLinkPath(value: string): UserOwnedLinkPath {
 
 function validIntegrity(value: unknown): value is string {
   return typeof value === 'string' && /^sha(256|512)-[A-Za-z0-9+/=]+$/.test(value);
+}
+
+function validRegistrySourceUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) {return false;}
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password;
+  } catch {
+    return false;
+  }
 }
 
 const VALID_PACKAGE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;

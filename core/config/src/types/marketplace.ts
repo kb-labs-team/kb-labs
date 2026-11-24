@@ -15,6 +15,12 @@ export type MarketplaceSourcesConfig =
   | readonly [RegistryMarketplaceSourceConfig, NpmMarketplaceSourceConfig?]
   | readonly [NpmMarketplaceSourceConfig];
 
+/** Registry catalog endpoint and verification key, independent of package resolution order. */
+export interface MarketplaceCatalogRegistryConfig {
+  url: string;
+  signingPublicKey: string;
+}
+
 /** Runtime schema for the source shape written by kb-create. */
 const RegistryMarketplaceSourceSchema = {
   type: 'object',
@@ -41,6 +47,15 @@ const NpmMarketplaceSourceSchema = {
 export const MarketplaceConfigSchema = {
   type: 'object',
   properties: {
+    catalogRegistry: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', format: 'uri' },
+        signingPublicKey: { type: 'string', minLength: 1 },
+      },
+      required: ['url', 'signingPublicKey'],
+      additionalProperties: false,
+    },
     sources: {
       oneOf: [
         {

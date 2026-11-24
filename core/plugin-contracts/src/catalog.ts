@@ -205,7 +205,7 @@ interface MarketplaceEntryMetadata {
 export type MarketplaceEntry = MarketplaceEntryMetadata & (
   | {
       source: 'marketplace'; version: string; integrity: string; package: string;
-      resolvedPath?: InstallOwnedRelativePath; marketplaceSource: 'registry' | 'npm';
+      resolvedPath?: InstallOwnedRelativePath; marketplaceSource: 'registry' | 'npm'; marketplaceSourceUrl?: string;
       signatureStatus: 'verified' | 'unsigned'; link?: never;
     }
   | { source: 'platform'; version: string; integrity: string; package: string; resolvedPath: InstallOwnedRelativePath; link?: never }
@@ -214,7 +214,7 @@ export type MarketplaceEntry = MarketplaceEntryMetadata & (
 
 export type MarketplaceAdapterEntry =
   | { source: 'platform'; version: string; integrity: string; resolvedPath: InstallOwnedRelativePath; enabled: boolean }
-  | { source: 'marketplace'; version: string; integrity: string; resolvedPath: InstallOwnedRelativePath; enabled: boolean; marketplaceSource: 'registry' | 'npm'; signatureStatus: 'verified' | 'unsigned' };
+  | { source: 'marketplace'; version: string; integrity: string; resolvedPath: InstallOwnedRelativePath; enabled: boolean; marketplaceSource: 'registry' | 'npm'; marketplaceSourceUrl?: string; signatureStatus: 'verified' | 'unsigned' };
 export type MarketplaceLockEntry = MarketplaceEntry | MarketplaceAdapterEntry;
 
 export interface MarketplaceResolvedIdentity {
