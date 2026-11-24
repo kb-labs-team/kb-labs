@@ -2671,7 +2671,9 @@
         "clickUpCode",
         "clickUpStatus",
         "command",
-        "inboxCode"
+        "inboxCode",
+        "route",
+        "upstreamStatus"
       ],
       "runtimeTemplateParameters": {
         "binary": "required"

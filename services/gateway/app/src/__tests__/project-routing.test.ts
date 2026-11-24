@@ -517,4 +517,43 @@ describe("registerProjectRoutes", () => {
       },
     });
   });
+
+  // case: S-022.5
+  it("wraps an unstructured workflow 500 as a catalogued command failure", async () => {
+    await setup(() => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${(upstream!.address() as { port: number }).port}`,
+        pathPrefix: "",
+        headers: {},
+        release: () => undefined,
+      }),
+    }), { statusCode: 500, body: "UPSTREAM_PRIVATE_FAILURE", contentType: "text/plain" }, [
+      { serviceId: "workflow", rewritePrefix: "/api/v1", healthCheck: "/health" },
+    ]);
+
+    const response = await app!.inject({
+      method: "POST",
+      url: "/api/v1/projects/prj_a/workflow/workflows/graph-view-demo/runs?access_token=UPSTREAM_PRIVATE_QUERY",
+      payload: {},
+    });
+
+    const body = response.json();
+    expect(response.statusCode).toBe(500);
+    expect(body).toMatchObject({
+      ok: false,
+      error: {
+        code: "KB_RUNTIME_COMMAND_FAILED",
+        details: {
+          route: "POST /api/v1/workflows/graph-view-demo/runs",
+          upstreamStatus: "500",
+        },
+        correlationId: expect.any(String),
+      },
+    });
+    expect(body.error.message).toEqual(expect.any(String));
+    expect(body.error.hint).toEqual(expect.any(String));
+    expect(response.body).not.toContain("UPSTREAM_PRIVATE_FAILURE");
+    expect(response.body).not.toContain("UPSTREAM_PRIVATE_QUERY");
+    expect(response.body).not.toContain("KB_RUNTIME_DIAGNOSTIC_CONTRACT_VIOLATION");
+  });
 });
