@@ -265,7 +265,7 @@ test('S-122.5: unavailable observability logs name the source and doctor command
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'unavailable' }) })
   })
 
-  await page.goto(`${GATEWAY}/observability/logs?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic`)
+  await page.goto(`${GATEWAY}/observability/logs?projectId=${encodeURIComponent(projectId!)}&runId=run-studio-diagnostic`)
   await page.getByText('History', { exact: true }).click()
   await expect(page.getByText('Observability logs unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('Source: REST API observability logs.', { exact: false })).toBeVisible()

@@ -405,12 +405,8 @@ describe('HybridLogReader', () => {
         append: vi.fn(),
       };
       const service = new HybridLogReader(undefined, mockBuffer as ILogBuffer);
-      const runFilters = {
-        runId: 'run-1',
-        executionId: 'exec-1',
-      } as Parameters<typeof service.subscribe>[1];
       const userCallback = vi.fn();
-      service.subscribe(userCallback, runFilters);
+      service.subscribe(userCallback, { runId: 'run-1', executionId: 'exec-1' });
 
       const matchingLog = createMockLog('matching', 'info', 'matching');
       matchingLog.fields = { runId: 'run-1', executionId: 'exec-1' };

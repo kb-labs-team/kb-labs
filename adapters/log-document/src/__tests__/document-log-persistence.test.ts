@@ -193,11 +193,10 @@ describe('DocumentLogPersistence (sqlite-backed)', () => {
     ]);
     await new Promise((resolve) => setTimeout(resolve, 120));
 
-    const runFilters = {
-      runId: 'run-1',
-      executionId: 'exec-1',
-    } as Parameters<typeof persistence.query>[0];
-    const result = await persistence.query(runFilters, { limit: 1, offset: 0 });
+    const result = await persistence.query(
+      { runId: 'run-1', executionId: 'exec-1' },
+      { limit: 1, offset: 0 },
+    );
 
     expect(result.total).toBe(1);
     expect(result.logs.map((log) => log.id)).toEqual(['matching-run-and-execution']);

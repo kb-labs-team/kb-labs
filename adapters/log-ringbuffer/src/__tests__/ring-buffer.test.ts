@@ -213,12 +213,7 @@ describe("LogRingBufferAdapter", () => {
         source: "workflow",
       });
 
-      const runFilters = {
-        runId: "run-1",
-        executionId: "exec-1",
-        limit: 1,
-      } as Parameters<typeof scopedBuffer.query>[0];
-      const logs = scopedBuffer.query(runFilters);
+      const logs = scopedBuffer.query({ runId: "run-1", executionId: "exec-1", limit: 1 });
 
       expect(logs.map((log) => log.id)).toEqual(["matching-run-and-execution"]);
     });
