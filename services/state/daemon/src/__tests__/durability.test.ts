@@ -182,19 +182,7 @@ describe('StateBroker durability', () => {
         }
         waiters.clear();
       });
-      const waitForLine = (line: string) => {
-        if (seen.has(line)) {return Promise.resolve();}
-        return new Promise<void>((resolve, reject) => {
-          const timeout = setTimeout(() => reject(new Error(`timed out waiting for journal worker signal: ${line}`)), 10_000);
-          const waiting = waiters.get(line) ?? [];
-          waiting.push({
-            resolve: () => { clearTimeout(timeout); resolve(); },
-            reject: (error) => { clearTimeout(timeout); reject(error); },
-          });
-          waiters.set(line, waiting);
-          child.once('error', (error) => { clearTimeout(timeout); reject(error); });
-        });
-      };
+      const waitForLine = (line: string) => waitForChildLine(child, seen, waiters, line);
       return { child, stdin, lines, seen, waitForLine };
     };
 
@@ -236,13 +224,133 @@ describe('StateBroker durability', () => {
       await expect(afterReclaim.get('compact-me')).resolves.toBe(999);
       await afterReclaim.stop();
     } finally {
-      const stopChild = async (child: ChildProcess | undefined) => {
-        if (!child || child.exitCode !== null || child.signalCode !== null) {return;}
-        child.kill();
-        await once(child, 'exit');
-      };
-      await Promise.all(children.map(({ child }) => stopChild(child)));
+      await Promise.all(children.map(({ child }) => stopChildIfRunning(child)));
       for (const worker of children) {worker.lines?.close();}
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-280.10
+  it.skipIf(process.platform !== 'linux')('serializes container writers with flock and recovers after a killed owner', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-flock-'));
+    const stateDirectory = path.join(root, 'state-broker');
+    const flockPath = path.join(stateDirectory, 'journal.jsonl.flock');
+    const moduleUrl = new URL('../backends/append-only-journal.ts', import.meta.url).href;
+    const vitestPath = createRequire(import.meta.url).resolve('vitest');
+    const vitePath = createRequire(vitestPath).resolve('vite');
+    const tsxLoader = createRequire(vitePath).resolve('tsx/esm');
+    const childCode = `
+      import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
+      const broker = await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
+      const role = process.env.JOURNAL_ROLE;
+      if (role === 'first') await broker.set('before-crash', 'durable', 60000);
+      process.stdout.write('locked-' + role + '\\n');
+      if (role === 'first') await new Promise((resolve) => process.stdin.once('data', resolve));
+      if (role !== 'first') {
+        const value = await broker.get('before-crash');
+        process.stdout.write('recovered-' + value + '\\n');
+        await broker.set('after-crash', role, 60000);
+      }
+      await broker.stop();
+      process.stdout.write('stopped-' + role + '\\n');
+    `;
+    const startChild = (role: string) => {
+      const child = spawn('/bin/sh', [
+        '-c', 'exec flock --no-fork --exclusive "$1" "$2" --import "$3" --input-type=module -e "$4"',
+        'sh', flockPath, process.execPath, tsxLoader, childCode,
+      ], {
+        env: { ...process.env, JOURNAL_ROOT: root, JOURNAL_ROLE: role },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+      const stdout = child.stdout;
+      const stdin = child.stdin;
+      const stderr = child.stderr;
+      if (!stdout || !stdin || !stderr) {throw new Error('flock worker has no piped stdio');}
+      const lines = createInterface({ input: stdout });
+      const seen = new Set<string>();
+      const waiters = new Map<string, Array<{ resolve(): void; reject(error: Error): void }>>();
+      const stderrChunks: Buffer[] = [];
+      stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+      lines.on('line', (value) => {
+        seen.add(value);
+        for (const waiter of waiters.get(value) ?? []) {waiter.resolve();}
+        waiters.delete(value);
+      });
+      child.on('exit', (code, signal) => {
+        if (code === 0) {return;}
+        const failure = new Error(`flock worker exited (${code ?? signal}): ${Buffer.concat(stderrChunks).toString('utf8')}`);
+        for (const waiting of waiters.values()) {for (const waiter of waiting) {waiter.reject(failure);}}
+        waiters.clear();
+      });
+      const waitForLine = (line: string) => waitForChildLine(child, seen, waiters, line);
+      return { child, stdin, lines, seen, waitForLine };
+    };
+
+    const children: Array<ReturnType<typeof startChild>> = [];
+    try {
+      await mkdir(stateDirectory, { recursive: true });
+      const first = startChild('first');
+      children.push(first);
+      await first.waitForLine('locked-first');
+
+      const second = startChild('second');
+      children.push(second);
+      await new Promise((resolve) => { setTimeout(resolve, 100); });
+      expect(second.seen.has('locked-second')).toBe(false);
+
+      first.child.kill('SIGKILL');
+      await once(first.child, 'exit');
+      await second.waitForLine('locked-second');
+      await second.waitForLine('recovered-durable');
+      await second.waitForLine('stopped-second');
+
+      const recreated = startChild('recreated');
+      children.push(recreated);
+      await recreated.waitForLine('locked-recreated');
+      await recreated.waitForLine('recovered-durable');
+      await recreated.waitForLine('stopped-recreated');
+      await expect(stat(flockPath)).resolves.toBeDefined();
+    } finally {
+      await Promise.all(children.map(({ child }) => stopChildIfRunning(child)));
+      for (const child of children) {child.lines.close();}
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-280.10
+  it.skipIf(process.platform !== 'linux')('fails closed on a legacy lock marker under the kernel lock', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-legacy-lock-'));
+    const stateDirectory = path.join(root, 'state-broker');
+    const flockPath = path.join(stateDirectory, 'journal.jsonl.flock');
+    const legacyPath = path.join(stateDirectory, 'journal.jsonl.lock');
+    const legacyMarker = JSON.stringify({ pid: 1, token: 'legacy-owner' });
+    const moduleUrl = new URL('../backends/append-only-journal.ts', import.meta.url).href;
+    const vitestPath = createRequire(import.meta.url).resolve('vitest');
+    const vitePath = createRequire(vitestPath).resolve('vite');
+    const tsxLoader = createRequire(vitePath).resolve('tsx/esm');
+    const childCode = `
+      import { AppendOnlyJournalStateBroker } from ${JSON.stringify(moduleUrl)};
+      await AppendOnlyJournalStateBroker.open(process.env.JOURNAL_ROOT);
+    `;
+    try {
+      await mkdir(stateDirectory, { recursive: true });
+      await writeFile(legacyPath, legacyMarker, 'utf8');
+      const child = spawn('/bin/sh', [
+        '-c', 'exec flock --no-fork --exclusive "$1" "$2" --import "$3" --input-type=module -e "$4"',
+        'sh', flockPath, process.execPath, tsxLoader, childCode,
+      ], {
+        env: { ...process.env, JOURNAL_ROOT: root },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      const stderr = child.stderr;
+      if (!stderr) {throw new Error('flock worker has no stderr pipe');}
+      const errors: Buffer[] = [];
+      stderr.on('data', (chunk: Buffer) => errors.push(chunk));
+      const [code] = await once(child, 'exit') as [number | null];
+      expect(code).not.toBe(0);
+      expect(Buffer.concat(errors).toString('utf8')).toContain('legacy PID lock marker');
+      await expect(readFile(legacyPath, 'utf8')).resolves.toBe(legacyMarker);
+    } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
@@ -369,15 +477,35 @@ describe('StateBroker durability', () => {
     } finally {
       await fifoWriter?.close();
       if (!liveReleased) {live.stdin.write('release\n');}
-      const stopChild = async (child: ChildProcess | undefined) => {
-        if (!child || child.exitCode !== null || child.signalCode !== null) {return;}
-        child.kill();
-        await once(child, 'exit');
-      };
-      await Promise.all([stopChild(live.child), stopChild(reclaimer?.child)]);
+      await Promise.all([stopChildIfRunning(live.child), stopChildIfRunning(reclaimer?.child)]);
       live.lines.close();
       reclaimer?.lines.close();
       await rm(root, { recursive: true, force: true });
     }
   });
 });
+
+async function stopChildIfRunning(child: ChildProcess | undefined): Promise<void> {
+  if (!child || child.exitCode !== null || child.signalCode !== null) {return;}
+  child.kill();
+  await once(child, 'exit');
+}
+
+function waitForChildLine(
+  child: ChildProcess,
+  seen: Set<string>,
+  waiters: Map<string, Array<{ resolve(): void; reject(error: Error): void }>>,
+  line: string,
+): Promise<void> {
+  if (seen.has(line)) {return Promise.resolve();}
+  return new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`timed out waiting for flock worker signal: ${line}`)), 10_000);
+    const waiting = waiters.get(line) ?? [];
+    waiting.push({
+      resolve: () => { clearTimeout(timeout); resolve(); },
+      reject: (error) => { clearTimeout(timeout); reject(error); },
+    });
+    waiters.set(line, waiting);
+    child.once('error', (error) => { clearTimeout(timeout); reject(error); });
+  });
+}

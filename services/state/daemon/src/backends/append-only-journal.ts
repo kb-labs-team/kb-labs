@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { link, mkdir, open, readFile, rename, rm, rmdir } from 'node:fs/promises';
+import { link, lstat, mkdir, open, readFile, rename, rm, rmdir } from 'node:fs/promises';
 import path from 'node:path';
 import { InMemoryStateBroker } from '@kb-labs/core-state-broker';
 
@@ -15,16 +15,19 @@ const COMPACT_AFTER_RECORDS = 1_000;
 export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   private readonly journalPath: string;
   private readonly lockPath: string;
+  private readonly kernelLockPath: string;
   private readonly ownerToken: string;
   private writeQueue: Promise<void> = Promise.resolve();
   private journalRecords = 0;
   private corrupted = false;
   private lockOwned = false;
+  private kernelLockOwned = false;
 
   private constructor(dataRoot: string, cleanupIntervalMs: number) {
     super(cleanupIntervalMs);
     this.journalPath = path.join(dataRoot, 'state-broker', 'journal.jsonl');
     this.lockPath = `${this.journalPath}.lock`;
+    this.kernelLockPath = `${this.journalPath}.flock`;
     this.ownerToken = randomUUID();
   }
 
@@ -34,7 +37,15 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
       const stateDirectory = path.dirname(broker.journalPath);
       await mkdir(stateDirectory, { recursive: true });
       await syncDirectoryChain(stateDirectory);
-      await broker.acquireWriterLock();
+      if (process.platform === 'linux' && await ownsKernelWriterLock(broker.kernelLockPath)) {
+        await broker.refuseLegacyLocks();
+        broker.kernelLockOwned = true;
+      } else {
+        if (process.platform === 'linux' && process.pid === 1) {
+          throw new Error('StateBroker persistent storage in a Linux container must be started through the journal-lock entrypoint (util-linux flock).');
+        }
+        await broker.acquireWriterLock();
+      }
       await broker.replay();
     } catch (error) {
       await broker.stop();
@@ -141,6 +152,18 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     }
   }
 
+  private async refuseLegacyLocks(): Promise<void> {
+    for (const legacyPath of [this.lockPath, `${this.lockPath}.reclaim`]) {
+      try {
+        await lstat(legacyPath);
+      } catch (error) {
+        if (isMissingPath(error)) {continue;}
+        throw error;
+      }
+      throw new Error(`StateBroker journal has a legacy PID lock marker at ${legacyPath}. Stop every legacy writer and resolve the marker offline before starting the flock-based daemon.`);
+    }
+  }
+
   private async reclaimStaleWriterLock(observed: { pid: number; token: string }): Promise<void> {
     const reclaimPath = `${this.lockPath}.reclaim`;
     for (;;) {
@@ -185,6 +208,10 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   }
 
   private async releaseWriterLock(): Promise<void> {
+    if (this.kernelLockOwned) {
+      this.kernelLockOwned = false;
+      return;
+    }
     if (!this.lockOwned) {return;}
     const existing = await this.readWriterLock();
     if (existing?.pid === process.pid && existing.token === this.ownerToken) {
@@ -307,6 +334,54 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
     }
     this.journalRecords = entries.length;
   }
+}
+
+/**
+ * The Linux container entrypoint execs Node under util-linux flock. Confirm the
+ * kernel lock belongs to this process and the stable sidecar inode before
+ * bypassing the legacy PID marker protocol.
+ */
+async function ownsKernelWriterLock(lockPath: string): Promise<boolean> {
+  if (process.platform !== 'linux') {return false;}
+
+  let lockStat: Awaited<ReturnType<typeof lstat>>;
+  try {
+    lockStat = await lstat(lockPath);
+  } catch (error) {
+    if (isMissingPath(error)) {return false;}
+    throw error;
+  }
+  if (!lockStat.isFile()) {
+    throw new Error(`StateBroker kernel lock path is not a regular file: ${lockPath}`);
+  }
+
+  let locks: string;
+  try {
+    locks = await readFile('/proc/locks', 'utf8');
+  } catch (error) {
+    if (process.pid === 1) {
+      throw new Error(`StateBroker cannot verify the Linux kernel lock through /proc/locks: ${String(error)}`);
+    }
+    return false;
+  }
+
+  const device = linuxDeviceId(lockStat.dev);
+  const identity = `${device}:${lockStat.ino}`;
+  return locks.split('\n').some((line) => {
+    const fields = line.trim().split(/\s+/);
+    return fields[1] === 'FLOCK'
+      && fields[2] === 'ADVISORY'
+      && fields[3] === 'WRITE'
+      && fields[4] === String(process.pid)
+      && fields[5] === identity;
+  });
+}
+
+function linuxDeviceId(device: number): string {
+  const encoded = BigInt(device);
+  const major = Number(((encoded >> 8n) & 0xfffn) | ((encoded >> 32n) & 0xfffff000n));
+  const minor = Number((encoded & 0xffn) | ((encoded >> 12n) & 0xffffff00n));
+  return `${major.toString(16).padStart(2, '0')}:${minor.toString(16).padStart(2, '0')}`;
 }
 
 function isJournalRecord(value: unknown): value is JournalRecord {
