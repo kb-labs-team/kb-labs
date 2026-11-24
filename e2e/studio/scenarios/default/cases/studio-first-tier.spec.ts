@@ -25,7 +25,13 @@ async function signInIfSecured(page: import('@playwright/test').Page) {
 }
 
 test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
+  test.skip(!enabled || accessMode !== 'local', 'S-120.1 is the local empty-project case')
+  await page.addInitScript(() => localStorage.removeItem('kb-studio-active-project'))
+  await page.route('**/api/v1/projects', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, data: [] }),
+  }))
   await signInIfSecured(page)
 
   const healthResponsePromise = page.waitForResponse((response) =>
