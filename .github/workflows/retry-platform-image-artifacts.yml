@@ -1,0 +1,150 @@
+name: Retry platform image artifacts
+
+# Reuses the already prepared production trees from one exact successful run.
+# This rebuilds the three images only; it does not run pnpm or prepare again.
+on:
+  push:
+    branches:
+      - 'verify/registry-image-artifact-retry'
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+jobs:
+  images:
+    name: Re-export ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: kb-state-daemon
+            dockerfile: services/state/daemon/Dockerfile
+          - image: kb-gateway
+            dockerfile: services/gateway/app/Dockerfile
+          - image: kb-marketplace-registry
+            dockerfile: services/marketplace-registry/app/Dockerfile
+    env:
+      SOURCE_SHA: 130ec1ce424b1ace37739d41ece963114d001896
+      IMAGE_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:130ec1ce424b1ace37739d41ece963114d001896
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 130ec1ce424b1ace37739d41ece963114d001896
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: platform-service-image-inputs
+          path: .kb/deploy/
+          repository: kb-labs-team/kb-labs
+          run-id: 45432527825
+          github-token: ${{ github.token }}
+
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+
+      - name: Build linux amd64 image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          load: true
+          tags: ${{ env.IMAGE_REF }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.SOURCE_SHA }}
+            org.opencontainers.image.version=${{ env.SOURCE_SHA }}
+
+      - name: Export image artifact with verified config identity
+        id: export_image
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/image-export"
+          mkdir -p "$out"
+          archive="$out/${IMAGE_NAME}.tar.gz"
+          docker save "$IMAGE_REF" | gzip -1 > "$archive"
+          gzip -t "$archive"
+
+          image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          manifest="$(tar -xOzf "$archive" manifest.json)"
+          config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+          repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$IMAGE_REF" '.[0].RepoTags[] | select(. == $ref)')"
+          archive_config_sha="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
+
+          if [ "$repo_tag" != "$IMAGE_REF" ]; then
+            echo "Docker archive tag mismatch: expected=$IMAGE_REF actual=$repo_tag" >&2
+            exit 1
+          fi
+          if [ "$config_file" != "${image_id#sha256:}.json" ] || [ "$archive_config_sha" != "$image_id" ]; then
+            echo "Docker archive config mismatch: imageID=$image_id configFile=$config_file archiveConfigSHA=$archive_config_sha" >&2
+            exit 1
+          fi
+
+          (cd "$out" && sha256sum "${IMAGE_NAME}.tar.gz" > "${IMAGE_NAME}.tar.gz.sha256")
+          archive_sha256="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GHCR
+        id: ghcr_login
+        continue-on-error: true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push immutable image tag
+        id: ghcr_push
+        if: steps.ghcr_login.outcome == 'success'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          push_output="$(docker push "$IMAGE_REF" 2>&1)" || { printf '%s\n' "$push_output"; exit 1; }
+          printf '%s\n' "$push_output"
+          digest="$(printf '%s\n' "$push_output" | sed -nE 's/.*digest: (sha256:[0-9a-f]+).*/\1/p' | tail -1)"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Finalize image identity
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+          IMAGE_ID: ${{ steps.export_image.outputs.image_id }}
+          ARCHIVE_SHA256: ${{ steps.export_image.outputs.archive_sha256 }}
+          GHCR_DIGEST: ${{ steps.ghcr_push.outputs.digest }}
+          GHCR_LOGIN_OUTCOME: ${{ steps.ghcr_login.outcome }}
+          GHCR_PUSH_OUTCOME: ${{ steps.ghcr_push.outcome }}
+        run: |
+          set -euo pipefail
+          out="${RUNNER_TEMP}/image-export"
+          registry_status=artifact-only
+          if [ "$GHCR_LOGIN_OUTCOME" = success ] && [ "$GHCR_PUSH_OUTCOME" = success ]; then
+            registry_status=published
+          fi
+          jq -n \
+            --arg image "$IMAGE_REF" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg platform "linux/amd64" \
+            --arg image_id "$IMAGE_ID" \
+            --arg archive_sha256 "$ARCHIVE_SHA256" \
+            --arg registry_status "$registry_status" \
+            --arg registry_digest "$GHCR_DIGEST" \
+            --arg run_id "$GITHUB_RUN_ID" \
+            --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            '{schemaVersion:1, image:$image, sourceSHA:$source_sha, platform:$platform, imageID:$image_id, archiveSHA256:$archive_sha256, registryStatus:$registry_status, registryDigest:$registry_digest, runID:$run_id, runURL:$run_url}' \
+            > "$out/${IMAGE_NAME}.identity.json"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ${{ matrix.image }}-130ec1ce424b1ace37739d41ece963114d001896
+          path: ${{ runner.temp }}/image-export/
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Report GHCR publish status
+        if: steps.ghcr_login.outcome == 'failure' || steps.ghcr_push.outcome == 'failure'
+        run: echo '::warning::GHCR publish failed; SHA-tagged image artifact is available for verified transfer.'
