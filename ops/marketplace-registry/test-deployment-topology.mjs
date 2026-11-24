@@ -2,6 +2,7 @@
 // case: S-321.1
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -40,4 +41,16 @@ assert.equal(registry.ports?.length ?? 0, 0);
 assert.equal(state.ports?.length ?? 0, 0);
 assert.equal(config.networks.registry_private.internal, true);
 assert.notEqual(config.networks.gateway_edge.internal, true);
-process.stdout.write('Marketplace Registry topology is loopback-only and private services remain internal.\n');
+
+const nginxConfig = readFileSync(path.join(root, 'ops/marketplace-registry/nginx-api.kblabs.ru.conf'), 'utf8');
+const accessLogFormat = nginxConfig.match(/log_format\s+kb_api_safe\s+'([^']+)'/u)?.[1] ?? '';
+assert.match(accessLogFormat, /\$uri/u, 'access logs must use the query-free normalized path');
+assert.doesNotMatch(accessLogFormat, /\$(?:request_uri|request)(?:\W|$)/u, 'access logs must not include query strings');
+assert.match(nginxConfig, /limit_except GET HEAD \{ deny all; \}/u);
+assert.match(nginxConfig, /limit_req_status 429;/u);
+assert.match(nginxConfig, /limit_conn_status 429;/u);
+assert.match(nginxConfig, /proxy_set_header X-Forwarded-For \$remote_addr;/u);
+assert.match(nginxConfig, /proxy_set_header X-Forwarded-Host "";/u);
+assert.match(nginxConfig, /proxy_set_header Forwarded "";/u);
+assert.match(nginxConfig, /location \/ \{\s*return 404;/u, 'unreviewed and write routes must stay closed');
+process.stdout.write('Marketplace Registry topology and read-only Nginx edge policy are valid.\n');
