@@ -289,7 +289,7 @@ test('S-122.5: unavailable observability logs name the source and doctor command
   await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false })).toBeVisible()
 })
 
-test('install Commit, inspect real changes, generate a plan, and uninstall it @S-123.1 @S-123.2 @S-123.3 @S-123.4 @S-123.5 @S-123.6', async ({ page }) => {
+test('install Commit, inspect real changes, generate a plan, and uninstall it @S-123.1 @S-123.2 @S-123.3 @S-123.4 @S-123.5 @S-123.6 @S-251.1', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
   const projectId = process.env.KB_STUDIO_PROJECT_ID
@@ -325,6 +325,17 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   )
   expect(commitPin?.resolvedPath).toBe(`store:${encodeURIComponent('@kb-labs/commit')}@${encodeURIComponent(commitVersion!)}`)
   expect(existsSync(extensionEntry), `installed Commit entry should exist at ${extensionEntry}`).toBe(true)
+
+  const installedPluginsResponse = await page.request.get(`${GATEWAY}/api/v1/plugins?projectId=${encodeURIComponent(projectId!)}`)
+  expect(installedPluginsResponse.status()).toBe(200)
+  const installedPlugins = await installedPluginsResponse.json() as {
+    ok?: boolean
+    data?: Array<{ id?: string; version?: string }>
+  }
+  expect(installedPlugins.ok).toBe(true)
+  expect(installedPlugins.data?.some(plugin =>
+    plugin.id === '@kb-labs/commit' && plugin.version === commitVersion,
+  )).toBe(true)
 
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
   await page.goto(`${GATEWAY}/p/commit`)
