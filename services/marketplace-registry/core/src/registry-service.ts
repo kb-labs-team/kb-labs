@@ -3,7 +3,7 @@
  * No direct filesystem or DB dependencies — swap adapters in kb.config.json.
  */
 
-import { createHash, sign as cryptoSign } from 'node:crypto';
+import { createHash, randomBytes, sign as cryptoSign } from 'node:crypto';
 import semver from 'semver';
 import type { IStorage, ICache, ILogger } from '@kb-labs/core-platform';
 import type {
@@ -24,7 +24,7 @@ const CACHE_TTL_META = 5 * 60 * 1000;
 const CACHE_TTL_SEARCH = 60 * 1000;
 const CACHE_TTL_SHARE_DEFAULT = 7 * 24 * 60 * 60 * 1000; // 7 days
 const MAX_TARBALL_SIZE = 50 * 1024 * 1024; // 50 MB
-const SHARE_TOKEN_PATTERN = /^kbrt_[a-f0-9]{32}$/;
+const SHARE_TOKEN_PATTERN = /^kbrt_(?:[a-f0-9]{32}|[A-Za-z0-9_-]{43})$/;
 const SHARE_TOKEN_DIGEST_PREFIX = 'sha256:';
 const MAX_PACKAGE_CACHE_ALIASES = 4096;
 const CANONICAL_AUTHOR_HANDLE = /^[a-z0-9-]{2,32}$/;
@@ -89,6 +89,11 @@ export interface RegistryServiceOptions {
   signingPrivateKey?: string;
   /** Site URL for marketplace pages (e.g. https://kblabs.ru) */
   siteUrl?: string;
+}
+
+export interface RegistryReadAccess {
+  namespaceId: string | null;
+  shareToken?: { pkg: string } | null;
 }
 
 export class RegistryService {
@@ -329,7 +334,7 @@ export class RegistryService {
     ttlMs: number = CACHE_TTL_SHARE_DEFAULT,
   ): Promise<ShareToken> {
     await this.requireEntry(authorHandle, name);
-    const token = `kbrt_${createHash('sha256').update(`${Date.now()}${Math.random()}`).digest('hex').slice(0, 32)}`;
+    const token = `kbrt_${randomBytes(32).toString('base64url')}`;
     const expiresAt = new Date(Date.now() + ttlMs).toISOString();
     const pkg = `${authorHandle}/${name}`;
     await this.cache.set(shareTokenCacheKey(token), { pkg, expiresAt }, ttlMs);
@@ -366,10 +371,11 @@ export class RegistryService {
     authorHandle: string,
     name: string,
     version: string,
+    access?: RegistryReadAccess,
   ): Promise<{ tarball: Buffer; signature?: EntitySignature }> {
     const entry = await this.requireEntry(authorHandle, name);
     const vEntry = entry.versions.find(v => v.version === version);
-    if (!vEntry) {
+    if (!vEntry || (access && !this.canAccess(entry, access.namespaceId, access.shareToken, version))) {
       throw Object.assign(new Error(`Version ${version} not found`), { code: 'VERSION_NOT_FOUND' });
     }
     if (vEntry.yanked) {

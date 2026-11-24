@@ -842,6 +842,29 @@ describe('RegistryService.deprecate', () => {
 });
 
 describe('RegistryService.getTarball', () => {
+  // case: S-268.21
+  it('authorizes a tarball using the same fresh entry snapshot as the version bytes', async () => {
+    const files = new Map<string, Buffer>();
+    const storage: IStorage = {
+      read: async path => files.get(path) ?? null,
+      write: async (path, data) => { files.set(path, Buffer.isBuffer(data) ? data : Buffer.from(data)); },
+      delete: async path => { files.delete(path); },
+      list: async prefix => [...files.keys()].filter(path => path.startsWith(prefix)),
+      exists: async path => files.has(path),
+    };
+    const svc = new RegistryService({ storage, cache: createMemoryCache(), logger: noopLogger });
+    await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
+    expect((await svc.getEntry('kirill', 'my-plugin'))?.versions[0]?.visibility).toBe('public');
+
+    const metaPath = 'marketplace-registry/packages/kirill/my-plugin/meta.json';
+    const stored = JSON.parse(files.get(metaPath)!.toString()) as RegistryEntry;
+    stored.versions[0]!.visibility = 'private';
+    files.set(metaPath, Buffer.from(JSON.stringify(stored)));
+
+    await expect(svc.getTarball('kirill', 'my-plugin', '1.0.0', { namespaceId: null }))
+      .rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' });
+  });
+
   it('RS-30: returns correct tarball bytes', async () => {
     const svc = makeService();
     const tarball = Buffer.from('fake-tarball-data');
@@ -1039,7 +1062,7 @@ describe('RegistryService.shareToken', () => {
     await svc.publish(SMALL_TARBALL, makePkg(), 'kirill', 'ns-kirill');
 
     const { token, pkg, expiresAt } = await svc.createShareToken('kirill', 'my-plugin', 60_000);
-    expect(token).toMatch(/^kbrt_[a-f0-9]{32}$/);
+    expect(token).toMatch(/^kbrt_[A-Za-z0-9_-]{43}$/);
     expect(pkg).toBe('kirill/my-plugin');
     expect(expiresAt).toBeTruthy();
 
