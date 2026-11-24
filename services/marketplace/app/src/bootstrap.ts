@@ -42,7 +42,9 @@ export async function setup({
   const sources: ConstructorParameters<typeof MarketplaceService>[0]['sources'] = [];
   let configuredRegistryUrl: string | undefined;
   for (const source of sourcesConfig) {
-    if (!source) continue;
+    if (!source) {
+      continue;
+    }
     if (source.kind === 'registry') {
       configuredRegistryUrl ??= source.url;
       sources.push(new RegistryPackageSource({
