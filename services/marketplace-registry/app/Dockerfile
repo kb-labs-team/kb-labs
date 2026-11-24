@@ -17,7 +17,7 @@ COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json /app/.kb/v2
 # may be layered at runtime.
 COPY --chown=kb:nodejs services/marketplace-registry/app/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-RUN mkdir -p .kb/data && chown -R kb:nodejs .kb && \
+RUN mkdir -p .kb/data/registry-storage && chown -R kb:nodejs .kb && \
     chmod +x /app/docker-entrypoint.sh
 
 USER kb

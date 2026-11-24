@@ -4133,6 +4133,9 @@ importers:
 
   services/marketplace-registry/app:
     dependencies:
+      '@kb-labs/adapters-fs':
+        specifier: workspace:*
+        version: link:../../../adapters/fs
       '@kb-labs/adapters-s3':
         specifier: workspace:*
         version: link:../../../adapters/s3

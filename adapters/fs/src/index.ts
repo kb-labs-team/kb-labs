@@ -47,21 +47,20 @@ export class FilesystemStorageAdapter implements IStorage {
   private baseDir: string;
 
   constructor(config: FilesystemStorageConfig = {}) {
-    this.baseDir = config.baseDir ?? resolveRuntimeStatePath(config.workspace?.cwd ?? process.cwd(), ["storage"]);
+    this.baseDir = path.resolve(
+      config.baseDir ?? resolveRuntimeStatePath(config.workspace?.cwd ?? process.cwd(), ["storage"]),
+    );
   }
 
   /**
    * Resolve relative path to absolute path within baseDir.
    */
   private resolvePath(relativePath: string): string {
-    // Normalize path and ensure it's within baseDir (security)
-    const normalized = path.normalize(relativePath);
-    const absolute = path.isAbsolute(normalized)
-      ? normalized
-      : path.join(this.baseDir, normalized);
-
-    // Ensure path is within baseDir (prevent directory traversal)
-    if (!absolute.startsWith(this.baseDir)) {
+    // Resolve and check path components, not string prefixes: `/data/store-evil`
+    // starts with `/data/store` but is a sibling outside the configured root.
+    const absolute = path.resolve(this.baseDir, relativePath);
+    const relative = path.relative(this.baseDir, absolute);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`Path traversal detected: ${relativePath}`);
     }
 

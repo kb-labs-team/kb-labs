@@ -1,50 +1,8 @@
 name: kb-marketplace-registry
 
 # Independent, single-replica Registry stack. It deliberately does not attach
-# to the existing web compose project or publish State/MinIO/Registry ports.
+# to the existing web compose project or publish State/Registry ports.
 services:
-  kb-minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in the registry env file}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in the registry env file}
-    volumes:
-      - registry_minio_data:/data
-    restart: unless-stopped
-    logging: &registry-json-logging
-      driver: json-file
-      options:
-        max-size: 10m
-        max-file: "3"
-    networks:
-      - registry_private
-
-  kb-minio-ready:
-    image: node:24-slim
-    command:
-      - node
-      - -e
-      - >-
-        (async () => {
-          const deadline = Date.now() + 60000;
-          while (Date.now() < deadline) {
-            try {
-              const response = await fetch('http://kb-minio:9000/minio/health/ready');
-              if (response.ok) process.exit(0);
-            } catch {}
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-          }
-          console.error('MinIO did not become ready within 60 seconds');
-          process.exit(1);
-        })().catch(() => process.exit(1));
-    depends_on:
-      - kb-minio
-    restart: "no"
-    logging: *registry-json-logging
-    networks:
-      - registry_private
-
   kb-state-daemon:
     image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-state-daemon:${BASE_IMAGE_TAG:?set BASE_IMAGE_TAG to the verified image tag}
     environment:
@@ -61,7 +19,11 @@ services:
       retries: 12
       start_period: 10s
     restart: unless-stopped
-    logging: *registry-json-logging
+    logging: &registry-json-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
     networks:
       - registry_private
 
@@ -76,13 +38,10 @@ services:
       KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
       KB_REGISTRY_SIGNING_KEY: ${KB_REGISTRY_SIGNING_KEY:?set KB_REGISTRY_SIGNING_KEY in the registry env file}
       GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER in the registry env file}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD in the registry env file}
     volumes:
       - ./registry.override.json:/app/.kb/kb.config.override.json:ro
+      - registry_storage_data:/app/.kb/data/registry-storage
     depends_on:
-      kb-minio-ready:
-        condition: service_completed_successfully
       kb-state-daemon:
         condition: service_healthy
     healthcheck:
@@ -130,6 +89,6 @@ networks:
     internal: true
 
 volumes:
-  registry_minio_data:
+  registry_storage_data:
   registry_state_data:
   registry_gateway_data:

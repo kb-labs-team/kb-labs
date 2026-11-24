@@ -1,17 +1,12 @@
 {
   "platform": {
     "adapters": {
-      "storage": "@kb-labs/adapters-s3",
+      "storage": "@kb-labs/adapters-fs",
       "cache": "@kb-labs/adapters-state-broker"
     },
     "adapterOptions": {
       "storage": {
-        "endpoint": "http://kb-minio:9000",
-        "bucket": "kb-marketplace-registry",
-        "region": "us-east-1",
-        "accessKeyId": "${MINIO_ROOT_USER}",
-        "secretAccessKey": "${MINIO_ROOT_PASSWORD}",
-        "forcePathStyle": true
+        "baseDir": "/app/.kb/data/registry-storage"
       },
       "cache": {
         "namespace": "marketplace-registry:"
