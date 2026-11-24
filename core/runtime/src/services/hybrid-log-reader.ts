@@ -8,6 +8,7 @@
  * 3. Graceful degradation if neither available
  */
 
+import { LOG_CONTEXT_FIELDS } from '@kb-labs/core-platform';
 import type {
   ILogReader,
   ILogPersistence,
@@ -216,6 +217,10 @@ export class HybridLogReader implements ILogReader {
         if (filters.source && log.source !== filters.source) {return;}
         if (filters.from !== undefined && log.timestamp < filters.from) {return;}
         if (filters.to !== undefined && log.timestamp > filters.to) {return;}
+        for (const field of LOG_CONTEXT_FIELDS) {
+          const value = filters[field];
+          if (value !== undefined && log.fields[field] !== value) {return;}
+        }
       }
       callback(log);
     });

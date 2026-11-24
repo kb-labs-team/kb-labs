@@ -36,6 +36,23 @@ describe('host API routing', () => {
     expect(fetch).toHaveBeenCalledWith('/api/v1/projects/local%2Fproject/rest/logs', { baseURL: '' });
   });
 
+  it('keeps workflow run and step execution filters on the selected project request', async () => {
+    const client = new HttpClient('/api/v1');
+    const fetch = vi.spyOn(client, 'fetch').mockResolvedValueOnce({ logs: [], total: 0 });
+
+    await new HttpObservabilitySource(client, 'project-01').queryLogs({
+      runId: 'run-123',
+      executionId: 'step-456',
+      limit: 1,
+      offset: 0,
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      '/api/v1/projects/project-01/rest/logs?runId=run-123&executionId=step-456&limit=1&offset=0',
+      { baseURL: '' },
+    );
+  });
+
   it('routes analytics and adapter usage through the selected project runtime', async () => {
     const client = new HttpClient('/api/v1');
     const fetch = vi.spyOn(client, 'fetch').mockResolvedValue({});

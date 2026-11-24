@@ -714,7 +714,7 @@ export default function WorkflowRunDetail() {
             <ViewModeSelector views={VIEW_MODES} current={viewMode} onChange={setViewMode} />
             {runId && projectId && (
               <Link
-                to={`/observability/logs?projectId=${encodeURIComponent(projectId)}&executionId=${encodeURIComponent(runId)}`}
+                to={`/observability/logs?projectId=${encodeURIComponent(projectId)}&runId=${encodeURIComponent(runId)}&mode=history`}
                 style={{ color: 'var(--link)', fontSize: 13 }}
               >
                 Inspect run logs
