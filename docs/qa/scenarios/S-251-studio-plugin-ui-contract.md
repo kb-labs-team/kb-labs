@@ -24,7 +24,7 @@ Install and enable a project plugin that declares Studio pages, use its navigati
 
 | # | Action | Expected |
 |---|---|---|
-| S-251.1 | Install the plugin in project A with `kb marketplace install <PLUGIN_PACKAGE>@<VERSION>` and enable it if the package is disabled | The project A marketplace state records the exact package version as enabled; the project B marketplace state is unchanged. |
+| S-251.1 | Install the plugin in project A with `kb marketplace install <PLUGIN_PACKAGE>@<VERSION>` and enable it if the package is disabled; request `GET /api/v1/plugins?projectId=<PROJECT_A_ID>` from the Gateway | The project A marketplace state records the exact package version as enabled; the Gateway returns HTTP 200 with an `{ ok: true, data: [...] }` response containing that plugin and its installed version; the project B marketplace state is unchanged. |
 | S-251.2 | Open Studio in project A and inspect its plugin navigation | The manifest-declared page is available at its declared route and the menu entry targets that page. |
 | S-251.3 | Switch Studio to project B and inspect the same navigation and route | The plugin menu entry is absent and its project A page is not available in project B. |
 | S-251.4 | Configure the plugin page in project A to throw its fixture render error, then open it | Studio shows the plugin page error boundary for that plugin and page; the Studio shell and navigation remain usable, and another Studio page can still be opened. |
