@@ -32,6 +32,7 @@ export function readReleaseFlowConfig(path, flowName) {
   }
   const adapters = config.platform?.adapters;
   const marketplaceSources = config.marketplace?.sources;
+  const marketplaceCatalogRegistry = config.marketplace?.catalogRegistry;
   if (!Array.isArray(flow.platformMembers) || flow.platformMembers.length === 0) {
     throw new Error(`release.flows.${flowName}.platformMembers must be a non-empty array`);
   }
@@ -40,6 +41,13 @@ export function readReleaseFlowConfig(path, flowName) {
   }
   if (marketplaceSources !== undefined && (!Array.isArray(marketplaceSources) || marketplaceSources.length === 0)) {
     throw new Error('marketplace.sources must be a non-empty array when declared');
+  }
+  if (marketplaceCatalogRegistry !== undefined && (
+    typeof marketplaceCatalogRegistry !== 'object' || marketplaceCatalogRegistry === null || Array.isArray(marketplaceCatalogRegistry) ||
+    typeof marketplaceCatalogRegistry.url !== 'string' || marketplaceCatalogRegistry.url.length === 0 ||
+    typeof marketplaceCatalogRegistry.signingPublicKey !== 'string' || marketplaceCatalogRegistry.signingPublicKey.length === 0
+  )) {
+    throw new Error('marketplace.catalogRegistry must contain a URL and signing public key when declared');
   }
   const additionalRequirements = flow.platformRequires ?? [];
   if (!Array.isArray(additionalRequirements) || additionalRequirements.some(slot => typeof slot !== 'string' || slot.length === 0)) {
@@ -54,6 +62,7 @@ export function readReleaseFlowConfig(path, flowName) {
     adapters,
     adapterOptions: config.platform.adapterOptions ?? {},
     marketplaceSources,
+    marketplaceCatalogRegistry,
   };
 }
 

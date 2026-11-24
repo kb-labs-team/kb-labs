@@ -60,9 +60,14 @@ const platformAdapterOptions = value('--platform-adapter-options')
   ? JSON.parse(value('--platform-adapter-options'))
   : undefined;
 const releaseConfigPath = resolve(value('--release-config') ?? fileURLToPath(new URL('../config/platform-release.jsonc', import.meta.url)));
-const marketplaceSources = readPlatformReleaseConfig(releaseConfigPath).marketplaceSources;
+const releaseMarketplaceConfig = readPlatformReleaseConfig(releaseConfigPath);
+const marketplaceSources = releaseMarketplaceConfig.marketplaceSources;
+const marketplaceCatalogRegistry = releaseMarketplaceConfig.marketplaceCatalogRegistry;
 if (flow === 'platform' && (!Array.isArray(marketplaceSources) || marketplaceSources.length === 0)) {
   throw new Error('platform release config must declare marketplace.sources for every platform install');
+}
+if (flow === 'platform' && !marketplaceCatalogRegistry) {
+  throw new Error('platform release config must declare marketplace.catalogRegistry for the trusted public catalog');
 }
 const platformMemberPackages = (value('--platform-member-packages') ?? '')
   .split(',')
@@ -241,6 +246,7 @@ for (const item of stage) {
         ...(portablePlatformAdapterConfig ? [{ id: 'platform.adapters', path: '/platform/adapters', default: portablePlatformAdapterConfig }] : []),
         ...(portablePlatformAdapterOptions ? [{ id: 'platform.adapterOptions', path: '/platform/adapterOptions', default: portablePlatformAdapterOptions }] : []),
         ...(marketplaceSources ? [{ id: 'marketplace.sources', path: '/marketplace/sources', default: marketplaceSources }] : []),
+        ...(marketplaceCatalogRegistry ? [{ id: 'marketplace.catalogRegistry', path: '/marketplace/catalogRegistry', default: marketplaceCatalogRegistry }] : []),
       ]
     : [];
   writeFileSync(join(staging, 'node_modules', item.name, 'kb-create.manifest.json'), `${JSON.stringify({
@@ -391,6 +397,11 @@ const exportValue = {
         id: 'marketplace.sources',
         path: '/marketplace/sources',
         default: JSON.stringify(marketplaceSources),
+      }] : []),
+      ...(marketplaceCatalogRegistry ? [{
+        id: 'marketplace.catalogRegistry',
+        path: '/marketplace/catalogRegistry',
+        default: JSON.stringify(marketplaceCatalogRegistry),
       }] : []),
     ],
     host,

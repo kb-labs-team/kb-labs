@@ -64,7 +64,11 @@
   "marketplace": {
     "sources": [
       { "kind": "npm", "url": "https://registry.npmjs.org" }
-    ]
+    ],
+    "catalogRegistry": {
+      "url": "https://api.kblabs.ru/api/v1/marketplace-registry",
+      "signingPublicKey": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAc6RfAt8enkIaGnnfnYmzI8NnhEVnFU4lIXnzrT5IpFM=\n-----END PUBLIC KEY-----\n"
+    }
   },
   "profiles": [
     {
