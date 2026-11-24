@@ -44,9 +44,15 @@ function requirePlatformSettingsWrite(
   if (forwarded.kind === 'identity' && forwarded.auth.permissions.includes(PLATFORM_SETTINGS_PERMISSION)) {
     return true;
   }
+  const gatewayHint = forwarded.kind === 'identity'
+    ? undefined
+    : 'Send platform-scope Marketplace writes through Gateway. A direct Marketplace URL does not carry a verified user identity.';
   reply.code(403).send({
     ok: false,
-    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', { details: { permission: PLATFORM_SETTINGS_PERMISSION } }),
+    error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+      details: { permission: PLATFORM_SETTINGS_PERMISSION },
+      ...(gatewayHint ? { hint: gatewayHint } : {}),
+    }),
   });
   return false;
 }

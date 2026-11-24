@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const gatewayApiFetch = vi.hoisted(() => vi.fn());
+const marketplaceOverride = vi.hoisted(() => ({ value: undefined as string | undefined }));
 vi.mock('@kb-labs/sdk', () => ({
-  useEnv: (name: string) => name === 'KB_GATEWAY_URL' ? 'http://gateway.test' : undefined,
+  useEnv: (name: string) => name === 'KB_GATEWAY_URL' ? 'http://gateway.test' : name === 'KB_MARKETPLACE_URL' ? marketplaceOverride.value : undefined,
   getHostServiceAddress: (_service: string, environment: Record<string, string | undefined>) => {
     if (!environment.KB_GATEWAY_URL) { throw new Error('gateway address missing'); }
     return environment.KB_GATEWAY_URL.replace(/\/+$/, '');
@@ -13,10 +14,10 @@ vi.mock('@kb-labs/sdk/gateway', async (importOriginal) => ({
   gatewayApiFetch,
 }));
 
-import { get } from '../http.js';
+import { get, post } from '../http.js';
 
 describe('marketplace shared gateway client', () => {
-  afterEach(() => { gatewayApiFetch.mockReset(); });
+  afterEach(() => { gatewayApiFetch.mockReset(); marketplaceOverride.value = undefined; });
 
   // case: S-041.7
   it('delegates marketplace REST calls to the shared authenticated client', async () => {
@@ -50,12 +51,32 @@ describe('marketplace shared gateway client', () => {
       error: { code: 'KB_AUTH_FORBIDDEN', message: 'Forbidden' },
     }), { status: 403 }));
 
-    await expect(get('/packages/install')).rejects.toMatchObject({
+    await expect(post('/packages/install', { specs: ['@kb-labs/plugin'], scope: 'platform' })).rejects.toMatchObject({
       envelope: {
         code: 'KB_AUTH_FORBIDDEN',
         hint: expect.stringContaining('must go through Gateway'),
       },
     });
+  });
+
+  it('surfaces the server hint when a direct Marketplace URL rejects a platform write', async () => {
+    marketplaceOverride.value = 'http://marketplace.test';
+    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: {
+        code: 'KB_AUTH_FORBIDDEN',
+        message: 'Forbidden',
+        hint: 'Send platform-scope Marketplace writes through Gateway. A direct Marketplace URL does not carry a verified user identity.',
+      },
+    }), { status: 403 }));
+
+    await expect(post('/packages/install', { specs: ['@kb-labs/plugin'], scope: 'platform' })).rejects.toMatchObject({
+      envelope: { hint: expect.stringContaining('direct Marketplace URL') },
+    });
+    expect(gatewayApiFetch).toHaveBeenCalledWith(
+      new URL('http://marketplace.test/api/v1/marketplace/packages/install'),
+      expect.objectContaining({ method: 'POST' }),
+    );
   });
 
   it('points timeout recovery at the installed platform commands', async () => {

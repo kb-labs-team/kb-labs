@@ -140,6 +140,15 @@ describe('Marketplace API error boundary', () => {
     const server = await createServer({ service, logger });
     servers.push(server);
 
+    const directMarketplace = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/adapters/install',
+      payload: { spec: '@kb-labs/test-adapter' },
+    });
+    expect(directMarketplace.statusCode).toBe(403);
+    expect(directMarketplace.json()).toMatchObject({ error: { hint: expect.stringContaining('through Gateway') } });
+    expect(installAdapter).not.toHaveBeenCalled();
+
     const forgedResponse = await injectAsPlatformAdmin(server, {
       method: 'POST',
       url: '/api/v1/marketplace/packages/adapters/install',
