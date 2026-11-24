@@ -273,10 +273,19 @@ export function aggregateVerdict({
   return parseVerdict(verdict, sha);
 }
 
-export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, runCommand }) {
-  const jobsUrl = `repos/${repository}/actions/runs/${runId}/jobs?per_page=100`;
-  const jobs = JSON.parse(runCommand(jobsUrl)).jobs ?? [];
-  const missingNames = new Set(plannedJobs.map(githubJobName));
+export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, jobPrefix = '', runCommand }) {
+  const jobsUrl = `repos/${repository}/actions/runs/${runId}/jobs`;
+  const jobs = [];
+  let page = 1;
+  while (true) {
+    const response = JSON.parse(runCommand(`${jobsUrl}?per_page=100&page=${page}`));
+    const pageJobs = response.jobs ?? [];
+    jobs.push(...pageJobs);
+    const totalCount = response.total_count;
+    if (pageJobs.length === 0 || (Number.isSafeInteger(totalCount) ? jobs.length >= totalCount : pageJobs.length < 100)) break;
+    page += 1;
+  }
+  const missingNames = new Set(plannedJobs.map((job) => `${jobPrefix}${githubJobName(job)}`));
   const plannedEvidence = jobs.filter((job) => missingNames.has(job.name));
   const observedNames = new Set(plannedEvidence.map((job) => job.name));
   const absentNames = [...missingNames].filter((name) => !observedNames.has(name));
@@ -286,7 +295,7 @@ export function fetchGitHubJobEvidence({ repository, runId, plannedJobs, runComm
     const annotations = checkRunId && job.conclusion !== 'success'
       ? JSON.parse(runCommand(`repos/${repository}/check-runs/${checkRunId}/annotations?per_page=100`))
       : [];
-    return { name: job.name, conclusion: job.conclusion, steps: job.steps ?? [], annotations };
+    return { name: job.name.slice(jobPrefix.length), conclusion: job.conclusion, steps: job.steps ?? [], annotations };
   });
 }
 
@@ -314,6 +323,7 @@ function main() {
       repository: process.env.GITHUB_REPOSITORY,
       runId: process.env.GITHUB_RUN_ID,
       plannedJobs,
+      jobPrefix: process.env.REMOTE_JOB_PREFIX ?? '',
       runCommand: (endpoint) => {
         const result = spawnSync('gh', ['api', endpoint], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
         if (result.error) throw result.error;
@@ -334,7 +344,7 @@ function main() {
   writeFileSync(out, `${JSON.stringify(verdict, null, 2)}\n`);
   if (process.env.GITHUB_STEP_SUMMARY) {
     const rows = verdict.jobs.map((job) => `| ${job.name} | ${job.status} | ${job.durationMs ?? '—'} ms |`).join('\n');
-    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `# Remote verification: ${verdict.status}\n\n| Stage | Status | Duration |\n|---|---|---:|\n${rows}\n`);
+    writeFileSync(process.env.GITHUB_STEP_SUMMARY, `# Remote verification: ${verdict.status}\n\nCommit: ${sha}\n\n| Stage | Status | Duration |\n|---|---|---:|\n${rows}\n`);
   }
   process.stdout.write(`Remote verification ${verdict.status} for ${sha}; wrote ${out}.\n`);
   if (verdict.status !== 'pass') process.exitCode = 1;

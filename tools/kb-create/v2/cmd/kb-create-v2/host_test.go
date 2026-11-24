@@ -545,6 +545,54 @@ func TestStatusUsesOneInstallationIdentityAcrossRootSpellings(t *testing.T) {
 	}
 }
 
+// case: PC-001.13, S-023.4
+func TestPendingRestartCommandIsStableAcrossInstallationRootSpellings(t *testing.T) {
+	inst := newInstallation(t)
+	if started, code, output := inst.run("start", "--json"); code != 0 {
+		t.Fatalf("start host: %d %s", code, output)
+	} else if hostInfo, ok := started["host"].(map[string]any); !ok || hostInfo["pid"] == nil {
+		t.Fatalf("start response omitted host identity: %#v", started)
+	}
+
+	layout, err := versionroot.New(inst.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := receipt.Read(activeRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active.ID = "receipt-after-update"
+	active.Plan.ServiceGraph.PlatformVersion = "2.0.0"
+	if err := receipt.Write(activeRoot, active); err != nil {
+		t.Fatal(err)
+	}
+
+	canonicalStatus, code, output := inst.runAt(inst.root, "status", "--json")
+	if code != 0 {
+		t.Fatalf("status from install root: %d %s", code, output)
+	}
+	want, ok := canonicalStatus["pendingRestart"].(map[string]any)
+	if !ok {
+		t.Fatalf("status omitted pending restart: %#v", canonicalStatus)
+	}
+	for _, spelling := range []string{layout.PlatformRoot(), activeRoot} {
+		status, statusCode, statusOutput := inst.runAt(spelling, "status", "--json")
+		got, ok := status["pendingRestart"].(map[string]any)
+		if statusCode != 0 || !ok || !reflect.DeepEqual(got, want) {
+			t.Fatalf("pending restart through %q differs from install root: code=%d got=%#v want=%#v output=%s", spelling, statusCode, status["pendingRestart"], want, statusOutput)
+		}
+	}
+	doctor, code, output := inst.runAt(activeRoot, "doctor", "--json")
+	if got, ok := doctor["pendingRestart"].(map[string]any); code != 0 || !ok || !reflect.DeepEqual(got, want) {
+		t.Fatalf("doctor through physical version root changed pending restart: code=%d got=%#v want=%#v output=%s", code, doctor["pendingRestart"], want, output)
+	}
+}
+
 func (i installation) runCommand(args []string, extraEnv ...string) commandResult {
 	return i.runArgv(append([]string{i.launcher}, args...), extraEnv...)
 }

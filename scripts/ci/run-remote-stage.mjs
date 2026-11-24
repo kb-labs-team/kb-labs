@@ -29,6 +29,7 @@ const cache = {
   pnpm: process.env.PNPM_CACHE_HIT,
   go: process.env.GO_CACHE_HIT,
   devkit: process.env.DEVKIT_CACHE_HIT,
+  devkitMode: process.env.DEVKIT_CACHE_MODE,
 };
 const resourceSamplePath = process.env.REMOTE_RESOURCE_SAMPLES;
 const result = await runStage({
@@ -41,6 +42,7 @@ const result = await runStage({
   resourceSamplePath,
   affectedBuild: process.env.REMOTE_AFFECTED_BUILD === '1',
   devkitExecutable: process.env.REMOTE_DEVKIT_EXECUTABLE,
+  devkitCacheStorePath: process.env.DEVKIT_CACHE_STORE_PATH,
   partialResultPath: stage === profile.buildStage ? out : undefined,
   runCommand: (command, args, options) => new Promise((resolve) => {
     const child = spawn(command, args, {

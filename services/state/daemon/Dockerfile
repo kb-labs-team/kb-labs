@@ -14,6 +14,7 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --chown=kb:nodejs .kb/deploy/state-daemon/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/state-daemon/dist ./dist
 COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
+COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json /app/.kb/v2/platform-layout.json
 
 # State uses InMemoryStateBroker (core/state-broker/src/factory.ts), so state
 # does not survive container recreation; the baked composition declares the

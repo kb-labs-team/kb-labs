@@ -12,6 +12,7 @@ export type {
   SessionCredentials,
   GatewayClientConfig,
   GatewayExecuteRequest,
+  GatewayProjectCommandRequest,
   IGatewayClient,
   ICredentialsManager,
   ISessionManager,

@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Callable
 
 from journey_resources import active_platform_root
+from platform_snapshot import _platform_snapshot
 from sdk_runtime_import_check import check_installed_runtime_imports
 from service_steps import Journey
-from marketplace_steps import _platform_snapshot
 from platform_update_steps import _changed_paths
 from invocations import (
     CompletedProcess,
@@ -517,6 +517,21 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
     journey.step("doctor verifies filesystem default is loaded", "adapter", assert_doctor, cases=["S-054.2"])
 
     def assert_doctor_manifest_repair_is_explicit() -> None:
+        receipt_path = platform_content_root / ".kb" / "v2" / "receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        recorded_root = receipt.get("plan", {}).get("request", {}).get("platformRoot")
+        if not isinstance(recorded_root, str) or Path(recorded_root).resolve() != platform_root:
+            raise RuntimeError("the installed receipt does not retain the canonical install root for doctor verification")
+        config_projection = platform_content_root / ".kb" / "kb.config.jsonc"
+        shared_config = platform_root / layout_value("sharedRuntimePaths.kb_kb_config_jsonc.statePath")
+        if not config_projection.is_symlink() or config_projection.resolve() != shared_config.resolve():
+            raise RuntimeError("the active version does not link its runtime config to install-root shared state")
+        if (platform_root / ".kb" / "kb.config.jsonc").exists():
+            raise RuntimeError("the fixture unexpectedly has a config at the install root")
+        status_command = ["kb-create", "status", "--platform-root", str(platform_root), "--json"]
+        before = _json(_run(runner, status_command, project_a, base_env), status_command)
+        if before.get("running") is not True or before.get("reachable") is not True:
+            raise RuntimeError("the installed host must be running and reachable before manifest repair")
         manifest = platform_content_root / "node_modules" / "@kb-labs" / "gateway-app" / "kb-create.manifest.json"
         if not manifest.is_file():
             raise RuntimeError(f"the installed gateway artifact has no manifest projection to diagnose: {manifest}")
@@ -538,13 +553,21 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
         fix_command = ["kb-create", "doctor", "--platform-root", str(platform_root), "--fix", "--json"]
         fixed = runner(fix_command, cwd=str(project_a), env=base_env, capture_output=True, text=True, timeout=300)
         fix_payload = _json(fixed, fix_command)
-        if fixed.returncode != 0 or fix_payload.get("operation") != "doctor-fix":
+        snapshot = fix_payload.get("snapshot")
+        if (fixed.returncode != 0 or fix_payload.get("operation") != "doctor-fix"
+                or not isinstance(snapshot, dict) or not snapshot.get("id")
+                or fix_payload.get("hostRestarted") is not True):
             raise RuntimeError("kb-create doctor --fix did not return its successful repair result")
         if not manifest.is_file():
             raise RuntimeError("kb-create doctor --fix did not restore the missing manifest projection")
+        if (platform_root / ".kb" / "kb.config.jsonc").exists():
+            raise RuntimeError("doctor repair wrote a config projection outside install-root shared state")
+        after = _json(_run(runner, status_command, project_a, base_env), status_command)
+        if after.get("running") is not True or after.get("reachable") is not True:
+            raise RuntimeError("the host is not healthy after installed-layout manifest repair")
 
     journey.step("doctor reports missing manifests read-only and repairs only with fix", layout_value('installerStateDirectory'),
-                 assert_doctor_manifest_repair_is_explicit, cases=["S-054.13"])
+                 assert_doctor_manifest_repair_is_explicit, cases=["S-054.13", "S-025.11"])
 
     def assert_unbound_analytics_uses_manifest_default() -> None:
         config_file = active_platform_root(platform_root) / ".kb" / "kb.config.jsonc"

@@ -23,7 +23,7 @@ export interface AuthSession {
   save(): Promise<void>;
 }
 export interface AuthSnapshot {
-  session: SessionCredentials | null;
+  sessions: SessionCredentials[];
   machine: GatewayCredentials | null;
   sessionPath: string;
   sessionExpired: boolean;
@@ -43,10 +43,15 @@ export class AuthSessionOwner {
   async load(kind: GatewayCredentialKind = 'either', target?: GatewayRequestTarget, policy: { refreshExpired?: boolean } = {}): Promise<AuthSession | null> {
     // Human identity is preferred because interactive CLI actions are performed
     // for the signed-in user. Machine identity remains available to machine-only callers.
-    const session = kind === 'machine' ? null : await this.sessions.load();
+    const session = kind === 'machine' ? null : await this.sessions.load(target?.gatewayUrl);
     const machine = session || kind === 'session' ? null : await this.machines.load();
     const selected = session ?? machine;
-    if (!selected) { return null; }
+    if (!selected) {
+      if (target?.gatewayUrl && kind !== 'machine' && (await this.sessions.list()).length > 0) {
+        throw authRequiredForGateway(target.gatewayUrl);
+      }
+      return null;
+    }
     const gatewayUrl = target?.gatewayUrl ?? selected.gatewayUrl;
     if (!credentialMatchesGatewayOrigin(selected.gatewayUrl, gatewayUrl)) { throw authRequiredForGateway(gatewayUrl); }
     if (session) {
@@ -96,11 +101,15 @@ export class AuthSessionOwner {
     return { credential: session, expiresIn: data.expiresIn };
   }
 
-  async clear(): Promise<void> { await Promise.all([this.sessions.clear(), this.machines.clear()]); }
+  async clear(gatewayUrl?: string): Promise<void> {
+    await Promise.all([this.sessions.clear(gatewayUrl), ...(gatewayUrl ? [] : [this.machines.clear()])]);
+  }
 
-  async logout(): Promise<boolean> {
-    const { session, machine } = await this.inspect();
-    const credentials = [session, machine].filter((value): value is AuthCredential => value !== null);
+  async logout(gatewayUrl?: string): Promise<boolean> {
+    const { sessions, machine } = await this.inspect();
+    const selectedSessions = gatewayUrl ? sessions.filter((item) => credentialMatchesGatewayOrigin(item.gatewayUrl, gatewayUrl)) : sessions;
+    const selectedMachine = machine && (!gatewayUrl || credentialMatchesGatewayOrigin(machine.gatewayUrl, gatewayUrl)) ? machine : null;
+    const credentials = [...selectedSessions, selectedMachine].filter((value): value is AuthCredential => value !== null);
     if (credentials.length === 0) { return false; }
     for (const credential of credentials) {
       const response = await fetch(`${credential.gatewayUrl}/auth/logout/cli`, {
@@ -109,15 +118,20 @@ export class AuthSessionOwner {
       });
       if (!response.ok) { throw await this.decodeFailure('Token revocation', response, credential.gatewayUrl); }
     }
-    await this.clear();
+    if (gatewayUrl) {
+      await this.sessions.clear(gatewayUrl);
+      if (selectedMachine) { await this.machines.clear(); }
+    } else {
+      await this.clear();
+    }
     return true;
   }
 
   async inspect(): Promise<AuthSnapshot> {
-    const [session, machine] = await Promise.all([this.sessions.load(), this.machines.load()]);
+    const [sessions, machine] = await Promise.all([this.sessions.list(), this.machines.load()]);
     return {
-      session, machine, sessionPath: this.sessions.getFilePath(),
-      sessionExpired: session ? authCredentialExpired(session) : false,
+      sessions, machine, sessionPath: this.sessions.getFilePath(),
+      sessionExpired: sessions.some(authCredentialExpired),
       machineExpired: machine ? authCredentialExpired(machine) : false,
     };
   }

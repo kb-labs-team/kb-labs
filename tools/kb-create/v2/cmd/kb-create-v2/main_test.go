@@ -176,6 +176,9 @@ func TestVersionJSONIncludesBuildCommit(t *testing.T) {
 }
 
 func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv(artifacts.BinarySourceEnv, "")
 	listener := testListenerWithPortHeadroom(t, 100)
 	port := listener.Addr().(*net.TCPAddr).Port
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
@@ -229,6 +232,74 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	if payload.Data.Plan.Request.GatewayURL != gatewayURL || payload.Data.Plan.Host.HealthURL != gatewayURL+"/health" ||
 		payload.Data.Plan.ServiceGraph.Services[0].Port != port {
 		t.Fatalf("declared Gateway was not applied to plan: %#v", payload.Data.Plan)
+	}
+}
+
+// case: PC-001.20
+func TestGatewayURLRequestFileProducesDerivedPlan(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_DATA_HOME", t.TempDir())
+	t.Setenv(artifacts.BinarySourceEnv, "")
+	listener := testListenerWithPortHeadroom(t, 100)
+	port := listener.Addr().(*net.TCPAddr).Port
+	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	platformRoot := filepath.Join(t.TempDir(), "platform")
+	requestPath := filepath.Join(t.TempDir(), "request.json")
+	request := contracts.InstallRequest{
+		Schema:         contracts.RequestSchema,
+		Platform:       contracts.VersionSelector{Channel: contracts.ChannelStable},
+		ServiceProfile: "default",
+		GatewayURL:     gatewayURL,
+		PlatformRoot:   platformRoot,
+	}
+	encodedRequest, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(requestPath, encodedRequest, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	source := testReleaseCatalog(t, "2.0.0")
+	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+	release, err := sealTestCatalog(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(t.TempDir(), "release-index.json")
+	encodedIndex, err := json.Marshal(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(indexPath, encodedIndex, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath, "--input", requestPath}, &stdout, &stderr)
+	if code.Code() != 0 {
+		t.Fatalf("request-file plan exit = %d: %s", code.Code(), stdout.String()+stderr.String())
+	}
+	var payload struct {
+		Data struct {
+			Plan contracts.ResolvedInstallPlan `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
+		t.Fatalf("request-file plan JSON is invalid: %s (%v)", stdout.String(), err)
+	}
+	plan := payload.Data.Plan
+	if plan.Request.GatewayURL != gatewayURL || plan.Host == nil || plan.Host.HealthURL != gatewayURL+"/health" ||
+		plan.ServiceGraph.Services[0].Port != port || plan.Request.MarketplaceSources != nil {
+		t.Fatalf("request-file Gateway input did not resolve as platform topology only: %#v", plan)
+	}
+	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
+		t.Fatalf("planning a request file changed the install root (stat error %v)", err)
 	}
 }
 
@@ -299,7 +370,7 @@ func TestExecuteInstallThenStatusUsesTheInstallRootIdentity(t *testing.T) {
 		t.Fatalf("install receipt request root = %q, read error=%v, canonicalize error=%v; want canonical install root %q", installedReceipt.Plan.Request.PlatformRoot, err, canonicalErr, canonicalRoot)
 	}
 	expectedMarketplaceInstall := contracts.MarketplaceInstallRecord{
-		ID: "@kb-labs/commit", Spec: "@kb-labs/commit@1.0.0", Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
+		ID: "@kb-labs/commit", Spec: "@kb-labs/commit", Version: "1.0.0", PrimaryKind: "plugin", Source: "registry", SignatureStatus: "verified",
 	}
 	if len(installedReceipt.MarketplaceInstalls) != 1 {
 		t.Fatalf("install receipt Marketplace results = %#v; want []contracts.MarketplaceInstallRecord{%#v}", installedReceipt.MarketplaceInstalls, expectedMarketplaceInstall)

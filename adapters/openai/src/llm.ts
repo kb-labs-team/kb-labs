@@ -130,7 +130,7 @@ export class OpenAILLM implements ILLM {
       max_tokens: options?.maxTokens ?? this.defaultMaxTokens,
       stop: options?.stop,
       ...(this.buildCacheRequestPatch(options) as Record<string, unknown>),
-    });
+    }, { signal: options?.signal });
 
     const choice = response.choices[0];
     const content = choice?.message?.content ?? "";
@@ -170,7 +170,7 @@ export class OpenAILLM implements ILLM {
       stop: options?.stop,
       stream: true,
       ...(this.buildCacheRequestPatch(options) as Record<string, unknown>),
-    });
+    }, { signal: options?.signal });
 
     for await (const chunk of stream) {
       const content = chunk.choices[0]?.delta?.content;
@@ -261,7 +261,7 @@ export class OpenAILLM implements ILLM {
       max_tokens: options?.maxTokens ?? this.defaultMaxTokens,
       stop: options?.stop,
       ...(this.buildCacheRequestPatch(options) as Record<string, unknown>),
-    });
+    }, { signal: options?.signal });
 
     const choice = response.choices[0];
     const content = choice?.message?.content ?? "";

@@ -124,6 +124,8 @@ export interface LLMOptions {
   metadata?: LLMRequestMetadata;
   /** Vendor-agnostic runtime execution policy (cache/stream semantics) */
   execution?: LLMExecutionPolicy;
+  /** Abort in-flight provider work when the owning command is cancelled. */
+  signal?: AbortSignal;
 }
 
 /**

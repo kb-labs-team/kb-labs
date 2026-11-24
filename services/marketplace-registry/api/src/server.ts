@@ -4,6 +4,7 @@ import {
   HttpObservabilityCollector,
   createDaemonServer,
   createServiceReadyResponse,
+  redactHttpUrl,
   type ObservabilityCollectorLike,
 } from '@kb-labs/shared-http';
 import type { ILogger } from '@kb-labs/core-platform';
@@ -55,7 +56,10 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
     logger,
     observability,
     onRequest: createRegistryAuthMiddleware(internalSecret),
+    // The Gateway's trusted service identity may probe health; Registry APIs and
+    // the other operational routes still require an authenticated user identity.
     standardRouteConfig: { registryAccess: 'user' },
+    healthRouteConfig: { registryAccess: 'public' },
     // Preserve the legacy /health contract { status:'ok', service, ts } — e2e RG-H01.
     healthResponse: () => ({ status: 'ok', service: 'marketplace-registry', ts: Date.now() }),
     // /ready must return { ready, components } — e2e RG-H02 asserts body.ready === true.
@@ -89,7 +93,7 @@ export async function createRegistryServer(opts: RegistryServerOptions): Promise
         }
         // Unhandled error — log full stack so failures surface in service logs.
         logger.error('Unhandled registry error', err, {
-          route: `${request.method} ${request.url}`,
+          route: `${request.method} ${redactHttpUrl(request.url)}`,
           code,
         });
         return reply.code(500).send({ error: 'InternalServerError', code, message: err.message });

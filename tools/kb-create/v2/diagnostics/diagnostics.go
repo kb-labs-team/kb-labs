@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"strings"
+	"unicode/utf8"
 
 	"github.com/kb-labs/create/v2/contracts"
 )
@@ -31,6 +32,8 @@ type Dossier struct {
 	LogPath             string               `json:"logPath,omitempty"`
 }
 
+const packageManagerStderrTailLimit = 4096
+
 func Redact(value string, secrets []string) string {
 	result := value
 	for _, secret := range secrets {
@@ -45,10 +48,16 @@ func Write(directory string, dossier Dossier, secrets []string) (string, error) 
 		return "", fmt.Errorf("diagnostic correlation ID is required")
 	}
 	if dossier.Error != nil {
-		dossier.Error.Reason = Redact(dossier.Error.Reason, secrets)
+		dossier.Error.Reason = diag.RedactText(Redact(dossier.Error.Reason, secrets))
+		dossier.Error.Cause = diag.RedactText(Redact(dossier.Error.Cause, secrets))
 		for key, value := range dossier.Error.Meta {
 			if text, ok := value.(string); ok {
-				dossier.Error.Meta[key] = Redact(text, secrets)
+				text = Redact(text, secrets)
+				text = diag.RedactText(text)
+				if key == "packageManagerStderrTail" {
+					text = tail(text, packageManagerStderrTailLimit)
+				}
+				dossier.Error.Meta[key] = text
 			}
 		}
 	}
@@ -70,4 +79,16 @@ func Write(directory string, dossier Dossier, secrets []string) (string, error) 
 		return "", err
 	}
 	return path, nil
+}
+
+func tail(value string, limit int) string {
+	value = strings.ToValidUTF8(value, "�")
+	data := []byte(value)
+	if len(data) > limit {
+		data = data[len(data)-limit:]
+		for len(data) > 0 && !utf8.Valid(data) {
+			data = data[1:]
+		}
+	}
+	return string(data)
 }

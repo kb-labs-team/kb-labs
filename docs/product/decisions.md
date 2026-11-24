@@ -1,5 +1,76 @@
 # Product decisions log
 
+## 2026-11-23
+
+### Higher config layers replace arrays consistently
+
+Generated, platform, project, and overlay layers share one merge rule:
+objects merge recursively, while an array supplied by a higher layer replaces
+the lower-layer array. Array concatenation requires an explicit
+`kb:merge: append` directive. Raw config inspection and the structured runtime
+reader use the same rule, so their effective values and provenance agree.
+Platform user config candidates fold in this order: root `.json`, root `.jsonc`,
+`.kb/kb.config.json`, then `.kb/kb.config.jsonc`. This makes the candidate
+selected by `config set` the highest-precedence file when multiple candidates
+exist. Case: S-316.
+
+## 2026-11-19
+
+### Agent CLI token budgets use command, configuration, then default precedence
+
+`kb agent run --budget N` overrides `tokenBudget.maxTokens` from plugin config;
+without the flag, the configured value applies, and without either value the
+runner's documented default applies. The budget counts combined prompt and
+completion usage after each provider response. Because usage is only known when
+the response returns, that response may cross the limit; any tool calls from
+that response are handled, then the agent stops with `hard_budget` before a
+subsequent provider request. Cases: S-299.1–S-299.5.
+
+### Registry versions without visibility snapshots fail closed
+
+Legacy Registry entries did not record visibility per release, so their prior
+version-by-version privacy cannot be reconstructed. A release without its own
+visibility snapshot is treated as private, and legacy aggregate install stats
+are private for the same reason. Publishing a new release snapshots its own
+visibility and preserves old releases as private without deleting their
+metadata or tarballs. Owners and valid share-token holders retain access.
+Case: S-268.21.
+
+## 2026-11-21
+
+### Secured installed project commands execute in the project runtime
+
+When a secured CLI invocation has positively verified the installed Gateway
+identity, no explicit `--gateway-url`, and a registered project scope, the CLI
+sends the plugin identity, canonical command path, bounded arguments, and
+flags to that project's runtime. The runtime resolves the enabled manifest,
+handler, permissions, environment, and canonical package root from its own
+catalog, then executes through its host-owned `platform.executionBackend`.
+Workspace Agent registration is not required. Explicit Gateway overrides and
+unverified targets retain the existing Gateway execution path; local CLI mode
+retains its existing execution path. A stopped secured host returns
+`KB_HOST_UNREACHABLE` before the plugin handler runs. Changing a platform
+adapter binding takes effect after the project runtime reloads. Cases: S-160.1–
+S-160.4, S-203.26.
+
+### Registry tarball downloads follow the configured source origin
+
+Marketplace resolves a Registry path-reference for package bytes against the
+configured Registry source, preserving a Gateway route prefix. An absolute
+tarball URL is accepted only when its origin matches that source. This keeps
+Registry credentials and trusted Gateway routing within the configured source
+boundary. Cases: S-268.1, S-268.3, S-268.4.
+
+### Package-manager output is captured and redacted before use
+
+Package-manager stdout and stderr are untrusted. Each stream is captured
+separately under a fixed byte limit; known secret values are replaced before
+credential-pattern redaction, and clipping happens only after that complete
+redaction pass. If a stream exceeds the limit, the installer drops that entire
+stream and reports a safe notice rather than retaining an unredacted slice.
+Failures retain the process exit code and bounded redacted stderr evidence.
+Cases: PC-001.2, S-285.18.
+
 ## 2026-10-31
 
 ### SQLite vector search breaks equal-score ties by record ID
@@ -123,15 +194,17 @@ separate owner decision. Case: S-268.9.
 
 ### Studio manages installed project plugins from Marketplace
 
-Studio has one Marketplace navigation destination. Its Installed view uses the
-selected project's Marketplace state and supports enable, disable, and
-uninstall for project plugins. The Studio runtime plugin registry remains a
-separate projection used to render plugin pages and menus; it is not the
-package catalog. Connecting Browse to Marketplace Registry packages remains
-required before S-182's package discovery steps are covered. This first
-increment does not add adapter lifecycle controls: adapters remain
-platform-scope packages, and selecting/configuring adapter slots stays with
-platform owners. Cases: S-120.1, S-182.
+Studio opens its single Marketplace navigation destination on installed
+entities grouped by type. Its Plugins category uses the selected project's
+Marketplace state and supports enable, disable, and removal; an `Open
+marketplace` action opens package search and install separately. The Studio
+runtime plugin registry remains a projection used to render plugin pages and
+menus; it is not the package catalog. Connecting the separate package view to
+Marketplace Registry packages remains required before S-182's discovery steps
+are covered. This increment does not display adapter lifecycle controls or
+adapter rows without platform Marketplace data; adapters remain platform-scope
+packages, and selecting/configuring adapter slots stays with platform owners.
+Cases: S-120.1, S-182.
 
 ## 2026-10-21
 
@@ -363,7 +436,7 @@ plugin installs need no credential. A team's private or paid plugins are fetched
 by the host with the installation's marketplace credential, so members only
 authenticate to their own platform. Author actions use a personal author
 credential scoped to the author's plugin scopes; CI uses short-lived, scope-limited
-publish credentials. Cases: S-216, S-217 (planned).
+publish credentials. Case S-216 is active; S-217 remains planned.
 
 ### Plugin lock keys are the manifest IDs
 
@@ -439,7 +512,7 @@ Cases: S-053.
 
 ### No self-registration
 
-The first administrator bootstraps the platform and has an offline recovery path (`kb-create doctor --recover`). Users join only through admin invites. Members see no user administration and are denied direct access to it. Machine registration for host agents is not human self-registration: it stays admin-gated and outside the release.
+The first administrator bootstraps the platform and has an offline recovery path (`kb-create doctor --recover`). Users join only through admin invites. Members see no user administration and are denied direct access to it. Machine registration for Workspace Agents is not human self-registration: it stays admin-gated and outside the first release. Workspace Agents serve remote project workspaces that are separate from the KB Labs platform host; local and secured installations use their platform-owned host and do not depend on Workspace Agent installation, registration, or connectivity.
 Cases: S-100, S-104.6, S-105, S-106, S-107, S-108.
 
 ### Roles, invites, reset links and API tokens
@@ -483,7 +556,7 @@ Cases: S-008, S-143, S-144, S-145, S-032 (historical).
 - Commands of installed plugins automatically become project MCP tools.
 - In secured mode, access uses the user's API token with that user's role.
 - Tool failures are `CallToolResult` values with `isError: true`, the ADR-0049 envelope as `structuredContent`, and a `"<code>: <message> — <hint>"` text line; protocol errors stay JSON-RPC errors.
-- Project MCP is release; agent sessions and host-agent registration are not.
+- Project MCP is release; agent sessions and Workspace Agent registration for remote project workspaces are not. Local and secured project execution remains on the platform-owned host and has no Workspace Agent dependency.
 Cases: S-045, S-140, S-141, S-142.
 
 ### Platform update and rollback

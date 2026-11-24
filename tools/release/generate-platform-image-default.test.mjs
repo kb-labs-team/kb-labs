@@ -25,3 +25,19 @@ test('image default carries Marketplace sources from the platform release config
     await rm(tempRoot, { recursive: true, force: true });
   }
 });
+
+// case: S-268.11
+test('image default carries the platform data layout used by adapter runtime paths', async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'kb-image-layout-'));
+  try {
+    const outputPath = path.join(tempRoot, '.kb', 'deploy', 'image-default', 'kb.config.json');
+    execFileSync(process.execPath, [producerPath, outputPath], { cwd: workspaceRoot });
+
+    const generatedLayout = JSON.parse(await readFile(path.join(path.dirname(outputPath), 'platform-layout.json'), 'utf8'));
+    const contractLayout = JSON.parse(await readFile(path.join(workspaceRoot, 'tools/kb-create/v2/contracts/platform-layout.json'), 'utf8'));
+    assert.deepEqual(generatedLayout, contractLayout);
+    assert.equal(generatedLayout.platformDataRoot.platformPath, '.kb/data');
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});

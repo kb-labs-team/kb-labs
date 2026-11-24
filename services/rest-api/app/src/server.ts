@@ -118,7 +118,8 @@ export async function createServer(
   config: RestApiConfig,
   repoRoot: string,
   registry: IEntityRegistry,
-  routeObserver?: (route: RouteOptions) => void
+  routeObserver?: (route: RouteOptions) => void,
+  projectExecution?: { projectId?: string; projectRoot: string; platformRoot: string; runtimeToken?: string },
 ): Promise<FastifyInstance> {
   // HTTP/2 configuration (requires HTTPS)
   const useHttp2 = config.http2?.enabled ?? false;
@@ -223,7 +224,7 @@ export async function createServer(
   registerMiddleware(server as unknown as FastifyInstance, config);
 
   // Register routes
-  await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, registry);
+  await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, registry, projectExecution);
   registerPluginRouteNotFoundHandler(server as unknown as FastifyInstance, config, registry);
 
   return server as unknown as FastifyInstance;

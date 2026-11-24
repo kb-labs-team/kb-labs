@@ -25,7 +25,6 @@ function harness({ listRuns, getRun, downloadVerdict = async () => pass, pushRef
   };
   const git = {
     headSha: async () => sha,
-    currentBranch: async () => 'agent/x231-test-strategy',
     remoteUrl: async (remoteName) => { calls.remoteUrls.push(remoteName); if (remoteUrlError) throw remoteUrlError; return remoteUrl; },
     pushRef: async (remoteName, ref, pushedSha) => { recordGitRemote(); calls.pushes.push({ remote: remoteName, ref, sha: pushedSha }); return pushRef(remoteName, ref, pushedSha); },
     resolveRef: async (remoteName, ref) => { recordGitRemote(); calls.resolves.push({ remote: remoteName, ref }); return resolveRef(remoteName, ref); },
@@ -204,13 +203,31 @@ test('candidate requests one dispatch run on its isolated ref and records the pr
     downloadVerdict: async () => candidatePass,
     listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
   });
-  h.executors.gh.dispatchRun = async (_repo, ref, profile, baseRef) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); assert.equal(baseRef, 'origin/agent/j90-integration'); };
+  h.executors.gh.dispatchRun = async (_repo, ref, profile, baseRef) => { dispatched += 1; assert.match(ref, /^verify-candidate\//); assert.equal(profile, 'candidate'); assert.equal(baseRef, undefined); };
   const verdict = await runRemoteVerification({ stream: 'release', profile: 'candidate', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
   assert.equal(verdict.status, 'pass');
   assert.equal(verdict.profile, 'candidate');
   assert.equal(dispatched, 1);
   assert.equal(h.calls.pushes.length, 1);
   assert.equal(h.calls.deletes.length, 1);
+});
+
+test('candidate dispatch from a short trunk branch does not select an affected base', async () => {
+  const candidateRun = (branch) => run({ event: 'workflow_dispatch', head_branch: branch, display_title: `Remote agent verification (candidate) for ${branch}` });
+  const h = harness({
+    downloadVerdict: async () => candidatePass,
+    listRuns: async (_repo, branch, event) => { assert.equal(event, 'workflow_dispatch'); return [candidateRun(branch)]; },
+  });
+  let dispatched = 0;
+  h.executors.gh.dispatchRun = async (_repo, ref, profile, baseRef) => {
+    dispatched += 1;
+    assert.match(ref, /^verify-candidate\//);
+    assert.equal(profile, 'candidate');
+    assert.equal(baseRef, undefined);
+  };
+  const verdict = await runRemoteVerification({ stream: 'release', profile: 'candidate', out: '/tmp/verdict.json' }, h.executors, { clock: h.clock, policy: h.policy });
+  assert.equal(verdict.status, 'pass');
+  assert.equal(dispatched, 1);
 });
 
 test('persistent GitHub failures exhaust the outage budget and classify as outage', async () => {

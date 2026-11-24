@@ -24,14 +24,26 @@ async function signInIfSecured(page: import('@playwright/test').Page) {
   await expect(page).not.toHaveURL(/\/login$/)
 }
 
-test('dashboard frame and first-tier navigation @S-120.1 @S-020.6', async ({ page }) => {
+test('dashboard frame and Gateway health response @S-120.1 @S-120.8 @S-020.6', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
 
+  const healthResponsePromise = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === '/api/observability/health',
+  )
   await page.goto(`${GATEWAY}/`)
+  const healthResponse = await healthResponsePromise
+  expect(healthResponse.status()).toBe(200)
+  expect(await healthResponse.json()).toMatchObject({
+    ok: true,
+    data: { serviceId: 'gateway', status: 'healthy', checks: expect.any(Array) },
+  })
   await expect(page.getByText('Intelligence Dashboard', { exact: true })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Dashboard', exact: true })).toBeVisible()
   await expect(page.getByText('Gateway health', { exact: true })).toBeVisible()
+  await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
+  await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
   await expect(page.getByRole('link', { name: 'Plugins', exact: true })).toHaveCount(0)
@@ -157,11 +169,12 @@ test('unavailable analytics service names its source and recovery command @S-125
 test('unavailable gateway keeps Dashboard visible with recovery commands @S-120.7 @S-125.4', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
+  let ready = false
   await page.route('**/api/observability/health', async (route) => {
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'gateway offline' }) })
   })
   await page.route('**/api/ready', async (route) => {
-    await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ready: false, reason: 'gateway unavailable' }) })
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: ready ? { ready: true } : { ready: false, reason: 'gateway unavailable' } }) })
   })
 
   await page.goto(`${GATEWAY}/`)
@@ -172,13 +185,23 @@ test('unavailable gateway keeps Dashboard visible with recovery commands @S-120.
   await expect(page.getByText('kb-create status --platform-root <platform-root>', { exact: false }).first()).toBeVisible()
   await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false }).first()).toBeVisible()
   await expect(page.getByRole('progressbar')).toHaveCount(0)
+
+  ready = true
+  await page.reload()
+  await expect(page.getByText('Gateway health details unavailable', { exact: true })).toBeVisible()
+  await expect(page.getByText('Could not load health details from /api/observability/health.', { exact: false })).toBeVisible()
+  await expect(page.getByText('Not ready at /api/ready', { exact: false })).toHaveCount(0)
 })
 
 test('S-122.2 and S-122.3: failed workflow detail carries its project and run to Logs', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   const projectId = process.env.KB_STUDIO_PROJECT_ID
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered project').toBeTruthy()
-  await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), projectId!)
+  const previouslySelectedProject = `${projectId}-previous`
+  await page.addInitScript(({ requested, selected }) => {
+    localStorage.setItem('kb.workflow.projectId', requested)
+    localStorage.setItem('kb-studio-active-project', selected)
+  }, { requested: projectId!, selected: previouslySelectedProject })
   await page.route(`**${projectServicePath(projectId!, 'workflow', 'runs/run-studio-diagnostic')}`, async (route) => {
     await route.fulfill({
       status: 200,
@@ -200,14 +223,72 @@ test('S-122.2 and S-122.3: failed workflow detail carries its project and run to
     })
   })
 
+  let previousProjectLogRequests = 0
+  await page.route(`**${projectServicePath(previouslySelectedProject, 'rest', 'logs')}**`, async (route) => {
+    previousProjectLogRequests += 1
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, data: { logs: [], total: 0 } }) })
+  })
+
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'logs')}**`, async (route) => {
+    if (route.request().url().includes('/stream')) {
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: '' })
+      return
+    }
+    const url = new URL(route.request().url())
+    const runLogs = [{ id: 'run-log', time: '2026-11-19T10:00:00.000Z', level: 'error', msg: 'RUN_LOG_MARKER', runId: 'run-studio-diagnostic', executionId: 'step-exec-diagnostic' }]
+    const from = url.searchParams.get('from')
+    const to = url.searchParams.get('to')
+    const logs = runLogs.filter(log => (!from || Date.parse(log.time) >= Date.parse(from)) && (!to || Date.parse(log.time) <= Date.parse(to)))
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        data: {
+          logs,
+          total: logs.length,
+          hasMore: false,
+          filters: { runId: 'run-studio-diagnostic' },
+          source: 'persistence',
+          stats: {},
+        },
+      }),
+    })
+  })
+  await page.route(`**${projectServicePath(projectId!, 'rest', 'logs/summarize')}`, async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, data: { summary: { question: 'Summarize this workflow run', timeRange: { from: null, to: null }, total: 1, stats: {} }, aiSummary: 'Run-specific summary', message: null } }),
+    })
+  })
+
   await page.goto(`${GATEWAY}/p/workflows/runs/run-studio-diagnostic`)
   const logsLink = page.getByRole('link', { name: 'Inspect run logs', exact: true })
   await expect(logsLink).toBeVisible()
-  await expect(logsLink).toHaveAttribute('href', `/observability/logs?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic`)
-  const logsRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/stream')))
+  await expect(logsLink).toHaveAttribute('href', `/observability/logs?projectId=${encodeURIComponent(projectId!)}&runId=run-studio-diagnostic&mode=history`)
+  const streamRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/stream')))
+  const historyRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs?')))
   await logsLink.click()
-  await expect(page).toHaveURL(new RegExp(`/observability/logs\\?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic$`))
-  expect((await logsRequest).url()).toContain('executionId=run-studio-diagnostic')
+  await expect(page).toHaveURL(new RegExp(`/observability/logs\\?projectId=${encodeURIComponent(projectId!)}&runId=run-studio-diagnostic&mode=history$`))
+  expect((await streamRequest).url()).toContain('runId=run-studio-diagnostic')
+  const historyUrl = new URL((await historyRequest).url())
+  expect(historyUrl.pathname).toContain(projectServicePath(projectId!, 'rest', 'logs'))
+  expect(historyUrl.searchParams.get('runId')).toBe('run-studio-diagnostic')
+  expect(historyUrl.searchParams.get('from')).toBeNull()
+  expect(historyUrl.searchParams.get('to')).toBeNull()
+  await expect(page.getByText('Historical Logs', { exact: true })).toBeVisible()
+  await expect(page.getByText('RUN_LOG_MARKER', { exact: true })).toBeVisible()
+  expect(previousProjectLogRequests).toBe(0)
+
+  await page.getByRole('button', { name: 'AI Summarize', exact: true }).click()
+  await page.getByPlaceholder(/Ask anything about these logs/).fill('Summarize this workflow run')
+  const summarizeRequest = page.waitForRequest(request => request.url().includes(projectServicePath(projectId!, 'rest', 'logs/summarize')))
+  await page.getByRole('button', { name: 'Generate Summary', exact: true }).click()
+  const summaryBody = (await summarizeRequest).postDataJSON()
+  expect(summaryBody.filters.runId).toBe('run-studio-diagnostic')
+  expect(summaryBody.timeRange).toBeUndefined()
+  await expect(page.getByText('Run-specific summary', { exact: true })).toBeVisible()
 })
 
 test('S-122.5: unavailable observability logs name the source and doctor command', async ({ page }) => {
@@ -219,14 +300,14 @@ test('S-122.5: unavailable observability logs name the source and doctor command
     await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ message: 'unavailable' }) })
   })
 
-  await page.goto(`${GATEWAY}/observability/logs?projectId=${encodeURIComponent(projectId!)}&executionId=run-studio-diagnostic`)
+  await page.goto(`${GATEWAY}/observability/logs?projectId=${encodeURIComponent(projectId!)}&runId=run-studio-diagnostic`)
   await page.getByText('History', { exact: true }).click()
   await expect(page.getByText('Observability logs unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('Source: REST API observability logs.', { exact: false })).toBeVisible()
   await expect(page.getByText('kb-create doctor --platform-root <platform-root>', { exact: false })).toBeVisible()
 })
 
-test('install Commit, inspect real changes, generate a plan, and uninstall it @S-123.1 @S-123.2 @S-123.3 @S-123.4 @S-123.5 @S-123.6', async ({ page }) => {
+test('install Commit, inspect real changes, generate a plan, and uninstall it @S-123.1 @S-123.2 @S-123.3 @S-123.4 @S-123.5 @S-123.6 @S-251.1', async ({ page }) => {
   test.skip(!enabled, 'Enabled by the installed Studio journey hook')
   await signInIfSecured(page)
   const projectId = process.env.KB_STUDIO_PROJECT_ID
@@ -262,6 +343,17 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   )
   expect(commitPin?.resolvedPath).toBe(`store:${encodeURIComponent('@kb-labs/commit')}@${encodeURIComponent(commitVersion!)}`)
   expect(existsSync(extensionEntry), `installed Commit entry should exist at ${extensionEntry}`).toBe(true)
+
+  const installedPluginsResponse = await page.request.get(`${GATEWAY}/api/v1/plugins?projectId=${encodeURIComponent(projectId!)}`)
+  expect(installedPluginsResponse.status()).toBe(200)
+  const installedPlugins = await installedPluginsResponse.json() as {
+    ok?: boolean
+    data?: Array<{ id?: string; version?: string }>
+  }
+  expect(installedPlugins.ok).toBe(true)
+  expect(installedPlugins.data?.some(plugin =>
+    plugin.id === '@kb-labs/commit' && plugin.version === commitVersion,
+  )).toBe(true)
 
   await page.addInitScript((id) => localStorage.setItem('kb-studio-active-project', id), projectId!)
   await page.goto(`${GATEWAY}/p/commit`)

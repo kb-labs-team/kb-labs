@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { createStreamingUI } from '../context/streaming-ui.js';
+import { withProcessSensitiveValues } from '@kb-labs/core-platform';
 import type { UIFacade, Spinner } from '@kb-labs/plugin-contracts';
 import type { EventEmitterFn } from '../api/index.js';
 
@@ -43,6 +44,49 @@ function createMockUI(): UIFacade {
 }
 
 describe('createStreamingUI', () => {
+  // case: S-203.26
+  it('redacts complete and cross-write UI messages before base output and IPC framing', async () => {
+    const base = createMockUI();
+    const events: Array<{ line: string }> = [];
+    const emitter: EventEmitterFn = async (_name, payload) => { events.push(payload as { line: string }); };
+
+    await withProcessSensitiveValues(['multi\nline-secret', 'cross-write-secret'], async () => {
+      const ui = createStreamingUI(base, emitter);
+      ui.info('before multi\nline-secret after');
+      ui.write('before cross-write-');
+      ui.write('secret after\r');
+    });
+
+    expect(events.map(({ line }) => line).join('\n')).toContain('[REDACTED]');
+    expect(JSON.stringify(events)).not.toContain('multi\nline-secret');
+    expect(JSON.stringify(events)).not.toContain('cross-write-secret');
+    expect(base.info).toHaveBeenCalledWith('before [REDACTED] after', undefined);
+    expect(vi.mocked(base.write).mock.calls.flat().join('')).not.toContain('cross-write-secret');
+  });
+
+  // case: S-203.26
+  it('recursively redacts structured keys and values before JSON serialization', async () => {
+    const base = createMockUI();
+    const events: Array<{ line: string }> = [];
+    const emitter: EventEmitterFn = async (_name, payload) => { events.push(payload as { line: string }); };
+    const secret = 'multi\n"quoted"\\path';
+
+    await withProcessSensitiveValues([secret], async () => {
+      const ui = createStreamingUI(base, emitter);
+      ui.log({
+        level: 'info',
+        message: 'structured fields',
+        fields: { nested: [{ [secret]: secret }] },
+      } as never);
+    });
+
+    const safeFields = vi.mocked(base.log).mock.calls[0]?.[0]?.fields;
+    expect(safeFields).toEqual({ nested: [{ '[REDACTED]': '[REDACTED]' }] });
+    const emittedFields = JSON.parse(events[0]!.line.slice(events[0]!.line.indexOf('{')));
+    expect(emittedFields).toEqual(safeFields);
+    expect(events.join('')).not.toContain(secret);
+  });
+
   it('delegates all calls to the base UI', () => {
     const base = createMockUI();
     const emitter: EventEmitterFn = vi.fn(async () => {});

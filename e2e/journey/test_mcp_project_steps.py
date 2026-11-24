@@ -13,11 +13,12 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).parent))
 
 from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
-from mcp_project_steps import (apply_commit_plan, commit_tool_schema, invalid_arguments, local_auth,
+from mcp_project_steps import (apply_commit_plan, cli_mcp_read_parity, commit_tool_schema, invalid_arguments, local_auth,
                                mcp_ux_result_contract, project_isolation, project_plugin_catalog_isolation,
                                project_readonly_tool_isolation,
                                run_agent_session_steps,
-                               opaque_host_credential_mcp_rejection, secured_auth, secured_project_catalog_isolation, unknown_tool)
+                               opaque_host_credential_mcp_rejection, secured_auth, secured_project_catalog_isolation,
+                               unknown_tool, workflow_cron_invocation_parity)
 from service_steps import FlowGraph, Journey
 from invocations import catalogued_error_hint
 import service_runner
@@ -44,6 +45,61 @@ def tool_error(code: str, message: str, hint: str):
 
 
 class ProjectMcpJourneyTests(unittest.TestCase):
+    # case: S-045.12
+    def test_workflow_cron_parity_drives_one_cli_and_mcp_state_sequence(self):
+        tool = {"name": "workflow__workflow_crons_enable", "inputSchema": {
+            "type": "object", "properties": {"id": {"type": "string", "minLength": 1}},
+            "required": ["id"], "additionalProperties": False,
+        }}
+        requests = []
+        def fake_request(path, **kwargs):
+            payload = kwargs.get("payload", {})
+            requests.append(payload)
+            if payload.get("method") == "tools/list":
+                return 200, {"result": {"tools": [tool]}}, {}
+            arguments = payload["params"].get("arguments", {})
+            if not arguments.get("id"):
+                return 200, tool_error("KB_RUNTIME_INPUT_INVALID", "The provided input is invalid.",
+                                       catalogued_error_hint("KB_RUNTIME_INPUT_INVALID")), {}
+            action = payload["params"]["name"].rsplit("_", 1)[-1]
+            enabled = action == "enable"
+            return 200, {"result": {"isError": False, "structuredContent": {
+                "ok": True, "data": {"id": "journey-cron", "enabled": enabled},
+            }}}, {}
+
+        def fake_cli(argv, **kwargs):
+            command = " ".join(argv)
+            if "workflow crons enable" in command and "journey-cron" not in command:
+                envelope = {
+                    "code": "KB_RUNTIME_INPUT_INVALID", "area": "runtime", "stage": "run",
+                    "severity": "error", "retryable": False,
+                    "message": "The provided input is invalid.",
+                    "hint": catalogued_error_hint("KB_RUNTIME_INPUT_INVALID"),
+                    "details": {"field": "id"}, "correlationId": "corr-input",
+                }
+                return subprocess.CompletedProcess(argv, 2, json.dumps({"ok": False, "error": envelope}), "")
+            if "crons list" in command:
+                data = {"crons": [{"id": "journey-cron", "source": "user", "schedule": "* * * * *",
+                                   "target": {"workflow": "journey-cron-target"}, "enabled": False}]}
+            else:
+                action = "enable" if "crons enable" in command else "disable"
+                data = {"id": "journey-cron", "enabled": action == "enable"}
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"ok": True, "data": data}), "")
+
+        with patch("mcp_project_steps._request", side_effect=fake_request), \
+             patch("mcp_project_steps.run_command", side_effect=fake_cli):
+            self.assertIsNone(workflow_cron_invocation_parity("prj_a", "token", "/tmp/project", {}, "S-045.12"))
+
+        self.assertEqual([item.get("params", {}).get("name") for item in requests[3:]], [
+            "workflow__workflow_crons_disable", "workflow__workflow_crons_enable",
+        ])
+        self.assertEqual([item.get("params", {}).get("arguments") for item in requests[1:3]], [
+            {}, {"id": ""},
+        ])
+        self.assertEqual([item.get("params", {}).get("arguments") for item in requests[3:]], [
+            {"id": "journey-cron"}, {"id": "journey-cron"},
+        ])
+
     def setUp(self):
         def read_installed_contract(*parts: str) -> bytes:
             root = Path(__file__).resolve().parents[2]
@@ -145,8 +201,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
     # case: S-199.3
     def test_project_catalog_isolation_rejects_fake_failure_then_proves_project_scoped_tool(self):
         journey = Journey("local", "project-catalog-isolation")
-        with patch("service_runner.request_mcp", side_effect=[
-            (500, {}, {}), (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
+        with patch("mcp_project_steps.project_service_path", side_effect=lambda project, service: f"/{project}/{service}"), patch("service_runner.request_mcp", side_effect=[
+            (500, {}, {}), (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
         ]):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
@@ -157,10 +213,10 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
         journey = Journey("local", "project-catalog-isolation")
         responses = [
-            (200, {"result": {"tools": [{"name": commit_tool("commit plan apply")}]}}, {}),
+            (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
             (200, {"result": {"tools": [{"name": next(iter(service_tool_names(DEFAULT_ENABLED_SERVICES)))}]}}, {}),
         ]
-        with patch("service_runner.request_mcp", side_effect=responses):
+        with patch("mcp_project_steps.project_service_path", side_effect=lambda project, service: f"/{project}/{service}"), patch("service_runner.request_mcp", side_effect=responses):
             journey.step("project catalog isolation", "mcp",
                          lambda: project_plugin_catalog_isolation("prj_a", "prj_b", "token"),
                          cases=["S-199.3"])
@@ -450,7 +506,8 @@ class ProjectMcpJourneyTests(unittest.TestCase):
 
     def test_invalid_arguments_sends_bad_type_and_checks_field_in_envelope(self):
         response = tool_error("KB_RUNTIME_MCP_INVALID_ARGUMENTS", "Argument force must be boolean", "Pass a boolean value.")
-        with patch("service_runner.request_mcp", return_value=(200, response, {})) as request:
+        with patch("service_runner.request_mcp", return_value=(200, response, {})) as request, \
+             patch("mcp_project_steps.project_service_path", return_value="/mcp"):
             self.assertIsNone(invalid_arguments("prj_a", "token"))
         self.assertEqual(request.call_args.kwargs["payload"]["params"]["arguments"], {"force": "yes"})
 
@@ -553,14 +610,47 @@ class ProjectMcpJourneyTests(unittest.TestCase):
         self.assertEqual(git_log.call_args_list[0].args[0], ["kb", "commit", "plan", "show", "--json"])
         self.assertEqual(git_log.call_args.args[0][-1], "--all")
 
+    def test_cli_mcp_read_parity_requires_prepared_plan_identity_and_matching_data(self):
+        plan_data = {"hasPlan": True, "planPath": "/tmp/prepared/plan.json",
+                     "plan": {"commits": [{"id": "journey-commit"}]}}
+        cli = subprocess.CompletedProcess(args=[], returncode=0,
+            stdout=json.dumps({"ok": True, "data": plan_data}), stderr="")
+        response = {"result": {"isError": False,
+                               "content": [{"text": json.dumps({"ok": True, "data": plan_data})}]}}
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_path = Path(directory) / "fixtures.json"
+            fixture_path.write_text(json.dumps({"commitPlanPreparationResult": {
+                "path": "/tmp/prepared/plan.json", "planId": "journey-commit", "totalCommits": 1,
+            }}), encoding="utf-8")
+            with patch("mcp_project_steps.run_command", return_value=cli) as run_cli, \
+                 patch("service_runner.request_mcp", return_value=(200, response, {})) as request, \
+                 patch("mcp_project_steps.project_service_path", return_value="/mcp"), \
+                 patch("mcp_project_steps.journey_value", return_value=str(fixture_path)):
+                self.assertIsNone(cli_mcp_read_parity("prj_a", "token", "/tmp/project-a"))
+            self.assertEqual(run_cli.call_args.args[0], ["kb", "commit", "plan", "show", "--json"])
+            self.assertEqual(request.call_args.kwargs["payload"]["params"]["name"], commit_tool("commit plan show"))
+            self.assertEqual(request.call_args.kwargs["payload"]["params"]["arguments"], {"json": True})
+
+            wrong_identity = dict(plan_data)
+            wrong_identity["plan"] = {"commits": [{"id": "other-plan"}]}
+            bad_cli = subprocess.CompletedProcess(args=[], returncode=0,
+                stdout=json.dumps({"ok": True, "data": wrong_identity}), stderr="")
+            with patch("mcp_project_steps.run_command", return_value=bad_cli), \
+                 patch("mcp_project_steps.journey_value", return_value=str(fixture_path)):
+                self.assertIn("plan id", cli_mcp_read_parity("prj_a", "token", "/tmp/project-a"))
+
     def test_project_isolation_checks_catalog_then_typed_unknown_call(self):
         response = tool_error("KB_RUNTIME_MCP_UNKNOWN_TOOL", "Unknown MCP tool", "Call tools/list to discover tools.")
-        with tempfile.TemporaryDirectory() as directory, patch("service_runner.request_mcp", side_effect=[
+        with tempfile.TemporaryDirectory() as directory, patch("mcp_project_steps.project_service_path", side_effect=lambda project, service: f"/{project}/{service}"), patch("service_runner.request_mcp", side_effect=[
+            (200, {"result": {"tools": [{"name": "kb-labs-review__review_run"}]}}, {}),
             (200, {"result": {"tools": [{"name": next(iter(service_tool_names(DEFAULT_ENABLED_SERVICES)))}]}}, {}),
             (200, response, {}),
         ]) as request:
             self.assertIsNone(project_isolation("prj_a", "prj_b", str(Path(directory).resolve()), "token"))
-        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[0].kwargs["payload"]["method"], "tools/list")
+        self.assertEqual(request.call_args_list[1].kwargs["payload"]["method"], "tools/list")
+        self.assertEqual(request.call_args_list[2].kwargs["payload"]["params"]["name"], "kb-labs-review__review_run")
 
     def test_project_isolation_requires_the_registered_canonical_root(self):
         with tempfile.TemporaryDirectory() as directory:

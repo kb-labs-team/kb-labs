@@ -854,17 +854,41 @@ func (clock *controlledSchedulerClock) Now() time.Time {
 	return clock.now
 }
 func (clock *controlledSchedulerClock) NewTicker(time.Duration) schedulerTicker {
-	clock.ticker = &controlledSchedulerTicker{ticks: make(chan time.Time, 4)}
+	// Advance waits until the scheduler receives each injected tick, avoiding a
+	// race with the test's lease polling. Receiving the tick does not guarantee
+	// the sweep acquired its lease; the test probes that separately.
+	clock.mu.Lock()
+	defer clock.mu.Unlock()
+	clock.ticker = &controlledSchedulerTicker{ticks: make(chan time.Time)}
 	return clock.ticker
 }
 func (ticker *controlledSchedulerTicker) C() <-chan time.Time { return ticker.ticks }
 func (ticker *controlledSchedulerTicker) Stop()               {}
-func (clock *controlledSchedulerClock) Advance(d time.Duration) {
+func (clock *controlledSchedulerClock) Advance(ctx context.Context, d time.Duration) error {
 	clock.mu.Lock()
 	clock.now = clock.now.Add(d)
 	now := clock.now
+	ticker := clock.ticker
 	clock.mu.Unlock()
-	clock.ticker.ticks <- now
+	if ticker == nil {
+		return errors.New("controlled scheduler ticker is not initialized")
+	}
+	select {
+	case ticker.ticks <- now:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("scheduler did not receive controlled ticker event: %w", ctx.Err())
+	}
+}
+
+func TestControlledSchedulerClockAdvanceReturnsWhenTickIsNotReceived(t *testing.T) {
+	clock := &controlledSchedulerClock{now: time.Now(), ticker: &controlledSchedulerTicker{ticks: make(chan time.Time)}}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Millisecond)
+	defer cancel()
+	err := clock.Advance(ctx, time.Hour)
+	if err == nil || !strings.Contains(err.Error(), "scheduler did not receive controlled ticker event: context deadline exceeded") {
+		t.Fatalf("Advance() error = %v, want bounded receive timeout", err)
+	}
 }
 
 // case: S-276.3
@@ -1061,6 +1085,13 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 		cancel()
 		t.Fatal(err)
 	}
+	// The completed marker is appended just before the startup sweep releases
+	// its lease. Wait for that release so the scheduled sweep below is the one
+	// whose lease this test observes.
+	if err := waitForHygieneLeaseAvailable(t, hygieneLeasePath(f.state)); err != nil {
+		cancel()
+		t.Fatal(err)
+	}
 	eventsFile, err = os.OpenFile(filepath.Join(first.WorktreeRoot, "logs", "events.log"), os.O_RDWR, 0)
 	if err != nil {
 		cancel()
@@ -1072,7 +1103,13 @@ func TestSchedulerDispatchesWhileScheduledHygieneIsSlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := f.addTask(t, "slow-hygiene-two", "worker")
-	clock.Advance(2 * time.Hour)
+	advanceCtx, cancelAdvance := context.WithTimeout(ctx, 10*time.Second)
+	if err := clock.Advance(advanceCtx, 2*time.Hour); err != nil {
+		cancelAdvance()
+		cancel()
+		t.Fatalf("advance scheduler clock: %v", err)
+	}
+	cancelAdvance()
 	leasePath := hygieneLeasePath(f.state)
 	if !waitForHygieneLeaseBusy(t, leasePath) {
 		_ = syscall.Flock(int(eventsFile.Fd()), syscall.LOCK_UN)
@@ -1144,6 +1181,22 @@ func waitForHygieneLeaseBusy(t *testing.T, path string) bool {
 		runtime.Gosched()
 	}
 	return false
+}
+
+func waitForHygieneLeaseAvailable(t *testing.T, path string) error {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		lease, acquired, err := proc.AcquireFileLease(path, proc.LeaseExclusiveTry)
+		if err != nil {
+			return fmt.Errorf("probe hygiene lease: %w", err)
+		}
+		if acquired {
+			return lease.Close()
+		}
+		runtime.Gosched()
+	}
+	return fmt.Errorf("hygiene lease %s did not become available", path)
 }
 
 func waitForHygieneEvent(path, event string) error {

@@ -229,7 +229,7 @@ func ensureTarget(target, cliEntry, platformRoot string) error {
 	if err != nil {
 		return failed(target, "cannot resolve installation home", err)
 	}
-	content := []byte(shimContent(cliEntry, home))
+	content := []byte(shimContent(cliEntry, home, platformRoot))
 	if existing, err := os.ReadFile(target); err == nil {
 		if string(existing) == string(content) {
 			return nil
@@ -253,8 +253,8 @@ func ensureTarget(target, cliEntry, platformRoot string) error {
 	return nil
 }
 
-func shimContent(cliEntry, home string) string {
-	return "#!/bin/sh\n# kb-create managed shim\nif [ -z \"${KB_HOME:-}\" ]; then KB_HOME=" + shellQuote(home) + "; export KB_HOME; fi\nexec node " + shellQuote(cliEntry) + " \"$@\"\n"
+func shimContent(cliEntry, home, platformRoot string) string {
+	return "#!/bin/sh\n# kb-create managed shim\nif [ -z \"${KB_HOME:-}\" ]; then KB_HOME=" + shellQuote(home) + "; export KB_HOME; fi\nif [ -z \"${KB_PLATFORM_ROOT:-}\" ]; then KB_PLATFORM_ROOT=" + shellQuote(platformRoot) + "; export KB_PLATFORM_ROOT; fi\nexec node " + shellQuote(cliEntry) + " \"$@\"\n"
 }
 
 func shellQuote(value string) string {

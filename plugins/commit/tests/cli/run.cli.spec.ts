@@ -37,7 +37,7 @@ vi.mock('../../src/rest/handlers/scope-resolver.js', () => ({
 }));
 
 import { generateCommitPlan, applyCommitPlan, hasChanges, getGitStatus, savePlan, saveToHistory, clearPlan } from '../../src/core/index.js';
-import { AdapterCredentialsMissingError, AdapterUnavailableError, findRepoRoot } from '@kb-labs/sdk';
+import { AdapterCredentialsMissingError, AdapterUnavailableError, findRepoRoot, useLoader } from '@kb-labs/sdk';
 import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 import type { CommitFlags, GenerateFlags } from '../../src/contracts/flags.js';
 import runCommand from '../../src/cli/commands/run.js';
@@ -108,6 +108,34 @@ function createRunContext(ui: ReturnType<typeof createCapturedUI>['ui']) {
 }
 
 describe('commit:commit (run)', () => {
+  // case: S-030.3
+  it('does not apply a generated plan after the host execution is cancelled', async () => {
+    const controller = new AbortController();
+    const stop = vi.fn();
+    vi.mocked(useLoader).mockReturnValue({ start: vi.fn(), stop, succeed: vi.fn(), fail: vi.fn(), update: vi.fn() } as never);
+    vi.mocked(generateCommitPlan).mockImplementation(async () => {
+      controller.abort(new Error('cancelled by caller'));
+      return mockPlan as never;
+    });
+    const { ui } = createCapturedUI();
+    const ctx = {
+      ...createMockContext({
+      ui,
+      cwd: '/project',
+      platformConfig: { platform: { adapters: { llm: '@kb-labs/adapter-fixture' } } },
+      }),
+      signal: controller.signal,
+    };
+
+    await expect(runCommand.execute(ctx as never, runInput())).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(generateCommitPlan).toHaveBeenCalledOnce();
+    expect(vi.mocked(generateCommitPlan).mock.calls[0]?.[0]).toMatchObject({ signal: controller.signal });
+    expect(stop).toHaveBeenCalled();
+    expect(savePlan).not.toHaveBeenCalled();
+    expect(applyCommitPlan).not.toHaveBeenCalled();
+  });
+
   it('CR-01: applies commits — successful result and success message', async () => {
     const { ui, captured } = createCapturedUI();
     const ctx = createRunContext(ui);

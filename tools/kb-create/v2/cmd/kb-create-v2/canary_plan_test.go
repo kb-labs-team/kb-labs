@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	clikitcommand "github.com/kb-labs/clikit/command"
+	"github.com/kb-labs/create/v2/catalog"
 	"github.com/kb-labs/create/v2/contracts"
 	"github.com/kb-labs/create/v2/runtime"
 	"github.com/kb-labs/create/v2/scenario"
@@ -32,6 +33,46 @@ func installCanaryIndex(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return home
+}
+
+// case: PC-001.3, S-268.9
+func TestMarketplaceScenarioPlanDoesNotRequirePluginInReleaseIndex(t *testing.T) {
+	home := installCanaryIndex(t)
+	source, err := catalog.LoadFile(filepath.Join("testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Plugins = nil
+	sealed, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	indexPath := filepath.Join(home, ".local", "share", "kb-create", "release-index.json")
+	if err := os.WriteFile(indexPath, index, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{"plan", "--index", indexPath, "--platform-root", filepath.Join(home, "platform"), "--platform-version", "2.121.0-canary.cec6dacc6", "--scenario", "commit", "--json"}
+	var out, stderr bytes.Buffer
+	code := clikitcommand.Execute(newRootCommand(), args, &out, &stderr)
+	if code.Code() != 0 {
+		t.Fatalf("exit=%d output=%s stderr=%s", code.Code(), out.String(), stderr.String())
+	}
+	var payload struct {
+		Data struct {
+			Plan contracts.ResolvedInstallPlan `json:"plan"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Data.Plan.Request.MarketplaceInstallSpecs; len(got) != 1 || got[0] != "@kb-labs/commit" {
+		t.Fatalf("Marketplace specs = %#v, want the unchanged scenario install spec", got)
+	}
 }
 
 // case: S-285.1

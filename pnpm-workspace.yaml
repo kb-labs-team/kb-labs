@@ -67,6 +67,8 @@ overrides:
   qs: '>=6.15.4'
   # GHSA-rgj7-g3m4-5g8c (Next.js image processing).
   sharp: '>=0.35.4'
+  # GHSA-jqcg-44mw-7w3h (proxy-addr IPv4-mapped IPv6 trust subnet spoofing).
+  'proxy-addr@': '2.0.8'
   find-my-way: '>=9.7.0'
   # GHSA-2883-xcg3-v3hh; gray-matter needs the 3.x API, so keep it on patched 3.x.
   'gray-matter>js-yaml': '>=3.15.2 <4'

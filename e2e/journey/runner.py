@@ -5,12 +5,13 @@ from __future__ import annotations
 from mcp_tool_names import DEFAULT_ENABLED_SERVICES, commit_tool, service_tool_names
 
 from kb_invocation import kb_command, kb_login_shell, kb_login_shell_sequence
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import active_platform_root, layout_relative, layout_value
 from journey_values import journey_value
 
 import json
 import base64
 import os
+import platform
 import re
 import stat
 import shutil
@@ -18,12 +19,14 @@ import sys
 import tempfile
 import time
 import traceback
+import uuid
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 from typing import Callable, Union
+from urllib.parse import urlsplit, urlunsplit
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
                           create_studio_member, run_studio_browser_step,
@@ -39,13 +42,19 @@ from installer_case_steps import (run_doctor_root_isolation_step,
                                   run_apply_scenario_step,
                                   run_uninstall_decline_step, run_missing_project_request_steps,
                                   commit_marketplace_install_record,
+                                  first_admin_credential_disclosed_once,
+                                  requested_commit_marketplace_install_satisfied,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import parse_install_refusal
-from journey_resources import host_structured_log_problem, case_catalog_root, journey_module, parse_shell_commands, resource_root, workspace_resource
+from journey_resources import (case_catalog_root, host_structured_log_problem, journey_module,
+                               parse_shell_commands, preserved_fixture_roots, remove_tree_preserving,
+                               resource_root, workspace_resource)
 from project_service_path import project_service_path
 from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
+                           run_selected_smoke,
                            record_runner_exception, replay_steps)
+from redaction import redact_text
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
                                read_journey_selection, use_journey_selection)
@@ -57,6 +66,7 @@ from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
 from scoreboard import release_claims_for_case, write_scoreboards
+from gateway_sessions import SavedGatewaySession
 from invocations import (
     CompletedProcess,
     TimeoutExpired,
@@ -74,8 +84,11 @@ from invocations import (
     run_pty_command,
     start_background_command,
     store_report_secret,
+    write_report_json,
     write_report_text,
 )
+from journey_evidence import (apply_clean_install_case_evidence, clean_install_evidence_profile,
+                             capture_clean_install_artifacts)
 
 INSTALLER = "/usr/local/share/kb-create/install.sh"
 FRONT_DOOR = journey_value("KB_JOURNEY_FRONT_DOOR", "agent")
@@ -99,10 +112,15 @@ ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
 LAST_COMMAND_CWD: str | None = None
+CLEAN_INSTALL_EVIDENCE_CAPTURE: dict[str, str] = {}
+CLEAN_INSTALL_CANDIDATE_DIGEST: str | None = None
+CLEAN_INSTALL_CANDIDATE_VERIFIED = False
+CLEAN_INSTALL_EVIDENCE_RUN_ID = ""
+CLEAN_INSTALL_ATTEMPT_ROOT: Path | None = None
 
 
-def marketplace_install_flags(env: dict[str, str]) -> list[str]:
-    """Configure the journey npm mirror and translate Registry secrets to env references."""
+def marketplace_install_flags(env: dict[str, str], *, gateway_url: str | None = None) -> list[str]:
+    """Configure journey Marketplace sources for anonymous public Registry installs."""
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL", "")
     encoded_key = env.get("KB_JOURNEY_MARKETPLACE_PUBLIC_KEY_B64", "")
     if bool(registry_url) != bool(encoded_key):
@@ -114,13 +132,61 @@ def marketplace_install_flags(env: dict[str, str]) -> list[str]:
         except (ValueError, UnicodeDecodeError) as error:
             raise ValueError("journey Registry public key is not valid base64-encoded UTF-8") from error
         env["KB_JOURNEY_MARKETPLACE_PUBLIC_KEY"] = key
-        store_report_secret(env, "KB_JOURNEY_MARKETPLACE_TOKEN",
-                            "journey-registry-token-reference-test-value", "journey Marketplace Registry token")
-        flags.extend(["--marketplace-registry-url", registry_url,
+        # Keep the configured reference resolvable while public Registry cases
+        # exercise anonymous access. S-268.6 injects a non-empty sentinel only
+        # for the status/doctor redaction checks.
+        env["KB_JOURNEY_MARKETPLACE_TOKEN"] = ""
+        source_url = (f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
+                      if gateway_url else registry_url)
+        flags.extend(["--marketplace-registry-url", source_url,
                       "--marketplace-registry-public-key-env", "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
                       "--marketplace-registry-token-env", "KB_JOURNEY_MARKETPLACE_TOKEN"])
     flags.extend(["--marketplace-npm-url", REGISTRY])
     return flags
+
+
+def registry_gateway_url_from_plan(plan_data: dict) -> str:
+    """Return the effective public Gateway origin recorded by kb-create plan."""
+    health_url = plan_data.get("plan", {}).get("host", {}).get("healthUrl")
+    if not isinstance(health_url, str) or not health_url:
+        raise ValueError("install plan omitted the Gateway health URL")
+    parsed = urlsplit(health_url)
+    if not parsed.scheme or not parsed.netloc:
+        raise ValueError("install plan returned an invalid Gateway health URL")
+    path = parsed.path.removesuffix("/health").rstrip("/")
+    return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
+
+def registry_install_request(plan_data: dict, *, gateway_url: str, registry_upstream: str) -> dict:
+    """Add the Registry Gateway route to the actual install request, before host/plugin startup."""
+    plan = plan_data.get("plan", {})
+    request = plan.get("request")
+    if not isinstance(request, dict):
+        raise ValueError("install plan omitted its normalized request")
+    request = json.loads(json.dumps(request))
+    sources = request.setdefault("marketplaceSources", {})
+    sources["registryUrl"] = f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
+    request["gatewayUrl"] = gateway_url
+    secret_inputs = request.setdefault("secretInputs", [])
+    if "gateway.internalSecret" not in secret_inputs:
+        secret_inputs.append("gateway.internalSecret")
+    values = request.setdefault("values", {})
+    values["gateway.marketplaceRegistryRoute"] = json.dumps({
+        "serviceId": "marketplace-registry",
+        "prefix": "/api/v1/marketplace-registry",
+        "rewritePrefix": "",
+    }, separators=(",", ":"))
+    patches = plan.get("configPatches", [])
+    adapter_options = next((patch.get("json") for patch in patches
+                            if patch.get("path") == "/platform/adapterOptions"), None)
+    if not isinstance(adapter_options, str):
+        raise ValueError("install plan omitted platform.adapterOptions")
+    options = json.loads(adapter_options)
+    transport = options.setdefault("serviceTransport", {})
+    services = transport.setdefault("services", {})
+    services["marketplace-registry"] = {"url": registry_upstream}
+    values["platform.adapterOptions"] = json.dumps(options, separators=(",", ":"))
+    return request
 
 
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
@@ -150,6 +216,18 @@ def runner_scenario(name: str, *, secured: bool) -> dict:
         "marketplace_packages": description["secured_marketplace_packages"] if secured else (),
         "command_help_paths": description["command_help_paths"],
     }
+
+
+def run_selected_first_value_smoke(graph: FlowGraph, check: Callable[[], object]):
+    """Run the Commit execution smoke only when the selected journey needs it."""
+    return run_selected_smoke(graph, "kb commit first value", "platform.install", check)
+
+
+def run_selected_project_mcp(graph: FlowGraph, check: Callable[[], object]):
+    """Run the agent project-MCP smoke only when the selected journey needs it."""
+    return run_selected_smoke(graph, "project MCP journey", "mcp", check, selected_capability="mcp")
+
+
 OUTER_GROUP_DEPENDENCIES = {
     "install": (),
     "host": ("platform-installed",),
@@ -241,6 +319,16 @@ def journey_verdict_detail(result: dict) -> str:
     if not row:
         return f"journey returned {result.get('status', 'unknown')} without a failing row"
     return f"{row.get('name') or 'journey step'}: {row.get('message') or 'no failure message'}"
+
+
+def missing_service_report_detail(result, report: Path, env: dict[str, str]) -> str:
+    """Explain a child-runner report gap with bounded, redacted process output."""
+    streams = []
+    for label, value in (("stdout", result.stdout), ("stderr", result.stderr)):
+        excerpt = " ".join(redact_text(value or "", env).split())[-700:]
+        streams.append(f"{label}: {excerpt or 'no output'}")
+    return (f"service_runner exited {result.returncode} without a usable result report at {report}; "
+            + "; ".join(streams))
 
 
 def confirmation_hint_matches_invocation(hint: str, invocation: list[str]) -> bool:
@@ -517,12 +605,12 @@ def run(args: list[str], *, env=None, cwd=None, timeout=900, input_text=None):
 
 
 def installer_command(args: list[str], *, env: Mapping[str, str], secret: str,
-                      input: str | None = None) -> CompletedProcess[str]:
+                      input: str | None = None, timeout: int = 1200) -> CompletedProcess[str]:
     installer_env = dict(env)
     if "--secret-env" in args:
         store_report_secret(installer_env, "KB_JOURNEY_ADMIN_PASSWORD", secret,
                             "installer scenario password")
-    return run(args, env=installer_env, timeout=1200, input_text=input)[0]
+    return run(args, env=installer_env, timeout=timeout, input_text=input)[0]
 
 
 def _sample_pnpm_rss_for_run(pid: int) -> None:
@@ -764,7 +852,9 @@ def mcp_rpc(url: str, method: str, request_id: int, params=None, token=None):
     return json.loads(body)
 
 
-def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES):
+def verify_project_mcp(env: dict[str, str], local: bool,
+                       enabled_service_ids: frozenset[str] = DEFAULT_ENABLED_SERVICES,
+                       token: str | None = None):
     registered, _ = run(kb_login_shell(["project", "add", "--json"]),
                         env=env, cwd=PROJECT, timeout=180)
     if not require(registered, step="register project for MCP"):
@@ -773,7 +863,6 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
         project = decode_ux_success_result(read_ux_cli_result(registered))["project"]
         project_id = project["id"]
         url = f"http://127.0.0.1:4000{project_service_path(project_id, 'mcp')}"
-        token = None
         if not local:
             try:
                 mcp_rpc(url, "tools/list", 0)
@@ -782,9 +871,8 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
                     raise
             else:
                 raise RuntimeError("secured MCP accepted a request without a token")
-            token = env.get("KB_MCP_TOKEN")
             if not token:
-                raise RuntimeError("secured MCP journey needs KB_MCP_TOKEN from gateway login")
+                raise RuntimeError("secured MCP journey needs the authenticated gateway session token")
         initialized = mcp_rpc(url, "initialize", 1, {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
@@ -805,6 +893,18 @@ def verify_project_mcp(env: dict[str, str], local: bool, enabled_service_ids: fr
             raise RuntimeError(f"diagnostics call had unexpected result: {text}")
     except (KeyError, ValueError, RuntimeError, urllib.error.URLError) as error:
         fail(f"project MCP journey: {error}")
+
+
+def verify_selected_project_mcp(graph: FlowGraph, env: dict[str, str]):
+    """Run MCP smoke using the registered runner mode and its normal API session."""
+    local = graph.journey.mode == "local"
+    token = None
+    if not local:
+        from service_runner import prepare_service_api_session, service_api_token
+
+        prepare_service_api_session(graph, "secured", env=env)
+        token = service_api_token(graph)
+    return verify_project_mcp(env, local, DEFAULT_ENABLED_SERVICES, token=token)
 
 
 def pty_install(command: list[str], env: dict[str, str], choice: str = "", access_mode: str = "local"):
@@ -846,6 +946,10 @@ def human_text_is_clean(output: str):
         fail("human output contains a stack trace")
 
 
+def _journey_evidence_profile() -> dict[str, str]:
+    return clean_install_evidence_profile()
+
+
 def finalize_run(passed: bool) -> int:
     global SELECTED_CLAIM_COMPLETION_CHECKED
     report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
@@ -876,8 +980,18 @@ def finalize_run(passed: bool) -> int:
              f"{sum(TIMES.values()):.1f}s | {root_size:.1f} MiB | {MAX_PNPM_RSS_MIB:.1f} MiB |"]
     report.parent.mkdir(parents=True, exist_ok=True)
     if CASE_JOURNEY is not None:
-        CASE_JOURNEY.write_json(report.with_name(
-            f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json"))
+        case_report = report.with_name(
+            f"installer-case-{CASE_JOURNEY.mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}.json")
+        result = CASE_JOURNEY.result().__dict__
+        result["case_run"] = apply_clean_install_case_evidence(
+            result["case_run"], result["steps"], claim_id="PC-001.2",
+            profile=_journey_evidence_profile(),
+            candidate_digest=CLEAN_INSTALL_CANDIDATE_DIGEST,
+            candidate_verified=CLEAN_INSTALL_CANDIDATE_VERIFIED,
+            artifacts=CLEAN_INSTALL_EVIDENCE_CAPTURE,
+            evidence_run_id=CLEAN_INSTALL_EVIDENCE_RUN_ID,
+        )
+        write_report_json(case_report, result, env=BASE_ENV)
     if not report.exists():
         write_report_text(report,
                           "| Journey | Result | First broken step | install.sh | questions | apply | start | first command | total | platform root | peak pnpm RSS |\n"
@@ -1167,10 +1281,18 @@ def _run_final_uninstall(graph: FlowGraph, env: dict[str, str], launcher: str) -
 def _main(*, update_variant_runner=None):
     global FIRST_FAILURE, CASE_JOURNEY, SELECTED_CLAIM_COMPLETION_CHECKED
     global ACTIVE_OUTER_GRAPH, ACTIVE_MAIN_ENV, ACTIVE_LAUNCHER
+    global CLEAN_INSTALL_EVIDENCE_CAPTURE, CLEAN_INSTALL_CANDIDATE_DIGEST
+    global CLEAN_INSTALL_CANDIDATE_VERIFIED
+    global CLEAN_INSTALL_EVIDENCE_RUN_ID, CLEAN_INSTALL_ATTEMPT_ROOT
     STATE_DUMP_GUARD.reset()
     Journey.reset_run_registry()
     FIRST_FAILURE = ""
     SELECTED_CLAIM_COMPLETION_CHECKED = False
+    CLEAN_INSTALL_EVIDENCE_CAPTURE = {}
+    CLEAN_INSTALL_CANDIDATE_DIGEST = None
+    CLEAN_INSTALL_CANDIDATE_VERIFIED = False
+    CLEAN_INSTALL_EVIDENCE_RUN_ID = ""
+    CLEAN_INSTALL_ATTEMPT_ROOT = None
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
@@ -1189,6 +1311,9 @@ def _main(*, update_variant_runner=None):
     mode = "secured" if VARIANT.endswith("secured") else "local"
     scenario_setup = runner_scenario(SCENARIO, secured=mode == "secured")
     CASE_JOURNEY = Journey(mode, f"installer-{mode}-{FRONT_DOOR}-{SCENARIO}-{VARIANT}")
+    CLEAN_INSTALL_EVIDENCE_RUN_ID = f"{CASE_JOURNEY.run_id}-{uuid.uuid4().hex}"
+    summary_root = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).parent
+    CLEAN_INSTALL_ATTEMPT_ROOT = summary_root / "qa-attempts" / CLEAN_INSTALL_EVIDENCE_RUN_ID
     diagnostics = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
         "journey-diagnostics.log")
     selection_groups = outer_selection_groups()
@@ -1282,6 +1407,7 @@ def _main(*, update_variant_runner=None):
             f"version --json exited {identity.returncode}: {' '.join(identity.stdout.split())[:300]}")
     provenance = record_candidate_provenance(
         CASE_JOURNEY, journey_value("KB_JOURNEY_GIT_REVISION", ""), candidate)
+    CLEAN_INSTALL_CANDIDATE_VERIFIED = provenance.status == "PASS"
     if provenance.status != "PASS":
         fail(provenance.message or "candidate provenance check failed")
         return finalize_run(False)
@@ -1303,9 +1429,10 @@ def _main(*, update_variant_runner=None):
         PROJECT.mkdir(parents=True, exist_ok=True)
         choice = "commit" if VARIANT == "human-nondefault" else ""
         access_mode = "secured" if VARIANT.endswith("secured") else "local"
-        code, output, duration, apply_offset = pty_install(
-            [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
-        )
+        with invocation_context(step_id="PC-001.2", report_root=CLEAN_INSTALL_ATTEMPT_ROOT):
+            code, output, duration, apply_offset = pty_install(
+                [launcher, "install", "--registry", REGISTRY, *marketplace_flags], env, choice, access_mode
+            )
         TIMES["questions"] = apply_offset if apply_offset is not None else duration
         if apply_offset is not None:
             TIMES["apply"] = duration - apply_offset
@@ -1351,7 +1478,43 @@ def _main(*, update_variant_runner=None):
             args.extend(["--scenario-answers", answers])
         if VARIANT == "relative-path":
             args[args.index(str(PLATFORM))] = os.path.relpath(PLATFORM, Path.cwd())
-        result, elapsed = run(args, env=env, timeout=1200)
+        if operation == "install" and env.get("KB_JOURNEY_MARKETPLACE_REGISTRY_URL"):
+            # Ask the installer for the effective Gateway address instead of
+            # assuming its default port or the runner's network offset.
+            preview_args = list(args)
+            preview_args[1] = "plan"
+            preview, _ = run(preview_args, env=env, timeout=120)
+            try:
+                preview_data = decode_ux_success_result(read_kb_create_cli_result("plan", preview))
+                gateway_url = registry_gateway_url_from_plan(preview_data)
+            except (json.JSONDecodeError, AttributeError, TypeError):
+                gateway_url = None
+            except ValueError:
+                gateway_url = None
+            if preview.returncode != 0 or not gateway_url:
+                fail("Registry journey could not resolve the installed Gateway address from the install plan")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            registry_upstream = env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"]
+            try:
+                request = registry_install_request(
+                    preview_data, gateway_url=gateway_url, registry_upstream=registry_upstream)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                fail(f"Registry journey could not prepare the install-time Gateway route: {error}")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            request_path = HOME / "registry-install-request.json"
+            request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+            request_path.chmod(0o600)
+            args = [launcher, "install", "--json", "--index",
+                    str(HOME / ".local/share/kb-create/release-index.json"),
+                    "--input", str(request_path), "--registry", REGISTRY,
+                    "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
+        if operation == "install":
+            with invocation_context(step_id="PC-001.2", report_root=CLEAN_INSTALL_ATTEMPT_ROOT):
+                result, elapsed = run(args, env=env, timeout=1200)
+        else:
+            result, elapsed = run(args, env=env, timeout=1200)
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
             try:
@@ -1379,7 +1542,18 @@ def _main(*, update_variant_runner=None):
                               and record.get("meta", {}).get("stream", {}).get("result") is True]
             install_receipt = result_records[0].get("data", {}).get("receipt", {}) if len(result_records) == 1 else {}
             install_plan = install_receipt.get("plan", {}) if isinstance(install_receipt, dict) else {}
-            install_marketplace_ok = commit_marketplace_install_record(install_receipt) is not None
+            release_digest = install_plan.get("releaseDigest") if isinstance(install_plan, dict) else None
+            if not (isinstance(release_digest, str) and re.fullmatch(r"[0-9a-fA-F]{64}", release_digest)):
+                try:
+                    saved_receipt = json.loads((PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json").read_text())
+                    release_digest = saved_receipt.get("plan", {}).get("releaseDigest")
+                except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+                    release_digest = None
+            CLEAN_INSTALL_CANDIDATE_DIGEST = (
+                release_digest.lower() if isinstance(release_digest, str)
+                and re.fullmatch(r"[0-9a-fA-F]{64}", release_digest) else None
+            )
+            install_marketplace_ok = requested_commit_marketplace_install_satisfied(install_receipt)
             install_plan_summary_ok = (isinstance(install_plan, dict)
                                        and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
                                        and bool(install_plan.get("artifacts")))
@@ -1409,12 +1583,8 @@ def _main(*, update_variant_runner=None):
                     password = credential.get("password", "")
                     store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", password,
                                         "installed first-admin password")
-                    first_admin_shown_once = (
-                        credential.get("email") == "journey-admin@example.test"
-                        and credential.get(layout_value('sharedStateDirectory')) == "disclosed"
-                        and bool(password)
-                        and result.stdout.count(password) == 1
-                    )
+                    first_admin_shown_once = first_admin_credential_disclosed_once(
+                        credential, result.stdout)
                     if first_admin_shown_once:
                         env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
                 if not first_admin_shown_once:
@@ -1509,6 +1679,15 @@ def _main(*, update_variant_runner=None):
                 cases=["PC-001.2"], requires=("step:candidate provenance",),
                 runners=("agent:commit", "agent-secured:commit", "service-local:explore",
                          "service-secured:explore"))
+    evidence_case_run = CASE_JOURNEY.result().__dict__["case_run"]
+    if any(claim.get("claimId") == "PC-001.2" for claim in evidence_case_run.get("claims", [])):
+        report_root = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).parent
+        CLEAN_INSTALL_EVIDENCE_CAPTURE = capture_clean_install_artifacts(
+            report_root=report_root, run_id=CLEAN_INSTALL_EVIDENCE_RUN_ID, claim_id="PC-001.2",
+            config_path=PLATFORM_CURRENT / ".kb" / "kb.config.jsonc",
+            installation_root=PLATFORM,
+            invocation_log_path=CLEAN_INSTALL_ATTEMPT_ROOT / "invocations" / "calls.jsonl",
+        )
     installed_doctor, _ = run([launcher, "doctor", "--platform-root", str(PLATFORM), "--json"],
                               env=env, timeout=120)
     try:
@@ -1581,11 +1760,17 @@ def _main(*, update_variant_runner=None):
         write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-command-output ==\n{result.stdout[-5000:]}\n", env=env)
     else:
         if FRONT == "agent" and scenario_setup["command_help_paths"]:
-            result, elapsed = run(kb_login_shell(["commit", "commit", "--dry-run", "--json"]),
-                                  env=env, cwd=PROJECT, timeout=300)
-            TIMES["first command"] += elapsed
-            if not require(result, step="kb commit first value"):
-                write_journey_diagnostic(f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n", env=env)
+            def check_first_value():
+                result, elapsed = run(kb_login_shell(["commit", "commit", "--dry-run", "--json"]),
+                                      env=env, cwd=PROJECT, timeout=300)
+                TIMES["first command"] += elapsed
+                if not require(result, step="kb commit first value"):
+                    write_journey_diagnostic(
+                        f"\n== {FRONT_DOOR}/{SCENARIO}: first-value-output ==\n{result.stdout[-5000:]}\n",
+                        env=env)
+                return result
+
+            run_selected_first_value_smoke(outer_graph, check_first_value)
         status, _ = run(["git", "status", "--porcelain"], env=env, cwd=PROJECT)
         clean_repo = not (PROJECT / ".kb").exists() and status.stdout.strip() in {"?? note.txt", "A  note.txt"}
         record_case("first CLI commands leave fresh repository untouched", clean_repo,
@@ -1594,7 +1779,8 @@ def _main(*, update_variant_runner=None):
             fail(f"project gained KB Labs files: {status.stdout.strip()}")
 
     if FRONT == "agent" and SCENARIO == "commit":
-        verify_project_mcp(env, env.get("KB_ACCESS_MODE", "local") == "local", DEFAULT_ENABLED_SERVICES)
+        run_selected_project_mcp(
+            outer_graph, lambda: verify_selected_project_mcp(outer_graph, env))
 
     update_group_selected = outer_graph.group_selected("update")
     update_journey = update_group_selected and (
@@ -1644,12 +1830,13 @@ def _main(*, update_variant_runner=None):
             verify_admin = None
             expire_admin_session = None
             if access_mode == "secured":
+                admin_gateway = "http://127.0.0.1:4000"
                 admin_email = env.get("KB_JOURNEY_ADMIN_EMAIL", "journey-admin@example.test")
                 admin_password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
 
                 def verify_admin():
                     result, _ = run(kb_command([ "auth", "login", "--gateway-url",
-                                     "http://127.0.0.1:4000", "--email", admin_email,
+                                     admin_gateway, "--email", admin_email,
                                      "--password-stdin"], executable=str(BIN / "kb")),
                                     env=env, cwd=PROJECT, timeout=90,
                                     input_text=admin_password + "\n")
@@ -1658,14 +1845,8 @@ def _main(*, update_variant_runner=None):
                 def expire_admin_session():
                     status, _ = run(kb_command([ "auth", "status", "--json"], executable=str(BIN / "kb")),
                                     env=env, cwd=PROJECT, timeout=30)
-                    envelope = json.loads(status.stdout)
-                    session_path = envelope.get("data", {}).get("session", {}).get("path")
-                    if not session_path:
-                        raise RuntimeError("kb auth status omitted session.path")
-                    session_file = Path(session_path)
-                    session = json.loads(session_file.read_text())
-                    session["expiresAt"] = 0
-                    session_file.write_text(json.dumps(session) + "\n")
+                    data = decode_ux_success_result(read_ux_cli_result(status))
+                    SavedGatewaySession.from_status(data, admin_gateway).expire()
 
             platform_report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).with_name(
                 f"platform-update-{access_mode}.json")
@@ -1832,9 +2013,10 @@ def _main(*, update_variant_runner=None):
             return run(args, env=installer_env, timeout=1200)[0]
         fixture_env = env
         def installer_command_for_fixture(args: list[str], *, input: str | None = None,
-                                          env: Mapping[str, str] | None = None):
+                                          env: Mapping[str, str] | None = None,
+                                          timeout: int = 1200):
             return installer_command(args, env=env if env is not None else fixture_env,
-                                     secret=installer_secret, input=input)
+                                     secret=installer_secret, input=input, timeout=timeout)
         fixture_groups = ISOLATED_FIXTURE_GROUPS
         fixture_group_keys = {group: f"isolated-fixture:{group.__name__}" for group in fixture_groups}
         selected_groups = tuple(group for group in fixture_groups
@@ -1880,7 +2062,8 @@ def _main(*, update_variant_runner=None):
                 INSTALLER_CASE_GROUP: run_installer_case_group,
                 APPLY_SCENARIO_GROUP: lambda: run_apply_scenario_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
-                    platform_root=PLATFORM, run_command=installer_command_for_fixture),
+                    platform_root=PLATFORM, registry=REGISTRY,
+                    run_command=installer_command_for_fixture),
                 INVALID_REQUEST_GROUP: lambda: run_invalid_request_step(
                     mode=mode, launcher=launcher, stable_index=stable_index,
                     platform_root=PLATFORM, run_command=installer_command_for_fixture),
@@ -2201,20 +2384,24 @@ def _main(*, update_variant_runner=None):
                     fail("service runner result states field was not an object")
             except (OSError, json.JSONDecodeError) as error:
                 fail(f"service runner result could not provide state probes: {error}")
+        if not service_report.exists():
+            detail = missing_service_report_detail(result, service_report, service_env)
+            report_step_name = f"{mode} service runner result report"
+            CASE_JOURNEY.step(report_step_name, "journey.runner",
+                              lambda: detail, role="lifecycle")
+            fail(f"{mode} service journey: {detail}")
+            block_outer_dependents(outer_graph, ["marketplace", "marketplace-fixtures", "adapters",
+                                                 "plugin-author", "workflow", "analytics", "studio"])
+            _run_final_uninstall(outer_graph, env, launcher)
+            return finalize_run(False)
+
         if result.returncode != 0:
             try:
                 service_result = json.loads(service_report.read_text())
                 detail = journey_verdict_detail(service_result)
             except (OSError, json.JSONDecodeError):
-                excerpt = " ".join(result.stdout.split())[-1500:]
-                detail = f"service_runner exited {result.returncode} without a result JSON; {excerpt or 'no output'}"
+                detail = missing_service_report_detail(result, service_report, service_env)
             fail(f"{mode} service journey: {detail}")
-
-        if not service_report.exists():
-            block_outer_dependents(outer_graph, ["marketplace", "marketplace-fixtures", "adapters",
-                                                 "plugin-author", "workflow", "analytics", "studio"])
-            _run_final_uninstall(outer_graph, env, launcher)
-            return finalize_run(False)
         fixture_state_needed = (not outer_graph.selection_active
                                 or "fixtures-installed" in outer_graph.needed_states)
         project_b_consumers_selected = (
@@ -2249,7 +2436,7 @@ def _main(*, update_variant_runner=None):
                     restart_host=restart_for_workflow_history,
                 ),
             ),
-            cases=workflow_claims, record_empty_success=False,
+            cases=[*workflow_claims, "S-007.5"], record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
         if isinstance(project_b_handoff, ProjectBRootValid):
@@ -2580,7 +2767,7 @@ def _main(*, update_variant_runner=None):
     elif outer_graph.selection_active and variant_gate != "BLOCKED":
         outer_graph.skip_unselected("platform update variant journey", "platform.update")
     add_installed_host_stop_case_step(
-        outer_graph.journey, PLATFORM, env,
+        outer_graph.journey, PLATFORM, env, executable=BIN / "kb-create",
         runner=lambda command, **options: run(
             command, env=options.get("env"), cwd=options.get("cwd"),
             timeout=options.get("timeout", 120),
@@ -2603,7 +2790,11 @@ def cleanup() -> None:
         if process.poll() is None:
             process.terminate()
             process.wait(timeout=10)
-    shutil.rmtree(HOME, ignore_errors=True)
+    preserved = preserved_fixture_roots()
+    if preserved:
+        remove_tree_preserving(HOME, preserved)
+    else:
+        shutil.rmtree(HOME, ignore_errors=True)
 
 
 if __name__ == "__main__":

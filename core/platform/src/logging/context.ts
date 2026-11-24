@@ -1,4 +1,6 @@
 import type { ILogger, LogLevel } from "../adapters/logger.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { setErrorPreviewRedactor } from "../error-envelope/sensitive-redaction.js";
 
 /** Stable identity attached to every platform-owned log record. */
 export interface PlatformLogContext {
@@ -161,12 +163,20 @@ class SensitiveValueRegistry {
   }
 
   public redactString(value: string): string {
-    return [...this.current]
-      .sort((left, right) => right.length - left.length)
+    return this.redactWithValues(value, this.activeValues());
+  }
+
+  public activeValues(): readonly string[] {
+    return [...new Set([...this.current, ...(requestSensitiveValues.getStore() ?? [])])];
+  }
+
+  public redactWithValues(value: string, values: readonly string[]): string {
+    return [...values].sort((left, right) => right.length - left.length)
       .reduce((redacted, sensitive) => redacted.split(sensitive).join('[REDACTED]'), value);
   }
 }
 
+const requestSensitiveValues = new AsyncLocalStorage<readonly string[]>();
 let processSensitiveValues: SensitiveValueRegistry | undefined;
 let processRootContext: PlatformLogContext | undefined;
 const loggerRegistries = new WeakMap<object, SensitiveValueRegistry>();
@@ -176,6 +186,8 @@ function getProcessSensitiveValues(): SensitiveValueRegistry {
   processSensitiveValues ??= new SensitiveValueRegistry();
   return processSensitiveValues;
 }
+
+setErrorPreviewRedactor((value) => getProcessSensitiveValues().redactString(value));
 
 class ContextLogger implements IContextLogger {
   public readonly context: Readonly<LogContext>;
@@ -376,7 +388,7 @@ class ContextLogger implements IContextLogger {
   }
 
   private redactError(error?: Error): Error | undefined {
-    if (!error || this.sensitiveValues.values.length === 0) {return error;}
+    if (!error || this.sensitiveValues.activeValues().length === 0) {return error;}
     const redacted = new Error(this.redactString(error.message), {
       cause: this.redactValue(error.cause),
     });
@@ -386,7 +398,7 @@ class ContextLogger implements IContextLogger {
   }
 
   private redactRecord(record: Record<string, unknown>): Record<string, unknown> {
-    if (this.sensitiveValues.values.length === 0) {return record;}
+    if (this.sensitiveValues.activeValues().length === 0) {return record;}
     return this.redactValue(record) as Record<string, unknown>;
   }
 
@@ -427,6 +439,16 @@ export function createProcessRootLogContext(context: PlatformLogContext): Platfo
 /** Register resolved values in the launcher-owned process root registry. */
 export function registerProcessSensitiveValues(values: readonly string[]): void {
   getProcessSensitiveValues().register(values);
+}
+
+/** Apply secret values to logging in one async execution without retaining them process-wide. */
+export function withProcessSensitiveValues<T>(values: readonly string[], run: () => T): T {
+  return requestSensitiveValues.run(values.filter(Boolean), run);
+}
+
+/** Return the request-scoped secrets for boundaries that must redact raw streams. */
+export function getRequestSensitiveValues(): readonly string[] {
+  return requestSensitiveValues.getStore() ?? [];
 }
 
 /** Redact a rendered diagnostic string through the process-owned secret registry. */

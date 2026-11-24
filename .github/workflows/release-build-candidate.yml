@@ -82,6 +82,7 @@ jobs:
     with:
       profile: candidate
       target_sha: ${{ inputs.commit_sha }}
+      job_prefix: 'Workspace unit verification / '
     permissions:
       contents: read
       actions: read

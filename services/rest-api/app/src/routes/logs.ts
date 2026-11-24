@@ -35,7 +35,7 @@ interface TopError {
 }
 
 const logRecordSchema = { type: 'object', properties: { id: { type: 'string' }, time: { type: 'string', format: 'date-time' }, level: { type: 'string' }, msg: { type: 'string' }, plugin: { type: 'string' } }, required: ['id', 'time', 'level', 'msg'], additionalProperties: true } as const;
-const logQuerySchema = { type: 'object', properties: { level: { enum: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] }, plugin: { type: 'string' }, from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' }, search: { type: 'string', minLength: 1 }, limit: { type: 'string', pattern: '^[1-9][0-9]*$' }, offset: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' } }, additionalProperties: false } as const;
+const logQuerySchema = { type: 'object', properties: { level: { enum: ['trace', 'debug', 'info', 'warn', 'error', 'fatal'] }, plugin: { type: 'string' }, runId: { type: 'string', minLength: 1 }, executionId: { type: 'string', minLength: 1 }, from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' }, search: { type: 'string', minLength: 1 }, limit: { type: 'string', pattern: '^[1-9][0-9]*$' }, offset: { type: 'string', pattern: '^(0|[1-9][0-9]*)$' } }, additionalProperties: false } as const;
 
 /**
  * Map Pino numeric level to string level
@@ -344,6 +344,7 @@ export async function registerLogRoutes(
       to?: string;
       level?: string;
       plugin?: string;
+      runId?: string;
       executionId?: string;
       tenantId?: string;
       search?: string;
@@ -352,7 +353,7 @@ export async function registerLogRoutes(
     };
   }>(
     "/api/v1/logs",
-    { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Logs"], summary: "Query logs with filters", querystring: logQuerySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { logs: { type: 'array', items: logRecordSchema }, total: { type: 'integer' }, hasMore: { type: 'boolean' }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, search: { type: 'string' }, limit: { type: 'string' }, offset: { type: 'string' } }, additionalProperties: false }, source: { type: 'string' }, stats: { type: 'object', properties: { buffer: { type: 'object', properties: { size: { type: 'integer' }, maxSize: { type: 'integer' }, oldest: { type: 'string' }, newest: { type: 'string' } }, required: ['size', 'maxSize'], additionalProperties: false }, persistence: { type: 'object', properties: { totalLogs: { type: 'integer' }, oldestTimestamp: { type: 'string' }, newestTimestamp: { type: 'string' }, sizeBytes: { type: 'integer' } }, required: ['totalLogs', 'sizeBytes'], additionalProperties: false } }, additionalProperties: false } }, required: ['logs', 'total', 'hasMore', 'filters', 'stats'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
+    { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Logs"], summary: "Query logs with filters", querystring: logQuerySchema, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { logs: { type: 'array', items: logRecordSchema }, total: { type: 'integer' }, hasMore: { type: 'boolean' }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, runId: { type: 'string' }, executionId: { type: 'string' }, from: { type: 'string' }, to: { type: 'string' }, search: { type: 'string' }, limit: { type: 'string' }, offset: { type: 'string' } }, additionalProperties: false }, source: { type: 'string' }, stats: { type: 'object', properties: { buffer: { type: 'object', properties: { size: { type: 'integer' }, maxSize: { type: 'integer' }, oldest: { type: 'string' }, newest: { type: 'string' } }, required: ['size', 'maxSize'], additionalProperties: false }, persistence: { type: 'object', properties: { totalLogs: { type: 'integer' }, oldestTimestamp: { type: 'string' }, newestTimestamp: { type: 'string' }, sizeBytes: { type: 'integer' } }, required: ['totalLogs', 'sizeBytes'], additionalProperties: false } }, additionalProperties: false } }, required: ['logs', 'total', 'hasMore', 'filters', 'stats'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       try {
         // Parse numeric query params (Fastify doesn't parse them automatically)
@@ -367,6 +368,8 @@ export async function registerLogRoutes(
         const query: LogQuery = {
           level: request.query.level as LogLevel,
           source: request.query.plugin,
+          runId: request.query.runId,
+          executionId: request.query.executionId,
           from: request.query.from
             ? new Date(request.query.from).getTime()
             : undefined,
@@ -382,6 +385,7 @@ export async function registerLogRoutes(
           result = await platform.logs.search(request.query.search, {
             limit,
             offset,
+            filters: query,
           });
         } else {
           // Regular query with filters
@@ -546,9 +550,14 @@ export async function registerLogRoutes(
    * GET /api/v1/logs/stream
    * Server-Sent Events stream for real-time logs
    */
-  server.get(
+  server.get<{
+    Querystring: {
+      runId?: string;
+      executionId?: string;
+    };
+  }>(
     "/api/v1/logs/stream",
-    { config: { ux: 'raw' }, schema: { hide: true, querystring: { type: 'object', additionalProperties: false } } },
+    { config: { ux: 'raw' }, schema: { hide: true, querystring: { type: 'object', properties: { runId: { type: 'string', minLength: 1 }, executionId: { type: 'string', minLength: 1 } }, additionalProperties: false } } },
     async (request, reply) => {
       // Check if streaming is supported
       const caps = platform.logs.getCapabilities();
@@ -579,6 +588,9 @@ export async function registerLogRoutes(
         // Frontend expects event name 'log'. Do not emit per-event telemetry:
         // otherwise this log stream would subscribe to its own telemetry.
         stream.send("log", toFrontendLogRecord(log));
+      }, {
+        runId: request.query.runId,
+        executionId: request.query.executionId,
       });
       stream.onCleanup(unsubscribe);
       await stream.closed;
@@ -655,6 +667,7 @@ export async function registerLogRoutes(
       filters?: {
         level?: string;
         plugin?: string;
+        runId?: string;
         traceId?: string;
         executionId?: string;
       };
@@ -670,7 +683,7 @@ export async function registerLogRoutes(
     };
   }>(
     "/api/v1/logs/summarize",
-    { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Logs"], summary: "AI-powered log summarization", querystring: { type: 'object', additionalProperties: false }, body: { type: 'object', properties: { timeRange: { type: 'object', properties: { from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' } }, additionalProperties: false }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, traceId: { type: 'string' }, executionId: { type: 'string' } }, additionalProperties: false }, groupBy: { enum: ['trace', 'execution', 'plugin'] }, question: { type: 'string' }, includeContext: { type: 'object', properties: { errors: { type: 'boolean' }, warnings: { type: 'boolean' }, info: { type: 'boolean' }, metadata: { type: 'boolean' }, stackTraces: { type: 'boolean' } }, additionalProperties: false } }, additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { summary: { type: 'object', properties: { question: { type: 'string' }, timeRange: { type: 'object', properties: { from: { type: ['string', 'null'] }, to: { type: ['string', 'null'] } }, required: ['from', 'to'], additionalProperties: false }, total: { type: 'integer' }, stats: { type: 'object' }, groups: { type: ['object', 'null'] } }, required: ['question', 'timeRange', 'total', 'stats'], additionalProperties: false }, aiSummary: { type: ['string', 'null'] }, message: { type: ['string', 'null'] } }, required: ['summary', 'aiSummary', 'message'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
+    { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Logs"], summary: "AI-powered log summarization", querystring: { type: 'object', additionalProperties: false }, body: { type: 'object', properties: { timeRange: { type: 'object', properties: { from: { type: 'string', format: 'date-time' }, to: { type: 'string', format: 'date-time' } }, additionalProperties: false }, filters: { type: 'object', properties: { level: { type: 'string' }, plugin: { type: 'string' }, runId: { type: 'string' }, traceId: { type: 'string' }, executionId: { type: 'string' } }, additionalProperties: false }, groupBy: { enum: ['trace', 'execution', 'plugin'] }, question: { type: 'string' }, includeContext: { type: 'object', properties: { errors: { type: 'boolean' }, warnings: { type: 'boolean' }, info: { type: 'boolean' }, metadata: { type: 'boolean' }, stackTraces: { type: 'boolean' } }, additionalProperties: false } }, additionalProperties: false }, response: withUxErrorResponses({ 200: { type: 'object', properties: { ok: { const: true }, data: { type: 'object', properties: { summary: { type: 'object', properties: { question: { type: 'string' }, timeRange: { type: 'object', properties: { from: { type: ['string', 'null'] }, to: { type: ['string', 'null'] } }, required: ['from', 'to'], additionalProperties: false }, total: { type: 'integer' }, stats: { type: 'object' }, groups: { type: ['object', 'null'] } }, required: ['question', 'timeRange', 'total', 'stats'], additionalProperties: false }, aiSummary: { type: ['string', 'null'] }, message: { type: ['string', 'null'] } }, required: ['summary', 'aiSummary', 'message'], additionalProperties: false } }, required: ['ok', 'data'], additionalProperties: false } }) } },
     async (request, reply) => {
       const { timeRange, filters, groupBy, question, includeContext } =
         request.body;
@@ -684,25 +697,16 @@ export async function registerLogRoutes(
             ? new Date(timeRange.from).getTime()
             : undefined,
           to: timeRange?.to ? new Date(timeRange.to).getTime() : undefined,
+          runId: filters?.runId,
+          executionId: filters?.executionId,
+          traceId: filters?.traceId,
         };
 
         // Query logs using unified service
         const result = await platform.logs.query(query, { limit: 1000 });
         const frontendLogs = result.logs.map(toFrontendLogRecord);
 
-        // Additional filters (traceId, executionId)
         let filteredLogs = frontendLogs;
-        if (filters?.traceId) {
-          filteredLogs = filteredLogs.filter(
-            (log) => log.traceId === filters.traceId,
-          );
-        }
-        if (filters?.executionId) {
-          filteredLogs = filteredLogs.filter(
-            (log) => log.executionId === filters.executionId,
-          );
-        }
-
         // Calculate aggregated statistics
         const stats = {
           total: filteredLogs.length,

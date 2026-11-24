@@ -1,7 +1,7 @@
 ---
 title: "Case First QA Coverage"
 description: "Validate product cases and generate release coverage from executed tests."
-updatedAt: "2026-10-01"
+updatedAt: "2026-11-24"
 order: 9
 ---
 
@@ -20,6 +20,24 @@ kb qa cases validate
 case id followed by a stable number, such as `S-010.4`. Journey steps declare
 `cases=["S-010.4"]`, Playwright test titles include `@S-020.3`, and Go or
 Vitest tests put `// case: S-023.2` directly above the test.
+
+### Declare execution-model applicability
+
+When a step depends on a plugin execution model, declare only the relevant
+models in that case's optional `## Profile applicability` table:
+
+```md
+## Profile applicability
+
+| Step | Execution models |
+|---|---|
+| S-243.6 | in-process, subprocess, worker-pool |
+```
+
+`kb qa cases validate` checks the step IDs and model names. `kb qa cases
+inventory --json` reports the declaration as an expectation with
+`evaluation: NOT EVALUATED`; it does not prove that a test ran or passed. OS
+and runtime coverage remain separate profile dimensions.
 
 ## Generate coverage
 
@@ -46,6 +64,27 @@ reports `PASS`, `FAIL`, `NOT RUN`, or `NOT COVERED`; cases outside the selected
 install mode report `NOT REQUIRED`. Release coverage passes only when every
 active release case passes all of its steps with an executed journey or e2e
 claim. Unit claims alone do not satisfy a release case.
+
+### Evidence-backed coverage pilot
+
+The evidence-backed mode adds an independent candidate/profile check and
+verified configuration and log artifacts to the result. Keep the expected
+candidate and profile in a separate plan file, then run:
+
+```bash
+kb qa coverage show --level release --mode local --evidence \
+  --evidence-plan .journey/evidence-plan.json \
+  --run .journey/reports/installer-case-local-agent-commit-default.json --json
+```
+
+The installed journey currently collects this evidence for `PC-001.2`: its
+case-run record identifies the validated release-catalog SHA-256 digest and
+observed run profile, and links the redacted installed config and the actual
+invocations recorded for that install step. The artifacts live below the
+run-record directory and their SHA-256 digests are checked by the coverage
+command. A missing artifact or a plan mismatch reports `INCOMPLETE`; the
+journey's observed `PASS` or `FAIL` remains separate. This pilot does not
+provide evidence for other case steps.
 
 Projects can keep their catalog elsewhere by setting `qa.casesPath` in their
 plugin configuration. The default is `docs/qa/scenarios`.
@@ -77,7 +116,7 @@ plugin configuration. The default is `docs/qa/scenarios`.
 | S-018 — Switch the platform LLM provider | S-018.1: NOT RUN<br />S-018.2: NOT RUN<br />S-018.3: NOT RUN | NOT RUN |
 | S-020 — Studio — First login | S-020.1: NOT RUN<br />S-020.2: NOT RUN<br />S-020.3: NOT RUN<br />S-020.4: NOT RUN<br />S-020.5: NOT RUN<br />S-020.6: NOT RUN<br />S-020.7: NOT RUN | NOT RUN |
 | S-021 — Studio — Inspect workflow runs for the selected project | S-021.1: NOT RUN<br />S-021.2: NOT RUN<br />S-021.3: NOT RUN<br />S-021.4: NOT RUN<br />S-021.5: NOT RUN | NOT RUN |
-| S-022 — Studio — Trigger a workflow with declared inputs | S-022.1: NOT RUN<br />S-022.2: NOT RUN<br />S-022.3: NOT RUN<br />S-022.4: NOT RUN | NOT RUN |
+| S-022 — Studio — Trigger a workflow with declared inputs | S-022.1: NOT RUN<br />S-022.2: NOT RUN<br />S-022.3: NOT RUN<br />S-022.4: NOT RUN<br />S-022.5: NOT RUN | NOT RUN |
 | S-023 — Platform — update from a new sealed index | S-023.1: NOT RUN<br />S-023.2: NOT RUN<br />S-023.3: NOT RUN<br />S-023.4: NOT RUN<br />S-023.5: NOT RUN<br />S-023.6: NOT RUN<br />S-023.7: NOT RUN<br />S-023.8: NOT RUN<br />S-023.9: NOT RUN<br />S-023.10: NOT RUN<br />S-023.11: NOT RUN<br />S-023.12: NOT RUN<br />S-023.13: NOT RUN<br />S-023.14: NOT RUN<br />S-023.15: NOT RUN<br />S-023.16: NOT RUN<br />S-023.17: NOT RUN<br />S-023.18: NOT RUN | NOT RUN |
 | S-024 — Platform — rollback to a V2 snapshot | S-024.1: NOT RUN<br />S-024.2: NOT RUN<br />S-024.3: NOT RUN<br />S-024.4: NOT RUN<br />S-024.5: NOT RUN<br />S-024.6: NOT RUN<br />S-024.7: NOT RUN | NOT RUN |
 | S-025 — Platform — diagnose and safely repair a V2 setup | S-025.1: NOT RUN<br />S-025.2: NOT RUN<br />S-025.3: NOT RUN<br />S-025.4: NOT RUN<br />S-025.5: NOT RUN<br />S-025.6: NOT RUN<br />S-025.7: NOT RUN<br />S-025.8: NOT RUN<br />S-025.9: NOT RUN<br />S-025.10: NOT RUN | NOT RUN |
@@ -164,7 +203,7 @@ plugin configuration. The default is `docs/qa/scenarios`.
 | S-018 — Switch the platform LLM provider | S-018.1: NOT RUN<br />S-018.2: NOT RUN<br />S-018.3: NOT RUN | NOT RUN |
 | S-020 — Studio — First login | S-020.1: NOT RUN<br />S-020.2: NOT RUN<br />S-020.3: NOT RUN<br />S-020.4: NOT RUN<br />S-020.5: NOT RUN<br />S-020.6: NOT RUN<br />S-020.7: NOT RUN | NOT RUN |
 | S-021 — Studio — Inspect workflow runs for the selected project | S-021.1: NOT RUN<br />S-021.2: NOT RUN<br />S-021.3: NOT RUN<br />S-021.4: NOT RUN<br />S-021.5: NOT RUN | NOT RUN |
-| S-022 — Studio — Trigger a workflow with declared inputs | S-022.1: NOT RUN<br />S-022.2: NOT RUN<br />S-022.3: NOT RUN<br />S-022.4: NOT RUN | NOT RUN |
+| S-022 — Studio — Trigger a workflow with declared inputs | S-022.1: NOT RUN<br />S-022.2: NOT RUN<br />S-022.3: NOT RUN<br />S-022.4: NOT RUN<br />S-022.5: NOT RUN | NOT RUN |
 | S-023 — Platform — update from a new sealed index | S-023.1: NOT RUN<br />S-023.2: NOT RUN<br />S-023.3: NOT RUN<br />S-023.4: NOT RUN<br />S-023.5: NOT RUN<br />S-023.6: NOT RUN<br />S-023.7: NOT RUN<br />S-023.8: NOT RUN<br />S-023.9: NOT RUN<br />S-023.10: NOT RUN<br />S-023.11: NOT RUN<br />S-023.12: NOT RUN<br />S-023.13: NOT RUN<br />S-023.14: NOT RUN<br />S-023.15: NOT RUN<br />S-023.16: NOT RUN<br />S-023.17: NOT RUN<br />S-023.18: NOT RUN | NOT RUN |
 | S-024 — Platform — rollback to a V2 snapshot | S-024.1: NOT RUN<br />S-024.2: NOT RUN<br />S-024.3: NOT RUN<br />S-024.4: NOT RUN<br />S-024.5: NOT RUN<br />S-024.6: NOT RUN<br />S-024.7: NOT RUN | NOT RUN |
 | S-025 — Platform — diagnose and safely repair a V2 setup | S-025.1: NOT RUN<br />S-025.2: NOT RUN<br />S-025.3: NOT RUN<br />S-025.4: NOT RUN<br />S-025.5: NOT RUN<br />S-025.6: NOT RUN<br />S-025.7: NOT RUN<br />S-025.8: NOT RUN<br />S-025.9: NOT RUN<br />S-025.10: NOT RUN | NOT RUN |

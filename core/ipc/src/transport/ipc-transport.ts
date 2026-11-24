@@ -38,6 +38,7 @@ import {
   type PendingRequest,
   TransportError,
   TimeoutError,
+  createTransportAbortError,
 } from './transport';
 import { selectTimeout } from './timeout-config';
 
@@ -78,7 +79,8 @@ export class IPCTransport implements ITransport {
     }
   }
 
-  async send(call: AdapterCall): Promise<AdapterResponse> {
+  async send(call: AdapterCall, signal?: AbortSignal): Promise<AdapterResponse> {
+    if (signal?.aborted) { throw createTransportAbortError(signal); }
     if (this.closed) {
       throw new TransportError('Transport is closed');
     }
@@ -90,17 +92,31 @@ export class IPCTransport implements ITransport {
       // Create timeout timer
       const timer = setTimeout(() => {
         this.pending.delete(call.requestId);
+        pending.signal?.removeEventListener('abort', pending.abortHandler!);
+        this.sendCancel(call.requestId);
         reject(new TimeoutError(`Adapter call timed out after ${timeout}ms`, timeout));
       }, timeout);
 
       // Store pending request
-      this.pending.set(call.requestId, { resolve, reject, timer });
+      const pending: PendingRequest = { resolve, reject, timer, signal };
+      if (signal) {
+        pending.abortHandler = () => {
+          if (this.pending.get(call.requestId) !== pending) { return; }
+          clearTimeout(timer);
+          this.pending.delete(call.requestId);
+          this.sendCancel(call.requestId);
+          reject(createTransportAbortError(signal));
+        };
+        signal.addEventListener('abort', pending.abortHandler, { once: true });
+      }
+      this.pending.set(call.requestId, pending);
 
       // Try to send message, with backpressure handling
-      this.trySendWithBackpressure(call, 0).catch((error) => {
+      this.sendCall(call).catch((error) => {
         const pending = this.pending.get(call.requestId);
         if (pending) {
           clearTimeout(pending.timer);
+          pending.signal?.removeEventListener('abort', pending.abortHandler!);
           this.pending.delete(call.requestId);
           reject(error);
         }
@@ -108,58 +124,37 @@ export class IPCTransport implements ITransport {
     });
   }
 
-  /**
-   * Try to send IPC message with backpressure handling.
-   * If backpressure detected, waits and retries with exponential backoff.
-   *
-   * Note: Node.js IPC 'drain' event is unreliable, so we use sleep-based backoff instead.
-   *
-   * @param call - Adapter call to send
-   * @param retryCount - Current retry attempt (for exponential backoff)
-   */
-  private async trySendWithBackpressure(call: AdapterCall, retryCount: number): Promise<void> {
-    const maxRetries = 20;
-    const baseDelayMs = 50;
+  private async sendCall(call: AdapterCall): Promise<void> {
+    if (!this.pending.has(call.requestId)) { return; }
 
-    try {
-      // process.send() is guaranteed to exist (checked in constructor)
-      // Returns false if backpressure detected (buffer full)
-      const sent = process.send!(call);
-
-      if (sent) {
-        // Message sent successfully
-        return;
+    await new Promise<void>((resolve, reject) => {
+      try {
+        // `false` means queued under backpressure, not rejected. The callback
+        // owns asynchronous disconnect/EPIPE errors; never retry this message.
+        process.send!(call, undefined, undefined, (error) => {
+          if (!error) { resolve(); return; }
+          reject(new TransportError(`Failed to send IPC message: ${error.message}`, error));
+        });
+      } catch (error) {
+        // Synchronous error (e.g., serialization failure or closed channel).
+        const cause = error instanceof Error ? error : new Error(String(error));
+        reject(new TransportError(`Failed to send IPC message: ${cause.message}`, cause));
       }
-
-      // Backpressure detected
-      if (retryCount >= maxRetries) {
-        throw new TransportError(
-          `Failed to send IPC message after ${maxRetries} retries: persistent backpressure`
-        );
-      }
-
-      // Wait with exponential backoff (sleep instead of drain event)
-      const delay = Math.min(baseDelayMs * Math.pow(1.5, retryCount), 5000); // Cap at 5s
-      await new Promise(resolve => {
-        setTimeout(resolve, delay);
-      });
-
-      // Retry sending
-      return this.trySendWithBackpressure(call, retryCount + 1);
-
-    } catch (error) {
-      // Synchronous error (e.g., message too large, serialization error, channel closed)
-      if (error instanceof TransportError) {
-        throw error;
-      }
-      throw new TransportError(`Failed to send IPC message: ${error}`, error as Error);
-    }
+    });
   }
 
   sendMessage(msg: unknown): void {
     if (!this.closed && process.send) {
-      process.send(msg);
+      // Push messages are best-effort. The callback prevents Node from
+      // surfacing a later channel error as an unhandled process error.
+      process.send(msg, undefined, undefined, () => {});
     }
+  }
+
+  private sendCancel(requestId: string): void {
+    try {
+      process.send?.({ type: 'adapter:cancel', requestId }, undefined, undefined, () => {});
+    } catch { /* disconnected parent has already stopped dispatch */ }
   }
 
   onPushMessage(handler: (msg: unknown) => void): () => void {
@@ -172,6 +167,7 @@ export class IPCTransport implements ITransport {
       const pending = this.pending.get(msg.requestId);
       if (!pending) { return; }
       clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
       this.pending.delete(msg.requestId);
       pending.resolve(msg);
       return;
@@ -196,6 +192,7 @@ export class IPCTransport implements ITransport {
     // Reject all pending requests
     for (const [requestId, pending] of this.pending) {
       clearTimeout(pending.timer);
+      pending.signal?.removeEventListener('abort', pending.abortHandler!);
       pending.reject(new TransportError('Transport closed'));
     }
     this.pending.clear();

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { load } from 'js-yaml';
 import { nativeInstallCommands } from '../../e2e/journey/native-macos-install.mjs';
 import { discoverModules } from './go-module-suite.mjs';
+import { resolveCorepackHome } from './resolve-corepack-home.mjs';
 import { runExternalCheck } from '../checks/lib/run-external-check.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -17,6 +18,76 @@ test.after(() => {
   for (const directory of temporaryDirectories) rmSync(directory, { recursive: true, force: true });
 });
 const suite = path.join(root, 'scripts/ci/go-module-suite.mjs');
+
+test('coverage hydrates and verifies the workspace-pinned Corepack package manager before DevKit tests', () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+
+  assert.match(manifest.packageManager, /^pnpm@\d+\.\d+\.\d+$/);
+  for (const scriptName of ['coverage', 'coverage:json']) {
+    const script = manifest.scripts[scriptName];
+    assert.match(script, /^COREPACK_HOME="\$\(node scripts\/ci\/resolve-corepack-home\.mjs\)" && test -n "\$COREPACK_HOME" && export COREPACK_HOME && corepack install 1>&2 && export COREPACK_ENABLE_NETWORK=0 && corepack pnpm --version >\/dev\/null && /);
+    assert.match(script, /kb-devkit run test:coverage/);
+  }
+});
+
+test('coverage preparation stops on resolver failure and keeps setup output off stdout', () => {
+  const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const shell = (scriptName) => manifest.scripts[scriptName].split(' && ./tools/kb-devkit/')[0];
+  const fakeBin = temporaryDirectory('coverage-corepack-shell-');
+  const fakeNode = path.join(fakeBin, 'node');
+  const fakeCorepack = path.join(fakeBin, 'corepack');
+  const marker = path.join(fakeBin, 'corepack-was-called');
+
+  writeFileSync(fakeNode, '#!/bin/sh\nexit 29\n', { mode: 0o700 });
+  writeFileSync(fakeCorepack, `#!/bin/sh\nprintf called > '${marker}'\nexit 0\n`, { mode: 0o700 });
+  const failing = spawnSync('sh', ['-c', shell('coverage')], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+  });
+  assert.equal(failing.status, 29, failing.stderr || failing.stdout);
+  assert.equal(failing.stdout, '');
+  assert.equal(existsSync(marker), false, 'Corepack must not run after resolver failure');
+
+  writeFileSync(fakeNode, '#!/bin/sh\nprintf \'/tmp/coverage-corepack-cache\'\n', { mode: 0o700 });
+  writeFileSync(fakeCorepack, '#!/bin/sh\nif [ "$1" = install ]; then printf install-output; else printf version-output; fi\n', { mode: 0o700 });
+  for (const scriptName of ['coverage', 'coverage:json']) {
+    const prepared = spawnSync('sh', ['-c', shell(scriptName)], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH ?? ''}` },
+    });
+    assert.equal(prepared.status, 0, prepared.stderr || prepared.stdout);
+    assert.equal(prepared.stdout, '', `${scriptName} must not write setup or version output to stdout`);
+    assert.match(prepared.stderr, /install-output/, `${scriptName} directs Corepack install output to stderr`);
+  }
+});
+
+test('coverage resolves a relative Corepack home once before DevKit changes package cwd', () => {
+  const workspace = temporaryDirectory('coverage-corepack-cwd-');
+  const canonicalWorkspace = realpathSync(workspace);
+  const packageRoot = path.join(canonicalWorkspace, 'tools', 'kb-create');
+  mkdirSync(packageRoot, { recursive: true });
+  const relativeHome = path.join('cache', 'corepack');
+  const xdgCacheHome = path.join(workspace, 'xdg-decoy');
+  const resolveFrom = (cwd, corepackHome) => {
+    const result = spawnSync(process.execPath, [path.join(root, 'scripts/ci/resolve-corepack-home.mjs')], {
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, COREPACK_HOME: corepackHome, XDG_CACHE_HOME: xdgCacheHome },
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    return result.stdout;
+  };
+
+  const workspaceHome = resolveFrom(workspace, relativeHome);
+  const taskHome = resolveFrom(packageRoot, workspaceHome);
+  const unresolvedTaskHome = resolveFrom(packageRoot, relativeHome);
+  assert.ok(path.isAbsolute(workspaceHome));
+  assert.equal(workspaceHome, path.resolve(canonicalWorkspace, relativeHome));
+  assert.equal(taskHome, workspaceHome, 'exported absolute COREPACK_HOME is stable from a package cwd');
+  assert.notEqual(unresolvedTaskHome, workspaceHome, 'the original relative override would resolve differently in a package cwd');
+});
 
 function temporaryDirectory(prefix) {
   const directory = mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -237,6 +308,31 @@ test('nightly journey workflow syncs the scoreboard through the GitHub issue own
     && step.with?.name === 'nightly-user-journey-${{ github.run_id }}'));
 });
 
+// case: S-284.22
+test('reusable installer journey checks out the exact candidate SHA in every job', () => {
+  const reusable = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const expectedRef = '${{ inputs.ref || github.sha }}';
+  const checkoutFor = (jobName) => reusable.jobs[jobName].steps
+    .find((step) => step.uses?.startsWith('actions/checkout@'));
+  for (const jobName of ['prepare', 'journey', 'native_macos', 'coverage']) {
+    assert.ok(checkoutFor(jobName), `${jobName} checks out source`);
+    assert.equal(checkoutFor(jobName).with?.ref, expectedRef,
+      `${jobName} uses the candidate ref when supplied and the caller workflow SHA otherwise`);
+  }
+
+  const releaseCaller = load(readFileSync(path.join(root, '.github/workflows/release-build-candidate.yml'), 'utf8'));
+  assert.equal(releaseCaller.jobs['journey-gate'].with.ref, '${{ inputs.commit_sha }}');
+  const ordinaryCallers = [
+    '.github/workflows/installer-journey.yml',
+    '.github/workflows/nightly-user-journey.yml',
+  ].map((file) => load(readFileSync(path.join(root, file), 'utf8')));
+  for (const caller of ordinaryCallers) {
+    const job = Object.values(caller.jobs).find((candidate) => candidate.uses === './.github/workflows/reusable-installer-journey.yml');
+    assert.ok(job, 'ordinary caller invokes the reusable installer journey');
+    assert.equal(job.with?.ref, undefined, 'ordinary callers retain the workflow run SHA default');
+  }
+});
+
 // case: S-261.2
 test('reusable installer workflow runs a native macOS install from the candidate artifact', () => {
   const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
@@ -254,13 +350,47 @@ test('reusable installer workflow runs a native macOS install from the candidate
   assert.equal(setup.run, 'e2e/journey/native-macos-smoke.sh');
   assert.doesNotThrow(() => accessSync(path.join(root, setup.run), constants.X_OK));
   assert.deepEqual(native.steps.filter((step) => step.run).map((step) => step.run), ['e2e/journey/native-macos-smoke.sh']);
+  const upload = native.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  assert.equal(upload.with?.name, 'service-journey-results-macos-native');
+  assert.match(upload.with?.path, /\.journey\/reports\/service-native-macos\.json/);
+  assert.match(upload.with?.path, /\.journey\/reports\/invocations\/native-macos\/\*\*/);
+  assert.ok(coverage.needs.includes('native_macos'), 'release coverage includes the native Marketplace run');
   assert.ok(!native.steps.some((step) => step.uses?.startsWith('docker/')));
   assert.equal(native['timeout-minutes'] > 0, true);
+});
+
+test('installer journey artifacts use safe names and preserve redacted command logs', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const upload = workflow.jobs.journey.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+  const sanitizer = workflow.jobs.journey.steps.find((step) => step.id === 'artifact-name');
+  assert.equal(sanitizer.if, 'always()');
+  assert.equal(sanitizer.env.MATRIX_OS, '${{ matrix.os }}');
+  assert.equal(sanitizer.env.MATRIX_CASE, '${{ matrix.case }}');
+  assert.equal(upload.with.name, '${{ steps.artifact-name.outputs.name }}');
+  assert.match(upload.with.path, /\.journey\/reports\/invocations\/\*\*/);
+  assert.doesNotMatch(upload.with.path, /container-outcomes\.json|containers\/\*\*/);
+});
+
+test('reusable installer workflow runs the dist-free journey preflight before producer builds', () => {
+  const workflow = load(readFileSync(path.join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
+  const steps = workflow.jobs.prepare.steps;
+  const preflight = steps.findIndex((step) => step.name === 'Run journey static preflight');
+  const producerBuild = steps.findIndex((step) => step.name === 'Build kb-devkit');
+  const fullCaseValidation = steps.findIndex((step) => step.name === 'Validate QA cases and test claims');
+
+  assert.ok(preflight >= 0, 'the journey preflight is present');
+  assert.ok(preflight < producerBuild, 'static failures are found before producer builds');
+  assert.ok(fullCaseValidation > producerBuild, 'the full built-CLI QA validation remains after the build');
+  assert.equal(steps[preflight].run, 'bash e2e/journey/static-preflight.sh');
 });
 
 // case: S-261.2
 test('native macOS smoke entry installs the candidate and runs the installed CLI', () => {
   const commands = nativeInstallCommands({ workspace: '/workspace', tempRoot: '/tmp/native', platformRoot: '/tmp/platform', registryUrl: 'http://127.0.0.1:49183' });
+  const smokeScript = readFileSync(path.join(root, 'e2e/journey/native-macos-smoke.sh'), 'utf8');
+  assert.match(smokeScript, /node_major=.*process\.versions\.node/);
+  assert.match(smokeScript, /command -v corepack/);
+  assert.match(smokeScript, /command -v pnpm/);
   assert.deepEqual(commands.map(({ command, args, cwd }) => [command, args, cwd]), [
     ['make', ['build', 'BINARY=/tmp/native/kb-create'], '/workspace/tools/kb-create'],
     ['/tmp/native/kb-create', [
@@ -268,11 +398,13 @@ test('native macOS smoke entry installs the candidate and runs the installed CLI
       '--platform-root', '/tmp/platform', '--project-root', '/workspace', '--scenario', 'explore',
       '--scenario-answers', '{"access.mode":"local"}', '--registry', 'http://127.0.0.1:49183',
     ], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['--version'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['doctor', '--json'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['project', 'add', '/workspace', '--json'], '/workspace'],
-    ['/tmp/platform/node_modules/.bin/kb', ['qa', 'cases', 'list', '--json'], '/workspace'],
+    ['/tmp/native/kb', ['--version'], '/tmp/native'],
+    ['/tmp/native/kb', ['commit', '--help'], '/tmp/native'],
+    ['/tmp/native/kb', ['project', 'add', '/workspace', '--json'], '/tmp/native'],
+    ['/tmp/native/kb', ['marketplace', 'plugins', 'doctor', '--scope', 'platform', '--json'], '/tmp/native'],
   ]);
+  const install = commands[1];
+  assert.equal(install.args[install.args.indexOf('--platform-root') + 1], '/tmp/platform');
 });
 
 // case: S-261.2

@@ -14,8 +14,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import select_from_cases
 from select_from_cases import (read_coverage_result, runners_for_case_selection,
+                               claim_step_ids_for_area, uncovered_step_ids_for_area,
                                selection_from_coverage, selectors_from_coverage)
 from service_steps import Journey
+from service_steps import FlowGraph
+from journey_selection import JourneySelection
 from select_from_cases import _case_declarations
 from installed_fixture import configure_hermetic_cli_fixture, layout_value
 
@@ -27,6 +30,7 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
         "mode": mode,
         "cases": [{
             "id": "S-042",
+            "area": "marketplace",
             "status": status,
             "release": release,
             "steps": [{"stepId": "S-042.1", "claims": [{"source": source, "kind": kind, "line": line}]}],
@@ -35,6 +39,124 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    # case: S-262.19
+    def test_shared_prerequisite_does_not_select_sibling_service_group(self):
+        selection = JourneySelection(
+            requested=("S-262.19",),
+            claims=frozenset({"S-262.19"}),
+            owning_steps={"candidate provenance": ("S-262.19",)},
+            prerequisite_steps=frozenset({"candidate provenance"}),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset(),
+            runner_selector="service-local:explore",
+            requested_runners="service-local:explore",
+        )
+        groups = {
+            "selected": {"capabilities": {"selected"}, "cases": ("S-262.19",),
+                         "steps": ("candidate provenance",)},
+            "sibling": {"capabilities": {"adapter"}, "cases": (),
+                        "steps": ("candidate provenance",)},
+        }
+        journey = Journey("local", "shared-prerequisite-selection", selection=selection)
+        graph = FlowGraph(journey, {name: () for name in groups}, groups=groups)
+        sibling_calls = []
+
+        result = graph.flow("unrelated sibling flow", "sibling", "adapter",
+                            lambda: sibling_calls.append("ran"), cases=["S-054.1"],
+                            record_empty_success=False)
+
+        self.assertEqual(result, "SKIPPED")
+        self.assertEqual(sibling_calls, [])
+        self.assertNotIn("sibling", graph.selected_groups)
+
+    # case: S-262.18
+    def test_product_area_selects_active_qa_cases_by_catalog_area(self):
+        marketplace = {"mode": "local", "cases": [
+            {"id": "S-010", "area": "marketplace", "status": "active", "steps": [
+                {"stepId": "S-010.1", "claims": [{"kind": "journey", "source": "e2e/journey/runner.py"}]},
+            ]},
+            {"id": "S-268", "area": "marketplace", "status": "active", "steps": [
+                {"stepId": "S-268.1", "claims": [{"kind": "journey", "source": "e2e/journey/marketplace_steps.py"}]},
+                {"stepId": "S-268.2", "claims": [{"kind": "journey", "source": "e2e/journey/marketplace_steps.py"}]},
+            ]},
+            {"id": "S-026", "area": "marketplace", "status": "active", "steps": [
+                {"stepId": "S-026.1", "claims": []},
+            ]},
+            {"id": "S-047", "area": "marketplace", "status": "planned"},
+            {"id": "S-120", "area": "studio", "status": "active", "steps": [
+                {"stepId": "S-120.1", "claims": [{"kind": "journey", "source": "e2e/studio/fresh-host.spec.ts"}]},
+            ]},
+        ]}
+        secured = {"mode": "secured", "cases": [
+            marketplace["cases"][0],
+            {"id": "S-268", "area": "marketplace", "status": "active", "steps": [
+                marketplace["cases"][1]["steps"][0],
+                {"stepId": "S-268.2", "claims": []},
+            ]},
+            marketplace["cases"][2],
+            {"id": "S-047", "area": "marketplace", "status": "planned"},
+            marketplace["cases"][4],
+        ]}
+
+        self.assertEqual(claim_step_ids_for_area([marketplace, secured], "marketplace"),
+                         ["S-010.1", "S-268.1", "S-268.2"])
+        self.assertEqual(uncovered_step_ids_for_area([marketplace, secured], "marketplace"),
+                         ["S-026.1"])
+        self.assertEqual(claim_step_ids_for_area([marketplace, secured], "marketplace", "local"),
+                         ["S-010.1", "S-268.1", "S-268.2"])
+        self.assertEqual(uncovered_step_ids_for_area([marketplace, secured], "marketplace", "secured"),
+                         ["S-026.1", "S-268.2"])
+        self.assertEqual(claim_step_ids_for_area([marketplace, secured], "studio"), ["S-120.1"])
+        with self.assertRaisesRegex(ValueError, "unknown or empty product area"):
+            claim_step_ids_for_area([marketplace], "registry")
+        with self.assertRaisesRegex(ValueError, "lowercase QA area slug"):
+            claim_step_ids_for_area([marketplace], "Marketplace")
+        broken = {"mode": "secured", "cases": [
+            {"id": "S-010", "area": "platform-core", "status": "active"},
+        ]}
+        with self.assertRaisesRegex(ValueError, "inconsistent product areas"):
+            claim_step_ids_for_area([marketplace, broken], "marketplace")
+
+    # case: S-262.18
+    def test_coverage_reader_attaches_areas_from_the_qa_case_catalog(self):
+        def fake_cli(command, **_kwargs):
+            if command[2:5] == ["qa", "cases", "list"]:
+                payload = {"ok": True, "data": {"cases": [
+                    {"id": "S-010", "area": "marketplace"},
+                ]}}
+            else:
+                mode = command[command.index("--mode") + 1]
+                payload = {"ok": True, "data": {"mode": mode, "cases": [
+                    {"id": "S-010", "status": "active", "steps": []},
+                ]}}
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+        with patch.object(select_from_cases, "run_hermetic_cli", side_effect=fake_cli):
+            results = select_from_cases.coverage_results(Path("/workspace"))
+
+        self.assertEqual([item["cases"][0]["area"] for item in results], ["marketplace", "marketplace"])
+
+    # case: S-262.18
+    def test_coverage_reader_keeps_active_catalog_cases_without_steps(self):
+        def fake_cli(command, **_kwargs):
+            if command[2:5] == ["qa", "cases", "list"]:
+                payload = {"ok": True, "data": {"cases": [
+                    {"id": "S-026", "area": "marketplace", "status": "active"},
+                ]}}
+            else:
+                mode = command[command.index("--mode") + 1]
+                payload = {"ok": True, "data": {"mode": mode, "cases": []}}
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+        with patch.object(select_from_cases, "run_hermetic_cli", side_effect=fake_cli):
+            results = select_from_cases.coverage_results(Path("/workspace"))
+
+        for mode in results:
+            self.assertEqual(mode["cases"], [{
+                "id": "S-026", "area": "marketplace", "status": "active", "steps": [],
+            }])
+        self.assertEqual(uncovered_step_ids_for_area(results, "marketplace"), [])
+
     def test_commit_default_and_registry_lane_step_graphs_are_disjoint(self):
         root = Path(__file__).resolve().parents[2]
         source = "e2e/journey/marketplace_steps.py"
@@ -68,15 +190,41 @@ class CaseJourneySelectionTests(unittest.TestCase):
         from service_runner import service_selection_groups
         default_groups = service_selection_groups(runner_selector="service-local:explore")
         registry_groups = service_selection_groups(runner_selector="service-marketplace-registry:local")
-        self.assertIn("S-047.1", default_groups["marketplace-lifecycle"]["cases"])
-        self.assertNotIn("publish and install Commit through Registry",
-                         default_groups["marketplace-lifecycle"]["steps"])
-        self.assertNotIn("verify Commit Registry signature and provenance",
-                         default_groups["marketplace-lifecycle"]["steps"])
-        self.assertIn("publish and install Commit through Registry",
-                      registry_groups["marketplace-registry"]["steps"])
-        self.assertIn("verify Commit Registry signature and provenance",
-                      registry_groups["marketplace-registry"]["steps"])
+        default_lifecycle = set(default_groups["marketplace-lifecycle"].get("cases", ()))
+        registry_lifecycle = set(registry_groups["marketplace-lifecycle"].get("cases", ()))
+        default_registry = set(default_groups["marketplace-registry"].get("cases", ()))
+        registry_registry = set(registry_groups["marketplace-registry"].get("cases", ()))
+        registry_adapter = set(registry_groups["adapters"].get("cases", ()))
+        self.assertIn("S-047.1", default_lifecycle)
+        self.assertNotIn("S-268.1", default_lifecycle)
+        self.assertNotIn("S-268.1", registry_lifecycle)
+        self.assertTrue(registry_steps <= registry_registry)
+        self.assertNotIn("S-047.1", registry_registry)
+        self.assertFalse(registry_steps.intersection(registry_adapter))
+        selection = JourneySelection(
+            requested=tuple(sorted(registry_steps)),
+            claims=frozenset(registry_steps),
+            owning_steps={name: tuple(cases) for name, cases in registry["selectedOwningSteps"].items()},
+            prerequisite_steps=frozenset(registry["prerequisiteSteps"]),
+            prerequisite_flows=frozenset(registry["prerequisiteFlows"]),
+            capabilities=frozenset(registry["capabilities"]),
+            runner_selector=registry["runners"][0],
+            requested_runners=registry["runners"][0],
+        )
+        journey = Journey("local", "registry-selection-excludes-adapters", selection=selection)
+        graph = FlowGraph(journey, {name: spec["depends_on"] for name, spec in registry_groups.items()},
+                          groups=registry_groups)
+        adapter_calls = []
+        adapter_flow = graph.flow(
+            "adapter defaults flow", "adapters", "adapter", lambda: adapter_calls.append("ran"),
+            cases=["S-054.1", "S-048.1"], record_empty_success=False,
+        )
+        self.assertEqual(adapter_flow, "SKIPPED")
+        self.assertEqual(adapter_calls, [])
+        # Imported declaration closure must not accidentally claim the unrelated MCP case.
+        for cases in (default_lifecycle, registry_lifecycle, default_registry, registry_registry,
+                      registry_adapter):
+            self.assertNotIn("S-140.1", cases)
 
     def test_hermetic_fixture_stages_declared_lock_at_its_shared_root(self):
         repository = Path(__file__).resolve().parents[2]
@@ -148,6 +296,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
                 "composeProfiles": [],
                 "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+                "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
             })
 
     # case: S-262.8
@@ -290,6 +439,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
             "composeProfiles": [],
             "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+            "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
         })
 
     def test_rejects_unknown_case_or_step_id_by_name(self):
@@ -342,6 +492,36 @@ class CaseJourneySelectionTests(unittest.TestCase):
         after = {path.relative_to(root).as_posix(): (path.stat().st_size, path.stat().st_mtime_ns)
                  for path in reports.rglob("*") if path.is_file()} if reports.exists() else None
         self.assertEqual(after, before)
+
+    def test_real_resolve_only_keeps_s181_and_mcp_claim_owners(self):
+        root = Path(__file__).resolve().parents[2]
+        expected = {
+            ("S-181.7", "local"): ("agent:commit", "platform.install"),
+            ("S-181.7", "secured"): ("agent-secured:commit", "platform.install"),
+            ("S-140.5", "local"): ("service-local:explore", "mcp"),
+            ("S-140.5", "secured"): ("service-secured:explore", "mcp"),
+        }
+        for (case_id, mode), (selector, capability) in expected.items():
+            with self.subTest(case=case_id, mode=mode):
+                env = os.environ.copy()
+                env.update({"KB_JOURNEY_CASES": case_id, "KB_JOURNEY_SELECTION_MODE": mode})
+                for key in ("KB_JOURNEY_ONLY", "KB_JOURNEY_SELECTED_STEPS",
+                            "KB_JOURNEY_SELECTED_OWNING_STEPS", "KB_JOURNEY_PREREQUISITE_STEPS"):
+                    env.pop(key, None)
+                result = subprocess.run(
+                    ["bash", "e2e/journey/run.sh", "--resolve-only"], cwd=root, env=env,
+                    capture_output=True, text=True, check=False, timeout=120,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                resolved = json.loads(result.stdout)
+                self.assertEqual(resolved["selection"], [case_id])
+                self.assertEqual(resolved["runners"], [selector])
+                self.assertIn(capability, resolved["capabilities"])
+                if case_id == "S-181.7":
+                    self.assertIn("install and reapply generated secrets from the offline artifact cache",
+                                  resolved["selectedOwningSteps"])
+                else:
+                    self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
 
     def test_runner_variant_registration_is_enforced_when_claim_executes(self):
         with patch.dict(os.environ, {

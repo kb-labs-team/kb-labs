@@ -991,10 +991,43 @@ interface ServiceCommandMetadata {
   name: string;
   description: string;
   flags: Record<string, { type: "string" | "boolean" | "number" | "array"; description?: string; required?: boolean }>;
+  /** Optional host-neutral operation contract for commands shared by CLI and project MCP. */
+  invocation?: ServiceCommandInvocationDeclaration;
   scope: "project" | "global";
   jsonTest: { safeArgs?: string[]; noSafeValidPath?: string };
   category: string;
   examples?: string[];
+}
+
+export interface ServiceCommandInvocationDeclaration {
+  /** Explicit operation ID resolved only from a trusted runtime registration. */
+  operationId: string;
+  /** Canonical operation inputs and their CLI argument source. */
+  inputs: readonly {
+    name: string;
+    type: "string" | "boolean" | "number";
+    required?: boolean;
+    source: { kind: "positional"; index: number } | { kind: "flag"; name: string };
+  }[];
+  /** Fixed operation values supplied by the trusted command declaration. */
+  values?: Readonly<Record<string, string | boolean | number>>;
+}
+
+/** Narrow request capability passed to a trusted service operation by its host. */
+export interface ServiceCommandRequestCapability {
+  (request: { method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path: string; payload?: unknown }): Promise<{
+    ok: boolean;
+    statusCode: number;
+    payload?: unknown;
+    /** Public endpoint used by the host, for canonical Gateway protocol errors. */
+    gatewayUrl?: string;
+  }>;
+}
+
+export interface RegisteredServiceCommandOperation {
+  serviceId: string;
+  operationId: string;
+  execute: (input: Record<string, unknown>, request: ServiceCommandRequestCapability) => Promise<unknown>;
 }
 
 export interface ProjectServiceApiDeclaration {

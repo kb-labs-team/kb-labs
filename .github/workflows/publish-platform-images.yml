@@ -44,7 +44,7 @@ jobs:
           # covering every Go module in the workspace (including
           # kb-deploy/kb-monitor, which require go 1.26 as of #435), not
           # just kb-devkit itself.
-          go-version: '1.26.8'
+          go-version: '1.26.11'
 
       - name: Resolve platform version
         id: version
@@ -59,19 +59,8 @@ jobs:
 
       # Dockerfiles intentionally consume pnpm deploy output. Preparing all
       # eight outputs once avoids rebuilding the monorepo once per image.
-      - name: Prepare production dependency trees
-        run: |
-          set -euo pipefail
-          pnpm deploy --filter @kb-labs/core-state-daemon --prod .kb/deploy/state-daemon
-          pnpm deploy --filter @kb-labs/gateway-app --prod .kb/deploy/gateway-app
-          pnpm deploy --filter @kb-labs/marketplace-app --prod .kb/deploy/marketplace-app
-          pnpm deploy --filter @kb-labs/rest-api-app --prod .kb/deploy/rest-api-app
-          pnpm deploy --filter @kb-labs/studio-app --prod .kb/deploy/studio-app
-          pnpm deploy --filter @kb-labs/workflow-daemon --prod .kb/deploy/workflow-daemon
-          pnpm deploy --filter @kb-labs/mcp-app --prod .kb/deploy/mcp-app
-          pnpm deploy --filter @kb-labs/marketplace-registry-app --prod .kb/deploy/marketplace-registry-app
-      - name: Generate the release image default config
-        run: node tools/release/generate-platform-image-default.mjs
+      - name: Prepare production image artifacts
+        run: tools/release/prepare-platform-image-deploys.sh all
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

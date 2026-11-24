@@ -384,7 +384,7 @@ export default defineCommand({
           sessionId: effectiveSessionId,
           tier,
           analytics,
-          tokenBudget: agentsConfig?.tokenBudget,
+          tokenBudget: effectiveBudget,
           mode: modeConfig,
           onEvent: compositeEventCallback,
           debug,

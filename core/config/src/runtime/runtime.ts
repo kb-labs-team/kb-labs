@@ -8,6 +8,7 @@
 import { promises as fsp } from "node:fs";
 import path from "node:path";
 import type { Diagnostic, FindNearestConfigOpts, JsonReadResult, ProfilesConfig, KBConfig } from "../types";
+import { mergeOverlay } from "../overlay/merge.js";
 
 /** Find nearest config file walking up from startDir until stopDir or FS root. */
 export async function findNearestConfig(opts: FindNearestConfigOpts): Promise<{ path: string | null; tried: string[] }> {
@@ -149,8 +150,8 @@ export interface MergeWithFieldPolicyResult<T> {
  * Merge two config layers using a per-field policy map.
  *
  * The `policy` map is keyed by top-level field names on the config object.
- * Fields missing from the map default to `mergeable` — i.e. deep-merge with
- * project overriding platform.
+ * Fields missing from the map default to `mergeable` — i.e. objects deep-merge
+ * and higher-layer arrays replace lower-layer arrays.
  */
 export function mergeWithFieldPolicy<T extends object>(
     platform: Partial<T> | undefined,
@@ -197,7 +198,7 @@ export function mergeWithFieldPolicy<T extends object>(
 
         // mergeable
         if (hasPlatform && hasProject) {
-            out[key] = mergeDefined(platformValue as never, projectValue as never);
+            out[key] = mergeOverlay(platformValue as never, projectValue);
             sources[key] = "both";
         } else if (hasPlatform) {
             out[key] = platformValue;

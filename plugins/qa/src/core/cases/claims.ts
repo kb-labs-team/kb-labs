@@ -136,9 +136,11 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
     const lines = source.split(/\r?\n/);
     const file = relative(process.cwd(), filePath);
     const sourcePath = relative(root, filePath).replaceAll('\\', '/');
-    const isJourneySource = sourcePath.startsWith('e2e/journey/')
+    const isPythonJourneySource = sourcePath.startsWith('e2e/journey/')
       && filePath.endsWith('.py')
       && !sourcePath.split('/').at(-1)!.startsWith('test_');
+    const isNativeMacOSJourneySource = sourcePath === 'e2e/journey/native-macos-install.mjs';
+    const isJourneySource = isPythonJourneySource || isNativeMacOSJourneySource;
     const isPlaywrightSource = sourcePath.startsWith('e2e/') && filePath.endsWith('.spec.ts');
     const add = (stepId: string, kind: QACaseClaimKind, claimLine: number, testName?: string) => {
       if (!CLAIM_ID.test(stepId)) { diagnostics.push({ file, line: claimLine, message: `invalid case step claim ${stepId}` }); return; }
@@ -147,7 +149,7 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
       claims.push(claim);
     };
     if (isJourneySource) {
-      const journeySource = maskPythonCommentsAndDocstrings(source);
+      const journeySource = isPythonJourneySource ? maskPythonCommentsAndDocstrings(source) : source;
       const claimSpans: Array<{ start: number; end: number }> = [];
       const declaredStepIds = new Set<string>();
       for (const match of journeySource.matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
@@ -216,9 +218,10 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
         else {add(caseComment[1]!, 'unit', index + 1, testLine[1]!);}
       } else if (caseComment) {
         const next = lines[index + 1] ?? '';
-        const testLine = next.match(/\b(?:test|it)\s*\(\s*["'`]([^"'`]+)/);
-        if (!testLine) {diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a test declaration' });}
-        else {add(caseComment[1]!, 'unit', index + 1, testLine[1]!);}
+        const testLine = next.match(/\b(?:test|it)(?:\.each\([^)]*\))?\s*\(\s*(?:["'`]([^"'`]+)|\([^)]*\)\s*=>)/);
+        const multilineParameterizedTest = next.match(/^\s*(?:test|it)\.each\s*\(/);
+        if (!testLine && !multilineParameterizedTest) {diagnostics.push({ file, line: index + 1, message: '// case: must be directly above a test declaration' });}
+        else {add(caseComment[1]!, 'unit', index + 1, testLine?.[1] ?? 'parameterized test');}
       }
     }
   }

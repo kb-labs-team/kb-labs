@@ -298,7 +298,7 @@ test('project selector scopes plugin attachments @S-046.1 @S-046.2 @S-046.3', as
   await openAdminStudio(page)
   await page.goto(`${GATEWAY}/plugins`)
   await expect(page.getByRole('heading', { name: 'Marketplace', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Installed project plugins', exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Plugins', exact: true })).toBeVisible()
   await expect(page.getByText('No plugins installed', { exact: true })).toBeVisible()
   await expect(page.getByText(projectAName!, { exact: true }).first()).toBeVisible()
   await expect(page.getByRole('row')).toHaveCount(0)

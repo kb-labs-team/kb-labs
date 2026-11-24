@@ -12,7 +12,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
-import { SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
+import { createSensitiveStreamCapture, createSensitiveTextStream, getRequestSensitiveValues, SerializedErrorEnvelopeError } from '@kb-labs/core-platform';
 import type { ErrorEnvelope, SerializedError } from '@kb-labs/core-platform';
 import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import { createStdioChannel, StdioPlatformServer } from '@kb-labs/core-ipc';
@@ -65,6 +65,8 @@ export interface RunInProcessOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  /** Host-only platform root for resolving platform peers from store entries. */
+  platformRoot?: string;
   /** Resolved adapter middlewares to apply before governance. */
   adapterMiddlewares?: LoadedMiddleware[];
 }
@@ -79,6 +81,8 @@ export interface RunInSubprocessOptions {
   cwd: string;
   outdir?: string;
   environment?: Record<string, string | undefined>;
+  /** Host-only platform root sent over IPC, never exposed through plugin env. */
+  platformRoot?: string;
   onLog?: (entry: { level: string; message: string; stream: 'stdout' | 'stderr'; lineNo: number; timestamp: string; meta?: Record<string, unknown> }) => void;
 }
 
@@ -93,7 +97,7 @@ export interface RunInSubprocessOptions {
 export async function runInProcess<T = unknown>(
   options: RunInProcessOptions
 ): Promise<RunResult<T>> {
-  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, adapterMiddlewares } = options;
+  const { descriptor, platform, ui, pluginInvoker, eventEmitter, handlerPath, input, signal, cwd, outdir, environment, platformRoot: hostPlatformRoot, adapterMiddlewares } = options;
   const startTime = Date.now();
 
   // Create context
@@ -142,7 +146,10 @@ export async function runInProcess<T = unknown>(
     // Plugin code can be outside the installed platform tree (for example, a
     // Marketplace store entry). Resolve its platform packages from the one
     // platform copy in this process before importing the handler.
-    const platformRoot = process.env.KB_PLATFORM_ROOT;
+    // The host passes this root as execution metadata, not plugin environment.
+    // Do not depend on the process-global value: project commands can run with
+    // a correct resolved root that was never exported into the caller's shell.
+    const platformRoot = hostPlatformRoot ?? process.env.KB_PLATFORM_ROOT;
     if (platformRoot) {
       installPlatformResolveHook({ platformRoot, anchors: [import.meta.url] });
     }
@@ -217,6 +224,9 @@ export async function runInSubprocess<T = unknown>(
   if (signal?.aborted) { throw new AbortError(); }
 
   const startTime = Date.now();
+  // Capture the trusted host root before merging invocation/plugin environment
+  // values into the child process environment.
+  const platformRoot = options.platformRoot ?? process.env.KB_PLATFORM_ROOT;
 
   return new Promise((resolve, reject) => {
     // Path to bootstrap script
@@ -262,31 +272,63 @@ export async function runInSubprocess<T = unknown>(
     });
 
     let completed = false;
-    let stderrBuffer = '';
+    let finishPromise: Promise<void> | undefined;
+    let outputActive = true;
+    const stderrCapture = createSensitiveStreamCapture(getRequestSensitiveValues(), (message) => {
+      if (!outputActive) { return; }
+      options.onLog?.({ level: 'error', message, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString() });
+    });
     const timeoutId: { timer?: ReturnType<typeof setTimeout> } = {};
     let cancelId: ReturnType<typeof setTimeout> | undefined;
     const channel = createStdioChannel(child.stdout, child.stdin);
     const platformServer = new StdioPlatformServer(channel, platform);
-    const finish = () => {
+    let logLineNo = 0;
+    const logCaptures = new Map<'stdout' | 'stderr', { write: (chunk: string) => string; flush: () => string; level: string }>();
+    const emitLogText = (stream: 'stdout' | 'stderr', level: string, message: string) => {
+      if (!outputActive || !message) { return; }
+      options.onLog?.({ level, message, stream, lineNo: ++logLineNo, timestamp: new Date().toISOString() });
+    };
+    const getLogCapture = (stream: 'stdout' | 'stderr', level: string) => {
+      let capture = logCaptures.get(stream);
+      if (!capture) {
+        const redactor = createSensitiveTextStream(getRequestSensitiveValues());
+        capture = { write: (chunk) => redactor.write(chunk), flush: () => redactor.flush(), level };
+        logCaptures.set(stream, capture);
+      }
+      capture.level = level;
+      return capture;
+    };
+    const flushLogCaptures = () => {
+      for (const [stream, capture] of logCaptures) { emitLogText(stream, capture.level, capture.flush()); }
+    };
+    const finish = (): Promise<void> => {
+      if (finishPromise) { return finishPromise; }
       completed = true;
+      flushLogCaptures();
+      stderrCapture.flush();
+      outputActive = false;
       clearTimeout(timeoutId.timer);
       clearTimeout(cancelId);
       signal?.removeEventListener('abort', abortHandler);
-      platformServer.close();
-      channel.close();
-      child.stdin.end();
+      finishPromise = platformServer.close().catch(() => {}).finally(() => {
+        channel.close();
+        child.stdin.end();
+      });
+      return finishPromise;
     };
     const fail = (error: Error) => {
       if (completed) { return; }
-      finish();
-      child.kill('SIGKILL');
-      reject(error);
+      void finish().finally(() => {
+        child.kill('SIGKILL');
+        reject(error);
+      });
     };
 
     // Handle abort signal
     const abortHandler = () => {
       if (!completed) {
         void channel.send({ type: 'execution:cancel', requestId: descriptor.requestId ?? '' })
+          .catch(() => {})
           .finally(() => child.stdin.end());
         cancelId = setTimeout(() => fail(new AbortError()), 1000);
       }
@@ -298,23 +340,8 @@ export async function runInSubprocess<T = unknown>(
 
     channel.onError((error) => fail(error));
 
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderrBuffer += chunk.toString('utf8');
-      const lines = stderrBuffer.split(/\r?\n/);
-      stderrBuffer = lines.pop() ?? '';
-      for (const line of lines) {
-        options.onLog?.({
-          level: 'error', message: line, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString(),
-        });
-      }
-    });
-    child.stderr.on('end', () => {
-      if (stderrBuffer.length > 0) {
-        options.onLog?.({
-          level: 'error', message: stderrBuffer, stream: 'stderr', lineNo: 0, timestamp: new Date().toISOString(),
-        });
-      }
-    });
+    child.stderr.on('data', (chunk: Buffer) => stderrCapture.write(chunk));
+    child.stderr.once('end', () => stderrCapture.flush());
 
     // Set timeout
 
@@ -333,28 +360,22 @@ export async function runInSubprocess<T = unknown>(
       cwd: options.cwd,
       strictFilesystemPermissions: false,
       outdir: options.outdir,
+      platformRoot,
     };
     void channel.send({ type: 'execution:start', requestId, payload: executeMsg }).catch((error: unknown) => {
       fail(error instanceof Error ? error : new Error(String(error)));
     });
     channel.on('log', (frame) => {
-      options.onLog?.({
-        level: frame.level,
-        message: frame.message,
-        stream: frame.stream,
-        lineNo: 0,
-        timestamp: new Date().toISOString(),
-        meta: frame.meta,
-      });
+      const capture = getLogCapture(frame.stream, frame.level);
+      emitLogText(frame.stream, frame.level, capture.write(frame.message));
     });
     channel.on('execution:result', (frame) => {
       if (frame.requestId !== requestId) { fail(new Error('Execution result request id does not match')); return; }
-      finish();
-      resolve({
+      void finish().then(() => resolve({
         ok: true,
         data: (frame.payloadUndefined ? undefined : frame.payload) as T,
         executionMeta: buildExecutionMeta(descriptor, startTime),
-      });
+      }));
     });
     channel.on('execution:error', (frame) => {
       if (frame.requestId !== requestId) { fail(new Error('Execution error request id does not match')); return; }
@@ -370,24 +391,23 @@ export async function runInSubprocess<T = unknown>(
         return;
       }
       const errorPayload = payload as { envelope: ErrorEnvelope; serializedError: SerializedError };
-      finish();
-      reject(new SerializedErrorEnvelopeError(errorPayload.envelope, errorPayload.serializedError));
+      void finish().then(() => reject(new SerializedErrorEnvelopeError(errorPayload.envelope, errorPayload.serializedError)));
     });
 
     // Handle child exit
     child.on('exit', (code) => {
       if (!completed) {
-        finish();
-
-        if (signal?.aborted) {
-          reject(new AbortError());
-        } else {
-          reject(new PluginError(
-            `Plugin process exited with code ${code}`,
-            'KB_PLUGIN_CRASHED',
-            { plugin: descriptor.pluginId }
-          ));
-        }
+        void finish().then(() => {
+          if (signal?.aborted) {
+            reject(new AbortError());
+          } else {
+            reject(new PluginError(
+              `Plugin process exited with code ${code}`,
+              'KB_PLUGIN_CRASHED',
+              { plugin: descriptor.pluginId }
+            ));
+          }
+        });
       }
     });
 

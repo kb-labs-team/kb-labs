@@ -73,7 +73,10 @@ env:
 jobs:
   e2e:
     name: E2E / ${{ inputs.suite }}
-    runs-on: ubuntu-latest
+    # Playwright 1.59.1 does not yet support ubuntu-26.04, which is now
+    # behind ubuntu-latest on GitHub-hosted runners. Keep browser runs on the
+    # supported Ubuntu 24.04 image until Playwright adds 26.04 support.
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -90,7 +93,7 @@ jobs:
           # kb-deploy/kb-monitor, which require go 1.26 as of #435), not just
           # kb-create — go-version-file only pins to one module's directive
           # and silently under-provisions the toolchain for the rest.
-          go-version: '1.26.8'
+          go-version: '1.26.11'
           cache-dependency-path: |
             tools/kb-create/go.sum
             tools/kb-dev/go.sum
@@ -140,7 +143,8 @@ jobs:
         if: inputs.prebuilt-artifact == '' && inputs.prebuilt-files-artifact == '' && !inputs.fast-build
         uses: ./.github/actions/devkit-cas
         with:
-          mode: ${{ inputs.cache-mode }}
+          mode: ${{ (github.ref == 'refs/heads/master' || inputs.cache-mode == 'off') && 'off' || 'read-only' }}
+          namespace: e2e-docker
 
       - name: Build all packages (topological order)
         if: inputs.prebuilt-artifact == '' && inputs.prebuilt-files-artifact == ''

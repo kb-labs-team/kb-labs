@@ -75,4 +75,33 @@ describe('generateCommitPlan - LLM gating', () => {
       cleanup();
     }
   });
+
+  // case: S-030.3
+  it('passes cancellation to a pending native LLM call and does not fall back to heuristics', async () => {
+    const llm = mockLLM();
+    vi.mocked(llm.chatWithTools!).mockImplementation((_messages, options) => new Promise((_resolve, reject) => {
+      options?.signal?.addEventListener('abort', () => {
+        const error = new Error('cancelled');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    }) as never);
+    const { cleanup } = createTestContext({ platform: { llm } });
+    const controller = new AbortController();
+
+    try {
+      const pending = generateCommitPlan({
+        cwd: repoDir,
+        llmComplete: async () => ({ content: '' }),
+        signal: controller.signal,
+        onOutput: vi.fn(),
+      });
+      await vi.waitFor(() => expect(llm.chatWithTools).toHaveBeenCalled());
+      controller.abort();
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(llm.complete).not.toHaveBeenCalled();
+    } finally {
+      cleanup();
+    }
+  });
 });

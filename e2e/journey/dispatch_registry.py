@@ -59,6 +59,9 @@ def runners_for_source(source: str, mode: str) -> set[str]:
         "e2e/journey/steps/auth.py",
         "e2e/journey/steps/accounts.py",
         "e2e/journey/studio_steps.py",
+        # Marketplace lifecycle steps are executed by service_runner.py; the
+        # installer runner only imports that module for a narrow recovery helper.
+        "e2e/journey/marketplace_steps.py",
     } or source.startswith("e2e/studio/"):
         claim_family = "service"
     elif source.startswith("e2e/journey/"):

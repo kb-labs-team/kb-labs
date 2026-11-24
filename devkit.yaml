@@ -647,6 +647,11 @@ tasks:
         - "kb-runner"
       deps:
         - "^build"
+      # Makefiles inject git describe, short HEAD, and commit date into these
+      # binaries; the task input fingerprint does not include that VCS stamp.
+      # Do not replay a binary built from another checkout until that stamp is
+      # represented in the cache key.
+      cache: false
 
     - categories: [site-pkg, site-config]
       command: pnpm run build
@@ -755,6 +760,39 @@ tasks:
         - "coverage/**"
       deps:
         - "build"
+
+    # Plugin entry packages own their test runner configuration and test layout.
+    # Run the declared package script so general suites are included; test:cli is
+    # a narrower, separate lane for command-handler checks.
+    - categories: [plugin-entry]
+      command: pnpm run test
+      inputs:
+        - "src/**"
+        - "tests/**"
+        - "test/**"
+        - "package.json"
+        - "vitest.config.*"
+        - "vitest.*.config.*"
+        - "^dist/**"
+      outputs:
+        - "coverage/**"
+      deps:
+        - "build"
+
+    - categories: [internal-tool]
+      packages: [github.com/kb-labs/kb-runner]
+      command: make test
+      manualOnly: true
+      inputs:
+        - "**/*.go"
+        - "go.mod"
+        - "go.sum"
+        - "Makefile"
+        - "internal/manifest/manifest.json"
+        - "^dist/**"
+      outputs: []
+      deps:
+        - "^build"
 
     - categories: [go-binary, internal-tool]
       command: make test

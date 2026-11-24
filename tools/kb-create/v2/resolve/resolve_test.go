@@ -12,7 +12,9 @@ import (
 	"github.com/kb-labs/create/v2/doctor"
 	"github.com/kb-labs/create/v2/installed"
 	"github.com/kb-labs/create/v2/internal/testfixtures"
+	"github.com/kb-labs/create/v2/receipt"
 	"github.com/kb-labs/create/v2/testworkspace"
+	"github.com/kb-labs/create/v2/versionroot"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -141,6 +143,114 @@ func TestPlanRefusesSelectedPackageWithoutSealedProvenance(t *testing.T) {
 }
 
 // case: S-181.4
+func TestOfflinePlanUsesSharedCacheFromEveryInstalledRootSpelling(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "fixture", InstallationID: installationID,
+		Plan: contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: contracts.InstallRequest{PlatformRoot: root}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "2.0.0", "offline-path-spellings"); err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	packageBytes := testfixtures.PackageTarball("@kb/platform", "2.0.0", nil)
+	digest := sha256.Sum256(packageBytes)
+	hash := hex.EncodeToString(digest[:])
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(cacheRoot, "packages", hash+".tgz")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, packageBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: hash,
+			Tarball: "https://registry.example/platform.tgz", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}}}
+	for _, spelling := range []string{root, layout.PlatformRoot(), activeRoot} {
+		plan, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: spelling, Source: contracts.SourceOffline}, source)
+		if err != nil {
+			t.Fatalf("offline plan from %q did not use shared install cache: %v", spelling, err)
+		}
+		if len(plan.Artifacts) != 1 || plan.Artifacts[0].ResolvedFrom != "cache" || plan.Artifacts[0].ResolvedURL != "" {
+			t.Fatalf("offline artifact resolution from %q = %#v", spelling, plan.Artifacts)
+		}
+	}
+}
+
+func TestOfflinePlanDoesNotTreatNestedVersionPathAsInstalledRootAlias(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "install")
+	layout, err := versionroot.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stage, err := layout.StageInitial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	installationID, err := versionroot.InstallationIDForPath(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := receipt.Write(stage, contracts.InstallReceipt{ID: "fixture", InstallationID: installationID,
+		Plan: contracts.ResolvedInstallPlan{Schema: contracts.ResolvedPlanSchema, Request: contracts.InstallRequest{PlatformRoot: root}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := layout.ActivateInitial(stage, "2.0.0", "offline-nested-path"); err != nil {
+		t.Fatal(err)
+	}
+	activeRoot, err := layout.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(activeRoot, "unrelated")
+	if err := os.MkdirAll(nested, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	packageBytes := testfixtures.PackageTarball("@kb/platform", "2.0.0", nil)
+	digest := sha256.Sum256(packageBytes)
+	hash := hex.EncodeToString(digest[:])
+	cacheRoot, err := layout.SharedRuntimePath(".kb/v2/cache")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(cacheRoot, "packages", hash+".tgz")
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cachePath, packageBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"},
+		Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: hash,
+			Tarball: "https://registry.example/platform.tgz", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"},
+			Profiles: map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0"}}}}}
+	_, err = planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: nested, Source: contracts.SourceOffline}, source)
+	if err == nil || !strings.Contains(err.Error(), filepath.Join(nested, "state", "cache", "packages", hash+".tgz")) {
+		t.Fatalf("nested path unexpectedly used the containing install cache: %v", err)
+	}
+}
+
+// case: S-181.7
 func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 	for _, test := range []struct {
 		name string
@@ -148,6 +258,11 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 	}{{name: "missing"}, {name: "checksum mismatch", data: []byte("wrong bytes")}} {
 		t.Run(test.name, func(t *testing.T) {
 			root := t.TempDir()
+			canonicalRoot, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			root = canonicalRoot
 			wanted := []byte("sealed package bytes")
 			digest := sha256.Sum256(wanted)
 			hash := hex.EncodeToString(digest[:])
@@ -166,6 +281,19 @@ func TestOfflinePlanRejectsMissingOrCorruptArtifactCacheEntry(t *testing.T) {
 					Profiles: map[string]contracts.ServiceGraph{"default": {}}}}}
 			if _, err := planWithFixtureProvenance(contracts.InstallRequest{PlatformRoot: root, Source: contracts.SourceOffline}, source); err == nil {
 				t.Fatal("offline plan accepted an absent or corrupt cache entry")
+			} else {
+				var failure *diag.Diag
+				if !errors.As(err, &failure) {
+					t.Fatalf("offline cache error did not use the typed diagnostic: %T %v", err, err)
+				}
+				actualCachePath, _ := failure.Meta["cachePath"].(string)
+				if failure.Code != contracts.CodeOfflineArtifactMissing || failure.Meta["artifact"] != "platform" || actualCachePath == "" {
+					t.Fatalf("offline cache failure lost its typed artifact/cache path details: meta=%#v (%v)", failure, err)
+				}
+				envelope, envelopeErr := diag.ToEnvelope(failure)
+				if envelopeErr != nil || envelope.Details["cachePath"] != actualCachePath {
+					t.Fatalf("offline cache error envelope = %+v, err=%v", envelope, envelopeErr)
+				}
 			}
 		})
 	}
@@ -296,6 +424,12 @@ func TestClientProfileResolvesWithoutHostOrServices(t *testing.T) {
 	}
 	if len(plan.Artifacts) != 2 || plan.Artifacts[0].Kind != "binary" || plan.Artifacts[0].ID != "kb-create" || plan.Artifacts[1].Package != "@kb-labs/cli-bin" || len(plan.ConfigPatches) != 0 {
 		t.Fatalf("client artifacts/config = %#v / %#v", plan.Artifacts, plan.ConfigPatches)
+	}
+	cliProvenance := plan.Artifacts[1].Provenance
+	if cliProvenance.SourceRevision == "" || cliProvenance.Integrity == "" ||
+		cliProvenance.ContentScope != contracts.ProvenanceScopeDist || cliProvenance.DistSHA256 == "" ||
+		cliProvenance.PackageSHA256 != "" {
+		t.Fatalf("client CLI artifact omitted complete sealed provenance: %#v", cliProvenance)
 	}
 }
 
@@ -936,48 +1070,43 @@ func TestSecretInputIDsMustBelongToSelectedSecretRequirements(t *testing.T) {
 	}
 }
 
-// case: PC-001.4
-func TestScenarioMarketplaceUsesReleaseIndexPin(t *testing.T) {
+// case: PC-001.3, PC-001.4, S-268.9
+func TestScenarioMarketplaceSpecDoesNotRequireReleaseIndexPlugin(t *testing.T) {
 	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"}}, source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, plugin := range source.Plugins {
-		if plugin.Package == "@kb-labs/commit" {
-			if plan.Request.MarketplaceInstallSpecs[0] != plugin.ID+"@"+plugin.Version {
-				t.Fatalf("spec = %q, want release-index pin %s@%s", plan.Request.MarketplaceInstallSpecs[0], plugin.ID, plugin.Version)
-			}
-			return
-		}
-	}
-	t.Fatal("fixture missing commit")
-}
-
-func TestScenarioMarketplacePreservesReleaseIndexIdentityWhenPackageDiffers(t *testing.T) {
-	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var plugin catalog.Component
-	for index := range source.Plugins {
-		if source.Plugins[index].ID == "@kb-labs/commit" {
-			source.Plugins[index].Package = "@kb/commit"
-			plugin = source.Plugins[index]
-		}
-	}
+	source.Plugins = nil // Candidate platform indexes intentionally exclude separately published Marketplace plugins.
 	source, err = catalog.Seal(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{plugin.ID}}, source)
+	request := contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{"@kb-labs/commit"}}
+	plan, err := Plan(request, source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := plan.Request.MarketplaceInstallSpecs[0], plugin.ID+"@"+plugin.Version; got != want {
-		t.Fatalf("pinned request = %q, want release-index identity %q (package %q is not the requested identity)", got, want, plugin.Package)
+	if len(plan.Request.MarketplaceInstallSpecs) != 1 || plan.Request.MarketplaceInstallSpecs[0] != "@kb-labs/commit" {
+		t.Fatalf("Marketplace specs = %#v, want unchanged install spec", plan.Request.MarketplaceInstallSpecs)
+	}
+}
+
+func TestScenarioMarketplaceExactVersionDoesNotRequireReleaseIndexPlugin(t *testing.T) {
+	source, err := catalog.LoadFile(filepath.Join("..", "cmd", "kb-create-v2", "testdata", "x251-release-index.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source.Plugins = nil
+	source, err = catalog.Seal(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const spec = "@kb-labs/commit@2.0.0"
+	plan, err := Plan(contracts.InstallRequest{PlatformRoot: t.TempDir(), ServiceProfile: "default", Platform: contracts.VersionSelector{Channel: contracts.ChannelCanary}, MarketplaceInstallSpecs: []string{spec}}, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Request.MarketplaceInstallSpecs) != 1 || plan.Request.MarketplaceInstallSpecs[0] != spec {
+		t.Fatalf("Marketplace specs = %#v, want unchanged exact install spec %q", plan.Request.MarketplaceInstallSpecs, spec)
 	}
 }

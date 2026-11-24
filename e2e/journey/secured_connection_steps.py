@@ -11,6 +11,7 @@ import uuid
 from urllib.parse import urlparse
 import urllib.request
 
+from gateway_sessions import SavedGatewaySession, gateway_session
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
                          open_http, read_ux_cli_result, read_ux_http_result,
                          store_report_secret, run_command)
@@ -121,16 +122,46 @@ def validate_local_health_response(status: int, body: dict) -> None:
             "local /health/auth omitted readiness output")
 
 
+def _client_cli_provenance_matches(payload: dict, sealed_index: dict | None) -> bool:
+    if not isinstance(sealed_index, dict):
+        return False
+    data = payload.get("data", payload)
+    receipt = data.get("receipt", {}) if isinstance(data, dict) else {}
+    plan = receipt.get("plan", {}) if isinstance(receipt, dict) else {}
+    artifacts = plan.get("artifacts", []) if isinstance(plan, dict) else []
+    if not isinstance(artifacts, list):
+        return False
+    cli_artifact = next((item for item in artifacts if isinstance(item, dict)
+                         and item.get("package") == "@kb-labs/cli-bin"), None)
+    if not isinstance(cli_artifact, dict):
+        return False
+    records = sealed_index.get("provenance")
+    if not isinstance(records, list):
+        return False
+    expected = next((item for item in records if isinstance(item, dict)
+                     and item.get("package") == "@kb-labs/cli-bin"
+                     and item.get("version") == cli_artifact.get("version")), None)
+    actual = cli_artifact.get("provenance")
+    if not isinstance(expected, dict) or not isinstance(actual, dict):
+        return False
+    fields = ("sourceRevision", "integrity", "contentScope", "distSha256")
+    return (expected.get("contentScope") == "dist"
+            and all(isinstance(expected.get(field), str) and expected[field]
+                    and actual.get(field) == expected[field] for field in fields))
+
+
 def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict | None = None,
-                      *, email: str = "", gateway: str = "", root: str = "") -> None:
+                      *, email: str = "", gateway: str = "", root: str = "",
+                      sealed_index: dict | None = None) -> None:
     """Validate CLI observables independently so fake failures exercise each claim."""
     payload = payload or {}
     data = payload.get("data", payload)
-    session = data.get("session", {})
+    session = (gateway_session(data, gateway) or {}) if returncode == 0 and case_id in {"S-005.3", "S-031.1"} else {}
     checks = {
         "S-005.1": returncode == 0 and payload.get("ok") is True and root == expected_root(payload)
         and data.get("profile") == "client" and data.get("services") == []
-        and isinstance(data.get("shim"), dict),
+        and isinstance(data.get("shim"), dict)
+        and _client_cli_provenance_matches(payload, sealed_index),
         "S-005.2": returncode == 0,
         "S-005.3": returncode == 0 and session.get("authenticated") is True
         and session.get("email") == email and session.get("gatewayUrl") == gateway,
@@ -152,13 +183,9 @@ def validate_cli_case(case_id: str, returncode: int, output: str, payload: dict 
     _expect(checks[case_id], f"{case_id} CLI result did not match the case contract")
 
 
-def _session_path(cli: str, env: dict[str, str]) -> Path:
+def _session_status(cli: str, env: dict[str, str]) -> dict:
     result = _cli(cli, env, "auth", "status", "--json")
-    value = _json(result, "kb auth status")
-    path = value.get("data", {}).get("session", {}).get("path")
-    _expect(isinstance(path, str) and bool(path), "kb auth status omitted session.path")
-    return Path(path)
-
+    return decode_ux_success_result(read_ux_cli_result(result))
 
 
 def _journey_home(env: dict[str, str]) -> Path:
@@ -309,13 +336,15 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         home = _journey_home(env)
         root = home / ".kb/s005-client"
         index = home / ".local/share/kb-create/release-index.json"
+        sealed_index = json.loads(index.read_text(encoding="utf-8"))
         result = run_command([env.get("KB_JOURNEY_KB_CREATE_PATH", str(home / ".local/bin/kb-create")),
                               "apply", "--index", str(index), "--platform-root", str(root),
                               "--service-profile", "client", "--json"],
                              env=env, cwd=home, timeout=600)
         value = _json(result, "kb-create apply")
         actual = value.get("data", {}).get("receipt", {}).get("plan", {}).get("request", {}).get("platformRoot")
-        validate_cli_case("S-005.1", result.returncode, result.stdout, value, root=str(actual or ""))
+        validate_cli_case("S-005.1", result.returncode, result.stdout, value,
+                          root=str(actual or ""), sealed_index=sealed_index)
         _expect(actual == str(root), "kb-create apply did not report the requested isolated platform root")
         state["client_cli"] = str(root / ".kb/v2/bin/kb")
         return None
@@ -327,7 +356,7 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
                               "--email", member_email, "--password-stdin"],
                              env=env, input="NewMemberPass123!\n", timeout=90)
         validate_cli_case("S-005.2", result.returncode, result.stdout)
-        session = json.loads(_session_path(state.get("client_cli", cli), env).read_text())
+        session = SavedGatewaySession.from_status(_session_status(state.get("client_cli", cli), env), base).record
         state["client_access"] = store_report_secret(
             env, "KB_JOURNEY_CLIENT_ACCESS_TOKEN", session["accessToken"],
             "secured connection client access token")
@@ -365,10 +394,8 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         with invocation_context(step_id="journey.setup"):
             _cli(cli, env, "auth", "login", "--gateway-url", base, "--email", admin_email,
                  "--password", admin_password)
-        session_path = _session_path(cli, env)
-        session = json.loads(session_path.read_text())
-        session["expiresAt"] = 0
-        session_path.write_text(json.dumps(session) + "\n")
+        session = SavedGatewaySession.from_status(_session_status(cli, env), base)
+        session.expire()
         result = _cli(cli, env, "auth", "status", "--json")
         value = _json(result, "kb auth status")
         validate_cli_case("S-031.1", result.returncode, result.stdout, value, gateway=base)
@@ -380,13 +407,11 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     def revoked_session():
-        session_path = _session_path(cli, env)
-        session = json.loads(session_path.read_text())
+        session = SavedGatewaySession.from_status(_session_status(cli, env), base)
         with invocation_context(step_id="journey.setup"):
             _request(base, "/auth/logout/cli", method="POST",
-                     body={"refreshToken": session["refreshToken"]})
-        session["expiresAt"] = 0
-        session_path.write_text(json.dumps(session) + "\n")
+                     body={"refreshToken": session.record["refreshToken"]})
+        session.expire()
         with invocation_context(step_id="S-031.3"):
             result = _cli(cli, env, "auth", "tokens")
         output = result.stdout + result.stderr
@@ -394,7 +419,9 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     def removed_session():
-        _session_path(cli, env).unlink(missing_ok=True)
+        status = _session_status(cli, env)
+        if gateway_session(status, base) is not None:
+            SavedGatewaySession.from_status(status, base).remove()
         result = _cli(cli, env, "auth", "tokens")
         output = result.stdout + result.stderr
         validate_cli_case("S-031.4", result.returncode, output)

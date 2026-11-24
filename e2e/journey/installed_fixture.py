@@ -45,6 +45,8 @@ def _layout_path_values() -> dict[str, str]:
         "ownershipRecordStagingPrefix": contract["ownershipRecordStagingPrefix"],
         "platformDataRoot.platformPath": contract["platformDataRoot"]["platformPath"],
         "platformDataRoot.statePath": contract["platformDataRoot"]["statePath"],
+        "packageManagerStateDirectories.installer.path":
+            contract["packageManagerStateDirectories"]["installer"]["path"],
     }
     for projection in contract["sharedRuntimePaths"]:
         slug = _path_slug(projection["platformPath"])
@@ -226,11 +228,126 @@ def write_local_access_mode(platform_root: Path, source_config: Path | None = No
     return Path(platform_root)
 
 
+def _stage_workspace_node_modules(platform_root: Path, workspace_root: Path,
+                                  installed_platform_root: Path) -> None:
+    """Stage private module links, sourcing platform adapters from the active install."""
+    destination_root = platform_root / "node_modules"
+    if destination_root.is_symlink():
+        destination_root.unlink()
+    elif destination_root.exists() and not destination_root.is_dir():
+        raise RuntimeError("hermetic platform node_modules fixture is not a directory")
+    destination_root.mkdir(parents=True, exist_ok=True)
+
+    destination_scope = destination_root / "@kb-labs"
+    for source_root in (workspace_root / "node_modules" / ".pnpm" / "node_modules",
+                        workspace_root / "node_modules"):
+        if not source_root.is_dir():
+            continue
+        for source in source_root.iterdir():
+            if source.name in {".bin", ".pnpm"}:
+                continue
+            if source.name.startswith("@") and source.is_dir():
+                scope = destination_root / source.name
+                scope.mkdir(parents=True, exist_ok=True)
+                for package in source.iterdir():
+                    target = scope / package.name
+                    if not target.exists() and not target.is_symlink():
+                        target.symlink_to(package, target_is_directory=True)
+            else:
+                target = destination_root / source.name
+                if not target.exists() and not target.is_symlink():
+                    target.symlink_to(source, target_is_directory=True)
+
+    installed_scope = installed_platform_root / "node_modules" / "@kb-labs"
+    provenance_path = installed_platform_root / ".kb" / "v2" / "installed-provenance.json"
+    try:
+        provenance_value = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("active platform adapter provenance is unavailable") from error
+    provenance = provenance_value.get("packages") if isinstance(provenance_value, dict) else None
+    if not isinstance(provenance, list):
+        raise RuntimeError("active platform adapter provenance is invalid")
+    installed_packages = {
+        package.get("name"): package for package in provenance
+        if isinstance(package, dict) and isinstance(package.get("name"), str)
+    }
+    destination_scope.mkdir(parents=True, exist_ok=True)
+    if not installed_scope.is_dir():
+        raise RuntimeError("active platform adapter package directory is unavailable")
+    for source in installed_scope.iterdir():
+        name = source.name
+        if not name.startswith("adapters-"):
+            continue
+        package_name = f"@kb-labs/{name}"
+        record = installed_packages.get(package_name)
+        package_path = source / "package.json"
+        try:
+            package_manifest = json.loads(package_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"active platform adapter {package_name} is incomplete") from error
+        expected_path = f"node_modules/@kb-labs/{name}"
+        if (not isinstance(record, dict) or record.get("installedPath") != expected_path
+                or record.get("version") != package_manifest.get("version")
+                or package_manifest.get("name") != package_name):
+            raise RuntimeError(f"active platform adapter {package_name} does not match installed provenance")
+        target = destination_scope / name
+        if target.is_symlink():
+            target.unlink()
+        elif target.exists():
+            raise RuntimeError(f"hermetic adapter target {package_name} is not a managed link")
+        target.symlink_to(source, target_is_directory=True)
+
+
+def _merge_installed_platform_adapters(platform_root: Path, workspace_lock_path: Path,
+                                        installed_platform_root: Path) -> None:
+    """Use active-install adapter records while retaining workspace plugin entries."""
+    installed_lock_path = installed_platform_root / layout_value("versionStatePaths.kb_marketplace_lock")
+    try:
+        workspace_lock = json.loads(workspace_lock_path.read_text(encoding="utf-8"))
+        installed_lock = json.loads(installed_lock_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("workspace or active platform marketplace lock is unavailable") from error
+    if not isinstance(workspace_lock, dict) or not isinstance(installed_lock, dict):
+        raise RuntimeError("workspace or active platform marketplace lock is invalid")
+    adapters = installed_lock.get("adapters")
+    if not isinstance(adapters, dict):
+        raise RuntimeError("active platform marketplace lock has no adapter entries")
+
+    staged_adapters: dict[str, dict] = {}
+    for adapter_id, entry in adapters.items():
+        if not isinstance(adapter_id, str) or not isinstance(entry, dict):
+            raise RuntimeError("active platform marketplace adapter entry is invalid")
+        resolved_path = entry.get("resolvedPath")
+        if not isinstance(resolved_path, str) or not resolved_path:
+            raise RuntimeError(f"active platform adapter {adapter_id} has no resolved package path")
+        relative_path = Path(resolved_path)
+        if (relative_path.is_absolute() or ".." in relative_path.parts
+                or len(relative_path.parts) != 3 or relative_path.parts[:2] != ("node_modules", "@kb-labs")
+                or not relative_path.parts[2].startswith("adapters-")):
+            raise RuntimeError(f"active platform adapter {adapter_id} does not resolve to an installed adapter package")
+        package_root = platform_root / relative_path
+        try:
+            manifest = json.loads((package_root / "package.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"staged active platform adapter {adapter_id} is unavailable") from error
+        package_name = manifest.get("name") if isinstance(manifest, dict) else None
+        package_version = manifest.get("version") if isinstance(manifest, dict) else None
+        expected_name = f"@kb-labs/{relative_path.parts[2]}"
+        if (package_name != expected_name or not isinstance(package_version, str)
+                or entry.get("version") != package_version):
+            raise RuntimeError(f"staged active platform adapter {adapter_id} has an invalid package manifest")
+        staged_adapters[adapter_id] = entry
+
+    workspace_lock["adapters"] = staged_adapters
+    workspace_lock_path.write_text(json.dumps(workspace_lock, indent=2) + "\n", encoding="utf-8")
+
+
 def configure_hermetic_cli_fixture(
     home: Path,
     *,
     env: Mapping[str, str] | None = None,
     workspace_root: Path | None = None,
+    installed_platform_root: Path | None = None,
     source_config: Path | None = None,
     platform_root: Path | None = None,
 ) -> dict[str, str]:
@@ -253,6 +370,8 @@ def configure_hermetic_cli_fixture(
                 "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
 
     root = write_local_access_mode(root, source_config)
+    if workspace_root is not None and installed_platform_root is not None:
+        _stage_workspace_node_modules(root, workspace_root, Path(installed_platform_root).resolve())
     fixture_env["KB_PLATFORM_ROOT"] = str(root)
 
     if workspace_root is not None:
@@ -262,6 +381,27 @@ def configure_hermetic_cli_fixture(
         if source_lock.resolve() != destination_lock.resolve():
             destination_lock.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source_lock, destination_lock)
+        if installed_platform_root is not None:
+            _merge_installed_platform_adapters(
+                root, destination_lock, Path(installed_platform_root).resolve())
+        plugin_root = root / "plugins"
+        source_plugins = workspace_root / "plugins"
+        # In a staged workspace checkout the platform root and workspace root
+        # are the same directory. Keep its existing plugins link in that case;
+        # unlinking it and linking the path back to itself creates an ELOOP.
+        same_plugins_path = plugin_root.absolute() == source_plugins.absolute()
+        if not same_plugins_path:
+            try:
+                same_plugins_path = plugin_root.resolve() == source_plugins.resolve()
+            except (OSError, RuntimeError):
+                # A pre-existing bad link is repaired by the normal replacement
+                # below; do not let its resolution failure mask the setup error.
+                pass
+        if not same_plugins_path:
+            if plugin_root.is_symlink():
+                plugin_root.unlink()
+            if not plugin_root.exists():
+                plugin_root.symlink_to(source_plugins, target_is_directory=True)
         journey_root = root / "e2e"
         journey_source = workspace_root / "e2e"
         if journey_source.is_symlink():

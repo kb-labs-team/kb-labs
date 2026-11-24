@@ -18,13 +18,14 @@
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 
-import { mergeDefined, readJsonWithDiagnostics } from '../runtime/runtime.js';
+import { readJsonWithDiagnostics } from '../runtime/runtime.js';
+import { mergeOverlay } from '../overlay/merge.js';
 import type { Diagnostic } from '../types/index.js';
 
-export type ConfigLayerName = 'manifest' | 'generated' | 'platform' | 'project' | 'overlay';
+export type ConfigLayerName = 'manifest' | 'generated' | 'platform' | 'container' | 'project' | 'overlay';
 
 /** Layer names ordered from the lowest to the highest precedence. */
-export const CONFIG_LAYER_ORDER: readonly ConfigLayerName[] = ['manifest', 'generated', 'platform', 'project', 'overlay'];
+export const CONFIG_LAYER_ORDER: readonly ConfigLayerName[] = ['manifest', 'generated', 'platform', 'container', 'project', 'overlay'];
 
 /** Directory (relative to a root) that holds installer-written config. */
 export const GENERATED_CONFIG_DIR = path.join('.kb', 'generated');
@@ -38,6 +39,14 @@ export const USER_CONFIG_CANDIDATES = [
   path.join('.kb', 'kb.config.json'),
   'kb.config.jsonc',
   'kb.config.json',
+] as const;
+
+/** Read order is low-to-high; the first existing writer target wins last. */
+export const PLATFORM_USER_CONFIG_CANDIDATES = [
+  'kb.config.json',
+  'kb.config.jsonc',
+  path.join('.kb', 'kb.config.json'),
+  path.join('.kb', 'kb.config.jsonc'),
 ] as const;
 
 /** Absolute path of the user config file `config set` writes for a root. */
@@ -64,9 +73,76 @@ export interface ConfigLayerFile {
 
 export interface GeneratedLayerResult {
   files: ConfigLayerFile[];
-  /** Deep-merged contents of all generated files. */
+  /** Merged contents of generated files in precedence order. */
   data: Record<string, unknown>;
   diagnostics: Diagnostic[];
+}
+
+export interface ConfigFilesLayerResult {
+  files: ConfigLayerFile[];
+  /** Existing paths in precedence order, including files with parse diagnostics. */
+  paths: string[];
+  data: Record<string, unknown>;
+  diagnostics: Diagnostic[];
+}
+
+/** Read every platform user config candidate in the shared precedence order. */
+export async function loadPlatformUserLayerFiles(root: string): Promise<ConfigFilesLayerResult> {
+  return loadConfigFilesAtRoot(root, PLATFORM_USER_CONFIG_CANDIDATES, 'platform');
+}
+
+/** Read the optional Helm/container-owned platform override layer. */
+export async function loadPlatformContainerLayer(root: string): Promise<ConfigFilesLayerResult> {
+  return loadConfigFilesAtRoot(root, [path.join('.kb', 'kb.config.override.json')], 'container');
+}
+
+async function loadConfigFilesAtRoot(
+  root: string,
+  candidates: readonly string[],
+  layer: 'platform' | 'container',
+): Promise<ConfigFilesLayerResult> {
+  const files: ConfigLayerFile[] = [];
+  const paths: string[] = [];
+  const diagnostics: Diagnostic[] = [];
+  let data: Record<string, unknown> = {};
+
+  for (const relative of candidates) {
+    const full = path.join(root, relative);
+    try {
+      await fsp.access(full);
+      paths.push(full);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      diagnostics.push({
+        level: 'error',
+        code: 'FILE_READ_FAILED',
+        message: `Failed to read file: ${full}`,
+        detail: String(error),
+        path: full,
+      });
+      continue;
+    }
+
+    const read = await readJsonWithDiagnostics<unknown>(full);
+    diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
+    if (!read.ok) continue;
+    if (read.data === null || typeof read.data !== 'object' || Array.isArray(read.data)) {
+      diagnostics.push({
+        level: 'error',
+        code: 'CONFIG_NOT_OBJECT',
+        message: `Config must be a JSON object at top level: ${full}`,
+        path: full,
+      });
+      continue;
+    }
+
+    const object = read.data as Record<string, unknown>;
+    files.push({ layer, path: full, data: object });
+    data = mergeOverlay(data, object);
+  }
+
+  return { files, paths, data, diagnostics };
 }
 
 /**
@@ -122,7 +198,7 @@ export async function loadGeneratedLayer(roots: readonly string[]): Promise<Gene
       }
       const object = read.data as Record<string, unknown>;
       files.push({ layer: 'generated', path: full, data: object });
-      data = mergeDefined(data, object);
+      data = mergeOverlay(data, object);
     }
   }
 
@@ -139,8 +215,8 @@ export interface ValueProvenance {
   /** File that supplied it. */
   source: string;
   /**
-   * For arrays, which concatenate across generated/platform/project layers, every
-   * layer that contributed items (highest first). Absent for other values.
+   * For arrays explicitly appended with `kb:merge`, each contributing layer
+   * (highest first). Absent when one layer replaces the array.
    */
   contributors?: Array<{ layer: ConfigLayerName; source: string }>;
 }
@@ -158,6 +234,15 @@ function valueAt(data: unknown, segments: readonly string[]): { found: boolean; 
     current = current[segment];
   }
   return { found: true, value: current };
+}
+
+function appendsArrayAt(data: unknown, segments: readonly string[]): boolean {
+  const parent = valueAt(data, segments.slice(0, -1));
+  if (!parent.found || !isPlainObject(parent.value)) {
+    return false;
+  }
+  const directive = parent.value['kb:merge'];
+  return isPlainObject(directive) && directive[segments.at(-1)!] === 'append';
 }
 
 function collectLeaves(value: unknown, prefix: string[], out: string[][]): void {
@@ -202,8 +287,7 @@ export function buildProvenance(
       winner ??= file;
       if (Array.isArray(leafValue) && Array.isArray(hit.value)) {
         contributors.push({ layer: file.layer, source: file.path });
-        // Overlays replace arrays instead of concatenating: nothing below contributes.
-        if (file.layer === 'overlay') {
+        if (!appendsArrayAt(file.data, segments)) {
           break;
         }
       } else {

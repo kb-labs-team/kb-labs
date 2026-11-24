@@ -101,12 +101,13 @@ export function useSystemEvents(source: ObservabilityDataSource) {
  * @param source - Observability data source
  * @param filters - Optional log filters
  */
-export function useLogStream(source: ObservabilityDataSource, filters?: LogQuery) {
+export function useLogStream(source: ObservabilityDataSource, filters?: LogQuery, enabled = true) {
   const [logs, setLogs] = useState<LogRecord[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
   useEffect(() => {
+    if (!enabled) {return;}
     setIsConnected(true);
     setError(null);
 
@@ -127,7 +128,7 @@ export function useLogStream(source: ObservabilityDataSource, filters?: LogQuery
       cleanup();
       setIsConnected(false);
     };
-  }, [source, filters]);
+  }, [source, filters, enabled]);
 
   const clearLogs = () => setLogs([]);
 

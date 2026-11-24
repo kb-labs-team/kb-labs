@@ -37,6 +37,7 @@ import type { Dayjs } from 'dayjs';
 import dayjs from 'dayjs';
 import { UIPage, UIPageHeader } from '@kb-labs/studio-ui-kit';
 import { AnalyticsSummaryStrip } from '../../analytics/components/analytics-summary-strip';
+import { resolveLogTimeRange, TIME_RANGES } from '../log-time-range';
 
 const LEVEL_COLORS: Record<string, string> = {
   error: 'var(--error)',
@@ -50,15 +51,6 @@ const LEVEL_COLORS: Record<string, string> = {
 /**
  * Time range presets for quick filtering
  */
-const TIME_RANGES = {
-  '5m': { label: 'Last 5 minutes', minutes: 5 },
-  '15m': { label: 'Last 15 minutes', minutes: 15 },
-  '1h': { label: 'Last hour', minutes: 60 },
-  '6h': { label: 'Last 6 hours', minutes: 360 },
-  '24h': { label: 'Last 24 hours', minutes: 1440 },
-  custom: { label: 'Custom range', minutes: 0 },
-};
-
 /**
  * Quick question templates for AI summarization
  */
@@ -238,16 +230,28 @@ function LogRow({ log }: { log: LogRecord }) {
  */
 export function LogsPage() {
   const [searchParams] = useSearchParams();
-  const { setProjectId } = useProjectContext();
+  const { projectId: selectedProjectId, setProjectId } = useProjectContext();
   const requestedProjectId = searchParams.get('projectId');
+  const requestedProjectSelected = !requestedProjectId || selectedProjectId === requestedProjectId;
+  const requestedRunId = searchParams.get('runId');
   const requestedExecutionId = searchParams.get('executionId');
+  const [runIdFilter, setRunIdFilter] = useState<string | null>(requestedRunId);
   const [executionIdFilter, setExecutionIdFilter] = useState<string | null>(requestedExecutionId);
   const sources = useDataSources();
+  const streamFilters = useMemo(
+    () => runIdFilter || executionIdFilter
+      ? { runId: runIdFilter ?? undefined, executionId: executionIdFilter ?? undefined }
+      : undefined,
+    [runIdFilter, executionIdFilter],
+  );
   const { logs: streamLogs, isConnected, error, clearLogs } = useLogStream(
     sources.observability,
-    executionIdFilter ? { executionId: executionIdFilter } : undefined,
+    streamFilters,
+    requestedProjectSelected,
   );
-  const [viewMode, setViewMode] = useState<'live' | 'history'>('live');
+  const [viewMode, setViewMode] = useState<'live' | 'history'>(
+    searchParams.get('mode') === 'history' ? 'history' : 'live',
+  );
   const [searchQuery, setSearchQuery] = useState('');
   const [historyRefreshToken, setHistoryRefreshToken] = useState(0);
   const [historyPage, setHistoryPage] = useState(1);
@@ -273,14 +277,15 @@ export function LogsPage() {
   // Filters
   const [levelFilter, setLevelFilter] = useState<string | null>(null);
   const [pluginFilter, setPluginFilter] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState<string>('15m');
+  const [timeRange, setTimeRange] = useState<string>(requestedRunId ? 'all' : '15m');
   const [customTimeRange, setCustomTimeRange] = useState<[Dayjs, Dayjs] | null>(null);
   const [groupBy, setGroupBy] = useState<'none' | 'trace' | 'execution' | 'plugin'>('none');
 
   useEffect(() => {
     if (requestedProjectId) {setProjectId(requestedProjectId);}
+    setRunIdFilter(requestedRunId);
     setExecutionIdFilter(requestedExecutionId);
-  }, [requestedProjectId, requestedExecutionId, setProjectId]);
+  }, [requestedProjectId, requestedRunId, requestedExecutionId, setProjectId]);
 
   // AI Summarize Modal
   const [summarizeModalOpen, setSummarizeModalOpen] = useState(false);
@@ -293,16 +298,16 @@ export function LogsPage() {
     stackTraces: true,
   });
   const [summarizing, setSummarizing] = useState(false);
-  const [summaryResult, setSummaryResult] = useState<LogSummarizeResponse['data'] | null>(null);
+  const [summaryResult, setSummaryResult] = useState<LogSummarizeResponse | null>(null);
 
   useEffect(() => {
-    if (viewMode !== 'history') {return;}
+    if (viewMode !== 'history' || !requestedProjectSelected) {return;}
     setHistoryPage(1);
-  }, [viewMode, levelFilter, pluginFilter, timeRange, customTimeRange, searchQuery]);
+  }, [viewMode, levelFilter, pluginFilter, timeRange, customTimeRange, searchQuery, requestedProjectSelected]);
 
   // Query logs history from backend with server-side filtering/pagination/search
   useEffect(() => {
-    if (viewMode !== 'history') {return;}
+    if (viewMode !== 'history' || !requestedProjectSelected) {return;}
 
     let cancelled = false;
 
@@ -325,17 +330,17 @@ export function LogsPage() {
         if (executionIdFilter) {
           query.executionId = executionIdFilter;
         }
+        if (runIdFilter) {
+          query.runId = runIdFilter;
+        }
         if (searchQuery.trim()) {
           query.search = searchQuery.trim();
         }
 
-        if (timeRange !== 'custom') {
-          const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes || 15;
-          query.from = dayjs().subtract(rangeMinutes, 'minutes').toISOString();
-          query.to = dayjs().toISOString();
-        } else if (customTimeRange) {
-          query.from = customTimeRange[0].toISOString();
-          query.to = customTimeRange[1].toISOString();
+        const selectedTimeRange = resolveLogTimeRange(timeRange, customTimeRange);
+        if (selectedTimeRange) {
+          query.from = selectedTimeRange.from;
+          query.to = selectedTimeRange.to;
         }
 
         const result: any = await sources.observability.queryLogs(query);
@@ -372,11 +377,13 @@ export function LogsPage() {
     levelFilter,
     pluginFilter,
     executionIdFilter,
+    runIdFilter,
     timeRange,
     customTimeRange,
     searchQuery,
     historyRefreshToken,
     sources.observability,
+    requestedProjectSelected,
   ]);
 
   // Calculate filtered logs
@@ -388,6 +395,9 @@ export function LogsPage() {
     // In history mode level/plugin/time/search are applied on backend.
     // In live mode apply all filters client-side.
     if (viewMode !== 'history') {
+      if (runIdFilter) {
+        filtered = filtered.filter((log) => log.runId === runIdFilter);
+      }
       if (executionIdFilter) {
         filtered = filtered.filter((log) => log.executionId === executionIdFilter);
       }
@@ -399,16 +409,18 @@ export function LogsPage() {
         filtered = filtered.filter((log) => log.plugin === pluginFilter);
       }
 
-      if (timeRange !== 'custom') {
-        const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes || 15;
+      if (timeRange === 'custom') {
+        if (customTimeRange) {
+          const [start, end] = customTimeRange;
+          filtered = filtered.filter((log) => {
+            const logTime = dayjs(log.time);
+            return logTime.isAfter(start) && logTime.isBefore(end);
+          });
+        }
+      } else if (timeRange !== 'all') {
+        const rangeMinutes = TIME_RANGES[timeRange as keyof typeof TIME_RANGES]?.minutes ?? 15;
         const cutoff = Date.now() - rangeMinutes * 60 * 1000;
         filtered = filtered.filter((log) => new Date(log.time).getTime() >= cutoff);
-      } else if (customTimeRange) {
-        const [start, end] = customTimeRange;
-        filtered = filtered.filter((log) => {
-          const logTime = dayjs(log.time);
-          return logTime.isAfter(start) && logTime.isBefore(end);
-        });
       }
 
       if (searchQuery.trim()) {
@@ -491,23 +503,12 @@ export function LogsPage() {
       const request = {
         question: customQuestion,
         includeContext,
-        timeRange:
-          timeRange === 'custom' && customTimeRange
-            ? {
-                from: customTimeRange[0].toISOString(),
-                to: customTimeRange[1].toISOString(),
-              }
-            : timeRange !== 'custom'
-            ? {
-                from: dayjs()
-                  .subtract(TIME_RANGES[timeRange as keyof typeof TIME_RANGES].minutes, 'minutes')
-                  .toISOString(),
-                to: dayjs().toISOString(),
-              }
-            : undefined,
+        timeRange: resolveLogTimeRange(timeRange, customTimeRange),
         filters: {
           level: levelFilter || undefined,
           plugin: pluginFilter || undefined,
+          runId: runIdFilter || undefined,
+          executionId: executionIdFilter || undefined,
         },
         groupBy: groupBy !== 'none' ? groupBy : undefined,
       };
@@ -517,7 +518,7 @@ export function LogsPage() {
       const result = await sources.observability.summarizeLogs(request);
 
       // Store the full result data for structured rendering
-      setSummaryResult(result.data);
+      setSummaryResult(result);
     } catch (err: any) {
       UIMessage.error('Failed to generate summary: ' + err.message);
     } finally {

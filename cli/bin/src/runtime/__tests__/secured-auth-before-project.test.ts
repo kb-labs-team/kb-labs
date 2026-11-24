@@ -142,7 +142,7 @@ describe('secured CLI auth ordering', () => {
 
     expect(exitCode).toBe(0);
     expect(records).toHaveLength(1);
-    expect(JSON.parse(records[0]!).data.session).toMatchObject({
+    expect(JSON.parse(records[0]!).data.sessions[0]).toMatchObject({
       authenticated: true, tokenExpired: true, email: 'member@example.test',
     });
     expect(mocks.hasUsablePlatformAuth).not.toHaveBeenCalled();

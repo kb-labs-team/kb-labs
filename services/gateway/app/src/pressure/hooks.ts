@@ -18,6 +18,7 @@ import type { FastifyRequest, FastifyReply, onRequestHookHandler, preHandlerHook
 import type { IResourceBroker, TryAcquireResult } from '@kb-labs/core-resource-broker';
 import type { ILogger } from '@kb-labs/core-platform';
 import type { GatewayConfig } from '@kb-labs/gateway-contracts';
+import { redactHttpUrl } from '@kb-labs/shared-http';
 import { resolveResourceId } from './resolve.js';
 
 import './types.js';
@@ -92,7 +93,7 @@ export function createPressureOnRequest(deps: PressureHooksDeps): onRequestHookH
         resource: resolved.resource,
         layer: resolved.layer,
         method: request.method,
-        url: request.url,
+        url: redactHttpUrl(request.url),
         waitTimeMs: acquired.waitTimeMs,
       });
       reply
@@ -147,7 +148,7 @@ export function createPressurePreHandler(deps: PressureHooksDeps): preHandlerHoo
         resource,
         layer: 'tenant',
         method: request.method,
-        url: request.url,
+        url: redactHttpUrl(request.url),
         namespaceId,
         waitTimeMs: acquired.waitTimeMs,
       });

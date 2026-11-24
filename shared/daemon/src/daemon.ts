@@ -27,6 +27,8 @@ export interface ServiceContext {
   platformRoot: string;
   projectRoot?: string;
   projectId?: string;
+  /** Host-only credential supplied to the project REST module for guard proof verification. */
+  projectRuntimeToken?: string;
   activeWork: ActiveWorkRegistry;
 }
 
@@ -84,6 +86,8 @@ export interface ServiceConfig extends NetworkServiceConfig {
 export interface HostModule extends Omit<NetworkServiceConfig, "appId"> {
   /** Stable module id used in diagnostics; also the serviceId when `serviceId` is omitted. */
   id: string;
+  /** Private host authority for a project REST module; never copied to process.env. */
+  projectRuntimeToken?: string;
   /**
    * Runs after the platform is ready. The returned teardown is called in
    * reverse start order, before platform shutdown.
@@ -232,6 +236,7 @@ export async function runHost(config: HostConfig): Promise<void> {
         platformRoot: runtime.roots.platformRoot,
         projectId: config.projectId,
         activeWork,
+        projectRuntimeToken: module.projectRuntimeToken,
       });
       started.push({ id: module.id, teardown });
     } catch (error) {

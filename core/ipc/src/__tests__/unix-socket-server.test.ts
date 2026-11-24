@@ -17,6 +17,8 @@ import type { IPlatformAdapters } from '@kb-labs/core-platform';
 import * as net from 'net';
 import * as fs from 'fs';
 import { IPC_PROTOCOL_VERSION, deserialize, serialize } from '@kb-labs/core-platform/serializable';
+import { UnixSocketTransport } from '../transport/unix-socket-transport';
+import { LLMProxy } from '../proxy/llm-proxy';
 
 describe('UnixSocketServer', () => {
   let server: UnixSocketServer;
@@ -483,6 +485,150 @@ describe('UnixSocketServer', () => {
 
       client1.end();
       client2.end();
+    });
+  });
+
+  describe('cancellation', () => {
+    it('aborts a host LLM request through the Unix socket transport', async () => {
+      let providerSignal: AbortSignal | undefined;
+      const llmAdapter = mockPlatform.llm as unknown as {
+        complete: (_prompt: string, options?: { signal?: AbortSignal }) => Promise<unknown>;
+      };
+      llmAdapter.complete = (
+        _prompt: string,
+        options?: { signal?: AbortSignal },
+      ) => {
+        providerSignal = options?.signal;
+        return new Promise((_resolve, reject) => {
+          providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('aborted', 'AbortError')), { once: true });
+        });
+      };
+      server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
+      await server.start();
+      const transport = new UnixSocketTransport({ socketPath: testSocketPath, autoReconnect: false });
+      const controller = new AbortController();
+      const completion = new LLMProxy(transport).complete('wait for cancellation', { signal: controller.signal });
+      const deadline = Date.now() + 1000;
+      while (!providerSignal && Date.now() < deadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      expect(providerSignal).toBeDefined();
+      controller.abort(new DOMException('cancelled by caller', 'AbortError'));
+      await expect(completion).rejects.toMatchObject({ name: 'AbortError' });
+      const abortDeadline = Date.now() + 1000;
+      while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      expect(providerSignal?.aborted).toBe(true);
+      await transport.close();
+    });
+
+    it('aborts a host LLM request when the Unix socket transport times out', async () => {
+      let providerSignal: AbortSignal | undefined;
+      const llmAdapter = mockPlatform.llm as unknown as {
+        complete: (_prompt: string, options?: { signal?: AbortSignal }) => Promise<unknown>;
+      };
+      llmAdapter.complete = (_prompt, options) => {
+        providerSignal = options?.signal;
+        return new Promise((_resolve, reject) => {
+          providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true });
+        });
+      };
+      server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
+      await server.start();
+      const transport = new UnixSocketTransport({ socketPath: testSocketPath, autoReconnect: false, timeout: 30 });
+
+      try {
+        await expect(new LLMProxy(transport).complete('Unix timeout test')).rejects.toMatchObject({ name: 'TimeoutError' });
+        const abortDeadline = Date.now() + 1000;
+        while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+        expect(providerSignal?.aborted).toBe(true);
+      } finally {
+        await transport.close();
+      }
+    });
+
+    it('does not send a request if aborted while connecting', async () => {
+      const transport = new UnixSocketTransport({ socketPath: testSocketPath, autoReconnect: false });
+      let releaseConnect!: () => void;
+      const connectStarted = new Promise<void>((resolve) => {
+        vi.spyOn(transport, 'connect').mockImplementation(() => new Promise<void>((resolveConnect) => {
+          releaseConnect = resolveConnect;
+          resolve();
+        }));
+      });
+      const controller = new AbortController();
+      const pending = transport.send({
+        type: 'adapter:call', requestId: 'aborted-during-connect', version: IPC_PROTOCOL_VERSION,
+        adapter: 'llm', method: 'complete', args: [],
+      }, controller.signal);
+      await connectStarted;
+      controller.abort(new DOMException('cancelled while connecting', 'AbortError'));
+      releaseConnect();
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      await transport.close();
+    });
+
+    it('stops an actual reconnect wait promptly when the caller aborts', async () => {
+      const transport = new UnixSocketTransport({
+        socketPath: testSocketPath,
+        autoReconnect: true,
+        maxReconnectAttempts: 3,
+        timeout: 5000,
+      });
+      const controller = new AbortController();
+      const startedAt = Date.now();
+      const pending = transport.send({
+        type: 'adapter:call', requestId: 'abort-during-reconnect', version: IPC_PROTOCOL_VERSION,
+        adapter: 'cache', method: 'get', args: [serialize('abort-key')],
+      }, controller.signal);
+      setTimeout(() => controller.abort(new DOMException('aborted during reconnect', 'AbortError')), 25);
+
+      await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      await transport.close();
+    });
+
+    it('completes the original request after an initial connection failure and recovery', async () => {
+      const transport = new UnixSocketTransport({
+        socketPath: testSocketPath,
+        autoReconnect: true,
+        maxReconnectAttempts: 2,
+        timeout: 5000,
+      });
+      vi.mocked(mockPlatform.cache.get).mockResolvedValue('recovered' as never);
+      const pending = transport.send({
+        type: 'adapter:call', requestId: 'recovered-connection', version: IPC_PROTOCOL_VERSION,
+        adapter: 'cache', method: 'get', args: [serialize('recovery-key')],
+      });
+
+      // The first connect receives ECONNREFUSED; start the server before the
+      // transport's bounded retry so the same connect promise can recover.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
+      await server.start();
+      try {
+        const response = await pending;
+        expect(response.error).toBeUndefined();
+        expect(response.result).toBeDefined();
+        if (response.result === undefined) { throw new Error('Recovered response did not include a result'); }
+        expect(deserialize(response.result)).toBe('recovered');
+        expect(mockPlatform.cache.get).toHaveBeenCalledWith('recovery-key');
+      } finally {
+        await transport.close();
+      }
+    }, 10_000);
+
+    it('rejects at the request deadline while connection establishment is pending', async () => {
+      const transport = new UnixSocketTransport({
+        socketPath: testSocketPath,
+        timeout: 25,
+        autoReconnect: true,
+        maxReconnectAttempts: 3,
+      });
+      const startedAt = Date.now();
+      await expect(transport.send({
+        type: 'adapter:call', requestId: 'deadline-during-connect', version: IPC_PROTOCOL_VERSION,
+        adapter: 'cache', method: 'get', args: [serialize('deadline-key')],
+      })).rejects.toMatchObject({ name: 'TimeoutError' });
+      expect(Date.now() - startedAt).toBeLessThan(500);
+      await transport.close();
     });
   });
 });
