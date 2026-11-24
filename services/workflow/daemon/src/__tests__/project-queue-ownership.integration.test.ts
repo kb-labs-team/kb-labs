@@ -94,6 +94,41 @@ describe('workflow project queue ownership', () => {
     }
   });
 
+  // case: S-198.1, S-198.2
+  it('keeps run history and detail isolated when project engines share storage', async () => {
+    const cache = new InMemoryCache();
+    const storage = new InMemoryStorage();
+    const events = new InMemoryEventBus();
+    const logger = mockLogger();
+    const projectA = new WorkflowEngine({
+      projectId: 'prj_0000000000000001', cache, storage, events, logger,
+      secretProvider: new EnvSecretProvider(), workspaceRoot: '/tmp/project-a',
+    });
+    const projectB = new WorkflowEngine({
+      projectId: 'prj_0000000000000002', cache, storage, events, logger,
+      secretProvider: new EnvSecretProvider(), workspaceRoot: '/tmp/project-b',
+    });
+    const spec = (name: string) => ({
+      name,
+      version: '1.0.0',
+      on: { manual: true as const },
+      jobs: {
+        main: {
+          runsOn: 'local' as const,
+          steps: [{ name: 'Echo', uses: 'builtin:shell' as const, with: { run: `echo ${name}` } }],
+        },
+      },
+    });
+
+    const runA = await projectA.createRun({ spec: spec('project-a'), trigger: { type: 'manual' } });
+    const runB = await projectB.createRun({ spec: spec('project-b'), trigger: { type: 'manual' } });
+
+    await expect(projectA.getAllRuns()).resolves.toEqual([expect.objectContaining({ id: runA.id })]);
+    await expect(projectB.getAllRuns()).resolves.toEqual([expect.objectContaining({ id: runB.id })]);
+    await expect(projectA.getRun(runB.id)).resolves.toBeNull();
+    await expect(projectB.getRun(runA.id)).resolves.toBeNull();
+  });
+
   it('warns with project context and drops an orphan queue entry without retrying it', async () => {
     const logger = mockLogger();
     const engine = new WorkflowEngine({

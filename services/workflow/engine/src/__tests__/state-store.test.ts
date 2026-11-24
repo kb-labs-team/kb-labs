@@ -66,6 +66,8 @@ function makeRun(overrides: Partial<WorkflowRun> = {}): WorkflowRun {
 }
 
 describe('StateStore', () => {
+  const projectId = 'prj_0000000000000001'
+  const projectStoragePrefix = `workflow/projects/project-${Buffer.from(projectId, 'utf8').toString('hex')}/runs/`
   let cache: MockCache;
   let storage: InMemoryStorage;
   let store: StateStore;
@@ -73,7 +75,7 @@ describe('StateStore', () => {
   beforeEach(() => {
     cache = new MockCache();
     storage = new InMemoryStorage();
-    store = new StateStore(cache, storage, mockLogger());
+    store = new StateStore(cache, storage, mockLogger(), projectId);
   });
 
   // ── saveRun / getRun ─────────────────────────────────────────────────
@@ -117,7 +119,7 @@ describe('StateStore', () => {
 
   it('restores run history from storage after the process cache is replaced', async () => {
     const storage = new InMemoryStorage();
-    const firstProcess = new StateStore(cache, storage, mockLogger());
+    const firstProcess = new StateStore(cache, storage, mockLogger(), projectId);
     const run = makeRun({
       status: 'success',
       metadata: { cronId: 'round-three' },
@@ -132,7 +134,7 @@ describe('StateStore', () => {
     });
     await firstProcess.saveRun(run);
 
-    const record = await storage.read('workflows/run-1.json');
+    const record = await storage.read(`${projectStoragePrefix}run-1.json`);
     expect(record).not.toBeNull();
     expect(JSON.parse(record!.toString('utf8'))).toMatchObject({
       id: 'run-1', name: 'test-workflow', status: 'success',
@@ -143,7 +145,7 @@ describe('StateStore', () => {
       id: 'core-runtime-run', workflowId: 'separate-engine', steps: [],
     }), 'utf8'));
 
-    const restartedProcess = new StateStore(new MockCache(), storage, mockLogger());
+    const restartedProcess = new StateStore(new MockCache(), storage, mockLogger(), projectId);
     await expect(restartedProcess.getRun('run-1')).resolves.toMatchObject({
       id: 'run-1', status: 'success',
       jobs: [{ artifacts: { produce: ['dist/app.tgz'] }, steps: [{ outputs: { stdout: 'persisted-workflow-output\n' } }] }],
@@ -158,14 +160,32 @@ describe('StateStore', () => {
 
   it('stores the complete run record outside the expiring cache', async () => {
     await store.saveRun(makeRun());
-    await expect(storage.read('workflows/run-1.json')).resolves.not.toBeNull();
+    await expect(storage.read(`${projectStoragePrefix}run-1.json`)).resolves.not.toBeNull();
+  });
+
+  it('isolates persisted run history across projects sharing one storage adapter', async () => {
+    const sharedStorage = new InMemoryStorage();
+    const projectA = new StateStore(new MockCache(), sharedStorage, mockLogger(), projectId);
+    const projectB = new StateStore(new MockCache(), sharedStorage, mockLogger(), 'prj_0000000000000002');
+    await sharedStorage.write('workflows/legacy-unscoped-run.json', Buffer.from(JSON.stringify(makeRun({
+      id: 'legacy-unscoped-run',
+    }))));
+    await projectA.saveRun(makeRun({ id: 'run-a' }));
+    await projectB.saveRun(makeRun({ id: 'run-b' }));
+
+    await expect(projectA.getAllRunIds()).resolves.toEqual(['run-a']);
+    await expect(projectB.getAllRunIds()).resolves.toEqual(['run-b']);
+    await expect(projectA.getRun('run-b')).resolves.toBeNull();
+    await expect(projectB.getRun('run-a')).resolves.toBeNull();
+    await expect(projectA.getRun('legacy-unscoped-run')).resolves.toBeNull();
+    await expect(sharedStorage.exists('workflows/legacy-unscoped-run.json')).resolves.toBe(true);
   });
 
   it('keeps storage as the source of truth when the cache index is unavailable', async () => {
     const brokenCache = new MockCache();
     vi.spyOn(brokenCache, 'zadd').mockRejectedValue(new Error('cache unavailable'));
     vi.spyOn(brokenCache, 'zrangebyscore').mockRejectedValue(new Error('cache unavailable'));
-    const storageOnlyRead = new StateStore(brokenCache, storage, mockLogger());
+    const storageOnlyRead = new StateStore(brokenCache, storage, mockLogger(), projectId);
 
     await expect(storageOnlyRead.saveRun(makeRun())).resolves.toBeUndefined();
     await expect(storageOnlyRead.getAllRunIds()).resolves.toEqual(['run-1']);
