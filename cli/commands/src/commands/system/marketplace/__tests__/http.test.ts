@@ -44,6 +44,20 @@ describe('marketplace shared gateway client', () => {
     });
   });
 
+  it('explains that protected platform writes must use Gateway when Marketplace auth rejects them', async () => {
+    gatewayApiFetch.mockResolvedValue(new Response(JSON.stringify({
+      ok: false,
+      error: { code: 'KB_AUTH_FORBIDDEN', message: 'Forbidden' },
+    }), { status: 403 }));
+
+    await expect(get('/packages/install')).rejects.toMatchObject({
+      envelope: {
+        code: 'KB_AUTH_FORBIDDEN',
+        hint: expect.stringContaining('must go through Gateway'),
+      },
+    });
+  });
+
   it('points timeout recovery at the installed platform commands', async () => {
     const abort = new Error('aborted');
     abort.name = 'AbortError';

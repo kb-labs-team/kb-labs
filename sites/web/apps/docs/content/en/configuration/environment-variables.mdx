@@ -1,7 +1,7 @@
 ---
 title: "Environment Variables"
 description: "Every env var the platform reads, grouped by purpose, with defaults and effects."
-updatedAt: "2026-10-02"
+updatedAt: "2026-11-24"
 order: 4
 ---
 
@@ -94,10 +94,10 @@ Each long-running service reads its own port env var plus `NODE_ENV`:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `KB_MARKETPLACE_URL` | Direct URL to the marketplace service. When set, the CLI bypasses the gateway. | (unset) |
+| `KB_MARKETPLACE_URL` | Optional Marketplace URL override. Protected platform-scope installs and updates require Gateway identity, so use the Gateway URL here or leave this unset. A direct Marketplace service URL cannot authorize those writes. | (unset) |
 | `KB_GATEWAY_URL` | Gateway address used by gateway-aware plugin commands. The CLI resolves it from the same service transport listen address, `GATEWAY_PORT` value or service default, and local network offset used by the daemon. Host-managed child runtimes receive that address from the host. A fresh install does not need a `gateway.port` setting. External API callers can set this variable explicitly. | Platform service transport or Gateway service defaults |
 
-From [`marketplace-cli/src/http.ts`](cli/commands/src/commands/system/marketplace/http.ts). `KB_MARKETPLACE_URL` takes precedence when present.
+From [`marketplace-cli/src/http.ts`](cli/commands/src/commands/system/marketplace/http.ts). `KB_MARKETPLACE_URL` takes precedence when present. Do not expose or pass `GATEWAY_INTERNAL_SECRET` to the CLI; the Gateway adds trusted identity material when proxying requests.
 
 ## State broker
 

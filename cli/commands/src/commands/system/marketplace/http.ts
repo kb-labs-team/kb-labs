@@ -23,7 +23,9 @@ class MarketplaceHttpError extends Error {
       message,
       hint: typeof error.hint === 'string'
         ? error.hint
-        : 'Check the installed platform with "kb-create status" and retry the command.',
+        : error.code === 'KB_AUTH_FORBIDDEN'
+          ? 'Platform-scope Marketplace writes must go through Gateway. Unset KB_MARKETPLACE_URL or set it to the Gateway URL; do not pass the internal Gateway secret to the CLI.'
+          : 'Check the installed platform with "kb-create status" and retry the command.',
     };
   }
 }
