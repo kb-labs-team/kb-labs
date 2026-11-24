@@ -23,6 +23,7 @@ import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createWorkflowActiveWorkProvider } from "./active-work.js";
+import { importLegacyWorkflowHistory, trustedLegacyProjectStorageRoot } from "./legacy-history-importer.js";
 
 /**
  * Bootstrap workflow daemon.
@@ -78,6 +79,27 @@ export async function setup({
       spanId: startupSpanId,
     })
     .with({ invocationId: startupSpanId, executionId: startupSpanId });
+
+  const trustedLegacyStorageRoot = await trustedLegacyProjectStorageRoot(runtime, projectId);
+  if (trustedLegacyStorageRoot) {
+    const migration = await importLegacyWorkflowHistory(trustedLegacyStorageRoot, projectId);
+    if (migration.status === 'retryable-failure' || migration.status === 'blocked' ||
+        migration.skipped > 0 || migration.conflicts > 0) {
+      bootstrapLogger.warn('Legacy workflow history import did not fully migrate every record', {
+        status: migration.status,
+        imported: migration.imported,
+        alreadyPresent: migration.alreadyPresent,
+        skipped: migration.skipped,
+        conflicts: migration.conflicts,
+        ...(migration.reason ? { reason: migration.reason } : {}),
+      });
+    } else if (migration.status === 'imported' && migration.imported > 0) {
+      bootstrapLogger.info('Imported legacy workflow history into project-scoped storage', {
+        imported: migration.imported,
+        alreadyPresent: migration.alreadyPresent,
+      });
+    }
+  }
 
   if (!platform.isConfigured("workspace")) {
     bootstrapLogger.warn("Workspace adapter is not configured", {

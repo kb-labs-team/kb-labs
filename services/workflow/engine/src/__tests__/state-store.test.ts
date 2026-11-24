@@ -158,6 +158,11 @@ describe('StateStore', () => {
     expect(result).toBeNull();
   });
 
+  it('rejects a run ID containing a Windows path separator', async () => {
+    await expect(store.getRun('bad\\id')).rejects.toThrow('Invalid workflow run ID');
+    await expect(store.saveRun(makeRun({ id: 'bad\\id' }))).rejects.toThrow('Invalid workflow run ID');
+  });
+
   it('stores the complete run record outside the expiring cache', async () => {
     await store.saveRun(makeRun());
     await expect(storage.read(`${projectStoragePrefix}run-1.json`)).resolves.not.toBeNull();

@@ -4535,6 +4535,9 @@ importers:
       '@kb-labs/core-platform':
         specifier: workspace:*
         version: link:../../../core/platform
+      '@kb-labs/core-project-registry':
+        specifier: workspace:*
+        version: link:../../../core/project-registry
       '@kb-labs/core-registry':
         specifier: workspace:*
         version: link:../../../core/registry
