@@ -75,18 +75,34 @@ jobs:
           repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$IMAGE_REF" '.[0].RepoTags[] | select(. == $ref)')"
           archive_config_sha="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
 
+          case "$config_file" in
+            blobs/sha256/*) declared_config_sha="sha256:${config_file##*/}" ;;
+            *.json) declared_config_sha="sha256:${config_file%.json}" ;;
+            *) echo "Unsupported Docker archive config path: $config_file" >&2; exit 1 ;;
+          esac
+
           if [ "$repo_tag" != "$IMAGE_REF" ]; then
             echo "Docker archive tag mismatch: expected=$IMAGE_REF actual=$repo_tag" >&2
             exit 1
           fi
-          if [ "$archive_config_sha" != "$image_id" ]; then
-            echo "Docker archive config mismatch: imageID=$image_id configFile=$config_file archiveConfigSHA=$archive_config_sha" >&2
+          if [ "$archive_config_sha" != "$declared_config_sha" ]; then
+            echo "Docker archive config digest mismatch: configFile=$config_file declared=$declared_config_sha actual=$archive_config_sha" >&2
+            exit 1
+          fi
+
+          docker image rm "$IMAGE_REF"
+          docker load --input "$archive"
+          loaded_image_id="$(docker image inspect --format '{{.Id}}' "$IMAGE_REF")"
+          if [ "$loaded_image_id" != "$image_id" ]; then
+            echo "Docker save/load identity mismatch: before=$image_id after=$loaded_image_id config=$archive_config_sha" >&2
             exit 1
           fi
 
           (cd "$out" && sha256sum "${IMAGE_NAME}.tar.gz" > "${IMAGE_NAME}.tar.gz.sha256")
           archive_sha256="$(sha256sum "$archive" | cut -d ' ' -f 1)"
           echo "image_id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "daemon_image_id=$image_id" >> "$GITHUB_OUTPUT"
+          echo "config_digest=$archive_config_sha" >> "$GITHUB_OUTPUT"
           echo "archive_sha256=$archive_sha256" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
@@ -114,6 +130,8 @@ jobs:
         env:
           IMAGE_NAME: ${{ matrix.image }}
           IMAGE_ID: ${{ steps.export_image.outputs.image_id }}
+          DAEMON_IMAGE_ID: ${{ steps.export_image.outputs.daemon_image_id }}
+          CONFIG_DIGEST: ${{ steps.export_image.outputs.config_digest }}
           ARCHIVE_SHA256: ${{ steps.export_image.outputs.archive_sha256 }}
           GHCR_DIGEST: ${{ steps.ghcr_push.outputs.digest }}
           GHCR_LOGIN_OUTCOME: ${{ steps.ghcr_login.outcome }}
@@ -130,12 +148,14 @@ jobs:
             --arg source_sha "$SOURCE_SHA" \
             --arg platform "linux/amd64" \
             --arg image_id "$IMAGE_ID" \
+            --arg daemon_image_id "$DAEMON_IMAGE_ID" \
+            --arg config_digest "$CONFIG_DIGEST" \
             --arg archive_sha256 "$ARCHIVE_SHA256" \
             --arg registry_status "$registry_status" \
             --arg registry_digest "$GHCR_DIGEST" \
             --arg run_id "$GITHUB_RUN_ID" \
             --arg run_url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            '{schemaVersion:1, image:$image, sourceSHA:$source_sha, platform:$platform, imageID:$image_id, archiveSHA256:$archive_sha256, registryStatus:$registry_status, registryDigest:$registry_digest, runID:$run_id, runURL:$run_url}' \
+            '{schemaVersion:1, image:$image, sourceSHA:$source_sha, platform:$platform, imageID:$image_id, dockerDaemonImageID:$daemon_image_id, configDigest:$config_digest, archiveSHA256:$archive_sha256, registryStatus:$registry_status, registryDigest:$registry_digest, runID:$run_id, runURL:$run_url}' \
             > "$out/${IMAGE_NAME}.identity.json"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
@@ -148,3 +168,54 @@ jobs:
       - name: Report GHCR publish status
         if: steps.ghcr_login.outcome == 'failure' || steps.ghcr_push.outcome == 'failure'
         run: echo '::warning::GHCR publish failed; SHA-tagged image artifact is available for verified transfer.'
+
+  verify:
+    name: Verify ${{ matrix.image }} artifact in clean Docker
+    needs: images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - kb-state-daemon
+          - kb-gateway
+          - kb-marketplace-registry
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: ${{ matrix.image }}-130ec1ce424b1ace37739d41ece963114d001896
+          path: ${{ runner.temp }}/image-artifact
+
+      - name: Verify checksum, tag, config digest and fresh load identity
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+          EXPECTED_REF: ghcr.io/kb-labs-team/${{ matrix.image }}:130ec1ce424b1ace37739d41ece963114d001896
+        run: |
+          set -euo pipefail
+          cd "${RUNNER_TEMP}/image-artifact"
+          archive="${IMAGE_NAME}.tar.gz"
+          identity="${IMAGE_NAME}.identity.json"
+          sha256sum -c "${archive}.sha256"
+          test "$(jq -r '.image' "$identity")" = "$EXPECTED_REF"
+          test "$(jq -r '.sourceSHA' "$identity")" = "130ec1ce424b1ace37739d41ece963114d001896"
+          test "$(jq -r '.platform' "$identity")" = "linux/amd64"
+          archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+          test "$archive_sha" = "$(jq -r '.archiveSHA256' "$identity")"
+
+          manifest="$(tar -xOzf "$archive" manifest.json)"
+          config_file="$(printf '%s' "$manifest" | jq -er '.[0].Config')"
+          repo_tag="$(printf '%s' "$manifest" | jq -er --arg ref "$EXPECTED_REF" '.[0].RepoTags[] | select(. == $ref)')"
+          test "$repo_tag" = "$EXPECTED_REF"
+          config_sha="sha256:$(tar -xOzf "$archive" "$config_file" | sha256sum | cut -d ' ' -f 1)"
+          case "$config_file" in
+            blobs/sha256/*) declared_config_sha="sha256:${config_file##*/}" ;;
+            *.json) declared_config_sha="sha256:${config_file%.json}" ;;
+            *) echo "Unsupported Docker archive config path: $config_file" >&2; exit 1 ;;
+          esac
+          test "$config_sha" = "$declared_config_sha"
+          test "$config_sha" = "$(jq -r '.configDigest' "$identity")"
+
+          docker load --input "$archive"
+          loaded_image_id="$(docker image inspect --format '{{.Id}}' "$EXPECTED_REF")"
+          test "$loaded_image_id" = "$(jq -r '.imageID' "$identity")"
+          test "$loaded_image_id" = "$(jq -r '.dockerDaemonImageID' "$identity")"
