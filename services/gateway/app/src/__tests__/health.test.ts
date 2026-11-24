@@ -340,6 +340,27 @@ describe('Gateway /health endpoint', () => {
     expect(body.components.projectRuntimes).toEqual({ ready: true, status: '0/4 active' });
   });
 
+  // case: S-321.1
+  it('uses configured static upstreams for platform Gateway readiness without a project or REST upstream', async () => {
+    mockAdapters = { llm: { complete: vi.fn() } };
+    const transport = makeTransport({ ok: true, statusCode: 200, payload: { ok: true } });
+    app = await buildHealthApp({
+      upstreams: {
+        registry: { serviceId: 'marketplace-registry', prefix: '/api/v1/registry' },
+        marketplaceRegistry: { serviceId: 'marketplace-registry', prefix: '/api/v1/marketplace-registry/api/v1' },
+      },
+    }, transport);
+
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+    const body = response.json().data;
+
+    expect(response.statusCode).toBe(200);
+    expect(body.ready).toBe(true);
+    expect(body.components['upstream:registry']).toEqual({ ready: true, status: 'up' });
+    expect(body.components['upstream:marketplaceRegistry']).toEqual({ ready: true, status: 'up' });
+    expect(body.components).not.toHaveProperty('upstream:rest');
+  });
+
   // case: S-268.23
   it('authenticates the protected Registry health probe without sharing the secret with other upstreams', async () => {
     mockAdapters = { llm: { complete: vi.fn() } };

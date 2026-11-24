@@ -5,6 +5,7 @@ const { runService, requireEnvironmentSecret } = vi.hoisted(() => ({ runService:
 vi.mock("@kb-labs/shared-daemon", () => ({ runService, requireEnvironmentSecret }));
 
 import { resolvePublicUrl } from "../server.js";
+import { resolveGatewayStandaloneScope } from "../bootstrap.js";
 
 describe("gateway entrypoints", () => {
   beforeEach(() => {
@@ -39,6 +40,28 @@ describe("gateway entrypoints", () => {
         setup,
       }),
     );
+  });
+
+  it('keeps project scope by default and supports platform scope for standalone Gateway', async () => {
+    expect(resolveGatewayStandaloneScope(undefined)).toEqual({
+      projectScope: 'required',
+      configScope: 'project',
+    });
+    expect(resolveGatewayStandaloneScope('platform')).toEqual({
+      projectScope: 'platform',
+      configScope: 'platform',
+    });
+    expect(() => resolveGatewayStandaloneScope('unknown')).toThrow('GATEWAY_PROJECT_SCOPE');
+
+    const { bootstrap, setup } = await import('../index.js');
+    vi.stubEnv('GATEWAY_PROJECT_SCOPE', 'platform');
+    runService.mockResolvedValue(undefined);
+
+    await bootstrap('/some/root');
+
+    const options = runService.mock.calls[0]?.[0];
+    expect(options.projectScope).toBe('platform');
+    expect(options.setup).not.toBe(setup);
   });
 
   // case: S-038.1
