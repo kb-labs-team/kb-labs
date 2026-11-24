@@ -10,6 +10,7 @@ import { mkdtemp, mkdir, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createErrorEnvelope } from "@kb-labs/core-platform";
 import Fastify, { type FastifyInstance } from "fastify";
 import { createProjectRegistry } from "@kb-labs/core-project-registry";
 import type { IProjectRegistry } from "@kb-labs/core-project-registry";
@@ -31,6 +32,7 @@ function stubMarketplace(overrides: Partial<MarketplaceClient> = {}): Marketplac
     listPackages: vi.fn().mockResolvedValue({ entries: [], total: 0 }),
     setEnabled: vi.fn().mockResolvedValue(undefined),
     installPackages: vi.fn().mockResolvedValue({ installed: [] }),
+    installRegistryPackage: vi.fn().mockResolvedValue({ installed: [], warnings: [], scope: "project" }),
     uninstallPackages: vi.fn().mockResolvedValue(undefined),
     ...overrides,
   } as unknown as MarketplaceClient;
@@ -173,6 +175,91 @@ describe("createPluginsRoutes", () => {
     expect(marketplace.installPackages).toHaveBeenCalledWith({
       specs: ["@kb/demo@1.0.0"], scope: "project", projectRoot: projectDir,
     });
+  });
+
+  it("POST /plugins/install-from-registry resolves a registered project ID before the service-only install", async () => {
+    const marketplace = stubMarketplace({
+      installRegistryPackage: vi.fn().mockResolvedValue({ installed: [{ id: "@kb/demo", version: "1.0.0" }], warnings: [], scope: "project" }),
+    });
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/install-from-registry",
+      payload: { projectId, spec: "@kb/demo@1.0.0" },
+    });
+
+    expect(res.statusCode).toBe(201);
+    expect(marketplace.installRegistryPackage).toHaveBeenCalledWith({
+      spec: "@kb/demo@1.0.0",
+      scope: "project",
+      projectRoot: projectDir,
+    });
+  });
+
+  it("POST /plugins/install-from-registry rejects paths and names as project IDs", async () => {
+    const marketplace = stubMarketplace();
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/install-from-registry",
+      payload: { projectId: projectDir, spec: "@kb/demo@1.0.0" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_RUNTIME_INPUT_INVALID");
+    expect(marketplace.installRegistryPackage).not.toHaveBeenCalled();
+  });
+
+  it("POST /plugins/install-from-registry rejects a well-formed but unregistered project ID", async () => {
+    const marketplace = stubMarketplace();
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/install-from-registry",
+      payload: { projectId: "prj_0000000000000000", spec: "@kb/demo@1.0.0" },
+    });
+
+    expect(res.statusCode).toBe(404);
+    expect((res.json() as ErrorBody).error.code).toBe("KB_PROJECT_UNKNOWN");
+    expect(marketplace.installRegistryPackage).not.toHaveBeenCalled();
+  });
+
+  it("POST /plugins/install-from-registry preserves a validated Marketplace error envelope", async () => {
+    const upstreamError = createErrorEnvelope("KB_MARKETPLACE_SIGNATURE_INVALID", {
+      details: { package: "@kb/demo", scope: "project" },
+    });
+    const marketplace = stubMarketplace({
+      installRegistryPackage: vi.fn().mockRejectedValue(
+        new MarketplaceClientError(400, JSON.stringify({ ok: false, error: upstreamError })),
+      ),
+    });
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/install-from-registry",
+      payload: { projectId, spec: "@kb/demo@1.0.0" },
+    });
+
+    expect((res.json() as ErrorBody).error.code).toBe("KB_MARKETPLACE_SIGNATURE_INVALID");
+  });
+
+  it("does not expose unstructured Marketplace response bodies", async () => {
+    const marketplace = stubMarketplace({
+      installRegistryPackage: vi.fn().mockRejectedValue(new MarketplaceClientError(503, "private upstream details")),
+    });
+    const instance = await setup(marketplace);
+
+    const res = await instance.inject({
+      method: "POST",
+      url: "/api/v1/plugins/install-from-registry",
+      payload: { projectId, spec: "@kb/demo@1.0.0" },
+    });
+
+    expect(JSON.stringify(res.json())).not.toContain("private upstream details");
   });
 
   it("POST /plugins/uninstall removes the package pin from the selected project", async () => {

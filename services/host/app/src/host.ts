@@ -457,7 +457,10 @@ export async function createHostConfig(
         ? internalBaseUrl(ctx, "marketplace")
         : undefined;
       const pluginsRoutes = marketplaceBaseUrl
-        ? [createPluginsRoutes({ registry, marketplace: new MarketplaceClient(marketplaceBaseUrl) })]
+        ? [createPluginsRoutes({
+          registry,
+          marketplace: new MarketplaceClient(marketplaceBaseUrl, process.env.GATEWAY_INTERNAL_SECRET),
+        })]
         : [];
       const pluginRegistryRoutes: HostRoutes = async (app) => registerPluginRegistryRoutes(app, {
         apiBasePath: "/api/v1",

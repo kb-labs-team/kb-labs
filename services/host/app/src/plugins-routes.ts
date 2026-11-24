@@ -22,8 +22,8 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { createErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
-import { projectErrorEnvelope, showProject } from "@kb-labs/core-project-registry";
+import { createErrorEnvelope, isErrorEnvelope, toErrorEnvelope, type ErrorEnvelope } from "@kb-labs/core-platform";
+import { isProjectId, projectErrorEnvelope, showProject } from "@kb-labs/core-project-registry";
 import type { IProjectRegistry } from "@kb-labs/core-project-registry";
 import type { HostRoutes } from "@kb-labs/gateway-app";
 import { invalidBody, sendData, sendEnvelope } from "./envelope.js";
@@ -44,6 +44,11 @@ interface InstallBody {
   spec?: unknown;
 }
 
+interface InstallRegistryBody {
+  projectId?: unknown;
+  spec?: unknown;
+}
+
 /** Resolves a registered project id to its absolute path. */
 async function resolveProjectRoot(registry: IProjectRegistry, projectId: string): Promise<string> {
   const summary = await showProject(registry, projectId);
@@ -55,10 +60,21 @@ function marketplaceErrorEnvelope(error: MarketplaceClientError, plugin: string)
   if (error.status === 404) {
     return createErrorEnvelope("KB_PLUGIN_NOT_FOUND", {
       details: { plugin },
-      cause: error.body || error.message,
+      cause: "The package was not found in the Marketplace Registry.",
     });
   }
-  return toErrorEnvelope(error);
+  try {
+    const body: unknown = JSON.parse(error.body);
+    if (isErrorEnvelope(body)) {
+      return body;
+    }
+    if (typeof body === "object" && body !== null && "error" in body && isErrorEnvelope(body.error)) {
+      return body.error;
+    }
+  } catch {
+    // Unstructured upstream bodies are intentionally not forwarded to clients.
+  }
+  return toErrorEnvelope(new Error("Marketplace request failed."));
 }
 
 function requireString(
@@ -140,6 +156,27 @@ export function createPluginsRoutes(options: PluginsRoutesOptions): HostRoutes {
       try {
         const projectRoot = await resolveProjectRoot(registry, projectId);
         const result = await marketplace.installPackages({ specs: [spec], scope: "project", projectRoot });
+        return sendData(reply, result, 201);
+      } catch (error) {
+        if (error instanceof MarketplaceClientError) {
+          return sendEnvelope(reply, marketplaceErrorEnvelope(error, spec));
+        }
+        return sendEnvelope(reply, projectErrorEnvelope(error));
+      }
+    });
+
+    app.post<{ Body: InstallRegistryBody }>("/api/v1/plugins/install-from-registry", async (request, reply) => {
+      const { projectId, spec } = request.body ?? {};
+      if (!requireString(reply, projectId, "projectId") || !requireString(reply, spec, "spec")) {
+        return reply;
+      }
+      if (!isProjectId(projectId)) {
+        sendEnvelope(reply, invalidBody("projectId", "must be a registered project id"));
+        return reply;
+      }
+      try {
+        const projectRoot = await resolveProjectRoot(registry, projectId);
+        const result = await marketplace.installRegistryPackage({ spec, scope: "project", projectRoot });
         return sendData(reply, result, 201);
       } catch (error) {
         if (error instanceof MarketplaceClientError) {

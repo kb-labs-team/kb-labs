@@ -6,6 +6,7 @@
 import { Navigate, type RouteObject } from 'react-router-dom';
 import { PluginsPage } from '../pages/marketplace-page';
 import { PluginDetailPage } from '../pages/plugin-detail-page';
+import { MarketplaceCatalogPage } from '../pages/marketplace-catalog-page';
 import { ErrorBoundary } from '../../../components/error-boundary';
 import { renderIcon } from '../../../routes/helpers';
 import type { NavigationItem } from '@/components/ui';
@@ -29,6 +30,16 @@ export const pluginsRoutes: RouteObject[] = [
   {
     path: PATHS.ROOT,
     element: <PluginsPage />,
+    errorElement: <ErrorBoundary />,
+  },
+  {
+    path: '/marketplace/catalog',
+    element: <MarketplaceCatalogPage />,
+    errorElement: <ErrorBoundary />,
+  },
+  {
+    path: '/marketplace/catalog/:handle/:name',
+    element: <MarketplaceCatalogPage />,
     errorElement: <ErrorBoundary />,
   },
   {
