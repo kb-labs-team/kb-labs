@@ -24,7 +24,7 @@
       },
       "marketplaceRegistry": {
         "serviceId": "marketplace-registry",
-        "prefix": "/api/v1/marketplace-registry",
+        "prefix": "/api/v1/marketplace-registry/api/v1",
         "rewritePrefix": "/api/v1",
         "description": "Public read-only Marketplace Registry API"
       }

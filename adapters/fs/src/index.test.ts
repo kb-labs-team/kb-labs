@@ -3,7 +3,8 @@
  * Unit tests for FilesystemStorageAdapter
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import fs from "fs-extra";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -62,6 +63,18 @@ describe("FilesystemStorageAdapter", () => {
 
       expect(result).toEqual(content);
       expect(result?.toString()).toBe("Hello, World!");
+    });
+
+    it("keeps the previous complete file when atomic replacement fails", async () => {
+      await storage.write("registry/meta.json", Buffer.from('{"version":1}'));
+      const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("simulated commit failure"));
+
+      await expect(storage.write("registry/meta.json", Buffer.from('{"version":2}')))
+        .rejects.toThrow("simulated commit failure");
+      rename.mockRestore();
+
+      expect(await storage.read("registry/meta.json")).toEqual(Buffer.from('{"version":1}'));
+      expect(await fs.readdir(join(tmpDir, "registry"))).toEqual(["meta.json"]);
     });
 
     it("should return null when reading nonexistent file", async () => {

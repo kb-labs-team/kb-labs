@@ -18,6 +18,8 @@
  */
 
 import fs from "fs-extra";
+import { open } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fg from "fast-glob";
 import {
@@ -82,11 +84,33 @@ export class FilesystemStorageAdapter implements IStorage {
 
   async write(filepath: string, data: Buffer): Promise<void> {
     const absolutePath = this.resolvePath(filepath);
+    const directory = path.dirname(absolutePath);
+    const temporaryPath = path.join(directory, `.${path.basename(absolutePath)}.${randomUUID()}.tmp`);
 
-    // Ensure directory exists
-    await fs.ensureDir(path.dirname(absolutePath));
+    await fs.ensureDir(directory);
+    let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      // Publish via a same-directory rename so readers see either the previous
+      // complete value or the new one, never a partially overwritten file.
+      fileHandle = await open(temporaryPath, "wx", 0o666);
+      await fileHandle.writeFile(data);
+      await fileHandle.sync();
+      await fileHandle.close();
+      fileHandle = undefined;
 
-    await fs.writeFile(absolutePath, data);
+      await fs.rename(temporaryPath, absolutePath);
+
+      // Persist the directory entry as well as file contents across power loss.
+      const directoryHandle = await open(directory, "r");
+      try {
+        await directoryHandle.sync();
+      } finally {
+        await directoryHandle.close();
+      }
+    } finally {
+      await fileHandle?.close();
+      await fs.remove(temporaryPath);
+    }
   }
 
   async delete(filepath: string): Promise<void> {
