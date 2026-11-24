@@ -242,6 +242,7 @@ OUTER_GROUP_DEPENDENCIES = {
     "workflow": ("host-running", "project-registered", "platform-version-known", "fixtures-installed", "adapter-defaults"),
     "analytics": ("host-running", "project-registered", "fixtures-installed"),
     "studio": ("host-running", "project-registered", "workflow-ready", "fixtures-installed", "adapter-defaults"),
+    "studio-empty-project": ("host-running",),
     "uninstall": (),
 }
 OUTER_GROUP_PRODUCES = {
@@ -288,6 +289,11 @@ def outer_selection_groups() -> dict[str, dict]:
         spec["capabilities"] = set(spec.get("capabilities", ())) | {group}
         spec["depends_on"] = tuple(dict.fromkeys((*spec.get("depends_on", ()), *dependencies)))
         groups[group] = spec
+    empty_project_spec = dict(groups.get("studio-empty-project", {}))
+    empty_project_spec["capabilities"] = set(empty_project_spec.get("capabilities", ())) | {"studio-empty-project"}
+    empty_project_spec["depends_on"] = OUTER_GROUP_DEPENDENCIES["studio-empty-project"]
+    empty_project_spec["cases"] = tuple(sorted(set(empty_project_spec.get("cases", ())) | {"S-120.1"}))
+    groups["studio-empty-project"] = empty_project_spec
     for group, produced_states in OUTER_GROUP_PRODUCES.items():
         spec = dict(groups.get(group, {}))
         spec["produces"] = produced_states
@@ -1727,6 +1733,35 @@ def _main(*, update_variant_runner=None):
                                              "workflow", "analytics", "studio"])
         _run_final_uninstall(outer_graph, env, launcher)
         return finalize_run(False)
+
+    def run_empty_project_studio_case() -> str | None:
+        if mode != "local":
+            return "S-120.1 requires the local-mode empty-project fixture"
+        studio_env = {
+            **env,
+            "GATEWAY_URL": "http://127.0.0.1:4000",
+            "KB_ACCESS_MODE": "local",
+            "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
+        }
+        report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
+        service_report = report.with_name("service-local.json")
+        with invocation_context(step_id="S-120.1"):
+            passed, elapsed, message = run_studio_browser_step([
+                "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
+            ], studio_env, service_report, "local", True, cases=["S-120.1"], timeout=180)
+        TIMES["Studio empty project browser journey"] = elapsed
+        return None if passed else message
+
+    if mode == "local":
+        outer_graph.flow(
+            "Studio dashboard with empty project registry", "studio-empty-project", "studio",
+            run_empty_project_studio_case, cases=["S-120.1"],
+            runners=("service-local:explore",),
+        )
+    else:
+        outer_graph.skip_unselected("Studio dashboard with empty project registry", "studio")
+    capture_case_failure()
 
     if mode == "secured":
         from service_runner import restore_secured_cli_login

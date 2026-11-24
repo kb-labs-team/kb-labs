@@ -84,7 +84,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
             ]},
             {"id": "S-047", "area": "marketplace", "status": "planned"},
             {"id": "S-120", "area": "studio", "status": "active", "steps": [
-                {"stepId": "S-120.1", "claims": [{"kind": "journey", "source": "e2e/studio/fresh-host.spec.ts"}]},
+                {"stepId": "S-120.1", "claims": [{"kind": "journey", "source": "e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts"}]},
             ]},
         ]}
         secured = {"mode": "secured", "cases": [

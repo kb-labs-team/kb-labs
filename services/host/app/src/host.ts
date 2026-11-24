@@ -18,6 +18,7 @@ import {
   AdapterConfigError,
   catalogEnvironmentVariables,
   resolveServiceListenAddress,
+  toErrorEnvelope,
   type IServiceTransport,
 } from "@kb-labs/core-platform";
 import { createProjectRegistry, resolvePlatformDataRoot } from "@kb-labs/core-project-registry";
@@ -47,6 +48,7 @@ import {
 } from "@kb-labs/shared-daemon";
 import { applyHostGatewayPolicy, type GatewayUpstreams } from "./policy.js";
 import { MarketplaceClient } from "./marketplace-client.js";
+import { registerPluginRegistryRoutes } from "@kb-labs/shared-http";
 import { createChildProcessLauncher } from "./project-runtime/launcher.js";
 import { createProjectServiceTransport } from "./project-runtime/service-transport.js";
 import { PROJECT_SERVICE_DECLARATIONS } from "@kb-labs/project-runtime-app";
@@ -59,6 +61,7 @@ import { createProjectRouting } from "./project-runtime/routing.js";
 import { findScheduledProjects } from "./project-runtime/workflow-schedules.js";
 import { createProjectsRoutes } from "./projects-routes.js";
 import { createPluginsRoutes } from "./plugins-routes.js";
+import { sendData, sendEnvelope } from "./envelope.js";
 import { startHostActiveWorkControl } from "./active-work-control.js";
 import {
   parseHostSettings,
@@ -456,6 +459,12 @@ export async function createHostConfig(
       const pluginsRoutes = marketplaceBaseUrl
         ? [createPluginsRoutes({ registry, marketplace: new MarketplaceClient(marketplaceBaseUrl) })]
         : [];
+      const pluginRegistryRoutes: HostRoutes = async (app) => registerPluginRegistryRoutes(app, {
+        apiBasePath: "/api/v1",
+        getSnapshot: () => ctx.runtime.catalog.snapshot(),
+        sendSuccess: sendData,
+        sendFailure: (reply, error) => sendEnvelope(reply, toErrorEnvelope(error)),
+      });
       if (isSelected(settings, "marketplace") && !marketplaceBaseUrl) {
         ctx.logger.warn(
           "Marketplace module selected but has no internal address; /api/v1/plugins will not be mounted",
@@ -477,6 +486,7 @@ export async function createHostConfig(
           projectServiceTransport: createProjectServiceTransport(projectRouting),
           hostRoutes: combineHostRoutes(
             createProjectsRoutes({ registry, manager }),
+            pluginRegistryRoutes,
             ...pluginsRoutes,
           ),
           ...(activeWorkControl ? { readinessControlAddress: activeWorkControl.address } : {}),

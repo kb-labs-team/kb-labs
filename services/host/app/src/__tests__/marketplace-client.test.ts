@@ -8,7 +8,7 @@ describe("MarketplaceClient", () => {
 
   // case: S-251.1
   it("uses the mounted Marketplace API prefix for project plugin operations", async () => {
-    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>()
+    const fetchMock = vi.fn<typeof fetch>()
       .mockImplementation(async () => new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new MarketplaceClient("http://127.0.0.1:5070");

@@ -30,6 +30,27 @@ import journey_resources
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
+    # case: S-120.1
+    def test_empty_project_studio_claim_selects_a_host_only_group(self):
+        groups = runner.outer_selection_groups()
+        self.assertEqual(runner.OUTER_GROUP_DEPENDENCIES["studio-empty-project"], ("host-running",))
+        self.assertIn("S-120.1", groups["studio-empty-project"]["cases"])
+        selection = JourneySelection(
+            requested=("S-120.1",), claims=frozenset({"S-120.1"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="service-local:explore", requested_runners="",
+        )
+        journey = Journey("local", "s120-empty-project-selection", selection=selection)
+        graph = FlowGraph(journey, runner.OUTER_GROUP_DEPENDENCIES,
+                          states={"host-running": {"passed": True, "evidence": "isolated host ready"}},
+                          groups=groups)
+        calls = []
+        status = graph.flow("Studio dashboard with empty project registry", "studio-empty-project", "studio",
+                            lambda: calls.append("browser") or None, cases=["S-120.1"])
+        self.assertEqual(status, "PASS")
+        self.assertEqual(calls, ["browser"])
+        self.assertEqual(journey.steps[-1].cases, ["S-120.1"])
+
     # case: S-262.9
     def test_host_state_is_reprobed_after_a_workflow_failure(self):
         journey = Journey("local", "workflow-boundary-test")
