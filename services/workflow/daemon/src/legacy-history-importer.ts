@@ -9,7 +9,7 @@ import {
   readdir,
   unlink,
 } from 'node:fs/promises'
-import { dirname, join, parse } from 'node:path'
+import { dirname, join, parse, sep } from 'node:path'
 import {
   canonicalizeProjectPath,
   deriveProjectId,

@@ -83,7 +83,7 @@ export async function setup({
   const trustedLegacyStorageRoot = await trustedLegacyProjectStorageRoot(runtime, projectId);
   if (trustedLegacyStorageRoot) {
     const migration = await importLegacyWorkflowHistory(trustedLegacyStorageRoot, projectId);
-    if (migration.status === 'retryable-failure' || migration.status === 'blocked' ||
+    if (migration.status === 'retryable-failure' || migration.status === 'blocked' || migration.status === 'conflict' ||
         migration.skipped > 0 || migration.conflicts > 0) {
       bootstrapLogger.warn('Legacy workflow history import did not fully migrate every record', {
         status: migration.status,
