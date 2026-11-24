@@ -65,7 +65,7 @@ describe('Registry filesystem storage', () => {
     }
   });
 
-  // case: S-321.1
+  // case: S-324.1
   it('publishes and resolves a signed public package from filesystem storage', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'kb-registry-fs-'));
     const storageRoot = join(tempRoot, 'registry-storage');
@@ -92,7 +92,7 @@ describe('Registry filesystem storage', () => {
     verifySignature(fixture.integrity, fixture.packageName, fixture.version, downloaded.signature, publicKey);
   });
 
-  // case: S-321.2
+  // case: S-324.2
   it('preserves signed package metadata and tarball across service recreation', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'kb-registry-fs-'));
     const storageRoot = join(tempRoot, 'registry-storage');
@@ -112,7 +112,7 @@ describe('Registry filesystem storage', () => {
     verifySignature(fixture.integrity, fixture.packageName, fixture.version, downloaded.signature, publicKey);
   });
 
-  // case: S-321.3
+  // case: S-324.3
   it('rejects path traversal before writing outside the filesystem storage root', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'kb-registry-fs-'));
     const storageRoot = join(tempRoot, 'registry-storage');

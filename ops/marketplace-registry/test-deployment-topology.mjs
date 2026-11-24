@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// case: S-321.1
+// case: S-324.1
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -44,7 +44,7 @@ assert.notEqual(config.networks.gateway_edge.internal, true);
 
 const nginxConfig = readFileSync(path.join(root, 'ops/marketplace-registry/nginx-api.kblabs.ru.conf'), 'utf8');
 const accessLogFormat = nginxConfig.match(/log_format\s+kb_api_safe\s+'([^']+)'/u)?.[1] ?? '';
-// case: S-321.6
+// case: S-324.6
 assert.match(accessLogFormat, /\$uri/u, 'access logs must use the query-free normalized path');
 assert.doesNotMatch(accessLogFormat, /\$(?:request_uri|request)(?:\W|$)/u, 'access logs must not include query strings');
 assert.match(nginxConfig, /limit_except GET HEAD \{ deny all; \}/u);
