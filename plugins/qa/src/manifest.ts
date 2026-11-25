@@ -74,6 +74,7 @@ export const manifest = {
         path: 'qa run',
         category: 'Run',
         describe: 'Run devkit tasks and record results',
+        examples: ['kb qa run --tasks test --packages kb-create --json'],
         operationType: 'execute' as const,
         handler: './cli/commands/qa-run.js#default',
         flags: defineCommandFlags(qaRunFlags.schema),

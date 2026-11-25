@@ -59,9 +59,14 @@ pnpm kb marketplace install @kb-labs/qa
 ```bash
 kb qa run                              # all checks: build, lint, types, tests
 kb qa run --json
+kb qa run --tasks test --packages kb-create --json
 kb qa check run --id=types                 # single check atomically
 kb qa save                             # run + save to history
 ```
+
+Pass a comma-separated package list to limit a QA run to those workspace
+packages and any task prerequisites declared for them. If `--packages` is
+omitted, DevKit selects packages using its normal workspace rules.
 
 ### History and trends
 

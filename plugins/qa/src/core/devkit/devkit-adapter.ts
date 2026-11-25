@@ -27,9 +27,15 @@ export class DevkitAdapter {
     this.timeout = opts.timeoutMs ?? 600_000;
   }
 
-  async run(tasks: string[]): Promise<DevkitRunOutput> {
+  async run(tasks: string[], packages?: string): Promise<DevkitRunOutput> {
     if (tasks.length === 0) {throw new Error('DevkitAdapter.run: tasks must not be empty');}
-    return this.invoke<DevkitRunOutput>(['run', ...tasks]);
+    const packageSelector = packages?.trim();
+    const packageNames = packageSelector ? packageSelector.split(',').map((name) => name.trim()) : [];
+    if (packageSelector && packageNames.some((name) => !name)) {
+      throw new Error('DevkitAdapter.run: packages must include at least one name per selector entry');
+    }
+    const packageArgs = packageNames.length > 0 ? ['--packages', packageNames.join(',')] : [];
+    return this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
   }
 
   async check(): Promise<DevkitCheckOutput> {

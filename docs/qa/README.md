@@ -118,6 +118,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-319](scenarios/S-319-cli-large-json-result-backpressure.md) | CLI — preserve large JSON results through stdout backpressure | developer | P1 | planned | false | [local] | [cli] | — |
 | [S-320](scenarios/S-320-installed-cli-resolves-platform-sdk-peers.md) | CLI — resolve installed plugins’ SDK peers without shell setup | solo-developer | P1 | planned | true | [local] | [cli] | — |
 | [S-325](scenarios/S-325-native-agent-qa-dogfood.md) | Workflow — run an agent task and QA in one task workspace | solo-developer | P1 | planned | false | [local] | [cli] | — |
+| [S-326](scenarios/S-326-scoped-qa-workflow.md) | QA — run selected workspace packages in a workflow | developer | P1 | planned | false | [local] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.

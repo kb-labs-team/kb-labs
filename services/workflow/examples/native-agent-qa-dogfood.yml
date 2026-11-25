@@ -17,6 +17,10 @@ inputs:
     type: boolean
     description: Run the optional heuristic review after tests pass
     default: false
+  qa_packages:
+    type: string
+    description: Optional comma-separated package names to test
+    required: false
 
 phases:
   implement:
@@ -48,6 +52,7 @@ jobs:
         uses: command:qa run
         with:
           tasks: test
+          packages: "${{ inputs.qa_packages }}"
           json: true
 
       - name: Review changes (optional)

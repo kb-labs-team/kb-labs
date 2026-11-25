@@ -5,6 +5,10 @@ export const qaRunFlags = defineFlags({
     type: 'string',
     description: 'Comma-separated tasks to run (default: build,lint,type-check,test)',
   },
+  packages: {
+    type: 'string',
+    description: 'Comma-separated workspace packages to select for the requested tasks',
+  },
   save: {
     type: 'boolean',
     description: 'Save snapshot to history',

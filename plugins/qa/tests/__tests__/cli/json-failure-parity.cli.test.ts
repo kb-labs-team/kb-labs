@@ -25,7 +25,7 @@ vi.mock('../../../src/core/index.js', () => ({
   DevkitAdapter: class {
     gate() { return mocks.gate(); }
     check() { return mocks.check(); }
-    run() { return mocks.run(); }
+    run(...args: unknown[]) { return mocks.run(...args); }
   },
   SnapshotStore: class {
     saveGate() { return null; }
@@ -120,6 +120,20 @@ describe('QA command failure parity', () => {
     const human = await execute(qaRun, { save: false });
     expect(json).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', diagnostics: [{ code: 'KB_QA_TASK_FAILED' }] } });
     expect(human).toEqual(json);
+  });
+
+  // case: S-326.1
+  it('forwards an optional package scope to kb-devkit', async () => {
+    mocks.run.mockResolvedValue({
+      elapsed: '1s',
+      ok: true,
+      results: [{ Package: 'kb-create', Task: 'test', OK: true, Cached: false, Elapsed: 1, ExitCode: 0, Stdout: '', Stderr: '', Error: '' }],
+      summary: { total: 1, passed: 1, failed: 0, cached: 0 },
+    });
+
+    await execute(qaRun, { json: true, save: false, tasks: 'test', packages: 'kb-create' });
+
+    expect(mocks.run).toHaveBeenCalledWith(['test'], 'kb-create');
   });
 
   // case: S-203.1
