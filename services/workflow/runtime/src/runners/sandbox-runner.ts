@@ -305,16 +305,20 @@ export class SandboxRunner implements Runner {
       executionId,
     })
 
+    const executionWorkspace = request.spec.uses?.startsWith('command:')
+      ? context.env['KB_WORKSPACE_ROOT'] ?? request.workspace
+      : request.workspace;
+
     return {
       executionId,
       descriptor,
       pluginRoot: resolution.pluginRoot,
       handlerRef: resolution.handler,
       input: resolution.input,
-      workspace: request.workspace
+      workspace: executionWorkspace
         ? {
             type: 'local',
-            cwd: request.workspace,
+            cwd: executionWorkspace,
           }
         : undefined,
       timeoutMs: request.spec.timeoutMs ?? this.defaultTimeout,

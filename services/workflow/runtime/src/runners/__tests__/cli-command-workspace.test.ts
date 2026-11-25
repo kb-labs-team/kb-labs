@@ -6,7 +6,7 @@ import type { StepExecutionRequest } from '../../types.js';
 
 describe('SandboxRunner CLI command workspace routing', () => {
   // case: S-325.2
-  it('uses the isolated task worktree as CLI cwd while retaining the owner workspace', async () => {
+  it('uses the isolated task worktree for CLI cwd and execution workspace', async () => {
     let captured: ExecutionRequest | undefined;
     const backend = {
       execute: vi.fn(async (request: ExecutionRequest) => {
@@ -56,6 +56,6 @@ describe('SandboxRunner CLI command workspace routing', () => {
       flags: { tasks: 'test' },
       cwd: '/project/.worktrees/wt_run-1',
     });
-    expect(captured?.workspace).toEqual({ type: 'local', cwd: '/project' });
+    expect(captured?.workspace).toEqual({ type: 'local', cwd: '/project/.worktrees/wt_run-1' });
   });
 });
