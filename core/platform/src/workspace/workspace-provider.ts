@@ -95,6 +95,7 @@ export interface WorkspaceProviderCapabilities {
   supportsAttach?: boolean;
   supportsRelease?: boolean;
   supportsReadOnlyMounts?: boolean;
+  supportsSourceRef?: boolean;
   custom?: Record<string, unknown>;
 }
 
@@ -120,6 +121,8 @@ export interface WorkspacePatchExportRequest {
 
 export interface IWorkspaceProvider {
   materialize(request: MaterializeWorkspaceRequest): Promise<WorkspaceDescriptor>;
+  /** Resolve a source ref to an immutable commit before workspace materialization. */
+  resolveSourceRef?(sourceRef: string, projectRoot: string): Promise<string>;
   attach(request: AttachWorkspaceRequest): Promise<WorkspaceAttachment>;
   release(workspaceId: string, environmentId?: string): Promise<void>;
   getStatus(workspaceId: string): Promise<WorkspaceStatusResult>;

@@ -19,7 +19,8 @@ vi.mock('node:child_process', () => ({
     cb(null, { stdout: '' })
   ),
   execFile: vi.fn((_file: string, args: string[], _opts: unknown, cb: (err: null, res: { stdout: string; stderr: string }) => void) => {
-    const stdout = args.join(' ') === 'rev-parse HEAD'
+    const stdout = (args[0] === 'rev-parse' && args.includes('--verify'))
+      || args.join(' ') === 'rev-parse HEAD'
       ? 'a'.repeat(40)
       : '';
     cb(null, { stdout, stderr: '' });

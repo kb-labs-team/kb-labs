@@ -582,6 +582,7 @@ describe('workflow worker lifecycle', () => {
       async markStepCompleted() {},
       async markStepFailed() {},
       async markJobInterrupted() {},
+      getStateStore: vi.fn(() => ({ updateRun: vi.fn(async () => {}) })),
     };
 
     const logger = mockLogger();
@@ -596,7 +597,12 @@ describe('workflow worker lifecycle', () => {
       platform: {
         executionBackend: createWorkflowExecutionBackendFixture().backend,
         hasExecutionBackend: true,
-        getAdapter: vi.fn().mockReturnValue(undefined),
+        getAdapter: vi.fn().mockReturnValue({
+          getCapabilities: () => ({ supportsSourceRef: true }),
+          resolveSourceRef: vi.fn(async () => 'a'.repeat(40)),
+          materialize: vi.fn(async () => ({ workspaceId: 'wt-test', provider: 'test', status: 'ready', rootPath: '/tmp/test-wt', createdAt: '', updatedAt: '', metadata: { baseCommit: 'a'.repeat(40) } })),
+          release: vi.fn(),
+        }),
       },
       concurrency: 1,
     });
@@ -729,6 +735,8 @@ describe('workflow worker lifecycle', () => {
     const logger = mockLogger();
 
     const failingWsProvider = {
+      getCapabilities: () => ({ supportsSourceRef: true }),
+      resolveSourceRef: vi.fn(async () => 'b'.repeat(40)),
       materialize: vi.fn().mockRejectedValue(new Error('ETIMEDOUT: connection timed out')),
       release: vi.fn(),
     };
@@ -766,7 +774,7 @@ describe('workflow worker lifecycle', () => {
       }),
     );
     expect(failingWsProvider.materialize).toHaveBeenCalledWith(expect.objectContaining({
-      sourceRef: 'job-ref',
+      sourceRef: 'b'.repeat(40),
     }));
   });
 

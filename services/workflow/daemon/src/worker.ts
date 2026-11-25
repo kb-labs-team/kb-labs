@@ -385,18 +385,45 @@ export async function createWorkflowWorker(
       : (process.env["KB_PROJECT_ROOT"] ?? workspaceRoot);
     let provisionedWorkspaceId: string | undefined;
     let executionWorkspaceId: string | undefined;
+    let sourceRefCommit: string | undefined;
     const workspaceMetadata = run.metadata?.['executionWorkspace'] as
-      | { workspaceId?: unknown; rootPath?: unknown }
+      | { workspaceId?: unknown; rootPath?: unknown; sourceRef?: unknown; sourceRefCommit?: unknown }
       | undefined;
     const inheritedWorkspace = typeof run.metadata?.['workspaceOwnerRunId'] === 'string'
       && run.metadata?.['workspaceOwnerRunId'] !== run.id;
+
+    if (sourceRef !== undefined) {
+      const resolveSourceRef = wsProvider?.resolveSourceRef;
+      const supportsSourceRef = wsProvider?.getCapabilities?.().supportsSourceRef === true
+        && typeof resolveSourceRef === 'function';
+      if (!supportsSourceRef || !wsProvider) {
+        await engine.markJobFailed(run.id, job.id, Object.assign(
+          new Error('The configured workspace provider does not support Git source refs.'),
+          { code: 'KB_WORKSPACE_SOURCE_REF_UNSUPPORTED' },
+        ));
+        claimedJobs.delete(jobKey);
+        return true;
+      }
+      try {
+        sourceRefCommit = await resolveSourceRef.call(wsProvider, sourceRef, projectRoot);
+      } catch (error) {
+        await engine.markJobFailed(run.id, job.id, error instanceof Error ? error : new Error(String(error)));
+        claimedJobs.delete(jobKey);
+        return true;
+      }
+    }
 
     if (
       workspaceMetadata
       && typeof workspaceMetadata.rootPath === 'string'
       && typeof workspaceMetadata.workspaceId === 'string'
     ) {
-      const refMismatch = workspaceSourceRefMismatch(sourceRef, workspaceMetadata.sourceRef);
+      const refMismatch = workspaceSourceRefMismatch(
+        sourceRef,
+        workspaceMetadata.sourceRef,
+        sourceRefCommit,
+        workspaceMetadata.sourceRefCommit,
+      );
       if (refMismatch) {
         await engine.markJobFailed(run.id, job.id, refMismatch);
         claimedJobs.delete(jobKey);
@@ -421,7 +448,7 @@ export async function createWorkflowWorker(
           projectRoot,
           ownerRunId: run.id,
           platformRoot,
-          sourceRef,
+          sourceRef: sourceRefCommit,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
             jobLogger.info(`[workspace] ${event.stage}: ${event.message}`, {
@@ -442,6 +469,7 @@ export async function createWorkflowWorker(
                 workspaceId: ws.workspaceId,
                 rootPath,
                 ...(sourceRef !== undefined ? { sourceRef } : {}),
+                ...(sourceRefCommit !== undefined ? { sourceRefCommit } : {}),
               },
               workspaceOwnerRunId: run.id,
             };
