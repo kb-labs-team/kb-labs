@@ -607,6 +607,40 @@ def _write_workflows(project: Path) -> None:
     )
 
 
+def _write_workflow_command_fixture(project: Path) -> None:
+    plugin_id = "@kb-labs/journey-workflow-command"
+    package = project / "journey-workflow-command"
+    package.mkdir(exist_ok=True)
+    workspace = project / "pnpm-workspace.yaml"
+    if not workspace.exists():
+        workspace.write_text("packages:\n  - journey-workflow-command\n", encoding="utf-8")
+    (package / "package.json").write_text(json.dumps({
+        "name": plugin_id, "version": "1.0.0", "private": True,
+        "kb": {"manifest": "kb.plugin.json"},
+    }), encoding="utf-8")
+    (package / "kb.plugin.json").write_text(json.dumps({
+        "schema": "kb.plugin/3", "id": plugin_id, "version": "1.0.0",
+        "cli": {"commands": [{
+            "path": "journey workflow fail", "handler": "./fail.mjs",
+            "describe": "Return a structured failure with captured output", "operationType": "execute",
+        }]},
+    }), encoding="utf-8")
+    (package / "fail.mjs").write_text(
+        "export default { async execute() { return {\n"
+        "  ok: false, stdout: 'partial workflow report', stderr: 'workflow failure details', exitCode: 23,\n"
+        "  error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'Journey command failed',\n"
+        "    hint: 'Inspect the journey command output.', diagnostics: [{ code: 'JOURNEY_COMMAND_FAILED',\n"
+        "      severity: 'error', path: 'report.txt', message: 'A reported check failed.' }] },\n"
+        "}; } };\n", encoding="utf-8",
+    )
+    (project / ".kb" / "workflows" / "journey-command-fails.yml").write_text(
+        "name: journey-command-fails\nversion: 1.0.0\non:\n  manual: true\n"
+        "jobs:\n  smoke:\n    runsOn: local\n    steps:\n"
+        "      - name: Structured command failure\n        id: command-failure\n"
+        "        uses: 'command:journey workflow fail'\n", encoding="utf-8",
+    )
+
+
 def _schedule_yaml(enabled: bool) -> str:
     return (
         "schedule: '* * * * *'\nworkflow: journey-cron-target\n"
@@ -615,9 +649,11 @@ def _schedule_yaml(enabled: bool) -> str:
     )
 
 
-def prepare_workflow_fixtures(project: Path) -> None:
+def prepare_workflow_fixtures(project: Path, *, include_command_fixture: bool = False) -> None:
     """Create watched workflow and schedule files before the project runtime starts."""
     _write_workflows(project)
+    if include_command_fixture:
+        _write_workflow_command_fixture(project)
     workflows = project / ".kb" / "workflows"
     (workflows / "journey-cron-target.yml").write_text(
         "name: journey-cron-target\nversion: 1.0.0\n"
@@ -837,7 +873,7 @@ def _wait_for_workflow_fixtures(*, env: dict[str, str], cwd: Path,
         workflows = _workflow_definition_list_data(
             _json_cli(["workflow", "defs", "list", "--json"], env=env, cwd=cwd))
         names = {item["id"] for item in workflows}
-        if {"hello", "journey-hello", "journey-fails", "journey-cron-target"}.issubset(names):
+        if {"hello", "journey-hello", "journey-fails", "journey-command-fails", "journey-cron-target"}.issubset(names):
             return
         sleep(1)
     raise AssertionError("project workflow catalog did not discover the journey fixtures within 30s")
@@ -1024,11 +1060,11 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if not any(item["source"] == "plugin" for item in crons):
             raise AssertionError("workflow cron list omitted the cron declared by installed @kb-labs/steward")
 
+    prepare_workflow_fixtures(project, include_command_fixture=True)
     if journey.mode == "secured":
         run_secured_cli_auth_step(journey, env=env, project=project)
     journey.step("install plugin cron fixture", "workflow", install_plugin_cron_fixture)
     _solo_workflow_case(journey, env=env, project=project, clock=clock, sleep=sleep)
-    prepare_workflow_fixtures(project)
 
     def discover_fixtures() -> None:
         _wait_for_workflow_fixtures(env=env, cwd=project, clock=clock, sleep=sleep)
@@ -1136,6 +1172,30 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
 
     journey.step("inspect failing command logs", "workflow", inspect_failure_logs,
                  cases=["S-029.3"])
+
+    def inspect_structured_command_failure() -> None:
+        result = _case_json_cli("S-029.4", ["workflow", "run", "--workflow-id=journey-command-fails", "--json"],
+                               env=env, cwd=project)
+        detail = _case_terminal_run("S-029.4", _run_id(result), env=env, cwd=project, clock=clock, sleep=sleep)
+        steps = [step for job in _workflow_run_jobs(detail, "kb workflow runs view --json=all")
+                 for step in job["steps"] if (step.get("spec") or {}).get("id") == "command-failure"]
+        if detail["status"] != "failed" or len(steps) != 1 or steps[0].get("status") != "failed":
+            raise AssertionError(f"run detail did not identify the failed command step: {detail!r}")
+        error = _contract_object(steps[0].get("error"), "kb workflow runs view --json=all")
+        expected_diagnostic = {"code": "JOURNEY_COMMAND_FAILED", "severity": "error",
+                               "path": "report.txt", "message": "A reported check failed."}
+        if (error.get("code") != "KB_RUNTIME_COMMAND_FAILED"
+                or error.get("hint") != "Inspect the journey command output."
+                or error.get("diagnostics") != [expected_diagnostic]):
+            raise AssertionError(f"run detail omitted the command failure code, hint or diagnostics: {error!r}")
+        outputs = steps[0].get("outputs")
+        if outputs != {"stdout": "partial workflow report", "stderr": "workflow failure details", "exitCode": 23}:
+            raise AssertionError(f"run detail did not retain the captured command outputs: {outputs!r}")
+
+    journey.step("inspect persisted command diagnostics and outputs", "workflow", inspect_structured_command_failure,
+                 cases=["S-029.4"], requires=("step:install plugin cron fixture",
+                                               "step:discover installed project workflow definitions"),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     def inspect_history() -> None:
         with invocation_context(step_id="S-009.1"):
