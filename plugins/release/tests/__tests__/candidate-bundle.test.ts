@@ -164,13 +164,24 @@ describe('candidate bundle producer and verifier', () => {
     writeFileSync(join(excludedPackageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/source-only', version: '99.0.0' }));
     const sourceOnlyTarball = join(packagesDir, 'kb-labs-source-only-99.0.0.tgz');
     execFileSync('tar', ['-czf', sourceOnlyTarball, '-C', join(root, 'excluded'), 'package']);
+    const updatePackageDir = join(root, 'update-fixture/package');
+    mkdirSync(updatePackageDir, { recursive: true });
+    writeFileSync(join(updatePackageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/cli-bin', version: '1.0.1' }));
+    const updateFilename = 'kb-labs-cli-bin-1.0.1.tgz';
+    const updateTarball = join(packagesDir, updateFilename);
+    execFileSync('tar', ['-czf', updateTarball, '-C', join(root, 'update-fixture'), 'package']);
+    const updateBytes = readFileSync(updateTarball);
     mkdirSync(candidateDir);
-    writeFileSync(join(candidateDir, 'release-index-update.json'), '{}');
+    writeFileSync(join(candidateDir, 'release-index-update.json'), JSON.stringify({ artifacts: [{
+      package: '@kb-labs/cli-bin', version: '1.0.1',
+      tarball: 'http://verdaccio/@kb-labs/cli-bin/-/cli-bin-1.0.1.tgz',
+      sha256: sha256(updateBytes),
+    }] }));
 
     stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateDir, verified });
 
     expect(readFileSync(join(packagesDir, tarball))).toEqual(tarballBytes);
-    expect(readdirSync(packagesDir)).toEqual([tarball]);
+    expect(readdirSync(packagesDir).sort()).toEqual([tarball, updateFilename].sort());
     expect(readFileSync(join(candidateDir, binaryFilename))).toEqual(binaryBytes);
     expect(lstatSync(join(candidateDir, binaryFilename)).mode & 0o777).toBe(0o755);
     expect(readFileSync(join(root, 'v1', binaryFilename))).toEqual(binaryBytes);
@@ -180,7 +191,9 @@ describe('candidate bundle producer and verifier', () => {
     expect(candidateChecksums).toContain(`${sha256(sealedIndexBytes)}  release-index.json`);
     expect(candidateChecksums).toContain(`${binarySha}  ${binaryFilename}`);
     expect(readFileSync(join(candidateDir, 'candidate-bundle-digest.txt'), 'utf8')).toBe(`${provenance.bundleDigest}\n`);
-    expect(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')).toBe('{}');
+    const stagedUpdateIndex = JSON.parse(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')) as { artifacts: Array<{ tarball: string }> };
+    expect(stagedUpdateIndex.artifacts[0]!.tarball)
+      .toBe('http://verdaccio/@kb-labs/cli-bin/-/cli-bin-1.0.1.tgz');
 
     // The HTTP origin used by installer.sh exposes the staged exact bytes from
     // these paths, including the URL-derived mirror consumed by the CLI.
@@ -226,6 +239,10 @@ describe('candidate bundle producer and verifier', () => {
       const metadata = await metadataResponse.json() as { versions: Record<string, { dist: { tarball: string } }> };
       const received = await fetch(metadata.versions['1.0.0']!.dist.tarball);
       expect(Buffer.from(await received.arrayBuffer())).toEqual(tarballBytes);
+      const updateMetadataResponse = await fetch(`${registryUrl}/@kb-labs%2Fcli-bin`);
+      const updateMetadata = await updateMetadataResponse.json() as { versions: Record<string, { dist: { tarball: string } }> };
+      const servedUpdate = await fetch(updateMetadata.versions['1.0.1']!.dist.tarball);
+      expect(Buffer.from(await servedUpdate.arrayBuffer())).toEqual(updateBytes);
     } finally {
       registry.kill('SIGTERM');
     }

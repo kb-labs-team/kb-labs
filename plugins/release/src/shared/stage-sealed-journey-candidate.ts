@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { join, resolve } from 'node:path';
 import type { VerifiedCandidateBundle } from './candidate-bundle.js';
 
@@ -75,27 +76,56 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
     mirroredBinaries.set(signedTag, group);
   }
   const allowedTarballs = new Set(verified.artifacts.map(artifact => artifact.tarball));
-  const addReferencedTarballs = (value: unknown): void => {
+  const indexedArtifacts = new Map<string, Set<string>>();
+  const collectIndexedArtifacts = (value: unknown): void => {
     if (Array.isArray(value)) {
-      value.forEach(addReferencedTarballs);
+      value.forEach(collectIndexedArtifacts);
     } else if (value && typeof value === 'object') {
       for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-        if ((key === 'tarball' || key === 'url') && typeof child === 'string' && child.includes('.tgz')) {
-          try {
-            const filename = decodeURIComponent(new URL(child).pathname.split('/').at(-1) ?? child);
-            if (filename.endsWith('.tgz') && !filename.includes('/') && !filename.includes('\\')) allowedTarballs.add(filename);
-          } catch {
-            const filename = child.split(/[/?#]/).at(-1);
-            if (filename?.endsWith('.tgz') && !filename.includes('\\')) allowedTarballs.add(filename);
-          }
+        const entry = value as Record<string, unknown>;
+        if (key === 'package' && typeof child === 'string' && typeof entry.version === 'string'
+          && typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256)) {
+          const identity = `${child}@${entry.version}`;
+          const digests = indexedArtifacts.get(identity) ?? new Set<string>();
+          digests.add(entry.sha256);
+          indexedArtifacts.set(identity, digests);
         }
-        addReferencedTarballs(child);
+        collectIndexedArtifacts(child);
       }
     }
   };
   for (const filename of readdirSync(candidateRoot).filter(name => /^release-index.*\.json$/.test(name))) {
-    try { addReferencedTarballs(JSON.parse(readFileSync(join(candidateRoot, filename), 'utf8')) as unknown); }
+    try { collectIndexedArtifacts(JSON.parse(readFileSync(join(candidateRoot, filename), 'utf8')) as unknown); }
     catch (error) { throw new Error(`Journey release index ${filename} is invalid: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  const repoRoot = resolve(packageRoot, '..', '..');
+  const extrasManifest = join(repoRoot, 'e2e/scripts/pack-extras.json');
+  if (existsSync(extrasManifest)) {
+    const extras = JSON.parse(readFileSync(extrasManifest, 'utf8')) as Array<{ directory?: string }>;
+    for (const extra of extras) {
+      if (!extra.directory || extra.directory.startsWith('/') || extra.directory.split(/[\\/]/).includes('..')) continue;
+      const packageManifest = join(repoRoot, extra.directory, 'package.json');
+      if (!existsSync(packageManifest)) continue;
+      const manifest = JSON.parse(readFileSync(packageManifest, 'utf8')) as { name?: string; version?: string };
+      if (manifest.name && manifest.version && !indexedArtifacts.has(`${manifest.name}@${manifest.version}`)) {
+        indexedArtifacts.set(`${manifest.name}@${manifest.version}`, new Set());
+      }
+    }
+  }
+  const packageIdentities = new Map<string, Array<{ filename: string; digest: string }>>();
+  for (const filename of readdirSync(packageRoot).filter(name => name.endsWith('.tgz'))) {
+    const path = join(packageRoot, filename);
+    const manifest = JSON.parse(execFileSync('tar', ['-xOzf', path, 'package/package.json'], { encoding: 'utf8' })) as { name?: string; version?: string };
+    if (!manifest.name || !manifest.version) continue;
+    const identity = `${manifest.name}@${manifest.version}`;
+    const values = packageIdentities.get(identity) ?? [];
+    values.push({ filename, digest: createHash('sha256').update(readFileSync(path)).digest('hex') });
+    packageIdentities.set(identity, values);
+  }
+  for (const [identity, digests] of indexedArtifacts) {
+    for (const candidate of packageIdentities.get(identity) ?? []) {
+      if (digests.size === 0 || digests.has(candidate.digest)) allowedTarballs.add(candidate.filename);
+    }
   }
   for (const filename of readdirSync(packageRoot).filter(name => name.endsWith('.tgz') && !allowedTarballs.has(name))) {
     unlinkSync(join(packageRoot, filename));
