@@ -315,7 +315,8 @@ describe('WorkflowEngine', () => {
       }
     });
 
-    it('cascades cancellation to all persisted child workflow descendants', async () => {
+    // case: S-008.2
+    it.each([false, true])('joins descendant cancellation (child already cancelling: %s)', async (childFirst) => {
       const spec: WorkflowSpec = {
         name: 'Nested', version: '1.0.0', on: { manual: true },
         jobs: { main: { runsOn: 'local', steps: [{ name: 'noop', uses: 'builtin:shell' }] } },
@@ -339,7 +340,21 @@ describe('WorkflowEngine', () => {
       await engine.markJobStarted(child.id, childJob.id);
       await engine.markStepWaitingChild(child.id, childJob.id, childJob.steps[0]!.id, grandchild.id);
 
-      await engine.cancelRun(parent.id);
+      const execution = await engine.trackLocalShellExecution(grandchild.id);
+      const abort = new Promise<void>((resolve) => execution.signal.addEventListener('abort', () => resolve(), { once: true }));
+      const childCancellation = childFirst ? engine.cancelRun(child.id) : undefined;
+      if (childFirst) { await abort; }
+      const parentCancellation = engine.cancelRun(parent.id);
+      try {
+        await abort;
+        await expect(Promise.race([
+          parentCancellation.then(() => 'confirmed'),
+          new Promise<string>((resolve) => setImmediate(() => resolve('pending'))),
+        ])).resolves.toBe('pending');
+      } finally {
+        execution.finish();
+        await Promise.all([parentCancellation, childCancellation]);
+      }
 
       await expect(engine.getRun(child.id)).resolves.toMatchObject({ status: 'cancelled' });
       await expect(engine.getRun(grandchild.id)).resolves.toMatchObject({ status: 'cancelled' });
