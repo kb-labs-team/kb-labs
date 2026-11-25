@@ -1625,6 +1625,7 @@ exec "$REAL_TAR" "$@"
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(REPO / "e2e/compose-owner.sh", self.root / "e2e/compose-owner.sh")
         shutil.copy2(REPO / "e2e/journey/candidate-services.sh", self.root / "e2e/journey/candidate-services.sh")
+        shutil.copy2(REPO / "e2e/journey/phase-timing.sh", self.root / "e2e/journey/phase-timing.sh")
         compose_source = self.root / "compose-workspace-source.txt"
         self._script(self.bin / "docker", '''#!/bin/sh
 if [ "$1 $2" = "compose version" ]; then
@@ -1640,7 +1641,7 @@ exit 1
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preflight fixture failed", result.stdout)
-        self.assertEqual(compose_source.read_text(), str(self.root))
+        self.assertEqual(Path(compose_source.read_text()).resolve(), self.root.resolve())
         self.assertFalse((self.root / "e2e/packages").exists())
 
 
