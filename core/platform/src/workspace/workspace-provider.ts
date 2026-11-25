@@ -82,6 +82,13 @@ export interface WorkspaceStatusResult {
   updatedAt: string;
 }
 
+export interface WorkspaceCleanupResult {
+  workspaceId: string;
+  status: 'preserved';
+  path: string;
+  reason: 'dirty' | 'status-unavailable' | 'cleanup-failed';
+}
+
 export interface WorkspaceProviderCapabilities {
   supportsAttach?: boolean;
   supportsRelease?: boolean;
@@ -94,5 +101,7 @@ export interface IWorkspaceProvider {
   attach(request: AttachWorkspaceRequest): Promise<WorkspaceAttachment>;
   release(workspaceId: string, environmentId?: string): Promise<void>;
   getStatus(workspaceId: string): Promise<WorkspaceStatusResult>;
+  /** Remove stale workspaces at host startup and report any path retained for recovery. */
+  startupCleanup?(projectRoot?: string): Promise<WorkspaceCleanupResult[]>;
   getCapabilities?(): WorkspaceProviderCapabilities;
 }

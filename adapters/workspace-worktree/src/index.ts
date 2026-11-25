@@ -12,6 +12,7 @@ import type {
   AttachWorkspaceRequest,
   WorkspaceAttachment,
   WorkspaceStatusResult,
+  WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
   WorkspaceStatus,
 } from '@kb-labs/sdk/adapters';
@@ -221,12 +222,22 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     } catch (error) {
       progress('failed', `Provisioning failed: ${error instanceof Error ? error.message : String(error)}`);
 
+      let recoveryHint = '';
       try {
-        await this.exec(`git worktree remove "${worktreePath}" --force`, repoRoot, TIMEOUTS.cleanup);
-      } catch { /* ignore cleanup errors */ }
+        if (existsSync(worktreePath)) {
+          const status = await this.inspectWorktree(worktreePath);
+          if (status !== 'clean') {
+            recoveryHint = ` Workspace preserved for recovery at ${worktreePath}`;
+          } else if (status === 'clean') {
+            await this.exec(`git worktree remove ${shellQuote(worktreePath)}`, repoRoot, TIMEOUTS.cleanup);
+          }
+        }
+      } catch {
+        recoveryHint = ` Workspace may need recovery at ${worktreePath}`;
+      }
 
       throw new Error(
-        `Failed to provision workspace: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to provision workspace: ${error instanceof Error ? error.message : String(error)}${recoveryHint}`
       );
     }
   }
@@ -273,26 +284,64 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     this.records.delete(workspaceId);
   }
 
-  async startupCleanup(projectRoot = this.configuredProjectRoot): Promise<void> {
-    if (!projectRoot) return;
+  async startupCleanup(projectRoot = this.configuredProjectRoot): Promise<WorkspaceCleanupResult[]> {
+    if (!projectRoot) return [];
     const repoRoot = path.resolve(projectRoot);
     const worktreeBaseDir = path.resolve(repoRoot, this.worktreeDir);
     if (!existsSync(worktreeBaseDir)) {
-      return;
+      return [];
     }
     const entries = readdirSync(worktreeBaseDir);
+    const preserved: WorkspaceCleanupResult[] = [];
     for (const entry of entries) {
       const worktreePath = path.join(worktreeBaseDir, entry);
+      const workspaceId = entry;
+      let status: 'clean' | 'dirty' | 'unavailable' | 'not-worktree';
       try {
-        await this.exec(`git worktree remove "${worktreePath}" --force`, repoRoot, TIMEOUTS.cleanup);
+        status = await this.inspectWorktree(worktreePath);
       } catch {
-        rmSync(worktreePath, { recursive: true, force: true });
+        status = 'unavailable';
+      }
+
+      if (status === 'not-worktree') continue;
+      if (status === 'dirty' || status === 'unavailable') {
+        preserved.push({
+          workspaceId,
+          status: 'preserved',
+          path: worktreePath,
+          reason: status === 'dirty' ? 'dirty' : 'status-unavailable',
+        });
+        continue;
+      }
+
+      try {
+        await this.exec(`git worktree remove ${shellQuote(worktreePath)}`, repoRoot, TIMEOUTS.cleanup);
+      } catch {
+        preserved.push({ workspaceId, status: 'preserved', path: worktreePath, reason: 'cleanup-failed' });
       }
     }
     try {
       await this.exec('git worktree prune', repoRoot, TIMEOUTS.cleanup);
     } catch { /* ignore */ }
     this.records.clear();
+    return preserved;
+  }
+
+  private async inspectWorktree(worktreePath: string): Promise<'clean' | 'dirty' | 'unavailable' | 'not-worktree'> {
+    let topLevel: string;
+    try {
+      topLevel = (await this.exec('git rev-parse --show-toplevel', worktreePath, TIMEOUTS.cleanup)).trim();
+    } catch {
+      return 'not-worktree';
+    }
+    if (path.resolve(topLevel) !== path.resolve(worktreePath)) return 'not-worktree';
+
+    try {
+      const status = await this.exec('git status --porcelain --untracked-files=all', worktreePath, TIMEOUTS.cleanup);
+      return status.trim() ? 'dirty' : 'clean';
+    } catch {
+      return 'unavailable';
+    }
   }
 
   async getStatus(workspaceId: string): Promise<WorkspaceStatusResult> {
@@ -359,6 +408,10 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     const { stdout } = await execAsync(command, { cwd, encoding: 'utf8', timeout });
     return stdout;
   }
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 /**

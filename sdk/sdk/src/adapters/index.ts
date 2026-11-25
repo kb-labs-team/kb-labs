@@ -184,6 +184,7 @@ export type {
   AttachWorkspaceRequest,
   WorkspaceAttachment,
   WorkspaceStatusResult,
+  WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
 } from '@kb-labs/core-platform/adapters';
 
