@@ -49,8 +49,20 @@ import type {
   StepExecutionResult,
 } from '../types'
 import { toWorkflowOutputs } from './output-normalizer.js'
-import type { IAnalytics, ILogger } from '@kb-labs/core-platform'
+import { redactSensitiveText, type IAnalytics, type ILogger } from '@kb-labs/core-platform'
 import { classifyFailure } from '@kb-labs/core-retry'
+
+function getCapturedCommandOutputs(data: unknown, secrets: Record<string, string>): Record<string, unknown> | undefined {
+  if (!data || typeof data !== 'object') { return undefined }
+
+  const { stdout, stderr, exitCode } = data as Record<string, unknown>
+  const sensitiveValues = Object.values(secrets)
+  const outputs: Record<string, unknown> = {}
+  if (typeof stdout === 'string') { outputs.stdout = redactSensitiveText(stdout, sensitiveValues) }
+  if (typeof stderr === 'string') { outputs.stderr = redactSensitiveText(stderr, sensitiveValues) }
+  if (typeof exitCode === 'number') { outputs.exitCode = exitCode }
+  return Object.keys(outputs).length ? outputs : undefined
+}
 
 export interface SandboxRunnerOptions {
   /**
@@ -376,18 +388,14 @@ export class SandboxRunner implements Runner {
         const returnedError = data.error && typeof data.error === 'object'
           ? data.error as Record<string, unknown>
           : undefined
-        const diagnostic = [data.stderr, data.stdout]
+        const outputs = getCapturedCommandOutputs(data, context.secrets)
+        const diagnostic = [outputs?.stderr, outputs?.stdout]
           .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
           .map((value) => value.slice(-500))
           .join('\n')
         const message = typeof returnedError?.message === 'string'
           ? returnedError.message
           : `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})${diagnostic ? `: ${diagnostic}` : ''}`
-        const outputs = Object.fromEntries(
-          ['stdout', 'stderr', 'exitCode']
-            .filter((key) => data[key] !== undefined)
-            .map((key) => [key, data[key]]),
-        )
         const failure = classifyFailure(
           data.error && typeof data.error === 'object'
             ? data.error
@@ -434,38 +442,27 @@ export class SandboxRunner implements Runner {
         durationMs: result.executionTimeMs,
         errorCode: result.error?.code,
       })
-      return {
-        status: 'failed',
-        error: {
-          message: result.error.message,
-          code: result.error.code,
-          hint: result.error.hint,
-          details: result.error?.details,
-          diagnostics: result.error?.diagnostics,
-        },
-        failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
-      }
+    } else {
+      context.logger.error('Plugin handler failed', {
+        stepId: context.stepId,
+        executionId,
+        error: result.error?.message,
+        code: result.error?.code,
+      })
     }
 
-    // Handle failure
-    context.logger.error('Plugin handler failed', {
-      stepId: context.stepId,
-      executionId,
-      error: result.error?.message,
-      code: result.error?.code,
-    })
-
-      return {
-        status: 'failed',
-        error: {
+    return {
+      status: 'failed',
+      error: {
         message: result.error?.message ?? 'Plugin execution failed',
         code: result.error?.code ?? 'UNKNOWN_ERROR',
-          hint: result.error?.hint,
-          details: result.error?.details,
-          diagnostics: result.error?.diagnostics,
-        },
-        failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
-      }
+        hint: result.error?.hint,
+        details: result.error?.details,
+        diagnostics: result.error?.diagnostics,
+      },
+      outputs: getCapturedCommandOutputs(result.data, context.secrets),
+      failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
+    }
   }
 
   /**

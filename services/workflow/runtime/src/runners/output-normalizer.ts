@@ -10,24 +10,17 @@
  * to step.outputs — no other code should do this transformation.
  */
 
-/**
- * Check if value looks like a plugin CommandResult.
- * CLI command handlers return this shape; workflow handlers return raw data.
- *
- * A shell result also has `exitCode`, so it must not be mistaken for a
- * plugin result even when its process succeeded.
- */
-type RuntimeCommandResult = { ok: boolean; result?: unknown; data?: unknown; error?: unknown; meta?: Record<string, unknown> };
+import { isUxResult } from '@kb-labs/core-platform/ux-result';
 
-function isCommandResult(value: unknown): value is RuntimeCommandResult {
+function isLegacyCommandResult(value: unknown): value is { ok: boolean; result: unknown } {
   if (typeof value !== 'object' || value === null) {
     return false;
   }
 
   const record = value as Record<string, unknown>;
   return typeof record.ok === 'boolean'
-    && !('exitCode' in record)
-    && ('result' in record || 'data' in record);
+    && 'result' in record
+    && Object.keys(record).every((key) => key === 'ok' || key === 'result' || key === 'error' || key === 'meta');
 }
 
 /**
@@ -49,13 +42,10 @@ function isCommandResult(value: unknown): value is RuntimeCommandResult {
  * | null                                     | {}                        |
  */
 export function toWorkflowOutputs(data: unknown): Record<string, unknown> {
-  // CLI CommandResult — extract the payload
-  if (isCommandResult(data)) {
-    const inner = 'data' in data ? data.data : data.result;
-    if (typeof inner === 'object' && inner !== null) {
-      return inner as Record<string, unknown>;
-    }
-    return inner !== undefined && inner !== null ? { result: inner } : {};
+  if (isUxResult(data) && data.ok) {
+    data = data.data;
+  } else if (isLegacyCommandResult(data)) {
+    data = data.result;
   }
 
   // Object — use as-is
