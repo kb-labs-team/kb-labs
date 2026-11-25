@@ -15,6 +15,8 @@ export interface ArtifactReference {
 
 export interface ArtifactClient {
   produce(path: string, input: ArtifactInput): Promise<void>
+  /** Atomically replace an artifact after a complete write; failed streams leave no partial target. */
+  produceAtomic?(path: string, input: ArtifactInput): Promise<void>
   consume(path: string): Promise<ArtifactOutput>
   list?(prefix?: string): Promise<ArtifactReference[]>
   basePath?: () => string

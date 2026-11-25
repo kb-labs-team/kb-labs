@@ -30,6 +30,10 @@ import type {
 } from "@kb-labs/workflow-contracts";
 import type { ExecutionBackend } from "@kb-labs/plugin-execution";
 import { createContextLogger, registerProcessSensitiveValues } from "@kb-labs/core-platform";
+import { createHash } from 'node:crypto';
+import path from 'node:path';
+import { Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import {
   buildShellSafeCommand,
   interpolateObject,
@@ -43,6 +47,8 @@ import {
   projectStepEnvironment,
   SandboxRunner,
   summarizeWorkflowInput,
+  createFileSystemArtifactClient,
+  type StepExecutionResult,
 } from "@kb-labs/workflow-runtime";
 
 interface StepSpecRaw {
@@ -371,6 +377,7 @@ export async function createWorkflowWorker(
       ? workspaceRoot
       : (process.env["KB_PROJECT_ROOT"] ?? workspaceRoot);
     let provisionedWorkspaceId: string | undefined;
+    let executionWorkspaceId: string | undefined;
     const workspaceMetadata = run.metadata?.['executionWorkspace'] as
       | { workspaceId?: unknown; rootPath?: unknown }
       | undefined;
@@ -383,6 +390,7 @@ export async function createWorkflowWorker(
       && typeof workspaceMetadata.workspaceId === 'string'
     ) {
       runWorkspace = workspaceMetadata.rootPath;
+      executionWorkspaceId = workspaceMetadata.workspaceId;
       // The owner releases once its terminal job completes. A child must never
       // release a borrowed worktree.
       provisionedWorkspaceId = inheritedWorkspace ? undefined : workspaceMetadata.workspaceId;
@@ -411,6 +419,7 @@ export async function createWorkflowWorker(
           const rootPath = ws.rootPath;
           runWorkspace = rootPath;
           provisionedWorkspaceId = ws.workspaceId;
+          executionWorkspaceId = ws.workspaceId;
           await engine.getStateStore().updateRun(run.id, (draft) => {
             draft.metadata = {
               ...(draft.metadata ?? {}),
@@ -908,7 +917,61 @@ export async function createWorkflowWorker(
 
           // Delegate execution to the execution plane.
           // The platform handles provisioning (workspace, environment, cleanup) transparently.
-          const result = await runner.execute({
+          let result: StepExecutionResult;
+          if (interpolatedSpec.uses === 'builtin:workspace-patch') {
+            try {
+              const exportPatch = wsProvider && executionWorkspaceId
+                ? (wsProvider as IWorkspaceProvider).exportPatch
+                : undefined;
+              if (!exportPatch || !executionWorkspaceId) {
+                throw new Error('Workspace patch export capability is unavailable');
+              }
+              const exported = await exportPatch.call(wsProvider, executionWorkspaceId, runWorkspace);
+              const artifacts = createFileSystemArtifactClient(path.join(projectRoot, '.kb/run-artifacts'));
+              const encodedId = (value: string) => Buffer.from(value).toString('base64url');
+              const artifactKey = `workflow-runs/${encodedId(run.id)}/${encodedId(job.id)}/${encodedId(step.id)}/workspace.patch`;
+              const hash = createHash('sha256');
+              let sizeBytes = 0;
+              const digestStream = new Transform({
+                transform(chunk: Buffer | string, encoding, callback) {
+                  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
+                  hash.update(bytes);
+                  sizeBytes += bytes.byteLength;
+                  callback(null, bytes);
+                },
+              });
+              const patchStream = pipeline(exported.patch, digestStream);
+              try {
+                await artifacts.produceAtomic(artifactKey, digestStream);
+                await patchStream;
+              } catch (error) {
+                digestStream.destroy();
+                await patchStream.catch(() => {});
+                throw error;
+              }
+              result = {
+                status: 'success',
+                outputs: {
+                  status: sizeBytes === 0 ? 'no_changes' : 'captured',
+                  artifactKey: `.kb/run-artifacts/${artifactKey}`,
+                  baseCommit: exported.baseCommit,
+                  changedFiles: exported.changedFiles,
+                  sizeBytes,
+                  sha256: hash.digest('hex'),
+                },
+              };
+            } catch {
+              result = {
+                status: 'failed',
+                error: {
+                  code: 'KB_RUNTIME_COMMAND_FAILED',
+                  message: 'The task worktree patch could not be exported or stored.',
+                  hint: 'Keep the task worktree for debugging, verify the workspace provider and artifact storage, then rerun the workflow.',
+                },
+              };
+            }
+          } else {
+            result = await runner.execute({
             spec: interpolatedSpec as StepSpec,
             context: {
               runId: run.id,
@@ -974,7 +1037,8 @@ export async function createWorkflowWorker(
             // KB_WORKSPACE_ROOT themselves (agent scripts, git operations).
             workspace: workspaceRoot,
             target,
-          });
+            });
+          }
 
           if (result.status === "failed") {
             const stepDurationMs = Date.now() - stepStartTime;
@@ -1003,7 +1067,7 @@ export async function createWorkflowWorker(
               errorCode: result.error?.code,
             });
 
-            if (step.continueOnError) {
+            if (step.continueOnError && step.spec.uses !== 'builtin:workspace-patch') {
               safeStepLogger.warn(
                 "[step] continueOnError=true — continuing despite failure",
                 {

@@ -463,6 +463,7 @@ export class SandboxRunner implements Runner {
    * - `plugin:id/handler` - workflow handler (native)
    * - `command:name` - CLI command (via adapter)
    * - `builtin:shell` - built-in shell execution
+   * - `builtin:workspace-patch` - handled by the workflow worker
    */
   private async resolveCommand(
     spec: StepSpec,
@@ -489,7 +490,7 @@ export class SandboxRunner implements Runner {
       )
     }
 
-    if (uses === 'builtin:approval' || uses === 'builtin:gate') {
+    if (uses === 'builtin:approval' || uses === 'builtin:gate' || uses === 'builtin:workspace-patch') {
       throw new Error(`${uses} is handled by the workflow worker, not the sandbox runner`)
     }
 

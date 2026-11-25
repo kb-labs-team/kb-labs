@@ -59,3 +59,8 @@ jobs:
           mode: heuristic
           scope: changed
           json: true
+
+      - name: Save task patch
+        id: patch
+        phase: review
+        uses: builtin:workspace-patch

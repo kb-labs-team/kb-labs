@@ -1,7 +1,9 @@
 import { createWriteStream, createReadStream } from 'node:fs'
-import { mkdir, stat, readdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, stat, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
-import { dirname, resolve, join, relative } from 'pathe'
+import { dirname, resolve, join, relative, basename } from 'pathe'
 import type {
   ArtifactClient,
   ArtifactInput,
@@ -89,6 +91,28 @@ export class FileSystemArtifactClient implements ArtifactClient {
   async produce(path: string, input: ArtifactInput): Promise<void> {
     const target = ensureWithinRoot(this.options.root, path)
     await writeInput(target, input)
+  }
+
+  async produceAtomic(path: string, input: ArtifactInput): Promise<void> {
+    const target = ensureWithinRoot(this.options.root, path)
+    const parent = dirname(target)
+    await mkdir(parent, { recursive: true, mode: 0o700 })
+    await chmod(parent, 0o700)
+    const temporary = join(parent, `.${basename(target)}.${randomUUID()}.tmp`)
+    try {
+      const destination = createWriteStream(temporary, { flags: 'wx', mode: 0o600 })
+      if (typeof input === 'string' || input instanceof Buffer || input instanceof Uint8Array) {
+        await pipeline(Readable.from([input]), destination)
+      } else if (input && typeof input.pipe === 'function') {
+        await pipeline(input, destination)
+      } else {
+        throw new Error('Unsupported artifact input type')
+      }
+      await rename(temporary, target)
+    } catch (error) {
+      await rm(temporary, { force: true })
+      throw error
+    }
   }
 
   async consume(path: string): Promise<ArtifactOutput> {

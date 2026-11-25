@@ -1,10 +1,14 @@
-import { exec } from 'node:child_process';
+import { exec, execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { PassThrough } from 'node:stream';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 import type {
   IWorkspaceProvider,
   MaterializeWorkspaceRequest,
@@ -15,6 +19,7 @@ import type {
   WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
   WorkspaceStatus,
+  WorkspacePatchExport,
 } from '@kb-labs/sdk/adapters';
 
 export { manifest } from './manifest.js';
@@ -55,6 +60,7 @@ interface WorktreeRecord {
   refCount: number;
   repoRoot: string;
   worktreeBaseDir: string;
+  baseCommit: string;
 }
 
 const TIMEOUTS = {
@@ -131,9 +137,10 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         };
       }
       // Worktree exists on disk but not in records (stale) — reuse anyway
+      const baseCommit = await this.readBaseCommit(worktreePath);
       onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree (recovered)', progress: 100 });
       const now = new Date().toISOString();
-      this.records.set(workspaceId, { workspaceId, worktreePath, branch, status: 'ready', createdAt: now, runId, refCount: 1, repoRoot, worktreeBaseDir });
+      this.records.set(workspaceId, { workspaceId, worktreePath, branch, status: 'ready', createdAt: now, runId, refCount: 1, repoRoot, worktreeBaseDir, baseCommit });
       return {
         workspaceId,
         provider: 'worktree',
@@ -195,6 +202,8 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         progress('dist-links', 'Tool binaries linked', 98);
       }
 
+      const baseCommit = await this.persistBaseCommit(worktreePath);
+
       progress('ready', 'Workspace ready', 100);
 
       const record: WorktreeRecord = {
@@ -207,6 +216,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         refCount: 1,
         repoRoot,
         worktreeBaseDir,
+        baseCommit,
       };
       this.records.set(workspaceId, record);
 
@@ -252,6 +262,102 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     // reuse it and see all accumulated changes (agent edits, build artifacts, etc.).
     // Startup reports retained worktrees. Explicit destroy() ends their lifetime.
     record.status = 'released';
+  }
+
+  async exportPatch(workspaceId: string, workspaceRoot?: string): Promise<WorkspacePatchExport> {
+    let record = this.records.get(workspaceId);
+    if (!record && workspaceRoot) {
+      record = await this.recoverRecord(workspaceId, workspaceRoot);
+    }
+    if (!record) {
+      throw Object.assign(new Error('Workspace is not available for patch export'), {
+        code: 'KB_WORKSPACE_PATCH_WORKSPACE_MISSING',
+      });
+    }
+
+    const expectedRoot = await realpath(record.worktreePath).catch(() => '');
+    const actualRoot = await this.gitOutput(['rev-parse', '--show-toplevel'], record.worktreePath)
+      .then((value) => realpath(value.trim()))
+      .catch(() => '');
+    if (!expectedRoot || actualRoot !== expectedRoot) {
+      throw Object.assign(new Error('Workspace Git root does not match the materialized workspace'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+
+    const baseCommit = await this.readBaseCommit(record.worktreePath);
+    if (baseCommit !== record.baseCommit) {
+      throw Object.assign(new Error('Workspace base commit metadata changed'), {
+        code: 'KB_WORKSPACE_PATCH_BASE_MISMATCH',
+      });
+    }
+
+    const objectDirRaw = await this.gitOutput(['rev-parse', '--git-path', 'objects'], record.worktreePath);
+    const commonObjectDir = await realpath(path.resolve(record.worktreePath, objectDirRaw.trim()));
+    const tempDir = await mkdtemp(path.join(tmpdir(), 'kb-worktree-patch-'));
+    const tempObjects = path.join(tempDir, 'objects');
+    const tempIndex = path.join(tempDir, 'index');
+    await chmod(tempDir, 0o700);
+    await mkdir(tempObjects, { mode: 0o700 });
+    const env = {
+      ...process.env,
+      GIT_INDEX_FILE: tempIndex,
+      GIT_OBJECT_DIRECTORY: tempObjects,
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: commonObjectDir,
+    };
+
+    try {
+      await this.gitOutput(['read-tree', baseCommit], record.worktreePath, env);
+      await this.gitOutput(['add', '--all'], record.worktreePath, env);
+      const filesOutput = await this.gitOutput(
+        ['diff', '--cached', '--name-only', '-z', baseCommit],
+        record.worktreePath,
+        env,
+      );
+      const child = spawn('git', [
+        'diff', '--cached', '--binary', '--full-index', '--no-ext-diff',
+        '--no-textconv', '--no-color', baseCommit,
+      ], { cwd: record.worktreePath, env, stdio: ['ignore', 'pipe', 'ignore'] });
+      const patch = new PassThrough();
+      let closed = false;
+      const cleanup = () => {
+        if (closed) return;
+        closed = true;
+        void rm(tempDir, { recursive: true, force: true });
+      };
+      child.once('error', () => {
+        patch.destroy(Object.assign(new Error('Git could not export the workspace patch'), {
+          code: 'KB_WORKSPACE_PATCH_EXPORT_FAILED',
+        }));
+        cleanup();
+      });
+      child.once('close', (code) => {
+        if (code === 0) {
+          patch.end();
+        } else {
+          patch.destroy(Object.assign(new Error('Git could not export the workspace patch'), {
+            code: 'KB_WORKSPACE_PATCH_EXPORT_FAILED',
+          }));
+        }
+        cleanup();
+      });
+      child.stdout.pipe(patch, { end: false });
+      patch.once('close', () => {
+        if (child.exitCode === null) child.kill();
+        cleanup();
+      });
+      return {
+        patch,
+        baseCommit,
+        changedFiles: filesOutput.split('\0').filter(Boolean).sort(),
+      };
+    } catch (error) {
+      await rm(tempDir, { recursive: true, force: true });
+      throw Object.assign(new Error('Git could not prepare the workspace patch'), {
+        code: 'KB_WORKSPACE_PATCH_EXPORT_FAILED',
+        cause: error,
+      });
+    }
   }
 
   async destroy(workspaceId: string): Promise<void> {
@@ -387,6 +493,80 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
   private async exec(command: string, cwd: string, timeout = 60_000): Promise<string> {
     const { stdout } = await execAsync(command, { cwd, encoding: 'utf8', timeout });
     return stdout;
+  }
+
+  private async gitOutput(args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
+    const { stdout } = await execFileAsync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      timeout: TIMEOUTS.cleanup,
+      env,
+    });
+    return stdout;
+  }
+
+  private async persistBaseCommit(worktreePath: string): Promise<string> {
+    const commit = (await this.gitOutput(['rev-parse', 'HEAD'], worktreePath)).trim();
+    if (!/^[a-f0-9]{40,64}$/.test(commit)) {
+      throw new Error('Materialized workspace has an invalid base commit');
+    }
+    const gitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+    const gitDir = await realpath(path.resolve(worktreePath, gitDirRaw));
+    await writeFile(path.join(gitDir, 'kb-workflow-base'), `${commit}\n`, { flag: 'wx', mode: 0o600 });
+    return commit;
+  }
+
+  private async readBaseCommit(worktreePath: string): Promise<string> {
+    const gitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+    const gitDir = await realpath(path.resolve(worktreePath, gitDirRaw));
+    const commit = (await readFile(path.join(gitDir, 'kb-workflow-base'), 'utf8')).trim();
+    if (!/^[a-f0-9]{40,64}$/.test(commit)) {
+      throw Object.assign(new Error('Workspace base commit metadata is missing or invalid'), {
+        code: 'KB_WORKSPACE_PATCH_BASE_MISSING',
+      });
+    }
+    return commit;
+  }
+
+  private async recoverRecord(workspaceId: string, workspaceRoot: string): Promise<WorktreeRecord> {
+    const rootPath = path.resolve(workspaceRoot);
+    const worktreeBaseDir = path.dirname(rootPath);
+    const relativeSegments = this.worktreeDir.split(path.sep).filter(Boolean).length;
+    const projectRoot = this.configuredProjectRoot
+      ? path.resolve(this.configuredProjectRoot)
+      : path.isAbsolute(this.worktreeDir)
+        ? ''
+        : path.resolve(worktreeBaseDir, ...Array.from({ length: relativeSegments }, () => '..'));
+    const repoRoot = projectRoot ? await realpath(projectRoot).catch(() => '') : '';
+    const expectedBaseDir = repoRoot ? path.resolve(repoRoot, this.worktreeDir) : '';
+    const expectedWorktree = expectedBaseDir && path.basename(rootPath) === workspaceId
+      ? await realpath(path.join(expectedBaseDir, workspaceId)).catch(() => '')
+      : '';
+    const actualBaseDir = await realpath(worktreeBaseDir).catch(() => '');
+    const actualWorkspaceRoot = await realpath(rootPath).catch(() => '');
+    const gitTopLevel = await this.gitOutput(['rev-parse', '--show-toplevel'], rootPath)
+      .then((value) => realpath(value.trim()))
+      .catch(() => '');
+    if (!expectedWorktree || actualBaseDir !== expectedBaseDir || actualWorkspaceRoot !== expectedWorktree || gitTopLevel !== expectedWorktree) {
+      throw Object.assign(new Error('Workspace Git root does not match the requested workspace ID'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    const baseCommit = await this.readBaseCommit(rootPath);
+    const now = new Date().toISOString();
+    const record: WorktreeRecord = {
+      workspaceId,
+      worktreePath: rootPath,
+      branch: 'HEAD',
+      status: 'ready',
+      createdAt: now,
+      refCount: 1,
+      repoRoot,
+      worktreeBaseDir,
+      baseCommit,
+    };
+    this.records.set(workspaceId, record);
+    return record;
   }
 }
 

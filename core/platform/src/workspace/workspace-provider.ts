@@ -96,6 +96,13 @@ export interface WorkspaceProviderCapabilities {
   custom?: Record<string, unknown>;
 }
 
+/** Binary-safe Git patch produced from the immutable workspace base. */
+export interface WorkspacePatchExport {
+  patch: NodeJS.ReadableStream;
+  baseCommit: string;
+  changedFiles: string[];
+}
+
 export interface IWorkspaceProvider {
   materialize(request: MaterializeWorkspaceRequest): Promise<WorkspaceDescriptor>;
   attach(request: AttachWorkspaceRequest): Promise<WorkspaceAttachment>;
@@ -103,5 +110,7 @@ export interface IWorkspaceProvider {
   getStatus(workspaceId: string): Promise<WorkspaceStatusResult>;
   /** Inspect existing workspaces at host startup and report paths retained for recovery. */
   startupCleanup?(projectRoot?: string): Promise<WorkspaceCleanupResult[]>;
+  /** Optional capability used only by the explicit `builtin:workspace-patch` workflow step. */
+  exportPatch?(workspaceId: string, workspaceRoot?: string): Promise<WorkspacePatchExport>;
   getCapabilities?(): WorkspaceProviderCapabilities;
 }
