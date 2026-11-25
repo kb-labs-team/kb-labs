@@ -9,7 +9,10 @@ const makeRun = (ok = true): DevkitRunOutput => ({
   elapsed: '1s',
   ok,
   results: [{ Package: 'pkg-a', Task: 'build', OK: ok, Cached: false, Elapsed: 100, ExitCode: ok ? 0 : 1, Stdout: '', Stderr: '', Error: '' }],
-  summary: { total: 1, passed: ok ? 1 : 0, failed: ok ? 0 : 1, cached: 0 },
+  summary: {
+    total: 1, scheduled: 1, passed: ok ? 1 : 0, failed: ok ? 0 : 1, cached: 0,
+    blocked: 0, notAffected: 0, skippedManual: 0, blockedTasks: [],
+  },
 });
 
 const makeCheck = (ok = true): DevkitCheckOutput => ({
