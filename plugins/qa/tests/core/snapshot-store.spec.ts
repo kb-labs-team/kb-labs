@@ -3,6 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SnapshotStore } from '../../src/core/snapshot/snapshot-store.js';
+import { QAHistoryResponseSchema } from '../../src/contracts/types/rest-api.js';
 import type { DevkitRunOutput, DevkitCheckOutput, DevkitStatsOutput, DevkitGateOutput } from '@kb-labs/qa/contracts';
 
 const makeRun = (ok = true): DevkitRunOutput => ({
@@ -63,6 +64,15 @@ describe('SnapshotStore — run snapshots', () => {
     const history = store.loadRunHistory();
     expect(history).toHaveLength(1);
     expect(history[0]!.id).toBe(snap.id);
+  });
+
+  it('accepts saved run summaries that predate DevKit task accounting', () => {
+    const store = new SnapshotStore(rootDir);
+    const summary = { total: 1, passed: 1, failed: 0, cached: 0 };
+    store.saveRun({ ...makeRun(), summary }, ['build'], 500);
+    const response = { snapshots: store.loadRunHistory(), total: 1 };
+
+    expect(QAHistoryResponseSchema.parse(response)).toEqual(response);
   });
 
   it('trims run history to maxEntries', () => {
