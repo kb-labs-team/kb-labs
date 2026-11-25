@@ -444,11 +444,11 @@ export function DashboardView({ run, onApprove }: DashboardViewProps) {
                 </div>
                 {step.spec?.artifacts && step.outputs && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 12px 4px 33px' }}>
-                    {Object.values(step.spec.artifacts).map((artifact, index) => {
-                      const data = resolveArtifactData(artifact.source, step.outputs as Record<string, unknown>);
+                    {Object.entries(step.spec.artifacts).map(([name, artifact]) => {
+                      const data = resolveArtifactData(artifact.source, step.outputs, step.spec?.id);
                       if (data == null) { return null; }
                       return (
-                        <div key={`${step.id}:artifact:${index}`}>
+                        <div key={name}>
                           <UITypographyText className="typo-label text-secondary" style={{ display: 'block', marginBottom: 6 }}>
                             {artifact.label}
                           </UITypographyText>
