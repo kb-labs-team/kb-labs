@@ -91,6 +91,24 @@ describe('WorktreeWorkspaceAdapter.exportPatch', () => {
     expect(materialized.rootPath).toBe(workspaceRoot);
   }, 20_000);
 
+  // case: S-325.4
+  it('exports original bytes independently of repository filters and respects private Git excludes', async () => {
+    const projectRoot = await makeRepository();
+    const workspaceId = 'wt_filter_patch';
+    const adapter = new WorktreeWorkspaceAdapter({ toolDistPaths: [], initSubmodules: false, installDeps: false });
+    const workspace = await adapter.materialize({ workspaceId, sourceRef: 'HEAD', projectRoot });
+    const root = workspace.rootPath!;
+    await writeFile(path.join(root, '.gitattributes'), '*.bin filter=local-format\n');
+    execFileSync('git', ['-C', projectRoot, 'config', 'filter.local-format.clean', 'false']);
+    execFileSync('git', ['-C', projectRoot, 'config', 'filter.local-format.required', 'true']);
+    await writeFile(path.join(projectRoot, '.git', 'info', 'exclude'), 'private.log\n');
+    await writeFile(path.join(root, 'private.log'), 'private fixture');
+    await writeFile(path.join(root, 'image.bin'), Buffer.from([0, 125, 255, 1]));
+    const exported = await adapter.exportPatch(workspaceId);
+    expect(exported.changedFiles).toEqual(['.gitattributes', 'image.bin']);
+    expect((await collect(exported.patch)).toString()).toContain('GIT binary patch');
+  });
+
   it('refuses to export when the recorded workspace path is no longer its Git toplevel', async () => {
     const projectRoot = await makeRepository();
     const adapter = new WorktreeWorkspaceAdapter({ toolDistPaths: [], initSubmodules: false, installDeps: false });
