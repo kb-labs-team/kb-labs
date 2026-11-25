@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmod, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { WorktreeWorkspaceAdapter } from './index.js';
 const roots: string[] = [];
 
 async function makeRepository(): Promise<string> {
-  const root = await mkdtemp(path.join(tmpdir(), 'worktree-patch-export-'));
+  const root = await realpath(await mkdtemp(path.join(tmpdir(), 'worktree-patch-export-')));
   roots.push(root);
   execFileSync('git', ['init', '-q', root]);
   execFileSync('git', ['-C', root, 'config', 'user.email', 'patch@example.test']);
