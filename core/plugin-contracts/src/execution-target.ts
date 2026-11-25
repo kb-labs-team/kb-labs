@@ -21,5 +21,8 @@ export interface ExecutionTarget {
    * Working directory override inside target context.
    */
   workdir?: string;
+
+  /** Git ref used when materializing an isolated workspace. Omitted refs keep the provider's configured default. */
+  sourceRef?: string;
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { StepSpecSchema, WorkflowSpecSchema, WorkflowTriggerSchema } from '../schemas'
+import { ExecutionTargetSchema, StepSpecSchema, WorkflowSpecSchema, WorkflowTriggerSchema } from '../schemas'
+import { WorkflowRunRequestSchema } from '../rest-api'
 
 describe('WorkflowTriggerSchema', () => {
   it('accepts manual workflows and rejects unreachable ingress triggers', () => {
@@ -7,6 +8,40 @@ describe('WorkflowTriggerSchema', () => {
     expect(WorkflowTriggerSchema.safeParse({ push: true }).success).toBe(false)
     expect(WorkflowTriggerSchema.safeParse({ webhook: true }).success).toBe(false)
     expect(WorkflowTriggerSchema.safeParse({ webhook: { path: '/incoming' } }).success).toBe(false)
+  })
+})
+
+describe('ExecutionTargetSchema', () => {
+  // case: S-325.2
+  it('preserves an explicit source ref for isolated workspace materialization', () => {
+    expect(ExecutionTargetSchema.parse({ sourceRef: 'HEAD' })).toEqual({ sourceRef: 'HEAD' })
+    expect(ExecutionTargetSchema.safeParse({ sourceRef: '' }).success).toBe(false)
+  })
+
+  // case: S-325.2
+  it('accepts sourceRef on workflow run API targets', () => {
+    expect(WorkflowRunRequestSchema.parse({ target: { sourceRef: 'HEAD' } })).toMatchObject({
+      target: { sourceRef: 'HEAD' },
+    })
+  })
+
+  // case: S-325.2
+  it('accepts sourceRef at both workflow and job scope', () => {
+    const parsed = WorkflowSpecSchema.parse({
+      name: 'native-agent-qa-dogfood',
+      version: '1.0.0',
+      on: { manual: true },
+      target: { sourceRef: 'workflow-ref' },
+      jobs: {
+        dogfood: {
+          runsOn: 'local',
+          target: { sourceRef: 'job-ref' },
+          steps: [{ name: 'Run', uses: 'builtin:shell', with: { command: 'true' } }],
+        },
+      },
+    })
+    expect(parsed.target?.sourceRef).toBe('workflow-ref')
+    expect(parsed.jobs.dogfood?.target?.sourceRef).toBe('job-ref')
   })
 })
 

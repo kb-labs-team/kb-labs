@@ -690,12 +690,13 @@ describe('workflow worker lifecycle', () => {
     const run = {
       id: runId,
       env: {},
-      metadata: {},
+      metadata: { target: { sourceRef: 'workflow-ref' } },
       jobs: [{
         id: jobId,
         jobName: 'job',
         status: 'queued',
         attempt: 0,
+        target: { sourceRef: 'job-ref' },
         steps: [{
           id: 'step-1',
           status: 'queued',
@@ -761,6 +762,10 @@ describe('workflow worker lifecycle', () => {
         serviceId: 'workflow',
       }),
     );
+    // case: S-325.2
+    expect(failingWsProvider.materialize).toHaveBeenCalledWith(expect.objectContaining({
+      sourceRef: 'job-ref',
+    }));
   });
 
   it('buildShellSafeCommand: builtin:shell step receives env-var references, not raw substituted values', async () => {

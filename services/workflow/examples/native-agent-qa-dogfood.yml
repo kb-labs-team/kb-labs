@@ -36,6 +36,8 @@ phases:
 jobs:
   dogfood:
     runsOn: local
+    target:
+      sourceRef: HEAD
     steps:
       - name: Implement task
         id: agent

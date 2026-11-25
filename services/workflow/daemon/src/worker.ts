@@ -406,6 +406,7 @@ export async function createWorkflowWorker(
           projectRoot,
           ownerRunId: run.id,
           platformRoot,
+          sourceRef: target?.sourceRef,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
             jobLogger.info(`[workspace] ${event.stage}: ${event.message}`, {
