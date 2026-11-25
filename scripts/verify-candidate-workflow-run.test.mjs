@@ -13,10 +13,12 @@ test('candidate gate receipt source must be the successful trusted release workf
     head_repository: { full_name: 'kb-labs-team/kb-labs' },
   };
   assert.doesNotThrow(() => verifyCandidateWorkflowRun(trusted, { repository: 'kb-labs-team/kb-labs' }));
+  assert.doesNotThrow(() => verifyCandidateWorkflowRun({ ...trusted, path: '.github/workflows/release-build-candidate.yml' }, { repository: 'kb-labs-team/kb-labs' }));
 
   for (const changed of [
     { path: '.github/workflows/other.yml@master' },
     { path: '.github/workflows/release-build-candidate.yml@feature/untrusted' },
+    { path: '.github/workflows/release-build-candidate.yml@refs/heads/feature/untrusted' },
     { event: 'push' },
     { status: 'in_progress' },
     { conclusion: 'failure' },

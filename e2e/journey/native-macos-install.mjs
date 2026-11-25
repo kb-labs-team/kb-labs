@@ -6,20 +6,21 @@ import { fileURLToPath } from 'node:url';
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const cases = ['S-298.1', 'S-261.2'];
 
-export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, platformRoot, registryUrl }) {
+export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, platformRoot, registryUrl, candidateBinaryPath = process.env.KB_JOURNEY_CANDIDATE_KB_CREATE }) {
   if (!registryUrl) throw new Error('Registry URL is required; run e2e/journey/native-macos-smoke.sh.');
   const createPath = path.join(tempRoot, 'kb-create');
   const createModule = path.join(workspace, 'tools/kb-create');
   const indexPath = path.join(workspace, '.journey/release/journey-candidate/release-index.json');
   const installedCLI = path.join(tempRoot, 'kb');
   return [
-    { command: 'make', args: ['build', `BINARY=${createPath}`], cwd: createModule },
+    ...(candidateBinaryPath ? [] : [{ command: 'make', args: ['build', `BINARY=${createPath}`], cwd: createModule }]),
     {
-      command: createPath,
+      command: candidateBinaryPath ?? createPath,
       args: [
         'install', '--json', '--index', indexPath, '--platform-root', platformRoot,
         '--project-root', workspace, '--scenario', 'explore', '--scenario-answers', '{"access.mode":"local"}',
         '--registry', registryUrl,
+        ...(process.env.KB_CREATE_DOWNLOAD_BASE_URL ? ['--binary-source', process.env.KB_CREATE_DOWNLOAD_BASE_URL] : []),
       ],
       cwd: workspace,
     },
@@ -75,7 +76,7 @@ function run() {
       failure = `${step.command} exited with ${result.status ?? 'no status'}`;
       break;
     }
-    if (step.command.endsWith('/kb-create')) {
+    if (step.args[0] === 'install') {
       try {
         verifyMarketplaceInstall(platformRoot);
       } catch (error) {

@@ -56,4 +56,10 @@ trap cleanup EXIT INT TERM
 journey_start_host_services
 export NPM_CONFIG_REGISTRY="$JOURNEY_REGISTRY_HOST_URL"
 export KB_JOURNEY_REGISTRY_URL="$JOURNEY_REGISTRY_HOST_URL"
+export KB_CREATE_DOWNLOAD_BASE_URL="http://origin:8080/journey-candidate"
+export KB_JOURNEY_CANDIDATE_KB_CREATE="$(node -e 'const fs=require("fs"); const arch=process.arch; const manifest=JSON.parse(fs.readFileSync(".journey/release/journey-candidate/binary-manifest.json","utf8")); const binary=manifest.binaries.find(item=>item.id==="kb-create"&&item.os==="darwin"&&item.arch===arch); if(!binary) throw new Error(`sealed candidate has no darwin/${arch} kb-create`); process.stdout.write(require("path").resolve(".journey/release/journey-candidate",binary.filename));')"
+if [[ ! -x "$KB_JOURNEY_CANDIDATE_KB_CREATE" ]]; then
+  echo "Sealed Darwin candidate binary is missing or not executable: $KB_JOURNEY_CANDIDATE_KB_CREATE" >&2
+  exit 1
+fi
 node e2e/journey/native-macos-install.mjs

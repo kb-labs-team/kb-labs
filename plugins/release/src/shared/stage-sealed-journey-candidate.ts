@@ -54,24 +54,23 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
       throw new Error(`Sealed candidate bundle is missing the exact binary bytes for ${binary.filename}`);
     }
     copyFileSync(source, join(candidateRoot, binary.filename));
-    binary.url = `http://origin:8080/journey-candidate/${binary.filename}`;
   }
-  const releaseIndex = JSON.parse(readFileSync(join(candidateRoot, 'release-index.json'), 'utf8')) as Record<string, unknown>;
-  const binaryByFilename = new Map((binaryManifest.binaries ?? []).map(binary => [binary.filename, binary]));
-  const rewriteUrls = (value: unknown): unknown => {
-    if (Array.isArray(value)) return value.map(rewriteUrls);
-    if (!value || typeof value !== 'object') return value;
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      if (key === 'url' && typeof entry === 'string') {
-        const filename = entry.split('/').pop();
-        if (filename && binaryByFilename.has(filename)) (value as Record<string, unknown>)[key] = `http://origin:8080/journey-candidate/${filename}`;
-      } else {
-        (value as Record<string, unknown>)[key] = rewriteUrls(entry);
-      }
+  // Keep the signed catalog byte-identical: its signature covers URLs as well
+  // as hashes. Installer smoke redirects only the binary source via the
+  // supported --binary-source/KB_CREATE_DOWNLOAD_BASE_URL override.
+  const files: string[] = [];
+  const collect = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) collect(path);
+      else if (entry.isFile() && entry.name !== 'checksums.txt') files.push(path);
     }
-    return value;
   };
-  writeFileSync(join(candidateRoot, 'binary-manifest.json'), `${JSON.stringify(binaryManifest, null, 2)}\n`);
-  writeFileSync(join(candidateRoot, 'release-index.json'), `${JSON.stringify(rewriteUrls(releaseIndex), null, 2)}\n`);
+  collect(candidateRoot);
+  const checksumLines = files.sort().map(path => {
+    const name = path.slice(candidateRoot.length + 1);
+    return `${createHash('sha256').update(readFileSync(path)).digest('hex')}  ${name}\n`;
+  }).join('');
+  writeFileSync(join(candidateRoot, 'checksums.txt'), checksumLines);
   writeFileSync(join(candidateRoot, 'candidate-bundle-digest.txt'), `${verified.provenance.bundleDigest}\n`);
 }

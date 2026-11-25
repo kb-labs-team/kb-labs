@@ -98,6 +98,7 @@ jobs:
       - name: Prepare local journey fixture artifacts
         env:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
+          KB_JOURNEY_FIXTURE_ONLY: ${{ inputs.candidate_run_id != '' && '1' || '0' }}
         run: e2e/journey/prepare-candidate.sh
       - name: Download the sealed release candidate bundle
         if: inputs.candidate_run_id != ''

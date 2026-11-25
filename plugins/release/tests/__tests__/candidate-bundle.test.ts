@@ -135,10 +135,11 @@ describe('candidate bundle producer and verifier', () => {
       url: `https://github.com/kb-labs-team/kb-labs/releases/download/v1/${binaryFilename}`,
     }] }));
     const releaseIndexPath = join(root, 'release-index.json');
-    writeFileSync(releaseIndexPath, JSON.stringify({ platforms: [{
+    const sealedIndexBytes = Buffer.from(JSON.stringify({ platforms: [{
       id: 'platform', version: '1.0.0', binaries: [{ filename: binaryFilename, sha256: binarySha,
         url: `https://github.com/kb-labs-team/kb-labs/releases/download/v1/${binaryFilename}` }],
     }] }));
+    writeFileSync(releaseIndexPath, sealedIndexBytes);
     const bundleDir = join(root, 'bundle');
     const provenance = createCandidateBundle({
       ...identity, channel: 'canary', gate: { policy: 'none' }, workflowRunId: '987654321',
@@ -157,8 +158,10 @@ describe('candidate bundle producer and verifier', () => {
 
     expect(readFileSync(join(packagesDir, tarball))).toEqual(tarballBytes);
     expect(readFileSync(join(candidateDir, binaryFilename))).toEqual(binaryBytes);
-    const stagedIndex = JSON.parse(readFileSync(join(candidateDir, 'release-index.json'), 'utf8'));
-    expect(stagedIndex.platforms[0].binaries[0].url).toBe(`http://origin:8080/journey-candidate/${binaryFilename}`);
+    expect(readFileSync(join(candidateDir, 'release-index.json'))).toEqual(sealedIndexBytes);
+    const candidateChecksums = readFileSync(join(candidateDir, 'checksums.txt'), 'utf8');
+    expect(candidateChecksums).toContain(`${sha256(sealedIndexBytes)}  release-index.json`);
+    expect(candidateChecksums).toContain(`${binarySha}  ${binaryFilename}`);
     expect(readFileSync(join(candidateDir, 'candidate-bundle-digest.txt'), 'utf8')).toBe(`${provenance.bundleDigest}\n`);
     expect(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')).toBe('auxiliary update fixture');
   });

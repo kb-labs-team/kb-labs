@@ -103,12 +103,14 @@ cleanup() {
   exit "$status"
 }
 trap cleanup EXIT
-journey_phase_start "install-candidate-runtime"
-RUNTIME_CONTENT_ROOT="$(journey_install_candidate_runtime "$TARGET/release-index.json" "$PACKAGES" "$RUNTIME_ROOT")"
-journey_phase_end
-journey_phase_start "verify-sdk-runtime-imports"
-node "$ROOT/e2e/journey/sdk_runtime_import_check.mjs" "$RUNTIME_CONTENT_ROOT"
-journey_phase_end
+if [[ "${KB_JOURNEY_FIXTURE_ONLY:-0}" != "1" ]]; then
+  journey_phase_start "install-candidate-runtime"
+  RUNTIME_CONTENT_ROOT="$(journey_install_candidate_runtime "$TARGET/release-index.json" "$PACKAGES" "$RUNTIME_ROOT")"
+  journey_phase_end
+  journey_phase_start "verify-sdk-runtime-imports"
+  node "$ROOT/e2e/journey/sdk_runtime_import_check.mjs" "$RUNTIME_CONTENT_ROOT"
+  journey_phase_end
+fi
 
 journey_phase_start "write-candidate-checksums"
 (

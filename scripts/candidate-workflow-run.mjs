@@ -1,6 +1,8 @@
 export function verifyCandidateWorkflowRun(run, { repository, expectedBranch = 'master' }) {
   const [workflowPath, workflowRef] = typeof run?.path === 'string' ? run.path.split('@', 2) : [];
-  const trustedRef = workflowRef === expectedBranch || workflowRef === `refs/heads/${expectedBranch}`;
+  // The Actions REST endpoint returns a bare workflow path for dispatch runs;
+  // when a ref suffix is present, validate it too.
+  const trustedRef = workflowRef === undefined || workflowRef === expectedBranch || workflowRef === `refs/heads/${expectedBranch}`;
   if (!run || typeof run !== 'object'
     || workflowPath !== '.github/workflows/release-build-candidate.yml'
     || !trustedRef
