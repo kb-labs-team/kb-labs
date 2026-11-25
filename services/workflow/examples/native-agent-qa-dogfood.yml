@@ -1,7 +1,7 @@
 # Native CLI-command dogfood loop. Requires a workspace adapter and the
-# command-step worktree routing from PR #711. Workflow run history retains the
-# command outputs; successful runs release their workspace, so this example
-# deliberately does not claim to preserve a patch.
+# command-step worktree routing from PR #711. The patch step snapshots agent
+# output before QA runs, so failed QA still leaves a reviewable artifact. Files
+# created or changed by QA are outside that snapshot.
 name: native-agent-qa-dogfood
 version: 1.0.0
 description: Run one agent task, then the project's QA test task in the task worktree
@@ -46,6 +46,11 @@ jobs:
           mode: execute
           json: true
 
+      - name: Save agent patch
+        id: patch
+        phase: implement
+        uses: builtin:workspace-patch
+
       - name: Run QA tests
         id: qa
         phase: verify
@@ -65,7 +70,3 @@ jobs:
           scope: changed
           json: true
 
-      - name: Save task patch
-        id: patch
-        phase: review
-        uses: builtin:workspace-patch
