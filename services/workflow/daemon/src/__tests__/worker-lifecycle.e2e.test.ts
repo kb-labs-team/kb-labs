@@ -214,7 +214,7 @@ describe('workflow worker lifecycle', () => {
       async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) { if (stepOutputs) outputs.push(stepOutputs); },
       async markStepFailed() {},
       async markJobInterrupted() {},
-      getStateStore: () => ({ updateStep: vi.fn(async () => {}) }),
+      getStateStore: () => ({ updateStep: vi.fn(async () => {}), updateRun: vi.fn(async () => {}) }),
     } satisfies Partial<WorkflowEngine>;
     const worker = await createWorkflowWorker({
       projectId: 'prj_0000000000000001',
