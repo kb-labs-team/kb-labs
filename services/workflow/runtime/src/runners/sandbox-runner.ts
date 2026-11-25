@@ -613,7 +613,7 @@ export class SandboxRunner implements Runner {
     return {
       argv: [],
       flags: input || {},
-      cwd: request.workspace || this.workspaceRoot,
+      cwd: request.context.env['KB_WORKSPACE_ROOT'] ?? request.workspace ?? this.workspaceRoot,
     }
   }
 
