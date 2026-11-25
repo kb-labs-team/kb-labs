@@ -45,7 +45,7 @@ describe('worker host LLM cancellation', () => {
       let executionFinished = false;
       const execution = backend.execute(request, { signal: controller.signal }).finally(() => { executionFinished = true; });
       const deadline = Date.now() + 3000;
-      while (!providerSignal && !executionFinished && Date.now() < deadline) { await new Promise((resolve) => setTimeout(resolve, 10)); }
+      while (!providerSignal && !executionFinished && Date.now() < deadline) { await new Promise((resolve) => { setTimeout(resolve, 10); }); }
       if (!providerSignal) {
         const earlyResult = await execution;
         throw new Error(`host LLM was not called: ${JSON.stringify(earlyResult)}`);
@@ -53,7 +53,7 @@ describe('worker host LLM cancellation', () => {
       controller.abort(new DOMException('command cancelled', 'AbortError'));
       const result = await execution;
       const abortDeadline = Date.now() + 1000;
-      while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => { setTimeout(resolve, 5); }); }
       expect(result.ok).toBe(false);
       expect(providerSignal?.aborted).toBe(true);
     } finally {
