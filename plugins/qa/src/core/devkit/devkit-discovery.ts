@@ -12,7 +12,7 @@ import { join } from 'node:path';
  * The shell permission whitelist matches by basename, so passing a full path
  * to shell.exec() works correctly when allow: ['kb-devkit'] is declared.
  */
-export function resolveDevkitBin(rootDir: string, configPath?: string): string {
+export function resolveDevkitBin(rootDir: string, configPath?: string, owningProjectRoot?: string): string {
   if (configPath) {
     const full = configPath.startsWith('/') ? configPath : join(rootDir, configPath);
     if (!existsSync(full)) {
@@ -23,6 +23,13 @@ export function resolveDevkitBin(rootDir: string, configPath?: string): string {
 
   const local = join(rootDir, 'tools', 'kb-devkit', 'kb-devkit');
   if (existsSync(local)) {return local;}
+
+  // Isolated task worktrees often omit ignored build outputs. Resolve the owning
+  // project's tool before falling back to PATH, which may contain an older CLI.
+  if (owningProjectRoot) {
+    const projectLocal = join(owningProjectRoot, 'tools', 'kb-devkit', 'kb-devkit');
+    if (existsSync(projectLocal)) {return projectLocal;}
+  }
 
   return 'kb-devkit';
 }

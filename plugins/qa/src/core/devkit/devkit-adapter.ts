@@ -14,6 +14,16 @@ export interface DevkitAdapterOptions {
   timeoutMs?: number;
 }
 
+export class NoDevkitTasksSelectedError extends Error {
+  readonly code = 'KB_RUNTIME_INPUT_INVALID';
+
+  constructor(tasks: string[], packages: string[]) {
+    const scope = packages.length > 0 ? `packages ${packages.join(', ')}` : 'the selected workspace scope';
+    super(`No DevKit tasks were selected for ${scope} and tasks ${tasks.join(', ')}.`);
+    this.name = 'NoDevkitTasksSelectedError';
+  }
+}
+
 export class DevkitAdapter {
   private readonly bin: string;
   private readonly cwd: string;
@@ -35,7 +45,12 @@ export class DevkitAdapter {
       throw new Error('DevkitAdapter.run: packages must include at least one name per selector entry');
     }
     const packageArgs = packageNames.length > 0 ? ['--packages', packageNames.join(',')] : [];
-    return this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
+    const output = await this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
+    const selectedTaskCount = output.summary?.total ?? 0;
+    if (!Number.isInteger(selectedTaskCount) || selectedTaskCount <= 0) {
+      throw new NoDevkitTasksSelectedError(tasks, packageNames);
+    }
+    return output;
   }
 
   async check(): Promise<DevkitCheckOutput> {

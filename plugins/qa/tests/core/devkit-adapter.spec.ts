@@ -6,7 +6,7 @@ describe('DevkitAdapter scoped runs', () => {
   it('passes selected package names to kb-devkit without changing the unscoped default', async () => {
     const exec = vi.fn().mockResolvedValue({
       code: 0,
-      stdout: JSON.stringify({ ok: true, results: [] }),
+      stdout: JSON.stringify({ ok: true, results: [], summary: { total: 2, passed: 2, failed: 0, cached: 0 } }),
       stderr: '',
     });
     const adapter = new DevkitAdapter({
@@ -40,5 +40,43 @@ describe('DevkitAdapter scoped runs', () => {
 
     await expect(adapter.run(['test'], ', ,')).rejects.toThrow(/packages must include at least one name/);
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  // case: S-326.2
+  it('rejects scoped runs when the selected packages schedule no tasks', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify({ ok: true, results: [], summary: { total: 0, passed: 0, failed: 0, cached: 0 } }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit',
+      cwd: '/workspace',
+      shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message: expect.stringContaining('@kb-labs/qa'),
+    });
+  });
+
+  // case: S-326.2
+  it('rejects workspace runs when no tasks are scheduled', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify({ ok: true, results: [], summary: { total: 0, passed: 0, failed: 0, cached: 0 } }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit',
+      cwd: '/workspace',
+      shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'])).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message: expect.stringContaining('selected workspace scope'),
+    });
   });
 });
