@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { DevkitAdapter } from '../../src/core/devkit/devkit-adapter.js';
 
 function adapterWithSummary(summary: Record<string, unknown>, wrapped = true) {
-  const output = { ok: true, results: [], summary: { passed: 1, failed: 0, cached: 0, ...summary } };
+  const output = { ok: true, results: [{ Package: '@kb-labs/qa', Task: 'test', OK: true, Cached: false }], summary: { passed: 1, failed: 0, cached: 0, ...summary } };
   const exec = vi.fn().mockResolvedValue({
     code: 0,
     stdout: JSON.stringify(wrapped ? { data: output } : output),
@@ -20,7 +20,7 @@ describe('DevkitAdapter scoped runs', () => {
   it('passes selected package names to kb-devkit without changing the unscoped default', async () => {
     const exec = vi.fn().mockResolvedValue({
       code: 0,
-      stdout: JSON.stringify({ ok: true, results: [], summary: { total: 2, passed: 2, failed: 0, cached: 0 } }),
+      stdout: JSON.stringify({ ok: true, results: [{ Package: '@kb-labs/qa', Task: 'test', OK: true, Cached: false }], summary: { total: 2, passed: 2, failed: 0, cached: 0 } }),
       stderr: '',
     });
     const adapter = new DevkitAdapter({
@@ -95,10 +95,10 @@ describe('DevkitAdapter scoped runs', () => {
   });
 
   it('accepts the current scheduled count from kb-devkit', async () => {
-    const { adapter } = adapterWithSummary({ scheduled: 3 });
+    const { adapter } = adapterWithSummary({ scheduled: 4 });
 
     await expect(adapter.run(['test'], '@kb-labs/qa')).resolves.toMatchObject({
-      summary: { scheduled: 3 },
+      summary: { scheduled: 4 },
     });
   });
 
@@ -131,6 +131,42 @@ describe('DevkitAdapter scoped runs', () => {
 
     await expect(adapter.run(['test'], '@kb-labs/qa')).rejects.toMatchObject({
       code: 'KB_RUNTIME_INPUT_INVALID',
+    });
+  });
+
+  // case: S-326.2
+  it('rejects scheduled counts without result evidence for the selected task and package', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        results: [{ Package: 'unrelated', Task: 'build', OK: true, Cached: false }],
+        summary: { scheduled: 1, passed: 1, failed: 0, cached: 0 },
+      }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit', cwd: '/workspace', shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message: expect.stringContaining('@kb-labs/qa'),
+    });
+  });
+
+  it('preserves a DevKit command error when its envelope has no task summary', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 1,
+      stdout: JSON.stringify({ ok: false, error: { code: 'KB_DEVKIT_TASK_GRAPH_CYCLE', message: 'task graph cycle', hint: 'fix the graph' } }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit', cwd: '/workspace', shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'])).rejects.toMatchObject({
+      code: 'KB_DEVKIT_TASK_GRAPH_CYCLE', message: 'task graph cycle', hint: 'fix the graph',
     });
   });
 });

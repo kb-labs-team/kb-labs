@@ -8,7 +8,7 @@ function adapterWithEnvelopeOk(ok: boolean) {
       ok,
       data: {
         elapsed: '1s',
-        results: [],
+        results: [{ Package: '@kb-labs/qa', Task: 'test', OK: true, Cached: false }],
         summary: { scheduled: 1, passed: 1, failed: 0, cached: 0 },
       },
     }),
@@ -39,6 +39,24 @@ describe('DevkitAdapter current JSON envelope', () => {
     await expect(adapter.run(['test'], '@kb-labs/qa')).resolves.toMatchObject({
       ok: false,
       summary: { scheduled: 1 },
+    });
+  });
+
+  // case: S-326.2
+  it('does not accept a positive scheduled count with no result rows', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify({ ok: true, data: {
+        elapsed: '1s', results: [], summary: { scheduled: 1, passed: 1, failed: 0, cached: 0 },
+      } }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit', cwd: '/workspace', shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
     });
   });
 });
