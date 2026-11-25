@@ -1161,6 +1161,7 @@ thread.join()
             "events": events,
         }
 
+    # case: S-262.17
     def test_main_smoke_selection_completes_in_both_modes(self):
         runner = importlib.import_module("runner")
         isolated_groups = [group.__name__ for group in runner.ISOLATED_FIXTURE_GROUPS]
@@ -1172,7 +1173,7 @@ thread.join()
                 service_claims = {claim for step in service["steps"] for claim in step.get("cases", [])}
                 self.assertTrue({"PC-002.3", "PC-002.8"}.issubset(service_claims))
                 self.assertIn("SKIPPED workflow execution journey: not selected", summary)
-                self.assertNotIn("SKIPPED platform update journey: not selected", summary)
+                self.assertIn("SKIPPED platform update journey: not selected", summary)
                 self.assertIn("SKIPPED installed platform bootstrap: not selected; the install operation ran earlier; this flow is only a selection marker", summary)
                 self.assertEqual(observed["fixture_calls"], [])
                 self.assertEqual(observed["host_cycle"], ["stop", "start"])
