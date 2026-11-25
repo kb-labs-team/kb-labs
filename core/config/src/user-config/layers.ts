@@ -126,7 +126,7 @@ async function loadConfigFilesAtRoot(
 
     const read = await readJsonWithDiagnostics<unknown>(full);
     diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
-    if (!read.ok) continue;
+    if (!read.ok) { continue; }
     if (read.data === null || typeof read.data !== 'object' || Array.isArray(read.data)) {
       diagnostics.push({
         level: 'error',
