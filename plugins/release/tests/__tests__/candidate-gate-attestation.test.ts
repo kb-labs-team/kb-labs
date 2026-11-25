@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { verifyCandidateGateAttestation, type CandidateGateAttestation } from '../../src/shared/candidate-gate-attestation.js';
 
-// case: S-284.23
 describe('candidate gate receipt', () => {
   const expected = {
     candidateId: 'candidate-1',
@@ -15,6 +14,7 @@ describe('candidate gate receipt', () => {
     result: 'passed' as const,
   };
 
+  // case: S-284.23
   it('accepts receipt fields bound to the sealed payload and trusted workflow run', () => {
     expect(() => verifyCandidateGateAttestation({
       schema: 'kb.release-gate-attestation/1',
@@ -22,21 +22,26 @@ describe('candidate gate receipt', () => {
     }, expected, expected.workflowRunId)).not.toThrow();
   });
 
-  it.each([
-    ['payload digest', { bundleDigest: 'b'.repeat(64) }],
-    ['candidate identity', { candidateId: 'other-candidate' }],
-    ['source workflow run', { workflowRunId: 'different-run' }],
-    ['release channel', { channel: 'canary' }],
-    ['gate result', { result: 'failed' }],
-  ])('rejects a receipt with a mismatched %s', (_label, changes) => {
-    const receipt: CandidateGateAttestation = {
-      schema: 'kb.release-gate-attestation/1',
-      ...expected,
-      ...changes,
-    } as CandidateGateAttestation;
-    expect(() => verifyCandidateGateAttestation(receipt, expected, expected.workflowRunId)).toThrow();
+  // case: S-284.23
+  it('rejects receipts with a mismatched payload digest, candidate identity, run, channel, or result', () => {
+    const changes = [
+      ['payload digest', { bundleDigest: 'b'.repeat(64) }],
+      ['candidate identity', { candidateId: 'other-candidate' }],
+      ['source workflow run', { workflowRunId: 'different-run' }],
+      ['release channel', { channel: 'canary' }],
+      ['gate result', { result: 'failed' }],
+    ] as const;
+    for (const [_label, overrides] of changes) {
+      const receipt: CandidateGateAttestation = {
+        schema: 'kb.release-gate-attestation/1',
+        ...expected,
+        ...overrides,
+      } as CandidateGateAttestation;
+      expect(() => verifyCandidateGateAttestation(receipt, expected, expected.workflowRunId)).toThrow();
+    }
   });
 
+  // case: S-284.23
   it('rejects a receipt without an independently trusted workflow run', () => {
     expect(() => verifyCandidateGateAttestation({
       schema: 'kb.release-gate-attestation/1',

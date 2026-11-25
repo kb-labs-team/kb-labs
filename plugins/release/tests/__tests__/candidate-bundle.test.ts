@@ -351,7 +351,6 @@ describe('candidate bundle producer and verifier', () => {
     })).toThrow(/Public delivery requires a channel with a passed release-case gate/);
   });
 
-  // case: S-284.5
   // case: S-284.23
   it('seals stable payload intent without claiming that its gate has passed', () => {
     const { provenance } = makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
