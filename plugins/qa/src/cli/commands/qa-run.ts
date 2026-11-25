@@ -56,7 +56,13 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
             code: 'KB_QA_TASK_FAILED',
             severity: 'error',
             path: task.Package,
-            message: task.Error || task.Stderr || `Task ${task.Task} exited ${task.ExitCode}.`,
+            message: [
+              `Task ${task.Task} exited ${task.ExitCode}.`,
+              task.Error,
+              task.Stderr,
+              task.LogPath ? `Log: ${task.LogPath}` : '',
+              task.LogError,
+            ].filter(Boolean).join(' '),
           })),
         },
       };

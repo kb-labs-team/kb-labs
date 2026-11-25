@@ -50,6 +50,9 @@ export class DevkitAdapter {
         Stdout: typeof value.Stdout === 'string' ? value.Stdout : '',
         Stderr: typeof value.Stderr === 'string' ? value.Stderr : '',
         Error: typeof value.Error === 'string' ? value.Error : '',
+        ...(typeof value.LogPath === 'string' ? { LogPath: value.LogPath } : {}),
+        ...(typeof value.LogError === 'string' ? { LogError: value.LogError } : {}),
+        ...(typeof value.LogDirectory === 'string' ? { LogDirectory: value.LogDirectory } : {}),
       };
     });
 

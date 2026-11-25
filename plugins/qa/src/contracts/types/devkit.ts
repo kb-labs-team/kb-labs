@@ -11,6 +11,9 @@ export interface DevkitRunResult {
   Stdout: string;
   Stderr: string;
   Error: string;
+  LogPath?: string;
+  LogError?: string;
+  LogDirectory?: string;
 }
 
 export interface DevkitRunSummary {

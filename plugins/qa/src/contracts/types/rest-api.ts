@@ -27,6 +27,9 @@ export const DevkitRunResultSchema = z.object({
   Stdout: z.string(),
   Stderr: z.string(),
   Error: z.string(),
+  LogPath: z.string().optional(),
+  LogError: z.string().optional(),
+  LogDirectory: z.string().optional(),
 });
 
 export const DevkitRunOutputSchema = z.object({
