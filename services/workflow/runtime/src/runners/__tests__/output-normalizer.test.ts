@@ -21,6 +21,11 @@ describe('toWorkflowOutputs', () => {
       expect(toWorkflowOutputs(data)).toEqual(data);
     });
 
+    it('preserves raw reports with an ok flag and no wrapper payload', () => {
+      const data = { ok: true, id: 'qa-run', tasks: ['test'], results: [{ Task: 'test', OK: true }] };
+      expect(toWorkflowOutputs(data)).toEqual(data);
+    });
+
     it('passes through arrays as objects', () => {
       // Arrays are objects in JS — they pass through
       const data = [1, 2, 3];
@@ -32,6 +37,11 @@ describe('toWorkflowOutputs', () => {
     it('extracts .result from CommandResult with object payload', () => {
       const data = { ok: true, result: { score: 95, grade: 'A' } };
       expect(toWorkflowOutputs(data)).toEqual({ score: 95, grade: 'A' });
+    });
+
+    it('extracts .data from a canonical command wrapper', () => {
+      const data = { ok: true, data: { id: 'qa-run', tasks: ['test'] } };
+      expect(toWorkflowOutputs(data)).toEqual({ id: 'qa-run', tasks: ['test'] });
     });
 
     it('extracts .result from CommandResult with meta', () => {
