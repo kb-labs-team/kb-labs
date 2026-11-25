@@ -35,14 +35,14 @@ describe('DevkitAdapter.run CliKit contract', () => {
       error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'task failed', hint: 'Review the task output.' },
       data: {
         elapsed: '1s',
-        results: [{ Package: '@kb/core', Task: 'test', OK: false, Cached: false, Elapsed: 100, ExitCode: 2, Stdout: '', Stderr: 'assertion failed', Error: 'exit 2' }],
+        results: [{ Package: '@kb/core', Task: 'test', OK: false, Cached: false, Elapsed: 100, ExitCode: 2, Stdout: '', Stderr: 'assertion failed', Error: 'exit 2', LogPath: '.kb/devkit/logs/test.log' }],
         summary: { scheduled: 1, passed: 0, failed: 1, cached: 0, blocked: 0, notAffected: 0, skippedManual: 0, blockedTasks: [] },
       },
     }, 1);
 
     await expect(adapter.run(['test'])).resolves.toMatchObject({
       ok: false,
-      results: [{ Package: '@kb/core', Task: 'test', OK: false, ExitCode: 2, Stderr: 'assertion failed' }],
+      results: [{ Package: '@kb/core', Task: 'test', OK: false, ExitCode: 2, Stderr: 'assertion failed', LogPath: '.kb/devkit/logs/test.log' }],
       summary: { total: 1, failed: 1 },
     });
   });
