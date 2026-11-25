@@ -16,7 +16,7 @@ describe('DevkitAdapter.run CliKit contract', () => {
       ok: true,
       data: {
         elapsed: '1s',
-        results: [{ package: '@kb/core', task: 'test', ok: true, cached: false, elapsed: 100, exitCode: 0, stdout: 'passed', stderr: '', error: '' }],
+        results: [{ Package: '@kb/core', Task: 'test', OK: true, Cached: false, Elapsed: 100, ExitCode: 0, Stdout: 'passed', Stderr: '', Error: '' }],
         summary: { scheduled: 1, passed: 1, failed: 0, cached: 0, blocked: 0, notAffected: 0, skippedManual: 0, blockedTasks: [] },
       },
     });
@@ -35,7 +35,7 @@ describe('DevkitAdapter.run CliKit contract', () => {
       error: { code: 'KB_RUNTIME_COMMAND_FAILED', message: 'task failed', hint: 'Review the task output.' },
       data: {
         elapsed: '1s',
-        results: [{ package: '@kb/core', task: 'test', ok: false, cached: false, elapsed: 100, exitCode: 2, stdout: '', stderr: 'assertion failed', error: 'exit 2' }],
+        results: [{ Package: '@kb/core', Task: 'test', OK: false, Cached: false, Elapsed: 100, ExitCode: 2, Stdout: '', Stderr: 'assertion failed', Error: 'exit 2' }],
         summary: { scheduled: 1, passed: 0, failed: 1, cached: 0, blocked: 0, notAffected: 0, skippedManual: 0, blockedTasks: [] },
       },
     }, 1);
@@ -67,5 +67,11 @@ describe('DevkitAdapter.run CliKit contract', () => {
     }, 2);
 
     await expect(adapter.run(['missing'])).rejects.toThrow(/unknown task/);
+  });
+
+  it('rejects a success envelope when the process exits unsuccessfully', async () => {
+    const adapter = adapterFor({ ok: true, data: { elapsed: '0s', results: [], summary: {} } }, 1);
+
+    await expect(adapter.run(['build'])).rejects.toThrow(/ok:true with exit 1/i);
   });
 });
