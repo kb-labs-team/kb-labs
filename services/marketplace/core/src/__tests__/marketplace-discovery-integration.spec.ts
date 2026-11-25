@@ -256,7 +256,7 @@ describe('Marketplace → Discovery Integration', () => {
     });
 
     await expect(tamperedMarketplace.install({ scope: 'project', projectRoot }, [identity]))
-      .rejects.toMatchObject({ code: 'KB_PLUGIN_INTEGRITY_MISMATCH' });
+      .rejects.toMatchObject({ envelope: { code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH' } });
     expect(downloadCount).toBe(1);
     expect(await store.listEntries()).toEqual([]);
     await expect(fs.access(path.join(projectRoot, '.kb', 'marketplace.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
