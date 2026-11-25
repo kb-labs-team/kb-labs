@@ -15,7 +15,9 @@ export function workspaceSourceRefMismatch(
     && requestedSourceCommit !== undefined
     && validCommit
     && materializedSourceCommit === requestedSourceCommit
-  ) return undefined;
+  ) {
+    return undefined;
+  }
 
   return Object.assign(
     new Error(

@@ -44,7 +44,7 @@ describe('useLoader output streams', () => {
     const run = async (label: string) => {
       const loader = useLoader(label, { spinner: false, total: 2, current: 1 });
       loader.start();
-      await new Promise((resolve) => setTimeout(resolve, 1));
+      await new Promise<void>((resolve) => { setTimeout(resolve, 1); });
       loader.update({ current: 2 });
       loader.stop();
     };
