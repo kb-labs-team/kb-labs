@@ -252,56 +252,59 @@ class CaseJourneySelectionTests(unittest.TestCase):
             with self.subTest(stdout=stdout, returncode=returncode), self.assertRaises(ValueError):
                 read_coverage_result(subprocess.CompletedProcess(["kb", "qa", "coverage", "show"], returncode, stdout, ""))
 
-    def test_selector_runs_coverage_without_caller_home_or_platform_overrides(self):
-        with tempfile.TemporaryDirectory() as caller_home:
-            captured = []
+    def test_selector_uses_hermetic_cli_for_catalog_and_both_coverage_modes(self):
+        captured = []
 
-            def invoke(command, **options):
-                captured.append(options["env"])
-                mode = command[command.index("--mode") + 1]
+        def invoke(command, **_options):
+            captured.append(command)
+            if command[2:5] == ["qa", "cases", "list"]:
                 return subprocess.CompletedProcess(command, 0, json.dumps({
-                    "ok": True, "data": {"mode": mode, "cases": [{
-                        "id": "S-042", "status": "active", "release": True,
-                        "steps": [{"stepId": "S-042.1", "claims": [{
-                            "kind": "journey", "source": "e2e/journey/service_runner.py",
-                            "line": next(iter(_case_declarations(
-                                "e2e/journey/service_runner.py", Path(__file__).resolve().parents[2]))),
-                        }]}],
-                    }]},
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
                 }), "")
+            mode = command[command.index("--mode") + 1]
+            return subprocess.CompletedProcess(command, 0, json.dumps({
+                "ok": True, "data": {"mode": mode, "cases": [{
+                    "id": "S-042", "status": "active", "release": True,
+                    "steps": [{"stepId": "S-042.1", "claims": [{
+                        "kind": "journey", "source": "e2e/journey/service_runner.py",
+                        "line": next(iter(_case_declarations(
+                            "e2e/journey/service_runner.py", Path(__file__).resolve().parents[2]))),
+                    }]}],
+                }]},
+            }), "")
 
-            output = StringIO()
-            with patch.dict(os.environ, {
-                "HOME": caller_home,
-                "KB_HOME": "/caller/kb-home",
-                "KB_PLATFORM_ROOT": "/caller/platform",
-                "KB_NET_OFFSET": "731",
-                "KB_JOURNEY_CASES": "S-042",
-            }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
-                self.assertEqual(select_from_cases.main(), 0)
+        output = StringIO()
+        with patch.dict(os.environ, {"KB_JOURNEY_CASES": "S-042"}, clear=False), \
+                patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), \
+                redirect_stdout(output):
+            self.assertEqual(select_from_cases.main(), 0)
 
-            self.assertEqual(len(captured), 2)
-            for child_env in captured:
-                self.assertNotEqual(child_env["HOME"], caller_home)
-                self.assertFalse(Path(child_env["HOME"]).exists())
-                self.assertEqual(Path(child_env["KB_HOME"]), Path(child_env["HOME"]) / ".kb")
-                self.assertEqual(Path(child_env["KB_PLATFORM_ROOT"]), Path(child_env["HOME"]) / "platform")
-                self.assertNotIn("KB_NET_OFFSET", child_env)
-            self.assertEqual(json.loads(output.getvalue()), {
-                "selection": ["S-042"], "steps": ["S-042.1"],
-                "owners": {"service-local:explore": ["S-042.1"],
-                           "service-secured:explore": ["S-042.1"]},
-                "runners": ["service-local:explore", "service-secured:explore"],
-                "prerequisiteSteps": [], "prerequisiteFlows": [],
-                "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
-                "composeProfiles": [],
-                "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
-                "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
-            })
+        self.assertEqual([command[2:5] for command in captured], [
+            ["qa", "cases", "list"],
+            ["qa", "coverage", "show"],
+            ["qa", "coverage", "show"],
+        ])
+        self.assertEqual(captured[1][captured[1].index("--mode") + 1], "local")
+        self.assertEqual(captured[2][captured[2].index("--mode") + 1], "secured")
+        self.assertEqual(json.loads(output.getvalue()), {
+            "selection": ["S-042"], "steps": ["S-042.1"],
+            "owners": {"service-local:explore": ["S-042.1"],
+                       "service-secured:explore": ["S-042.1"]},
+            "runners": ["service-local:explore", "service-secured:explore"],
+            "prerequisiteSteps": [], "prerequisiteFlows": [],
+            "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
+            "composeProfiles": [],
+            "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+            "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+        })
 
     # case: S-262.8
     def test_selector_main_limits_case_owners_to_the_requested_batch_mode(self):
         def invoke(command, **_options):
+            if command[2:5] == ["qa", "cases", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                }), "")
             mode = command[command.index("--mode") + 1]
             payload = {"ok": True, "data": coverage(
                 mode, source="e2e/journey/secured_connection_steps.py")}
@@ -312,7 +315,8 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "KB_JOURNEY_CASES": "S-042.1",
                 "KB_JOURNEY_SELECTION_MODE": "local",
                 "KB_JOURNEY_ONLY": "",
-        }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
+        }, clear=False), patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), \
+                redirect_stdout(output):
             self.assertEqual(select_from_cases.main(), 0)
 
         self.assertEqual(json.loads(output.getvalue())["runners"], ["agent:commit"])
@@ -325,9 +329,13 @@ class CaseJourneySelectionTests(unittest.TestCase):
         }}
 
         def invoke(command, **_options):
+            if command[2:5] == ["qa", "cases", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                }), "")
             return subprocess.CompletedProcess(command, 1, json.dumps(failure), "")
 
-        with patch("hermetic_cli.run_command", side_effect=invoke), patch.dict(
+        with patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), patch.dict(
             os.environ, {"KB_JOURNEY_CASES": "S-042"}, clear=False,
         ):
             with self.assertRaisesRegex(ValueError, "KB_CONFIG_INVALID; Saved authentication file") as raised:
