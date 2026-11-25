@@ -1222,6 +1222,61 @@ func testConfig(categories []config.NamedCategory) *config.DevkitConfig {
 	}
 }
 
+// case: S-326.1
+func TestScopedPluginTestBuildsPeerSDKWithoutSchedulingSDKTests(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"plugins/*", "sdk/*"})
+	qaDir := filepath.Join(root, "plugins", "qa")
+	sdkDir := filepath.Join(root, "sdk", "sdk")
+	writePkg(t, qaDir, `{"name":"@kb-labs/qa","peerDependencies":{"@kb-labs/sdk":"workspace:*"}}`)
+	writePkg(t, sdkDir, `{"name":"@kb-labs/sdk"}`)
+	if output, err := exec.Command("git", "-C", root, "init", "--quiet").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	if output, err := exec.Command("git", "-C", root, "add", "--all").CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v: %s", err, output)
+	}
+
+	cfg := testConfig([]config.NamedCategory{
+		{Name: "plugin-entry", Category: config.CategoryConfig{Match: []string{"plugins/*"}, Preset: "node-lib"}},
+		{Name: "ts-lib", Category: config.CategoryConfig{Match: []string{"sdk/*"}, Preset: "node-lib"}},
+	})
+	cfg.Tasks = map[string]config.TaskConfig{
+		"build": {
+			{Categories: []string{"plugin-entry"}, Command: `node -e "require('fs').accessSync('../../sdk/sdk/dist/index.js')"`, Deps: []string{"^build"}},
+			{Categories: []string{"ts-lib"}, Command: `node -e "require('fs').mkdirSync('dist',{recursive:true});require('fs').writeFileSync('dist/index.js','')"`},
+		},
+		"test": {
+			{Categories: []string{"plugin-entry"}, Command: "true", Deps: []string{"build"}},
+			{Categories: []string{"ts-lib"}, Command: "true"},
+		},
+	}
+	ws := mustWorkspace(t, root, cfg)
+	result, err := Run(ws, cfg, RunOptions{
+		Tasks: []string{"test"}, Packages: ws.FilterByName([]string{"@kb-labs/qa"}),
+		WSRoot: root, CacheRoot: filepath.Join(root, ".kb", "devkit"),
+		Concurrency: 1, NoCache: true,
+	})
+	if err != nil {
+		t.Fatalf("Run scoped QA test: %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("scoped QA test failed: %+v", result.Results)
+	}
+	seen := make(map[nodeKey]bool, len(result.Results))
+	for _, task := range result.Results {
+		seen[nodeKey{pkg: task.Package, task: task.Task}] = true
+	}
+	for _, want := range []nodeKey{{pkg: "@kb-labs/sdk", task: "build"}, {pkg: "@kb-labs/qa", task: "build"}, {pkg: "@kb-labs/qa", task: "test"}} {
+		if !seen[want] {
+			t.Errorf("scoped task graph omitted %s:%s; results=%+v", want.pkg, want.task, result.Results)
+		}
+	}
+	if seen[nodeKey{pkg: "@kb-labs/sdk", task: "test"}] {
+		t.Errorf("scoped task graph scheduled SDK tests outside the selected package: %+v", result.Results)
+	}
+}
+
 func writeWorkspaceRoot(t *testing.T, root string, workspaces []string) {
 	t.Helper()
 	var list string

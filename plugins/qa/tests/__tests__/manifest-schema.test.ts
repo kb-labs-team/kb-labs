@@ -7,6 +7,12 @@ describe('QA CLI manifest', () => {
     expect(command?.examples).toContain('kb qa coverage show --level release --json');
   });
 
+  // case: S-326.1
+  it('exposes a package selector for a focused QA run', () => {
+    const command = manifest.cli?.commands.find(({ path }) => path === 'qa run');
+    expect(command?.flags?.map(({ name }) => name)).toContain('packages');
+  });
+
   // case: S-203.21
   it('declares lowercase kebab-case CLI flag names so commands register', () => {
     const flags = manifest.cli?.commands.flatMap(command => command.flags ?? []) ?? [];

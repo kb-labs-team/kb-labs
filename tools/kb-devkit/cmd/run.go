@@ -214,6 +214,11 @@ Examples:
 			}
 			return err
 		}
+		if len(runPackages) > 0 && summary.Scheduled == 0 {
+			return diag.New("KB_RUNTIME_INPUT_INVALID",
+				fmt.Sprintf("No task variants match requested task(s) %q for selected package(s) %q.", strings.Join(args, ", "), strings.Join(runPackages, ", ")),
+				diag.WithHint("Check the selected packages' categories and task variants in devkit.yaml, then rerun kb-devkit run with a task that applies to those packages."))
+		}
 
 		if jsonMode {
 			payload := map[string]any{

@@ -38,7 +38,7 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
       const git = await captureGit(ctx.api.shell, cwd);
 
       const start = Date.now();
-      const raw = await adapter.run(tasks);
+      const raw = await adapter.run(tasks, flags.packages);
       const durationMs = Date.now() - start;
 
       const snap = save ? store.saveRun(raw, tasks, durationMs, git) : null;

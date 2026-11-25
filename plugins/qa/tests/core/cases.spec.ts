@@ -116,6 +116,19 @@ describe('QA case catalog diagnostics', () => {
 });
 
 describe('QA case claim scanning', () => {
+  // case: S-326.1
+  it('ignores isolated Git worktrees instead of treating them as project sources', () => {
+    const directory = fixture();
+    const isolatedSource = join(directory, '.worktrees', 'wt-task', 'src');
+    mkdirSync(isolatedSource, { recursive: true });
+    writeFileSync(join(isolatedSource, 'unrelated.ts'), '// case: S-999.1\nexport const helper = true;\n');
+
+    const scanned = scanQACaseClaims(directory, []);
+
+    expect(scanned.claims).toEqual([]);
+    expect(scanned.diagnostics).toEqual([]);
+  });
+
   // case: S-179.2
   it('scans multiline journey claims and exact-step helpers', () => {
     const directory = fixture();
