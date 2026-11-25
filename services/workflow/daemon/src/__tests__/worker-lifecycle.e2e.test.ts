@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -246,6 +246,83 @@ describe('workflow worker lifecycle', () => {
       });
       const artifactKey = String(outputs[0]?.artifactKey).replace('.kb/run-artifacts/', '');
       await expect(readFile(path.join(projectRoot, '.kb/run-artifacts', artifactKey), 'utf8')).resolves.toBe('diff --git a/new.txt b/new.txt\n');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-325.4
+  it('keeps the task worktree when workspace patch export fails', async () => {
+    const projectRoot = await mkdtemp(path.join(tmpdir(), 'workflow-worker-builtin-patch-failure-'));
+    const worktreeRoot = path.join(projectRoot, '.worktrees', 'wt_builtin_failure');
+    await mkdir(worktreeRoot, { recursive: true });
+    const runId = 'run-builtin-patch-failure';
+    const jobId = `${runId}:job`;
+    const completion = createDeferred<void>();
+    const release = vi.fn(async () => {});
+    const markJobFailed = vi.fn(async () => { completion.resolve(); return { ancillaryFailures: [] }; });
+    let queueDrained = false;
+    const run = {
+      id: runId,
+      tenantId: 'default',
+      env: {},
+      metadata: {},
+      jobs: [{
+        id: jobId,
+        jobName: 'test-job',
+        status: 'queued' as JobRun['status'],
+        attempt: 0,
+        steps: [{ id: 'save-patch', name: 'Save patch', status: 'queued' as StepRun['status'], spec: { name: 'Save patch', uses: 'builtin:workspace-patch' } }],
+      }],
+    } satisfies WorkerRunTestDouble;
+    const provider = {
+      async materialize() { return { workspaceId: 'wt_builtin_failure', provider: 'worktree', status: 'ready', rootPath: worktreeRoot, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; },
+      async exportPatch() { throw new Error('private Git failure detail'); },
+      release,
+    };
+    const engine = {
+      async nextJob() {
+        if (queueDrained) return null;
+        queueDrained = true;
+        return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job' };
+      },
+      async getRun(requestedRunId: string) { return requestedRunId === runId ? run as unknown as WorkflowRun : null; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { completion.resolve(); return { ancillaryFailures: [] }; },
+      markJobFailed,
+      async markStepStarted() {},
+      async markStepCompleted() {},
+      async markStepFailed(_r: string, _j: string, _s: string, error: Error) {
+        expect(error.message).toBe('The task worktree patch could not be exported or stored.');
+        expect(error.message).not.toContain('private Git failure detail');
+      },
+      async markJobInterrupted() {},
+      getStateStore: () => ({ updateStep: vi.fn(async () => {}), updateRun: vi.fn(async () => {}) }),
+    } satisfies Partial<WorkflowEngine>;
+    const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as IEntityRegistry,
+      logger: mockLogger(),
+      workspaceRoot: projectRoot,
+      projectRoot,
+      platform: {
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(provider),
+      },
+      concurrency: 1,
+    });
+    try {
+      const startPromise = worker.start();
+      await Promise.race([completion.promise, new Promise((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 10_000))]);
+      await worker.stop();
+      await startPromise;
+      expect(markJobFailed).toHaveBeenCalledOnce();
+      expect(release).not.toHaveBeenCalled();
+      expect((await stat(worktreeRoot)).isDirectory()).toBe(true);
+      await expect(stat(path.join(projectRoot, '.kb/run-artifacts'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
