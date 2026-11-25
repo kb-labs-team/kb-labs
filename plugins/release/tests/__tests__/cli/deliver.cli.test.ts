@@ -8,6 +8,11 @@ import { platformFlowPolicies } from '../../../src/core/platform-flow-policy.mjs
 const publishPackagesProgrammatic = vi.fn();
 const verifyAgainstRegistry = vi.fn();
 const findRepoRoot = vi.fn();
+const authenticateCandidateGateReceipt = vi.hoisted(() => vi.fn());
+
+vi.mock('../../../src/shared/authenticate-candidate-gate-receipt.js', () => ({
+  authenticateCandidateGateReceipt,
+}));
 
 vi.mock('../../../src/core/index.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../../../src/core/index.js')>();
@@ -133,6 +138,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -217,6 +223,7 @@ describe('release:deliver candidate bundle', () => {
     rmSync(join(root, 'bundle'), { recursive: true, force: true });
     writeBundle('stable', { policy: 'release-cases', result: 'passed', runId: 'journey-run-17' });
     writeGateReceipt();
+    vi.stubEnv('GITHUB_TOKEN', 'test-github-token');
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: root });
 
@@ -236,6 +243,13 @@ describe('release:deliver candidate bundle', () => {
 
     expect(result).toMatchObject({ success: true, registry: publicDeliveryTarget.registry });
     expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ registry: publicDeliveryTarget.registry }));
+    expect(authenticateCandidateGateReceipt).toHaveBeenCalledWith({
+      repository: 'kb-labs-team/kb-labs',
+      runId: '1234',
+      candidateId: trusted.candidateId,
+      suppliedBytes: readFileSync(join(root, 'gate-attestation.json')),
+      token: 'test-github-token',
+    });
   });
 
   // case: S-284.16
