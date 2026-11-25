@@ -22,7 +22,5 @@ export interface ExecutionTarget {
    */
   workdir?: string;
 
-  /** Git ref used when materializing an isolated workspace. Omitted refs keep the provider's configured default. */
-  sourceRef?: string;
 }
 

@@ -255,6 +255,9 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       const existing = this.records.get(workspaceId);
       if (existing) {
         await this.assertRecordOwner(existing, workspaceId, repoRoot, worktreePath, runId, true);
+        if (request.sourceRef) {
+          await this.assertRequestedBaseMatches(existing, safeBranch, repoRoot);
+        }
         existing.refCount++;
         onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree', progress: 100 });
         return {
@@ -269,6 +272,9 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       }
       // Worktree exists on disk but not in records (stale) — reuse anyway
       const recovered = await this.recoverRecord(workspaceId, repoRoot, worktreePath, runId, true);
+      if (request.sourceRef) {
+        await this.assertRequestedBaseMatches(recovered, safeBranch, repoRoot);
+      }
       onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree (recovered)', progress: 100 });
       const now = recovered.createdAt;
       recovered.branch = branch;
@@ -590,6 +596,19 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       env: env ?? metadataEnvironment(),
     });
     return stdout;
+  }
+
+  private async assertRequestedBaseMatches(record: WorktreeRecord, sourceRef: string, projectRoot: string): Promise<void> {
+    const requestedBase = (await this.gitOutput(
+      ['rev-parse', '--verify', '--end-of-options', `${sourceRef}^{commit}`],
+      projectRoot,
+    )).trim();
+    if (!record.baseCommit || record.baseCommit !== requestedBase) {
+      throw Object.assign(
+        new Error('The existing workspace base does not match the requested source ref.'),
+        { code: 'KB_WORKSPACE_PATCH_BASE_MISMATCH' },
+      );
+    }
   }
 
   private async persistBaseCommit(worktreePath: string): Promise<string> {

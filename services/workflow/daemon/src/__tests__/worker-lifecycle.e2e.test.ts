@@ -545,14 +545,14 @@ describe('workflow worker lifecycle', () => {
       tenantId: 'default',
       env: {},
       metadata: {
-        target: { namespace: 'custom-ns', environmentId: 'pre-provisioned-env' },
+        target: { namespace: 'custom-ns', environmentId: 'pre-provisioned-env', sourceRef: 'workflow-ref' },
       },
       jobs: [{
         id: jobId,
         jobName: 'test-job',
         status: 'queued',
         attempt: 0,
-        target: undefined,
+        target: { sourceRef: 'job-ref' },
         steps: [{
           id: 'step-1',
           status: 'queued',
@@ -609,7 +609,8 @@ describe('workflow worker lifecycle', () => {
     await startPromise;
 
     expect(run.jobs[0]!.status).toBe('success');
-    // Worker should pass target from run.metadata to runner.execute()
+    // sourceRef-only job targets affect workspace checkout while retaining the
+    // workflow's namespace/environment routing target.
     const call = mockRunnerExecute.mock.calls[0]?.[0];
     expect(call.target).toEqual({ namespace: 'custom-ns', environmentId: 'pre-provisioned-env' });
   });

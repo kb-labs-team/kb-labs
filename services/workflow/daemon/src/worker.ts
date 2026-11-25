@@ -48,6 +48,7 @@ import {
   type StepExecutionResult,
 } from "@kb-labs/workflow-runtime";
 import { writeWorkspacePatchArtifact } from './workspace-patch-artifact.js';
+import { workspaceSourceRefMismatch } from './workspace-source-ref.js';
 
 interface StepSpecRaw {
   name: string;
@@ -362,7 +363,15 @@ export async function createWorkflowWorker(
     const runTarget = (run.metadata as Record<string, unknown> | undefined)
       ?.target as ExecutionTarget | undefined;
     const jobTarget = job.target as ExecutionTarget | undefined;
-    const target = jobTarget ?? runTarget;
+    const sourceRef = jobTarget?.sourceRef ?? runTarget?.sourceRef;
+    const toPluginExecutionTarget = (value: ExecutionTarget | undefined) => {
+      if (!value) {return undefined;}
+      const { sourceRef: _sourceRef, ...executionTarget } = value;
+      return _sourceRef && Object.keys(executionTarget).length === 0 ? undefined : executionTarget;
+    };
+    // Workspace base selection and plugin routing are separate concerns. A
+    // sourceRef-only job target must not erase its workflow's namespace target.
+    const target = toPluginExecutionTarget(jobTarget) ?? toPluginExecutionTarget(runTarget);
 
     // ── Workspace provisioning (worktree/container/remote) ──
     // If platform has a workspace provider, create an isolated workspace for this run.
@@ -387,6 +396,12 @@ export async function createWorkflowWorker(
       && typeof workspaceMetadata.rootPath === 'string'
       && typeof workspaceMetadata.workspaceId === 'string'
     ) {
+      const refMismatch = workspaceSourceRefMismatch(sourceRef, workspaceMetadata.sourceRef);
+      if (refMismatch) {
+        await engine.markJobFailed(run.id, job.id, refMismatch);
+        claimedJobs.delete(jobKey);
+        return true;
+      }
       runWorkspace = workspaceMetadata.rootPath;
       executionWorkspaceId = workspaceMetadata.workspaceId;
       // The owner releases once its terminal job completes. A child must never
@@ -406,7 +421,7 @@ export async function createWorkflowWorker(
           projectRoot,
           ownerRunId: run.id,
           platformRoot,
-          sourceRef: target?.sourceRef,
+          sourceRef,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
             jobLogger.info(`[workspace] ${event.stage}: ${event.message}`, {
@@ -423,7 +438,11 @@ export async function createWorkflowWorker(
           await engine.getStateStore().updateRun(run.id, (draft) => {
             draft.metadata = {
               ...(draft.metadata ?? {}),
-              executionWorkspace: { workspaceId: ws.workspaceId, rootPath },
+              executionWorkspace: {
+                workspaceId: ws.workspaceId,
+                rootPath,
+                ...(sourceRef !== undefined ? { sourceRef } : {}),
+              },
               workspaceOwnerRunId: run.id,
             };
           });
