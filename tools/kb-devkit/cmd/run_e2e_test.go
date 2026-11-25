@@ -433,6 +433,63 @@ func TestBuiltBinaryRunsUnfilteredBuildAcrossWorkspace(t *testing.T) {
 	}
 }
 
+// case: S-326.3
+func TestExplicitPackageScopeWithNoTaskVariantFails(t *testing.T) {
+	root := t.TempDir()
+	writeRunFixture(t, filepath.Join(root, "package.json"), `{"workspaces":["packages/*"]}`)
+	writeRunFixture(t, filepath.Join(root, "packages", "with-test", "package.json"), `{"name":"@fixture/with-test"}`)
+	writeRunFixture(t, filepath.Join(root, "packages", "without-test", "package.json"), `{"name":"@fixture/without-test"}`)
+	writeRunFixture(t, filepath.Join(root, "devkit.yaml"), "workspace:\n"+
+		"  categories:\n"+
+		"    with-test:\n"+
+		"      match: [\"packages/with-test\"]\n"+
+		"      preset: node-lib\n"+
+		"    without-test:\n"+
+		"      match: [\"packages/without-test\"]\n"+
+		"      preset: node-lib\n"+
+		"tasks:\n"+
+		"  test:\n"+
+		"    - categories: [with-test]\n"+
+		"      command: 'true'\n")
+
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("locate command test source")
+	}
+	moduleRoot := filepath.Dir(filepath.Dir(source))
+	binary := filepath.Join(t.TempDir(), "kb-devkit")
+	build := exec.Command("go", "build", "-o", binary, ".")
+	build.Dir = moduleRoot
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build kb-devkit: %v\n%s", err, output)
+	}
+
+	command := exec.Command(binary, "run", "test", "--packages", "@fixture/without-test", "--json")
+	command.Dir = root
+	command.Env = append(os.Environ(), "HOME="+filepath.Join(t.TempDir(), "home"))
+	output, err := command.Output()
+	exit, ok := err.(*exec.ExitError)
+	if !ok || exit.ExitCode() != 2 {
+		t.Fatalf("explicit package scope with no test variant exit = %v; stdout=%s", err, output)
+	}
+	var failure struct {
+		OK    bool `json:"ok"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+			Hint    string `json:"hint"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(output, &failure); err != nil {
+		t.Fatalf("decode empty-scope failure %q: %v", output, err)
+	}
+	if failure.OK || failure.Error.Code != "KB_RUNTIME_INPUT_INVALID" ||
+		!strings.Contains(failure.Error.Message, "@fixture/without-test") || !strings.Contains(failure.Error.Message, "test") ||
+		!strings.Contains(failure.Error.Hint, "devkit.yaml") {
+		t.Fatalf("empty-scope diagnosis = %+v, want actionable package/task configuration error", failure)
+	}
+}
+
 func writeRunFixture(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

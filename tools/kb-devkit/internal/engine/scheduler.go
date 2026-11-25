@@ -181,7 +181,16 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 	if len(pkgs) == 0 {
 		pkgs = ws.Packages
 	}
-	if containsTask(opts.Tasks, "build") {
+	// An explicitly scoped task may depend on a local build which itself has
+	// workspace build dependencies (for example, a plugin manifest imports the
+	// SDK through a peer dependency). Include that dependency closure in the
+	// graph, while seeding requested tasks only for the selected packages below.
+	scopedSelection := !opts.Affected && len(opts.Packages) > 0
+	requestedPackages := make(map[string]bool, len(pkgs))
+	for _, pkg := range pkgs {
+		requestedPackages[pkg.Name] = true
+	}
+	if containsTask(opts.Tasks, "build") || scopedSelection {
 		expanded, err := expandBuildDependencyClosure(pkgs, ws.Packages)
 		if err != nil {
 			return RunResult{}, err
@@ -220,6 +229,14 @@ func Run(ws *workspace.Workspace, cfg *config.DevkitConfig, opts RunOptions) (Ru
 		seed = func(pkg workspace.Package, task string) bool { return task == "build" && skipped[pkg.Name] }
 	}
 	baseSeed := seed
+	if scopedSelection {
+		seed = func(pkg workspace.Package, task string) bool {
+			if !requestedPackages[pkg.Name] {
+				return true
+			}
+			return baseSeed != nil && baseSeed(pkg, task)
+		}
+	}
 	if opts.Affected {
 		seed = func(pkg workspace.Package, task string) bool {
 			if baseSeed != nil && baseSeed(pkg, task) {
