@@ -67,7 +67,7 @@ jobs:
         uses: builtin:approval
         with:
           title: "Promote ${{ inputs.candidateId }} to ${{ inputs.target }}?"
-          instructions: "The delivery workflow will publish only the candidate bundle identified by this run and candidate ID."
+          instructions: "The delivery workflow will publish only the candidate bundle identified by this run and candidate ID, with its separately uploaded digest-bound gate receipt."
 
       - name: Deliver candidate
         phase: deliver

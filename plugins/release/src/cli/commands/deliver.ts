@@ -34,6 +34,7 @@ import { findRepoRoot } from '../../shared/utils';
 import { publishPackagesProgrammatic, type PackageToPublish } from '../../shared/publish-programmatic';
 import { CandidateBundleError, CandidatePolicyError, verifyCandidateBundle, verifyCandidateBundleIntegrity } from '../../shared/candidate-bundle.js';
 import { resolveFlowName, type FlowResolvableFlags } from '../../shared/resolve-flow';
+import { authenticateCandidateGateReceipt } from '../../shared/authenticate-candidate-gate-receipt.js';
 
 const REGISTRY_VERIFY_RETRIES = 5;
 const REGISTRY_VISIBILITY_DEADLINE_MS = 15 * 60_000;
@@ -159,6 +160,7 @@ export default defineCommand({
       }
       const candidateChannel = flags['candidate-channel'];
       const candidateRunId = flags['candidate-run-id'];
+      let gateReceiptPath: string | undefined;
       const trust = {
         expectedDigest, candidateId, commit, flow: flowResult, version,
         ...(candidateChannel ? { channel: candidateChannel } : {}),
@@ -167,7 +169,8 @@ export default defineCommand({
       let gateAttestation: unknown;
       if (flags['gate-attestation']) {
         try {
-          gateAttestation = JSON.parse(readFileSync(resolve(repoRoot, flags['gate-attestation']), 'utf8')) as unknown;
+          gateReceiptPath = resolve(repoRoot, flags['gate-attestation']);
+          gateAttestation = JSON.parse(readFileSync(gateReceiptPath, 'utf8')) as unknown;
         } catch {
           return {
             ok: false,
@@ -177,6 +180,24 @@ export default defineCommand({
               hint: 'Download the gate receipt artifact from the candidate workflow run and retry with --gate-attestation <path>.',
             },
           };
+        }
+      }
+      if (!dryRun && kind === 'public' && candidateRunId && candidateId && gateReceiptPath) {
+        const repository = useEnv('GITHUB_REPOSITORY');
+        const token = useEnv('GITHUB_TOKEN') ?? useEnv('GH_TOKEN');
+        if (!repository || !token) {
+          return { ok: false, error: createErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
+            message: 'Public gated delivery requires authenticated access to the candidate workflow run.',
+            hint: 'Set GITHUB_REPOSITORY and GITHUB_TOKEN (or GH_TOKEN), then retry the delivery.',
+          }) };
+        }
+        try {
+          await authenticateCandidateGateReceipt({ repository, runId: candidateRunId, candidateId, receiptPath: gateReceiptPath, token });
+        } catch (error) {
+          return { ok: false, error: createErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
+            message: error instanceof Error ? error.message : 'Candidate gate receipt source could not be authenticated.',
+            hint: 'Download the gate receipt artifact from the successful trusted candidate workflow run and retry.',
+          }) };
         }
       }
       let candidate: ReturnType<typeof verifyCandidateBundle>;

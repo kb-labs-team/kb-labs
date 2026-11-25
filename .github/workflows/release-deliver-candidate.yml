@@ -141,6 +141,8 @@ jobs:
 
       - name: Deliver exact candidate tarballs
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           FLOW: ${{ inputs.flow }}
           VERSION: ${{ inputs.version }}

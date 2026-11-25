@@ -52,6 +52,12 @@ const sleepSync = ms => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
 
 try {
   run('gh', ['run', 'download', candidateRunId, '--repo', repository, '--name', `release-candidate-${candidateId}`, '--dir', bundle]);
+  const receiptDir = join(root, 'gate-attestation');
+  run('gh', ['run', 'download', candidateRunId, '--repo', repository, '--name', `release-gate-attestation-${candidateId}`, '--dir', receiptDir]);
+  const runMetadata = JSON.parse(run('gh', ['api', `repos/${repository}/actions/runs/${candidateRunId}`]));
+  const { verifyCandidateWorkflowRun } = await import('../../../scripts/candidate-workflow-run.mjs');
+  verifyCandidateWorkflowRun(runMetadata, { repository, expectedBranch: 'master' });
+  const gateAttestation = JSON.parse(readFileSync(join(receiptDir, 'gate-attestation.json'), 'utf8'));
   run('pnpm', ['--filter', '@kb-labs/release', 'build:cli']);
   const { verifyCandidateBundle } = await import('../../../plugins/release/dist/shared/candidate-bundle.js');
   const verified = verifyCandidateBundle(bundle, {
@@ -60,7 +66,14 @@ try {
     commit,
     flow,
     version,
-  }, { targetKind: deliveryTarget.kind, promotionChannel: channel });
+    channel,
+    workflowRunId: candidateRunId,
+  }, {
+    targetKind: deliveryTarget.kind,
+    promotionChannel: channel,
+    gateAttestation,
+    trustedWorkflowRunId: candidateRunId,
+  });
   const artifacts = verified.artifacts;
   if (!Array.isArray(artifacts) || artifacts.length === 0) throw new Error('candidate bundle has no staged npm artifacts');
   writeFileSync(npmrc, `//${new URL(registry).host}/:_authToken=${token}\nregistry=${registry}\n`);

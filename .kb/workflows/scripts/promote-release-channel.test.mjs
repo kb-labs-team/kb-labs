@@ -91,12 +91,18 @@ test('delivery and promotion follow the scratch declaration for stable gate and 
 
     const scriptDir = join(temp, '.kb/workflows/scripts');
     mkdirSync(scriptDir, { recursive: true });
+    mkdirSync(join(temp, 'scripts'), { recursive: true });
+    cpSync(resolve(root, 'scripts/candidate-workflow-run.mjs'), join(temp, 'scripts/candidate-workflow-run.mjs'));
     const promotionScript = join(scriptDir, 'promote-release-channel.mjs');
     cpSync(resolve(root, '.kb/workflows/scripts/promote-release-channel.mjs'), promotionScript);
+    const receipt = join(temp, 'gate-attestation.json');
+    writeFileSync(receipt, JSON.stringify({ schema: 'kb.release-gate-attestation/1', candidateId: skipped.provenance.candidateId,
+      commit: skipped.provenance.commit, flow: skipped.provenance.flow, version: skipped.provenance.version,
+      channel: 'stable', bundleDigest: skipped.provenance.bundleDigest, workflowRunId: '17', policy: 'release-cases', result: 'passed' }));
     const fakeBin = join(temp, 'bin');
     mkdirSync(fakeBin);
     const gh = join(fakeBin, 'gh');
-    writeFileSync(gh, `#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='run'&&args[1]==='download'){fs.cpSync(process.env.PROMOTION_FIXTURE,args[args.indexOf('--dir')+1],{recursive:true});process.exit(0)}if(args[0]==='release')process.exit(0);process.exit(2)\n`);
+    writeFileSync(gh, `#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='run'&&args[1]==='download'){const dir=args[args.indexOf('--dir')+1];if(args.includes('release-gate-attestation-stable-candidate')){fs.mkdirSync(dir,{recursive:true});fs.copyFileSync(process.env.PROMOTION_RECEIPT,dir+'/gate-attestation.json')}else fs.cpSync(process.env.PROMOTION_FIXTURE,dir,{recursive:true});process.exit(0)}if(args[0]==='api'){process.stdout.write(JSON.stringify({path:'.github/workflows/release-build-candidate.yml',event:'workflow_dispatch',status:'completed',conclusion:'success',head_branch:'master',head_repository:{full_name:'fixture/repo'}}));process.exit(0)}if(args[0]==='release')process.exit(0);process.exit(2)\n`);
     chmodSync(gh, 0o755);
     const npm = join(fakeBin, 'npm');
     writeFileSync(npm, '#!/usr/bin/env node\nif(process.argv.includes("view"))process.stdout.write("{}\\n");\n');
@@ -112,7 +118,7 @@ test('delivery and promotion follow the scratch declaration for stable gate and 
       cwd: temp,
       encoding: 'utf8',
       env: {
-        ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, PROMOTION_FIXTURE: skipped.bundle,
+        ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, PROMOTION_FIXTURE: skipped.bundle, PROMOTION_RECEIPT: receipt,
         NPM_TOKEN: 'test-token', GITHUB_REPOSITORY: 'fixture/repo',
       },
     });
@@ -129,7 +135,7 @@ test('delivery and promotion follow the scratch declaration for stable gate and 
       cwd: temp,
       encoding: 'utf8',
       env: {
-        ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, PROMOTION_FIXTURE: canary.bundle,
+        ...process.env, PATH: `${fakeBin}:${process.env.PATH}`, PROMOTION_FIXTURE: canary.bundle, PROMOTION_RECEIPT: receipt,
         NPM_TOKEN: 'test-token', GITHUB_REPOSITORY: 'fixture/repo',
       },
     });
@@ -173,10 +179,16 @@ test('promotion refuses a canary candidate when the requested channel is stable'
       releaseIndexPath: indexPath,
       outputDir: bundle,
     });
+    mkdirSync(join(temp, 'scripts'), { recursive: true });
+    cpSync(resolve(root, 'scripts/candidate-workflow-run.mjs'), join(temp, 'scripts/candidate-workflow-run.mjs'));
+    const receipt = join(temp, 'gate-attestation.json');
+    writeFileSync(receipt, JSON.stringify({ schema: 'kb.release-gate-attestation/1', candidateId: provenance.candidateId,
+      commit: provenance.commit, flow: provenance.flow, version: provenance.version,
+      channel: 'canary', bundleDigest: provenance.bundleDigest, workflowRunId: '17', policy: 'release-cases', result: 'passed' }));
     const fakeBin = join(temp, 'bin');
     mkdirSync(fakeBin);
     const gh = join(fakeBin, 'gh');
-    writeFileSync(gh, `#!/usr/bin/env node\nconst fs=require('node:fs');const path=require('node:path');const args=process.argv.slice(2);if(args[0]==='run'&&args[1]==='download'){const dir=args[args.indexOf('--dir')+1];fs.cpSync(process.env.PROMOTION_FIXTURE,dir,{recursive:true});process.exit(0)}if(args[0]==='release')process.exit(0);process.exit(2)\n`);
+    writeFileSync(gh, `#!/usr/bin/env node\nconst fs=require('node:fs');const args=process.argv.slice(2);if(args[0]==='run'&&args[1]==='download'){const dir=args[args.indexOf('--dir')+1];if(args.includes('release-gate-attestation-test-candidate')){fs.mkdirSync(dir,{recursive:true});fs.copyFileSync(process.env.PROMOTION_RECEIPT,dir+'/gate-attestation.json')}else fs.cpSync(process.env.PROMOTION_FIXTURE,dir,{recursive:true});process.exit(0)}if(args[0]==='api'){process.stdout.write(JSON.stringify({path:'.github/workflows/release-build-candidate.yml',event:'workflow_dispatch',status:'completed',conclusion:'success',head_branch:'master',head_repository:{full_name:'fixture/repo'}}));process.exit(0)}if(args[0]==='release')process.exit(0);process.exit(2)\n`);
     chmodSync(gh, 0o755);
     const npm = join(fakeBin, 'npm');
     writeFileSync(npm, '#!/usr/bin/env node\nif(process.argv.includes("view"))process.stdout.write("{\\"latest\\":\\"1.0.0\\"}\\n");\n');
@@ -197,6 +209,7 @@ test('promotion refuses a canary candidate when the requested channel is stable'
         ...process.env,
         PATH: `${fakeBin}:${process.env.PATH}`,
         PROMOTION_FIXTURE: bundle,
+        PROMOTION_RECEIPT: receipt,
         NPM_TOKEN: 'test-token',
         GITHUB_REPOSITORY: 'fixture/repo',
       },
