@@ -16,6 +16,21 @@ import {
 import { DEFAULT_TASKS, type QAPluginConfig } from '../../contracts/index.js';
 import type { QaRunFlags } from './flags.js';
 
+function isCommandFailure(value: unknown): value is CommandResult {
+  if (typeof value !== 'object' || value === null || !('ok' in value) || value.ok !== false || !('error' in value)) {
+    return false;
+  }
+  const error = value.error;
+  return typeof error === 'object' && error !== null &&
+    'code' in error && typeof error.code === 'string' &&
+    'message' in error && typeof error.message === 'string' &&
+    'hint' in error && typeof error.hint === 'string';
+}
+
+function hasTaskResults(value: unknown): value is import('../../contracts/index.js').DevkitRunOutput {
+  return typeof value === 'object' && value !== null && 'results' in value && Array.isArray(value.results);
+}
+
 export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
   id: 'qa:run',
   description: 'Run devkit tasks and record results',
@@ -40,6 +55,20 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
       const start = Date.now();
       const raw = await adapter.run(tasks);
       const durationMs = Date.now() - start;
+
+      // kb-devkit uses the shared command-failure envelope for input errors such as
+      // an undeclared task; those responses have no task results or run snapshot.
+      if (!hasTaskResults(raw)) {
+        if (isCommandFailure(raw)) return raw;
+        return {
+          ok: false,
+          error: {
+            code: 'KB_RUNTIME_COMMAND_FAILED',
+            message: 'kb-devkit returned an invalid run result',
+            hint: 'Review the kb-devkit output, then rerun `kb qa run`.',
+          },
+        };
+      }
 
       const snap = save ? store.saveRun(raw, tasks, durationMs, git) : null;
       const effective: import('../../contracts/index.js').RunSnapshot = snap ?? {
