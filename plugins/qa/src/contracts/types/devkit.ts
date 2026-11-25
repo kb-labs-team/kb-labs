@@ -14,10 +14,20 @@ export interface DevkitRunResult {
 }
 
 export interface DevkitRunSummary {
+  scheduled: number;
+  blocked: number;
+  notAffected: number;
+  skippedManual: number;
   total: number;
   passed: number;
   failed: number;
   cached: number;
+  blockedTasks: Array<{
+    package: string;
+    task: string;
+    blockedByPackage: string;
+    blockedByTask: string;
+  }>;
 }
 
 export interface DevkitRunOutput {
