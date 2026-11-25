@@ -101,7 +101,9 @@ function pythonCallNameBefore(source: string, position: number): string | undefi
         nestedCalls -= 1;
         continue;
       }
-      return source.slice(0, index).match(/([A-Za-z_]\w*)\s*$/)?.[1];
+      const prefix = source.slice(0, index);
+      if (/\b(?:async\s+)?def\s+[A-Za-z_]\w*\s*$/.test(prefix)) {return undefined;}
+      return prefix.match(/([A-Za-z_]\w*)\s*$/)?.[1];
     }
   }
   return undefined;
@@ -189,7 +191,7 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
       const journeySource = isPythonJourneySource ? maskPythonCommentsAndDocstrings(source) : source;
       const claimSpans: Array<{ start: number; end: number }> = [];
       const declaredStepIds = new Set<string>();
-      for (const match of journeySource.matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
+      for (const match of (isPythonJourneySource ? journeySource : '').matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
         const claimLine = journeySource.slice(0, match.index).split(/\r?\n/).length;
         claimSpans.push({ start: match.index!, end: match.index! + match[0].length });
         const callName = pythonCallNameBefore(journeySource, match.index!);
@@ -199,7 +201,14 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
             message: `case claim must be attached to a registered journey declaration; ${callName} is not a case recorder` });
           continue;
         }
-        if (!callName) {continue;}
+        if (!callName) {
+          const ids = [...(match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)];
+          if (ids.length > 0) {
+            diagnostics.push({ file, line: claimLine,
+              message: 'case claim must be attached to a registered journey declaration; cases list is not a declaration call' });
+          }
+          continue;
+        }
         for (const step of (match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) {
           declaredStepIds.add(step[1]!);
           add(step[1]!, 'journey', claimLine);
