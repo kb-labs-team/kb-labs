@@ -90,7 +90,7 @@ describe('candidate bundle producer and verifier', () => {
     expect(verified.provenance.bundleDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(verified.artifacts).toHaveLength(1);
     expect(verified.artifactsDir).toBe(join(bundleDir, 'npm'));
-    expect(verified.provenance.gate).toEqual({ policy: 'none', result: 'skipped' });
+    expect(verified.provenance.gate).toEqual({ policy: 'none' });
   });
 
   // case: S-284.16
@@ -152,19 +152,41 @@ describe('candidate bundle producer and verifier', () => {
   });
 
   // case: S-284.5
-  it('refuses to seal a stable candidate whose release-case gate did not pass, including for a test target', () => {
-    expect(() => makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
+  // case: S-284.23
+  it('seals stable payload intent without claiming that its gate has passed', () => {
+    const { provenance } = makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
       policy: 'release-cases', result: 'failed', runId: 'journey-run-17',
-    })).toThrow(/Channel stable requires a passed release-case gate/);
+    });
+    expect(provenance.gate).toEqual({ policy: 'release-cases' });
+    expect(provenance.schema).toBe('kb.release-provenance/4');
   });
 
-  // case: S-284.5
-  it('allows a stable candidate with a passed release-case gate at a public target', () => {
-    const { bundleDir, trust } = makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
+  // case: S-284.23
+  it('requires a separate exact-digest receipt to authorize stable delivery', () => {
+    const { bundleDir, trust, provenance } = makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
       policy: 'release-cases', result: 'passed', runId: 'journey-run-17',
     });
-
-    expect(() => verifyCandidateBundle(bundleDir, trust, { targetKind: 'public' })).not.toThrow();
+    expect(() => verifyCandidateBundle(bundleDir, trust, { targetKind: 'public' }))
+      .toThrow(/requires trusted candidate channel and workflow run values/);
+    const receipt = {
+      schema: 'kb.release-gate-attestation/1',
+      candidateId: provenance.candidateId,
+      commit: provenance.commit,
+      flow: provenance.flow,
+      version: provenance.version,
+      channel: provenance.channel,
+      bundleDigest: provenance.bundleDigest,
+      workflowRunId: provenance.workflowRunId,
+      policy: 'release-cases',
+      result: 'passed',
+    };
+    expect(() => verifyCandidateBundle(bundleDir, {
+      ...trust, channel: 'stable', workflowRunId: '1234',
+    }, {
+      targetKind: 'public',
+      gateAttestation: receipt,
+      trustedWorkflowRunId: '1234',
+    })).not.toThrow();
   });
 
   // case: S-284.5

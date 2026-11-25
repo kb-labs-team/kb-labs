@@ -101,6 +101,21 @@ function writeBundle(
   };
 }
 
+function writeGateReceipt(): void {
+  writeFileSync(join(root, 'gate-attestation.json'), JSON.stringify({
+    schema: 'kb.release-gate-attestation/1',
+    candidateId: trusted.candidateId,
+    commit: trusted.commit,
+    flow: trusted.flow,
+    version: trusted.version,
+    channel: 'stable',
+    bundleDigest: trusted.expectedDigest,
+    workflowRunId: '1234',
+    policy: 'release-cases',
+    result: 'passed',
+  }));
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   root = mkdtempSync(join(tmpdir(), 'x241-deliver-'));
@@ -198,9 +213,10 @@ describe('release:deliver candidate bundle', () => {
   });
 
   // case: S-284.5
-  it('delivers a stable bundle with a passed release-case gate at a public target', async () => {
+  it('delivers a stable bundle with a separate exact-digest gate receipt at a public target', async () => {
     rmSync(join(root, 'bundle'), { recursive: true, force: true });
     writeBundle('stable', { policy: 'release-cases', result: 'passed', runId: 'journey-run-17' });
+    writeGateReceipt();
     const { ui } = createCapturedUI();
     const ctx = createMockContext({ ui, cwd: root });
 
@@ -211,12 +227,37 @@ describe('release:deliver candidate bundle', () => {
       'candidate-id': trusted.candidateId,
       commit: trusted.commit,
       version: trusted.version,
+      'candidate-channel': 'stable',
+      'candidate-run-id': '1234',
+      'gate-attestation': 'gate-attestation.json',
       target: 'npm',
       json: true,
     } }));
 
     expect(result).toMatchObject({ success: true, registry: publicDeliveryTarget.registry });
     expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ registry: publicDeliveryTarget.registry }));
+  });
+
+  // case: S-284.23
+  it('refuses a stable candidate without an external gate receipt before publishing', async () => {
+    rmSync(join(root, 'bundle'), { recursive: true, force: true });
+    writeBundle('stable', { policy: 'release-cases', result: 'passed', runId: 'journey-run-17' });
+    const { ui } = createCapturedUI();
+    const result = await deliverCommand.execute(createMockContext({ ui, cwd: root }) as never, mockCLIInput({ flags: {
+      flow: 'platform',
+      'bundle-dir': 'bundle',
+      'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId,
+      commit: trusted.commit,
+      version: trusted.version,
+      'candidate-channel': 'stable',
+      'candidate-run-id': '1234',
+      target: 'npm',
+      json: true,
+    } }));
+
+    expect(result).toMatchObject({ ok: false, error: { code: 'KB_RELEASE_CANDIDATE_POLICY_REJECTED' } });
+    expect(publishPackagesProgrammatic).not.toHaveBeenCalled();
   });
 
   // case: S-284.5

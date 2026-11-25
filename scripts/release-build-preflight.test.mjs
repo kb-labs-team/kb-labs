@@ -37,16 +37,14 @@ test('candidate job expands the shared build once and leaves only hosted-only st
   assert.equal(candidateBuild.with['candidate-id'], '${{ inputs.candidate_id }}');
   assert.equal(candidateBuild.with['run-id'], '${{ github.run_id }}');
   assert.equal(candidateBuild.with['gate-policy'], '${{ needs.resolve-gate-policy.outputs.policy }}');
-  assert.equal(candidateBuild.with['gate-result'], "${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}");
-  assert.equal(candidateBuild.with['gate-run-id'], "${{ needs.journey-gate.result == 'success' && github.run_id || '' }}");
+  assert.equal(candidateBuild.with['gate-result'], undefined, 'candidate provenance must not claim a gate result before the journey');
+  assert.equal(candidateBuild.with['gate-run-id'], undefined, 'gate run evidence must stay outside candidate provenance');
   assert.deepEqual(
-    Object.fromEntries(['CANDIDATE_ID', 'RUN_ID', 'GATE_POLICY', 'GATE_RESULT', 'GATE_RUN_ID'].map(name => [name, preflightEntrypoints[0].env[name]])),
+    Object.fromEntries(['CANDIDATE_ID', 'RUN_ID', 'GATE_POLICY'].map(name => [name, preflightEntrypoints[0].env[name]])),
     {
       CANDIDATE_ID: "${{ inputs['candidate-id'] }}",
       RUN_ID: "${{ inputs['run-id'] }}",
       GATE_POLICY: "${{ inputs['gate-policy'] }}",
-      GATE_RESULT: "${{ inputs['gate-result'] }}",
-      GATE_RUN_ID: "${{ inputs['gate-run-id'] }}",
     },
   );
 
@@ -182,7 +180,7 @@ if [[ "$args" == *"d.platformMembers.join"* || "$args" == *"d.platformRequires.j
 if [[ "$args" == *"JSON.stringify(d.adapters)"* || "$args" == *"JSON.stringify(d.adapterOptions)"* ]]; then printf '{}'; fi
 if [[ "$args" == *"prepare-release-index.mjs"* ]]; then mkdir -p "$(dirname "$RELEASE_INDEX_PATH")"; printf '{"platforms":[{"id":"platform","version":"%s"}]}\\n' "$EXPECTED_VERSION" > "$RELEASE_INDEX_PATH"; fi
 if [[ "$args" == *"process.env.RELEASE_INDEX_PATH"* ]]; then printf '%s' "$EXPECTED_VERSION"; fi
-if [[ "$args" == *"create-candidate-bundle.mjs"* ]]; then printf '%s|%s|%s|%s|%s|%s|%s\\n' "$CANDIDATE_ID" "$COMMIT_SHA" "$VERSION" "$GATE_POLICY" "$GATE_RESULT" "$GATE_RUN_ID" "$RUN_ID" > '${bundleMetadataPath}'; printf 'bundle assembled\\n'; fi
+if [[ "$args" == *"create-candidate-bundle.mjs"* ]]; then printf '%s|%s|%s|%s|%s\\n' "$CANDIDATE_ID" "$COMMIT_SHA" "$VERSION" "$GATE_POLICY" "$RUN_ID" > '${bundleMetadataPath}'; printf 'bundle assembled\\n'; fi
 if [[ "$args" == *"bundle/provenance.json"* ]]; then printf 'trusted-test-digest'; fi
 if [[ "$args" == *"release artifact publish"* ]]; then printf '{"ok":true}\\n'; fi
 if [[ "$1" == -p ]]; then printf '2.0.0-preflight\\n'; fi
@@ -222,8 +220,6 @@ printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
         CANDIDATE_ID: 'candidate-012345678',
         RUN_ID: 'test-run-1',
         GATE_POLICY: 'required',
-        GATE_RESULT: 'passed',
-        GATE_RUN_ID: 'test-gate-run-1',
         RELEASE_PREFLIGHT_ORDER_FILE: orderPath,
       },
     });
@@ -254,7 +250,7 @@ printf 'goreleaser %s\\n' "$*" >> "$RELEASE_PREFLIGHT_ORDER_FILE"
     const regressionOrderPosition = commandOrder.indexOf('node --test tools/kb-create/scripts/prepare-binary-manifest.preflight.mjs');
     assert.ok(goreleaserPosition >= 0 && manifestPosition > goreleaserPosition, commandOrder);
     assert.ok(regressionOrderPosition > manifestPosition, commandOrder);
-    assert.equal(readFileSync(bundleMetadataPath, 'utf8').trim(), 'candidate-012345678|0123456789abcdef0123456789abcdef01234567|2.0.0-canary.012345678|required|passed|test-gate-run-1|test-run-1');
+    assert.equal(readFileSync(bundleMetadataPath, 'utf8').trim(), 'candidate-012345678|0123456789abcdef0123456789abcdef01234567|2.0.0-canary.012345678|required|test-run-1');
     const indexPosition = nodeCommands.indexOf('tools/kb-create/scripts/prepare-release-index.mjs');
     const bundlePosition = nodeCommands.indexOf('plugins/release/scripts/create-candidate-bundle.mjs');
     assert.ok(indexPosition >= 0, nodeCommands);

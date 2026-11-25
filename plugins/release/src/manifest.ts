@@ -375,7 +375,7 @@ export const manifest = {
         operationType: 'execute' as const,
         longDescription:
           'Delivery requires a named target declared in release.flows[flow].deliveryTargets and ships the exact tarballs in its npm/ directory to that target. ' +
-          'Test targets accept verified canary and ungated candidates; public targets require a stable candidate with a passed release-case gate. ' +
+          'Test targets accept verified canary and ungated candidates; release-case channels require a separate passed gate receipt bound to the payload digest and trusted workflow run. Public targets require a stable candidate with that receipt. ' +
           'Resolves {flow, channel} from --release-tag via release.flows[*].tagPattern so CI never needs to ' +
           'guess the flow itself — just pass the tag. Requires the expected bundle digest and candidate identity from outside ' +
           'the bundle, then validates the exact file set, tarball names, package manifest, and release index before publishing. ' +
@@ -390,6 +390,9 @@ export const manifest = {
           'bundle-dir': { type: 'string', description: 'Downloaded candidate bundle root containing provenance.json, bundle.sha256, bundle.modes, and npm/ (default: .kb/release/bundle)' },
           'expected-digest': { type: 'string', required: true, description: 'Trusted SHA-256 candidate payload digest from outside the downloaded bundle' },
           'candidate-id': { type: 'string', required: true, description: 'Expected candidate id from the hosted build run' },
+          'candidate-channel': { type: 'string', choices: ['canary', 'stable'] as const, description: 'Expected candidate channel from the hosted build run; required when its gate policy requires release cases' },
+          'candidate-run-id': { type: 'string', description: 'Trusted workflow run ID that produced the candidate and gate receipt' },
+          'gate-attestation': { type: 'string', description: 'Path to the separate gate receipt artifact for a release-case candidate' },
           commit: { type: 'string', required: true, description: 'Expected full candidate commit SHA from the hosted build run' },
           version: { type: 'string', required: true, description: 'Expected platform version from the hosted build run' },
           target: { type: 'string', required: true, description: 'Named delivery target from release.flows[flow].deliveryTargets' },

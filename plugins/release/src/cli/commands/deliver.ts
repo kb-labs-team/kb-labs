@@ -16,7 +16,7 @@
  * Verdaccio-pre-flight flow from ADR-0001) and remains in place unchanged.
  */
 
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { defineCommand, type CLIInput, type PluginCommandContextV3, useLoader, useConfig, useEnv, type CommandResult } from '@kb-labs/sdk';
 import { createErrorEnvelope } from '@kb-labs/sdk/errors';
@@ -42,6 +42,9 @@ interface DeliverFlags extends FlowResolvableFlags {
   'bundle-dir'?: string;
   'expected-digest'?: string;
   'candidate-id'?: string;
+  'candidate-channel'?: 'canary' | 'stable';
+  'candidate-run-id'?: string;
+  'gate-attestation'?: string;
   commit?: string;
   version?: string;
   tag?: string;
@@ -154,16 +157,41 @@ export default defineCommand({
           },
         };
       }
-      const trust = { expectedDigest, candidateId, commit, flow: flowResult, version };
+      const candidateChannel = flags['candidate-channel'];
+      const candidateRunId = flags['candidate-run-id'];
+      const trust = {
+        expectedDigest, candidateId, commit, flow: flowResult, version,
+        ...(candidateChannel ? { channel: candidateChannel } : {}),
+        ...(candidateRunId ? { workflowRunId: candidateRunId } : {}),
+      };
+      let gateAttestation: unknown;
+      if (flags['gate-attestation']) {
+        try {
+          gateAttestation = JSON.parse(readFileSync(resolve(repoRoot, flags['gate-attestation']), 'utf8')) as unknown;
+        } catch {
+          return {
+            ok: false,
+            error: {
+              code: 'KB_RUNTIME_INPUT_INVALID',
+              message: 'Candidate gate receipt is missing or contains invalid JSON.',
+              hint: 'Download the gate receipt artifact from the candidate workflow run and retry with --gate-attestation <path>.',
+            },
+          };
+        }
+      }
       let candidate: ReturnType<typeof verifyCandidateBundle>;
       try {
-        candidate = verifyCandidateBundle(bundleDir, trust, { targetKind: kind });
+        candidate = verifyCandidateBundle(bundleDir, trust, {
+          targetKind: kind,
+          gateAttestation,
+          trustedWorkflowRunId: candidateRunId,
+        });
       } catch (error) {
         if (!(error instanceof CandidateBundleError)) throw error;
         if (error instanceof CandidatePolicyError) {
           const testTarget = findTestDeliveryTarget(targets);
           const hint = error.reason === 'channel-gate'
-            ? `${error.message}. After it passes, rerun: kb release artifact publish --target ${targetName}.`
+            ? `${error.message}. After the journey passes, download its gate receipt and rerun: kb release artifact publish --target ${targetName} --candidate-channel stable --candidate-run-id <run-id> --gate-attestation <receipt-path>.`
             : testTarget
               ? `${error.message} Deliver an ungated channel to the test target with: kb release artifact publish --target ${testTarget}.`
               : `${error.message} Declare a test target or change the channel gate policy before delivery.`;

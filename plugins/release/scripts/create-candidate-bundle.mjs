@@ -13,11 +13,7 @@ const provenance = createCandidateBundle({
   flow: required('FLOW'),
   version: required('VERSION'),
   channel: required('CHANNEL'),
-  gate: {
-    policy: required('GATE_POLICY'),
-    result: required('GATE_RESULT'),
-    ...(process.env.GATE_RUN_ID ? { runId: process.env.GATE_RUN_ID } : {}),
-  },
+  gate: { policy: required('GATE_POLICY') },
   workflowRunId: required('RUN_ID'),
   artifactsDir: required('ARTIFACTS_DIR'),
   outputDir: required('BUNDLE_DIR'),

@@ -11,19 +11,25 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
-import { resolveCandidateGatePolicy, type CandidateGateProvenance } from '../core/delivery-policy.js';
+import { resolveCandidateGatePolicy, type CandidateGatePolicy, type CandidateGateProvenance } from '../core/delivery-policy.js';
 import type { ReleaseChannel } from '../core/types.js';
+import { CandidateGateAttestationError, verifyCandidateGateAttestation } from './candidate-gate-attestation.js';
 
 export interface CandidateProvenance {
-  schema: 'kb.release-provenance/3';
+  schema: 'kb.release-provenance/4';
   candidateId: string;
   commit: string;
   flow: string;
   version: string;
   channel: ReleaseChannel;
-  gate: CandidateGateProvenance;
+  gate: CandidateGatePolicy;
   workflowRunId: string;
   bundleDigest: string;
+}
+
+export interface LegacyCandidateProvenance extends Omit<CandidateProvenance, 'schema' | 'gate'> {
+  schema: 'kb.release-provenance/3';
+  gate: CandidateGateProvenance;
 }
 
 export interface CandidateBundleInput {
@@ -32,7 +38,7 @@ export interface CandidateBundleInput {
   flow: string;
   version: string;
   channel: ReleaseChannel;
-  gate: CandidateGateProvenance;
+  gate: CandidateGatePolicy | CandidateGateProvenance;
   workflowRunId: string;
   artifactsDir: string;
   outputDir: string;
@@ -51,7 +57,7 @@ export interface CandidateArtifact {
 export interface VerifiedCandidateBundle {
   bundleDir: string;
   artifactsDir: string;
-  provenance: CandidateProvenance;
+  provenance: CandidateProvenance | LegacyCandidateProvenance;
   artifacts: CandidateArtifact[];
 }
 
@@ -61,11 +67,15 @@ export interface CandidateTrustAnchor {
   commit: string;
   flow: string;
   version: string;
+  channel?: ReleaseChannel;
+  workflowRunId?: string;
 }
 
 export interface CandidateVerificationPolicy {
   targetKind: 'test' | 'public';
   promotionChannel?: ReleaseChannel;
+  gateAttestation?: unknown;
+  trustedWorkflowRunId?: string;
 }
 
 export class CandidateBundleError extends Error {
@@ -122,7 +132,10 @@ function copyTree(source: string, target: string): void {
   }
 }
 
-function payloadDigest(bundleDir: string, provenance: Omit<CandidateProvenance, 'bundleDigest'>, modes: Map<string, string>): string {
+type CandidateDigestIdentity = Pick<CandidateProvenance, 'schema' | 'candidateId' | 'commit' | 'flow' | 'version' | 'channel' | 'workflowRunId'>
+  & { gate: CandidateGatePolicy | CandidateGateProvenance };
+
+function payloadDigest(bundleDir: string, provenance: CandidateDigestIdentity, modes: Map<string, string>): string {
   const payload = filesUnder(bundleDir)
     .filter(path => path !== 'provenance.json' && path !== 'bundle.sha256' && path !== 'bundle.modes')
     .map(path => {
@@ -179,14 +192,14 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
   if (input.binariesDir) copyTree(input.binariesDir, join(bundleDir, 'binaries'));
 
   const provenance: Omit<CandidateProvenance, 'bundleDigest'> = {
-    schema: 'kb.release-provenance/3',
+    schema: 'kb.release-provenance/4',
     candidateId: input.candidateId,
     commit: input.commit,
     flow: input.flow,
     version: input.version,
     channel: input.channel,
     workflowRunId: input.workflowRunId,
-    gate: input.gate,
+    gate: { policy: input.gate.policy },
   };
   const provenancePath = join(bundleDir, 'provenance.json');
   writeFileSync(provenancePath, `${JSON.stringify({ ...provenance, bundleDigest: '' }, null, 2)}\n`);
@@ -194,7 +207,7 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
   const completeProvenance: CandidateProvenance = { ...provenance, bundleDigest: payloadDigest(bundleDir, provenance, parseIndexedPaths(bundleDir, 'bundle.modes')) };
   writeFileSync(provenancePath, `${JSON.stringify(completeProvenance, null, 2)}\n`);
   writeBundleChecksums(bundleDir);
-  verifyCandidateBundle(bundleDir, {
+  verifyCandidateBundleIntegrity(bundleDir, {
     expectedDigest: completeProvenance.bundleDigest,
     candidateId: input.candidateId,
     commit: input.commit,
@@ -265,10 +278,11 @@ function verifyNpmArtifacts(artifactsDir: string): CandidateArtifact[] {
   return manifest;
 }
 
-export function verifyCandidateBundle(
+function verifyCandidateBundleInternal(
   bundlePath: string,
   trust: CandidateTrustAnchor,
   policy: CandidateVerificationPolicy,
+  integrityOnly: boolean,
 ): VerifiedCandidateBundle {
   const bundleDir = resolve(bundlePath);
   try {
@@ -277,21 +291,26 @@ export function verifyCandidateBundle(
     if (error instanceof CandidateBundleError) throw error;
     throw new CandidateBundleError(`Candidate bundle directory does not exist or cannot be read: ${bundleDir}`);
   }
-  const provenance = readJson<CandidateProvenance>(join(bundleDir, 'provenance.json'), 'provenance.json');
-  if (provenance.schema !== 'kb.release-provenance/3' || !provenance.candidateId || !/^[a-f0-9]{40}$/i.test(provenance.commit ?? '')
+  const provenance = readJson<CandidateProvenance | LegacyCandidateProvenance>(join(bundleDir, 'provenance.json'), 'provenance.json');
+  if (!['kb.release-provenance/3', 'kb.release-provenance/4'].includes(provenance.schema) || !provenance.candidateId || !/^[a-f0-9]{40}$/i.test(provenance.commit ?? '')
     || !provenance.flow || !provenance.version || !['canary', 'stable'].includes(provenance.channel) || !provenance.workflowRunId) {
     throw new CandidateBundleError('Candidate provenance is incomplete or unsupported');
   }
   if (!provenance.gate || !['none', 'release-cases'].includes(provenance.gate.policy)
-    || !['passed', 'failed', 'skipped'].includes(provenance.gate.result)
-    || (provenance.gate.result === 'passed' && !provenance.gate.runId)) {
-    throw new CandidateBundleError('Candidate provenance is missing a valid gate result');
+    || (provenance.schema === 'kb.release-provenance/3'
+      && (!['passed', 'failed', 'skipped'].includes((provenance as LegacyCandidateProvenance).gate.result)
+        || ((provenance as LegacyCandidateProvenance).gate.result === 'passed' && !(provenance as LegacyCandidateProvenance).gate.runId)))
+    || (provenance.schema === 'kb.release-provenance/4'
+      && ('result' in provenance.gate || 'runId' in provenance.gate))) {
+    throw new CandidateBundleError('Candidate provenance is missing a valid gate policy');
   }
   if (!/^[a-f0-9]{64}$/.test(trust.expectedDigest)) {
     throw new CandidateBundleError('The trusted candidate digest must be a SHA-256 hex digest');
   }
   if (provenance.candidateId !== trust.candidateId || provenance.commit.toLowerCase() !== trust.commit.toLowerCase()
-    || provenance.flow !== trust.flow || provenance.version !== trust.version) {
+    || provenance.flow !== trust.flow || provenance.version !== trust.version
+    || (trust.channel && provenance.channel !== trust.channel)
+    || (trust.workflowRunId && provenance.workflowRunId !== trust.workflowRunId)) {
     throw new CandidateBundleError('Candidate provenance does not match the trusted candidate identity');
   }
   if (policy.promotionChannel && provenance.channel !== policy.promotionChannel) {
@@ -323,12 +342,32 @@ export function verifyCandidateBundle(
   if (provenance.gate.policy !== declaredGatePolicy.policy) {
     throw new CandidateBundleError('Candidate provenance gate policy differs from the release flow declaration');
   }
-  if (declaredGatePolicy.policy === 'release-cases'
-    && (provenance.gate.result !== 'passed' || !provenance.gate.runId)) {
-    throw new CandidatePolicyError(
-      `Channel ${provenance.channel} requires a passed release-case gate`,
-      'channel-gate',
-    );
+  if (!integrityOnly && declaredGatePolicy.policy === 'release-cases') {
+    if (!trust.channel || !trust.workflowRunId || policy.trustedWorkflowRunId !== trust.workflowRunId) {
+      throw new CandidatePolicyError(
+        'Release-case delivery requires trusted candidate channel and workflow run values',
+        'channel-gate',
+      );
+    }
+    try {
+      verifyCandidateGateAttestation(policy.gateAttestation, {
+        candidateId: provenance.candidateId,
+        commit: provenance.commit,
+        flow: provenance.flow,
+        version: provenance.version,
+        channel: trust.channel,
+        bundleDigest: provenance.bundleDigest,
+        workflowRunId: trust.workflowRunId,
+        policy: 'release-cases',
+        result: 'passed',
+      }, policy.trustedWorkflowRunId ?? '');
+    } catch (error) {
+      if (!(error instanceof CandidateGateAttestationError)) throw error;
+      throw new CandidatePolicyError(
+        `Channel ${provenance.channel} requires matching passed release-case gate evidence: ${error.message}`,
+        'channel-gate',
+      );
+    }
   }
   if (policy.targetKind === 'public' && declaredGatePolicy.policy !== 'release-cases') {
     throw new CandidatePolicyError(
@@ -366,6 +405,18 @@ export function verifyCandidateBundle(
     }
   }
   return { bundleDir, artifactsDir, provenance, artifacts };
+}
+
+export function verifyCandidateBundleIntegrity(bundlePath: string, trust: CandidateTrustAnchor): VerifiedCandidateBundle {
+  return verifyCandidateBundleInternal(bundlePath, trust, { targetKind: 'test' }, true);
+}
+
+export function verifyCandidateBundle(
+  bundlePath: string,
+  trust: CandidateTrustAnchor,
+  policy: CandidateVerificationPolicy,
+): VerifiedCandidateBundle {
+  return verifyCandidateBundleInternal(bundlePath, trust, policy, false);
 }
 
 export class CandidatePolicyError extends CandidateBundleError {
