@@ -336,6 +336,27 @@ describe('WorkflowHostService', () => {
       environmentId: 'env-1',
     });
   });
+
+  it('merges a request source ref into the configured workflow target', async () => {
+    const runFromSpec = vi.fn(async () => ({ id: 'run-1', status: 'queued' }));
+    const get = vi.fn(async () => ({
+      id: 'wf-1',
+      input: {
+        name: 'Test Workflow', version: '1.0.0', on: { manual: true },
+        target: { namespace: 'team-a/prod', environmentId: 'env-1' },
+        jobs: { main: { runsOn: 'sandbox', steps: [] } },
+      },
+    }));
+    const service = createService({ engine: { runFromSpec }, workflowService: { get } });
+
+    await service.runWorkflow('wf-1', { target: { sourceRef: 'main' } });
+
+    const calls = (runFromSpec as any).mock.calls as Array<[Record<string, unknown>, unknown]>;
+    const [specArg] = calls[0] ?? [];
+    expect(specArg?.target).toEqual({
+      namespace: 'team-a/prod', environmentId: 'env-1', sourceRef: 'main',
+    });
+  });
 });
 
 describe('WorkflowHostService.rerunWorkflow', () => {

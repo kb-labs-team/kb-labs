@@ -1,5 +1,6 @@
 // Devkit integration
 export { resolveDevkitBin } from './devkit/devkit-discovery.js';
+export { NoDevkitTasksSelectedError } from './devkit/devkit-adapter.js';
 export { DevkitAdapter } from './devkit/devkit-adapter.js';
 export { captureGit } from './devkit/git-capture.js';
 export type { DevkitAdapterOptions } from './devkit/devkit-adapter.js';

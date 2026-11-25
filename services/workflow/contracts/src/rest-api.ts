@@ -302,6 +302,7 @@ export const WorkflowRunRequestSchema = z.object({
     workspaceId: z.string().min(1).optional(),
     namespace: z.string().min(1).optional(),
     workdir: z.string().min(1).optional(),
+    sourceRef: z.string().min(1).optional(),
   }).optional(),
   isolation: z.enum(['strict', 'balanced', 'relaxed']).optional(),
   trigger: z.object({

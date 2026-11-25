@@ -34,7 +34,7 @@ const REDACTED = '***REDACTED***';
 
 // ── Row model ────────────────────────────────────────────────────────────────
 
-type ConfigFieldSource = 'manifest' | 'generated' | 'platform' | 'project' | 'overlay' | 'both' | 'ignored';
+type ConfigFieldSource = ConfigLayerName | 'both' | 'ignored';
 
 type ConfigRow = {
   source: ConfigFieldSource;

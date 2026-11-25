@@ -48,6 +48,7 @@ import {
   type StepExecutionResult,
 } from "@kb-labs/workflow-runtime";
 import { writeWorkspacePatchArtifact } from './workspace-patch-artifact.js';
+import { workspaceSourceRefMismatch } from './workspace-source-ref.js';
 
 interface StepSpecRaw {
   name: string;
@@ -362,7 +363,15 @@ export async function createWorkflowWorker(
     const runTarget = (run.metadata as Record<string, unknown> | undefined)
       ?.target as ExecutionTarget | undefined;
     const jobTarget = job.target as ExecutionTarget | undefined;
-    const target = jobTarget ?? runTarget;
+    const sourceRef = jobTarget?.sourceRef ?? runTarget?.sourceRef;
+    const toPluginExecutionTarget = (value: ExecutionTarget | undefined) => {
+      if (!value) {return undefined;}
+      const { sourceRef: _sourceRef, ...executionTarget } = value;
+      return _sourceRef && Object.keys(executionTarget).length === 0 ? undefined : executionTarget;
+    };
+    // Workspace base selection and plugin routing are separate concerns. A
+    // sourceRef-only job target must not erase its workflow's namespace target.
+    const target = toPluginExecutionTarget(jobTarget) ?? toPluginExecutionTarget(runTarget);
 
     // ── Workspace provisioning (worktree/container/remote) ──
     // If platform has a workspace provider, create an isolated workspace for this run.
@@ -376,17 +385,50 @@ export async function createWorkflowWorker(
       : (process.env["KB_PROJECT_ROOT"] ?? workspaceRoot);
     let provisionedWorkspaceId: string | undefined;
     let executionWorkspaceId: string | undefined;
+    let sourceRefCommit: string | undefined;
     const workspaceMetadata = run.metadata?.['executionWorkspace'] as
-      | { workspaceId?: unknown; rootPath?: unknown }
+      | { workspaceId?: unknown; rootPath?: unknown; sourceRef?: unknown; sourceRefCommit?: unknown }
       | undefined;
     const inheritedWorkspace = typeof run.metadata?.['workspaceOwnerRunId'] === 'string'
       && run.metadata?.['workspaceOwnerRunId'] !== run.id;
+
+    if (sourceRef !== undefined) {
+      const resolveSourceRef = wsProvider?.resolveSourceRef;
+      const supportsSourceRef = wsProvider?.getCapabilities?.().supportsSourceRef === true
+        && typeof resolveSourceRef === 'function';
+      if (!supportsSourceRef || !wsProvider) {
+        await engine.markJobFailed(run.id, job.id, Object.assign(
+          new Error('The configured workspace provider does not support Git source refs.'),
+          { code: 'KB_WORKSPACE_SOURCE_REF_UNSUPPORTED' },
+        ));
+        claimedJobs.delete(jobKey);
+        return true;
+      }
+      try {
+        sourceRefCommit = await resolveSourceRef.call(wsProvider, sourceRef, projectRoot);
+      } catch (error) {
+        await engine.markJobFailed(run.id, job.id, error instanceof Error ? error : new Error(String(error)));
+        claimedJobs.delete(jobKey);
+        return true;
+      }
+    }
 
     if (
       workspaceMetadata
       && typeof workspaceMetadata.rootPath === 'string'
       && typeof workspaceMetadata.workspaceId === 'string'
     ) {
+      const refMismatch = workspaceSourceRefMismatch(
+        sourceRef,
+        workspaceMetadata.sourceRef,
+        sourceRefCommit,
+        workspaceMetadata.sourceRefCommit,
+      );
+      if (refMismatch) {
+        await engine.markJobFailed(run.id, job.id, refMismatch);
+        claimedJobs.delete(jobKey);
+        return true;
+      }
       runWorkspace = workspaceMetadata.rootPath;
       executionWorkspaceId = workspaceMetadata.workspaceId;
       // The owner releases once its terminal job completes. A child must never
@@ -406,6 +448,7 @@ export async function createWorkflowWorker(
           projectRoot,
           ownerRunId: run.id,
           platformRoot,
+          sourceRef: sourceRefCommit,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
             jobLogger.info(`[workspace] ${event.stage}: ${event.message}`, {
@@ -422,7 +465,12 @@ export async function createWorkflowWorker(
           await engine.getStateStore().updateRun(run.id, (draft) => {
             draft.metadata = {
               ...(draft.metadata ?? {}),
-              executionWorkspace: { workspaceId: ws.workspaceId, rootPath },
+              executionWorkspace: {
+                workspaceId: ws.workspaceId,
+                rootPath,
+                ...(sourceRef !== undefined ? { sourceRef } : {}),
+                ...(sourceRefCommit !== undefined ? { sourceRefCommit } : {}),
+              },
               workspaceOwnerRunId: run.id,
             };
           });
@@ -754,7 +802,10 @@ export async function createWorkflowWorker(
           // avoiding a worker-pool deadlock when many parents invoke children.
           if (step.spec.uses?.startsWith("workflow:")) {
             await invokeChildWorkflow({
-              parentRun: run,
+              // The run passed into this job predates workspace provisioning.
+              // Use the persisted snapshot so nested workflows inherit the
+              // owner workspace binding written through the state store.
+              parentRun: freshRun ?? run,
               parentJob: job,
               parentStep: step,
               workflowRef: step.spec.uses.slice("workflow:".length),

@@ -8,6 +8,7 @@ export function buildRunJsonReport(snap: RunSnapshot): object {
     durationMs: snap.durationMs,
     tasks: snap.tasks,
     ok: snap.raw.ok,
+    ...(snap.raw.error ? { error: snap.raw.error } : {}),
     elapsed: snap.raw.elapsed,
     summary: snap.raw.summary,
     results: snap.raw.results,

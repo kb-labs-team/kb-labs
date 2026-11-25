@@ -5,6 +5,7 @@ import type { QACatalogDiagnostic } from './catalog.js';
 
 const CLAIM_ID = /^(?:S|PC)-\d{3}\.\d+$/;
 const CLAIM_ID_LITERAL = /["']((?:S|PC)-\d{3}\.\d+)["']/g;
+// Isolated task worktrees are not project sources.
 const SKIP = new Set(['.git', '.worktrees', 'node_modules', 'dist', 'build', '.next', '.kb', '.venv', '.tox', '.pytest_cache', 'vendor', 'coverage']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.go', '.py']);
 

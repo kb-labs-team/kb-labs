@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   gate: vi.fn(),
   check: vi.fn(),
   run: vi.fn(),
+  saveRun: vi.fn(),
   loadBaseline: vi.fn(),
   latestCheck: vi.fn(),
   latestStats: vi.fn(),
@@ -30,7 +31,7 @@ vi.mock('../../../src/core/index.js', () => ({
   SnapshotStore: class {
     saveGate() { return null; }
     saveCheck() { return null; }
-    saveRun() { return null; }
+    saveRun(...args: unknown[]) { return mocks.saveRun(...args); }
     loadBaseline() { return mocks.loadBaseline(); }
     latestCheck() { return mocks.latestCheck(); }
     latestStats() { return mocks.latestStats(); }
@@ -74,6 +75,9 @@ beforeEach(() => {
     results: [{ Package: '@kb-labs/test', Task: 'build', OK: false, Cached: false, Elapsed: 1, ExitCode: 1, Stdout: '', Stderr: 'build failed', Error: 'build failed' }],
     summary: { total: 1, passed: 0, failed: 1, cached: 0 },
   });
+  mocks.saveRun.mockImplementation((raw: unknown, tasks: string[]) => ({
+    kind: 'run', id: 'snapshot-1', timestamp: '2026-01-01T00:00:00.000Z', durationMs: 1, tasks, raw,
+  }));
   mocks.loadBaseline.mockReturnValue({ check: {}, stats: {} });
   mocks.latestCheck.mockReturnValue({ raw: {} });
   mocks.latestStats.mockReturnValue({ raw: {} });
@@ -120,6 +124,37 @@ describe('QA command failure parity', () => {
     const human = await execute(qaRun, { save: false });
     expect(json).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', diagnostics: [{ code: 'KB_QA_TASK_FAILED' }] } });
     expect(human).toEqual(json);
+  });
+
+  // case: S-326.2
+  it('saves and presents the original DevKit failure with its blocked-task snapshot', async () => {
+    const raw = {
+      elapsed: '1s', ok: false,
+      error: {
+        code: 'KB_DEVKIT_TASK_FAILED', message: 'Task build failed for @fixture/core',
+        hint: 'Inspect the task log.', details: { package: '@fixture/core', task: 'build' },
+      },
+      results: [{ Package: '@fixture/core', Task: 'build', OK: false, Cached: false, Elapsed: 1, ExitCode: 1, Stdout: '', Stderr: 'failed', Error: 'failed' }],
+      summary: {
+        scheduled: 3, passed: 0, failed: 1, cached: 0, blocked: 2,
+        blockedTasks: [
+          { package: '@fixture/middle', task: 'build', blockedByPackage: '@fixture/core', blockedByTask: 'build' },
+          { package: '@fixture/app', task: 'build', blockedByPackage: '@fixture/core', blockedByTask: 'build' },
+        ],
+      },
+    };
+    mocks.run.mockResolvedValue(raw);
+
+    const result = await execute(qaRun, { json: true });
+
+    expect(mocks.saveRun).toHaveBeenCalledWith(raw, ['build', 'lint', 'type-check', 'test'], expect.any(Number), { commit: 'abc123', branch: 'main', message: 'test' });
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_DEVKIT_TASK_FAILED', message: raw.error.message,
+        hint: raw.error.hint, details: raw.error.details,
+      },
+    });
   });
 
   // case: S-326.1

@@ -44,10 +44,15 @@ export function buildRunReport(snap: RunSnapshot | null): ReportSection[] {
   }
 
   const status = snap.raw.ok ? 'passed' : 'failed';
-  const { total, passed: p, failed: f, cached: c } = snap.raw.summary;
+  const total = snap.raw.summary.scheduled ?? snap.raw.summary.total;
+  const { passed: p, failed: f, cached: c } = snap.raw.summary;
   sections.push({
     header: 'Summary',
-    lines: [`${status.toUpperCase()}  total ${total}  pass ${p}  fail ${f}  cached ${c}  (${snap.raw.elapsed})`],
+    lines: [
+      `${status.toUpperCase()}  total ${total}  pass ${p}  fail ${f}  cached ${c}  (${snap.raw.elapsed})`,
+      ...(snap.raw.error?.message ? [`DevKit error: ${snap.raw.error.message}`] : []),
+      ...(snap.raw.error?.hint ? [`Hint: ${snap.raw.error.hint}`] : []),
+    ],
   });
 
   return sections;

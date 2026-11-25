@@ -32,13 +32,29 @@ export const DevkitRunResultSchema = z.object({
 export const DevkitRunOutputSchema = z.object({
   elapsed: z.string(),
   ok: z.boolean(),
+  error: z.object({
+    code: z.string().optional(),
+    message: z.string().optional(),
+    hint: z.string().optional(),
+    details: z.record(z.unknown()).optional(),
+  }).optional(),
   results: z.array(DevkitRunResultSchema),
   summary: z.object({
-    total: z.number(),
+    scheduled: z.number().int().nonnegative().optional(),
+    total: z.number().int().nonnegative().optional(),
     passed: z.number(),
     failed: z.number(),
     cached: z.number(),
-  }),
+    blocked: z.number().optional(),
+    notAffected: z.number().optional(),
+    skippedManual: z.number().optional(),
+    blockedTasks: z.array(z.object({
+      package: z.string(),
+      task: z.string(),
+      blockedByPackage: z.string(),
+      blockedByTask: z.string(),
+    })).optional(),
+  }).refine((summary) => summary.scheduled !== undefined || summary.total !== undefined),
 });
 
 // DevkitCheckOutput

@@ -7,6 +7,7 @@ import {
 } from '@kb-labs/sdk';
 import {
   DevkitAdapter,
+  NoDevkitTasksSelectedError,
   SnapshotStore,
   resolveDevkitBin,
   captureGit,
@@ -26,7 +27,7 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd ?? process.cwd();
 
-      const binaryPath = resolveDevkitBin(cwd, config?.devkitPath);
+      const binaryPath = resolveDevkitBin(cwd, config?.devkitPath, process.env.KB_PROJECT_ROOT);
       const adapter = new DevkitAdapter({ binaryPath, cwd, shell: ctx.api.shell });
       const store = new SnapshotStore(cwd, config?.historyMaxEntries);
 
@@ -38,7 +39,22 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
       const git = await captureGit(ctx.api.shell, cwd);
 
       const start = Date.now();
-      const raw = await adapter.run(tasks, flags.packages);
+      let raw: Awaited<ReturnType<DevkitAdapter['run']>>;
+      try {
+        raw = await adapter.run(tasks, flags.packages);
+      } catch (error) {
+        if (error instanceof NoDevkitTasksSelectedError) {
+          return {
+            ok: false,
+            error: {
+              code: error.code,
+              message: error.message,
+              hint: 'Choose a package with a matching DevKit task, then rerun `kb qa run`.',
+            },
+          };
+        }
+        throw error;
+      }
       const durationMs = Date.now() - start;
 
       const snap = save ? store.saveRun(raw, tasks, durationMs, git) : null;
@@ -49,9 +65,10 @@ export default defineCommand<unknown, CLIInput<QaRunFlags>, unknown>({
       const result = raw.ok ? raw : {
         ok: false as const,
         error: {
-          code: 'KB_RUNTIME_COMMAND_FAILED',
-          message: 'QA run failed',
-          hint: 'Review failed task output, then rerun `kb qa run`.',
+          code: raw.error?.code ?? 'KB_RUNTIME_COMMAND_FAILED',
+          message: raw.error?.message ?? 'QA run failed',
+          hint: raw.error?.hint ?? 'Review failed task output, then rerun `kb qa run`.',
+          ...(raw.error?.details ? { details: raw.error.details } : {}),
           diagnostics: raw.results.filter((task) => !task.OK).map((task) => ({
             code: 'KB_QA_TASK_FAILED',
             severity: 'error',

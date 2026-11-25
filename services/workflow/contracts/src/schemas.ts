@@ -59,6 +59,7 @@ export const ExecutionTargetSchema = z.object({
   workspaceId: z.string().min(1).optional(),
   namespace: z.string().min(1).optional(),
   workdir: z.string().min(1).optional(),
+  sourceRef: z.string().min(1).optional(),
 })
 
 export const IsolationProfileSchema = z.enum(['strict', 'balanced', 'relaxed'])
@@ -351,6 +352,8 @@ export const RunMetadataSchema = z.object({
   executionWorkspace: z.object({
     workspaceId: z.string().min(1),
     rootPath: z.string().min(1),
+    sourceRef: z.string().min(1).optional(),
+    sourceRefCommit: z.string().regex(/^[a-f0-9]{40,64}$/).optional(),
   }).optional(),
   workspaceOwnerRunId: z.string().optional(),
 })

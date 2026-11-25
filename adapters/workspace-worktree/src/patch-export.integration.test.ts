@@ -36,6 +36,24 @@ afterEach(async () => {
 const ownerRunId = 'test-owner-run';
 
 describe('WorktreeWorkspaceAdapter.exportPatch', () => {
+  // case: S-325.2
+  it('fails closed when a reused workspace no longer matches the requested source ref', async () => {
+    const projectRoot = await makeRepository();
+    const workspaceId = 'wt_source_ref_mismatch';
+    const adapter = new WorktreeWorkspaceAdapter({ toolDistPaths: [], initSubmodules: false, installDeps: false });
+    const initial = await adapter.materialize({ workspaceId, sourceRef: 'HEAD', projectRoot, metadata: { runId: ownerRunId } });
+    const originalBase = execFileSync('git', ['-C', initial.rootPath!, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+
+    await writeFile(path.join(projectRoot, 'tracked.txt'), 'advance source HEAD\n');
+    execFileSync('git', ['-C', projectRoot, 'add', 'tracked.txt']);
+    execFileSync('git', ['-C', projectRoot, 'commit', '-qm', 'advance source ref']);
+    const requestedBase = execFileSync('git', ['-C', projectRoot, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    expect(requestedBase).not.toBe(originalBase);
+
+    await expect(adapter.materialize({ workspaceId, sourceRef: 'HEAD', projectRoot, metadata: { runId: ownerRunId } }))
+      .rejects.toMatchObject({ code: 'KB_WORKSPACE_PATCH_BASE_MISMATCH' });
+  });
+
   it('returns an empty patch when the worktree has no changes', async () => {
     const projectRoot = await makeRepository();
     const adapter = new WorktreeWorkspaceAdapter({ toolDistPaths: [], initSubmodules: false, installDeps: false });

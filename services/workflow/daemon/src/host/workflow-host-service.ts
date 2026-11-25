@@ -267,9 +267,16 @@ export class WorkflowHostService {
     }
 
     const specInput = workflow.input as Record<string, unknown>;
+    const configuredTarget = specInput['target'];
+    const target = request.target
+      ? {
+          ...(configuredTarget && typeof configuredTarget === 'object' ? configuredTarget : {}),
+          ...request.target,
+        }
+      : configuredTarget;
     const spec = {
       ...specInput,
-      ...(request.target ? { target: request.target } : {}),
+      ...(target ? { target } : {}),
       ...(request.isolation ? { isolation: request.isolation } : {}),
     } as unknown as import('@kb-labs/workflow-contracts').WorkflowSpec;
     const triggerType =

@@ -15,7 +15,7 @@ export default defineHandler({
       const config = await useConfig<QAPluginConfig>();
       const cwd = ctx.cwd;
 
-      const binaryPath = resolveDevkitBin(cwd, config?.devkitPath);
+      const binaryPath = resolveDevkitBin(cwd, config?.devkitPath, process.env.KB_PROJECT_ROOT);
       const adapter = new DevkitAdapter({ binaryPath, cwd, shell: ctx.api.shell });
       const store = new SnapshotStore(cwd, config?.historyMaxEntries);
 

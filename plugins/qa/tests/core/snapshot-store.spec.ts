@@ -62,6 +62,25 @@ describe('SnapshotStore — run snapshots', () => {
     expect(history[0]!.id).toBe(snap.id);
   });
 
+  it('persists the DevKit error and blocked prerequisites in failed run history', () => {
+    const store = new SnapshotStore(rootDir);
+    const raw: DevkitRunOutput = {
+      elapsed: '1s', ok: false,
+      error: { code: 'KB_DEVKIT_TASK_FAILED', message: 'core build failed', hint: 'inspect the log' },
+      results: [{ Package: '@fixture/core', Task: 'build', OK: false, Cached: false, Elapsed: 1, ExitCode: 1, Stdout: '', Stderr: '', Error: 'failed' }],
+      summary: {
+        scheduled: 3, passed: 0, failed: 1, cached: 0, blocked: 2,
+        blockedTasks: [
+          { package: '@fixture/app', task: 'build', blockedByPackage: '@fixture/core', blockedByTask: 'build' },
+        ],
+      },
+    };
+
+    store.saveRun(raw, ['test'], 100);
+
+    expect(store.latestRun()?.raw).toEqual(raw);
+  });
+
   it('trims run history to maxEntries', () => {
     const store = new SnapshotStore(rootDir, 3);
     for (let i = 0; i < 5; i++) {store.saveRun(makeRun(), ['lint'], 100);}

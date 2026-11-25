@@ -14,6 +14,16 @@ export interface DevkitAdapterOptions {
   timeoutMs?: number;
 }
 
+export class NoDevkitTasksSelectedError extends Error {
+  readonly code = 'KB_RUNTIME_INPUT_INVALID';
+
+  constructor(tasks: string[], packages: string[]) {
+    const scope = packages.length > 0 ? `packages ${packages.join(', ')}` : 'the selected workspace scope';
+    super(`No DevKit tasks were selected for ${scope} and tasks ${tasks.join(', ')}.`);
+    this.name = 'NoDevkitTasksSelectedError';
+  }
+}
+
 export class DevkitAdapter {
   private readonly bin: string;
   private readonly cwd: string;
@@ -35,7 +45,33 @@ export class DevkitAdapter {
       throw new Error('DevkitAdapter.run: packages must include at least one name per selector entry');
     }
     const packageArgs = packageNames.length > 0 ? ['--packages', packageNames.join(',')] : [];
-    return this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
+    const output = await this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
+    const hasExecutionResult = Array.isArray(output.results) && output.summary !== undefined;
+    if (output.error && !hasExecutionResult) {
+      const failure = output.error;
+      throw Object.assign(new Error(failure.message ?? `kb-devkit run failed${failure.code ? ` (${failure.code})` : ''}`), {
+        ...(failure.code ? { code: failure.code } : {}),
+        ...(failure.hint ? { hint: failure.hint } : {}),
+        ...(failure.details ? { details: failure.details } : {}),
+      });
+    }
+    const selectedTaskCount = output.summary?.scheduled ?? output.summary?.total;
+    if (selectedTaskCount === undefined || !Number.isInteger(selectedTaskCount) || selectedTaskCount <= 0) {
+      throw new NoDevkitTasksSelectedError(tasks, packageNames);
+    }
+    const results = Array.isArray(output.results) ? output.results : [];
+    const hasSelectedEvidence = output.ok === true && tasks.every((task) =>
+      packageNames.length === 0
+        ? results.some((result) => result.Task === task)
+        : packageNames.every((packageName) => results.some((result) => result.Task === task && result.Package === packageName))
+    );
+    if (output.ok !== false && !hasSelectedEvidence) {
+      throw new NoDevkitTasksSelectedError(tasks, packageNames);
+    }
+    return {
+      ...output,
+      summary: { ...output.summary, scheduled: selectedTaskCount },
+    };
   }
 
   async check(): Promise<DevkitCheckOutput> {
@@ -83,7 +119,22 @@ export class DevkitAdapter {
     }
 
     try {
-      return JSON.parse(result.stdout) as T;
+      const parsed: unknown = JSON.parse(result.stdout);
+      if (parsed !== null && typeof parsed === 'object' && 'data' in parsed) {
+        const data = (parsed as { data?: unknown }).data;
+        if (data !== null && typeof data === 'object') {
+          const envelope = parsed as { ok?: unknown; error?: unknown };
+          if (typeof envelope.ok === 'boolean') {
+            return {
+              ...data,
+              ok: envelope.ok,
+              ...(envelope.error !== undefined ? { error: envelope.error } : {}),
+            } as T;
+          }
+          return data as T;
+        }
+      }
+      return parsed as T;
     } catch {
       throw new Error(
         `kb-devkit ${args[0]} produced non-JSON output (exit ${result.code}). ` +

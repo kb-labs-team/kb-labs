@@ -246,6 +246,9 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       throw new Error('Workspace materialization needs the platform root to link CLI tools. Pass platformRoot from the platform runtime.');
     }
     const repoRoot = await this.resolveOwnerRoot(projectRoot);
+    const requestedBaseCommit = request.sourceRef
+      ? await this.resolveSourceRef(request.sourceRef, repoRoot)
+      : undefined;
     const worktreeBaseDir = await this.resolveOwnedWorktreeBase(repoRoot, true);
 
     const worktreePath = path.join(worktreeBaseDir, workspaceId);
@@ -255,6 +258,10 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       const existing = this.records.get(workspaceId);
       if (existing) {
         await this.assertRecordOwner(existing, workspaceId, repoRoot, worktreePath, runId, true);
+        if (request.sourceRef) {
+          if (!requestedBaseCommit) throw new Error('Workspace source ref did not resolve to a commit');
+          this.assertRequestedBaseMatches(existing, requestedBaseCommit);
+        }
         existing.refCount++;
         onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree', progress: 100 });
         return {
@@ -264,11 +271,15 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
           rootPath: worktreePath,
           createdAt: existing.createdAt,
           updatedAt: new Date().toISOString(),
-          metadata: { branch, runId, repoRoot, reused: true },
+          metadata: { branch, runId, repoRoot, reused: true, baseCommit: existing.baseCommit },
         };
       }
       // Worktree exists on disk but not in records (stale) — reuse anyway
       const recovered = await this.recoverRecord(workspaceId, repoRoot, worktreePath, runId, true);
+      if (request.sourceRef) {
+        if (!requestedBaseCommit) throw new Error('Workspace source ref did not resolve to a commit');
+        this.assertRequestedBaseMatches(recovered, requestedBaseCommit);
+      }
       onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree (recovered)', progress: 100 });
       const now = recovered.createdAt;
       recovered.branch = branch;
@@ -283,7 +294,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         rootPath: worktreePath,
         createdAt: now,
         updatedAt: now,
-        metadata: { branch, runId, repoRoot, reused: true },
+        metadata: { branch, runId, repoRoot, reused: true, baseCommit: recovered.baseCommit },
       };
     }
 
@@ -292,10 +303,11 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     };
 
     try {
+      const baseCommitRef = requestedBaseCommit ?? await this.resolveSourceRef(branch, repoRoot);
       // Stage 1: Create worktree
       progress('worktree', `Creating worktree from ${safeBranch}...`, 10);
       await this.exec(
-        `git worktree add --detach "${worktreePath}" ${safeBranch}`,
+        `git worktree add --detach "${worktreePath}" ${baseCommitRef}`,
         repoRoot,
         TIMEOUTS.worktree,
       );
@@ -364,7 +376,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         rootPath: worktreePath,
         createdAt: record.createdAt,
         updatedAt: record.createdAt,
-        metadata: { branch, runId, repoRoot, platformRoot },
+        metadata: { branch, runId, repoRoot, platformRoot, baseCommit },
       };
     } catch (error) {
       progress('failed', `Provisioning failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -535,7 +547,20 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     return {
       supportsAttach: true,
       supportsRelease: true,
+      supportsSourceRef: true,
     };
+  }
+
+  async resolveSourceRef(sourceRef: string, projectRoot: string): Promise<string> {
+    const repoRoot = await this.resolveOwnerRoot(projectRoot);
+    const commit = (await this.gitOutput(
+      ['rev-parse', '--verify', '--end-of-options', `${sourceRef}^{commit}`],
+      repoRoot,
+    )).trim();
+    if (!/^[a-f0-9]{40,64}$/.test(commit)) {
+      throw new Error(`Workspace source ref did not resolve to a commit: ${sourceRef}`);
+    }
+    return commit;
   }
 
   /**
@@ -590,6 +615,15 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       env: env ?? metadataEnvironment(),
     });
     return stdout;
+  }
+
+  private assertRequestedBaseMatches(record: WorktreeRecord, requestedBaseCommit: string): void {
+    if (!record.baseCommit || record.baseCommit !== requestedBaseCommit) {
+      throw Object.assign(
+        new Error('The existing workspace base does not match the requested source ref.'),
+        { code: 'KB_WORKSPACE_PATCH_BASE_MISMATCH' },
+      );
+    }
   }
 
   private async persistBaseCommit(worktreePath: string): Promise<string> {
