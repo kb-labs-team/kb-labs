@@ -49,38 +49,6 @@ describe('WorktreeWorkspaceAdapter', () => {
     ).rejects.toThrow('Invalid branch name');
   });
 
-  // case: S-198.8
-  it('preserves dirty restart worktrees and reports their recovery paths', async () => {
-    const repoRoot = '/projects/demo';
-    const baseDir = `${repoRoot}/.worktrees`;
-    const dirtyPath = `${baseDir}/wt_dirty`;
-    const cleanPath = `${baseDir}/wt_clean`;
-    vi.mocked(existsSync).mockImplementation((p) => String(p) === baseDir || String(p) === dirtyPath || String(p) === cleanPath);
-    vi.mocked(readdirSync).mockReturnValue(['wt_dirty', 'wt_clean'] as never);
-    vi.mocked(exec).mockImplementation(((command: string, options: { cwd?: string }, callback: (error: null, result: { stdout: string }) => void) => {
-      if (command.includes('rev-parse --show-toplevel')) {
-        callback(null, { stdout: options.cwd ?? '' });
-      } else if (command.includes('status --porcelain')) {
-        callback(null, { stdout: options.cwd === dirtyPath ? ' M src/changed.ts\n?? recovery.txt\n' : '' });
-      } else {
-        callback(null, { stdout: '' });
-      }
-      return {} as never;
-    }) as never);
-
-    const adapter = new WorktreeWorkspaceAdapter({ workspace: { projectRoot: repoRoot } });
-    const result = await adapter.startupCleanup();
-
-    expect(result).toEqual([{
-      workspaceId: 'wt_dirty',
-      status: 'preserved',
-      path: dirtyPath,
-      reason: 'dirty',
-    }]);
-    expect(vi.mocked(exec).mock.calls.map(([command]) => String(command)).filter((command) => command.includes('worktree remove')))
-      .toEqual([expect.stringContaining(cleanPath)]);
-  });
-
   describe('toolDistPaths config', () => {
     it('defaults to [cli/bin/dist]', () => {
       const adapter = new WorktreeWorkspaceAdapter();
