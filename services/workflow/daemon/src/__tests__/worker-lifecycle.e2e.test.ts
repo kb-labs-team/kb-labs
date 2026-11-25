@@ -595,6 +595,7 @@ describe('workflow worker lifecycle', () => {
       async reconcileChildInvocation() {},
       async markJobStarted() {},
       async markStepStarted() {},
+      async markStepCompleted() {},
       async markJobFailed(_requestedRunId: string, _jobId: string, error: Error) { completion.reject(error); },
       getStateStore: vi.fn(() => ({
         async updateRun(requestedRunId: string, update: (draft: WorkflowRun) => void) {
@@ -613,8 +614,8 @@ describe('workflow worker lifecycle', () => {
       materialize,
       release: vi.fn(),
     };
-    mockRunnerExecute.mockImplementation(async (input: { workspace: string }) => {
-      await writeFile(path.join(input.workspace, 'parent-change.txt'), 'prepared for child');
+    mockRunnerExecute.mockImplementation(async (input: { context: { env: Record<string, string> } }) => {
+      await writeFile(path.join(input.context.env.KB_WORKSPACE_ROOT!, 'parent-change.txt'), 'prepared for child');
       return { status: 'success', outputs: {} };
     });
     const worker = await createWorkflowWorker({
