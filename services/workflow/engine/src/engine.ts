@@ -361,9 +361,9 @@ export class WorkflowEngine {
     // Invocation links are persisted on child trigger metadata, so cancellation
     // survives worker/daemon restarts and naturally cascades through descendants.
     const descendants = await this.findChildRuns(runId)
-    const childResults = await Promise.all(descendants
-      .filter((child) => !isTerminal(child.status, 'run'))
-      .map((child) => this.cancelRun(child.id)))
+    // A child may already be cancelled while still stopping its own descendants.
+    // Joining its in-flight operation keeps parent confirmation behind that cleanup.
+    const childResults = await Promise.all(descendants.map((child) => this.cancelRun(child.id)))
     ancillaryFailures.push(...childResults.flatMap((result) => result.ancillaryFailures))
     await this.runAncillaryOperation(runId, '', 'workflow.child.reconcile', async () => {
       await this.reconcileChildInvocation(runId)

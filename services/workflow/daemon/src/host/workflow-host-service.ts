@@ -659,7 +659,14 @@ export class WorkflowHostService {
     if (run.status !== 'running' && run.status !== 'queued') {
       throw new Error(`Cannot cancel run with status "${run.status}"`);
     }
-    await this.options.engine.cancelRun(resolved!);
+    await this.options.engine.cancelRun(run.id);
+    const finalRun = await this.options.engine.getRun(run.id);
+    if (!finalRun) {
+      throw new Error('Run not found');
+    }
+    if (finalRun.status !== 'cancelled') {
+      throw new Error(`Cannot cancel run with status "${finalRun.status}"`);
+    }
   }
 
   private requireWorkflowService(): WorkflowService {
