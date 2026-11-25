@@ -19,6 +19,22 @@ import redaction
 import jsonl
 
 
+class HarnessProbeTest(unittest.TestCase):
+    def test_probe_checks_exit_status_and_keeps_the_requested_timeout(self):
+        completed = subprocess.CompletedProcess(["node", "--version"], 0, "v24.1.0\n", "")
+        with patch.object(invocations.subprocess, "run", return_value=completed) as run:
+            self.assertIs(invocations.probe_harness_command(["node", "--version"], timeout=5), completed)
+        run.assert_called_once_with(
+            ["node", "--version"], capture_output=True, text=True, timeout=5, check=True,
+        )
+
+    def test_probe_returns_none_for_unavailable_or_failed_commands(self):
+        for error in (FileNotFoundError("node"), subprocess.CalledProcessError(1, ["node", "--version"])):
+            with self.subTest(error=type(error).__name__), \
+                 patch.object(invocations.subprocess, "run", side_effect=error):
+                self.assertIsNone(invocations.probe_harness_command(["node", "--version"], timeout=5))
+
+
 def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
     """Find secret-like keys written directly into environment mappings."""
     tree = ast.parse(source_text, filename=filename)
