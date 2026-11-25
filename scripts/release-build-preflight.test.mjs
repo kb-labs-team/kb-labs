@@ -59,6 +59,38 @@ test('candidate job expands the shared build once and leaves only hosted-only st
   }
 });
 
+// case: S-284.23
+test('release gate journey consumes one sealed payload and delivery verifies its external receipt', () => {
+  const workflow = loadYaml(readFileSync(candidateWorkflowPath, 'utf8'));
+  const deliveryPath = fileURLToPath(new URL('../.github/workflows/release-deliver-candidate.yml', import.meta.url));
+  const delivery = loadYaml(readFileSync(deliveryPath, 'utf8'));
+  const build = workflow.jobs.build;
+  const journey = workflow.jobs['journey-gate'];
+  assert.ok(!build.needs.includes('journey-gate'), 'the payload must be sealed before the journey starts');
+  assert.ok(journey.needs.includes('build'), 'the exact candidate build must complete before the journey');
+  assert.equal(build.steps.filter(step => step.uses === './.github/actions/release-build-preflight').length, 1,
+    'the release payload must be built and sealed once');
+  assert.ok(build.outputs?.bundle_digest, 'the sealed payload digest must be exposed to the journey job');
+  assert.equal(journey.with?.candidate_run_id, '${{ github.run_id }}');
+  assert.equal(journey.with?.bundle_digest, '${{ needs.build.outputs.bundle_digest }}');
+
+  const receiptJob = workflow.jobs['gate-attestation'];
+  assert.ok(receiptJob.needs.includes('journey-gate'), 'gate evidence must be created after a passing journey');
+  const receiptUpload = receiptJob.steps.find(step => step.uses?.startsWith('actions/upload-artifact@'));
+  assert.ok(receiptUpload, 'the gate receipt must be uploaded as a separate artifact');
+  assert.equal(receiptUpload.with.name, 'release-gate-attestation-${{ inputs.candidate_id }}');
+  assert.ok(!String(receiptUpload.with.path).includes('.kb/release/bundle'), 'the receipt must stay outside the sealed payload');
+
+  const download = delivery.jobs.deliver.steps.find(step => step.uses?.startsWith('actions/download-artifact@')
+    && step.with?.name === 'release-gate-attestation-${{ inputs.candidate_id }}');
+  assert.ok(download, 'delivery must download the receipt from the candidate run');
+  assert.equal(download.with['run-id'], '${{ inputs.candidate_run_id }}');
+  const verifyRun = delivery.jobs.deliver.steps.find(step => /Verify candidate workflow run/.test(step.name ?? ''));
+  assert.ok(verifyRun, 'delivery must authenticate the receipt source workflow run');
+  const deliveryCommand = delivery.jobs.deliver.steps.find(step => /release artifact publish/.test(step.run ?? ''));
+  assert.match(deliveryCommand.run, /--gate-attestation/);
+});
+
 test('platform image CI runs the release-index seam test after GoReleaser produces its input', () => {
   const workflowPath = fileURLToPath(new URL('../.github/workflows/reusable-e2e-platform-build.yml', import.meta.url));
   const workflow = loadYaml(readFileSync(workflowPath, 'utf8'));
