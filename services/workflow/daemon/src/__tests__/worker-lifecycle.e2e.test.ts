@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdir, mkdtemp, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { Readable } from 'node:stream';
+import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { WorktreeWorkspaceAdapter } from '@kb-labs/adapters-workspace-worktree';
 import { mockLogger } from '@kb-labs/shared-testing';
 import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { StateStore, WorkflowEngine, WorkflowOperationResult } from '@kb-labs/workflow-engine';
@@ -172,17 +174,27 @@ describe('workflow worker lifecycle', () => {
 
   // case: S-325.4
   it('runs the explicit workspace patch builtin and records an artifact pointer in step output', async () => {
-    const projectRoot = await mkdtemp(path.join(tmpdir(), 'workflow-worker-builtin-patch-'));
-    const worktreeRoot = path.join(projectRoot, '.worktrees', 'wt_builtin');
-    await mkdir(worktreeRoot, { recursive: true });
+    const projectRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'workflow-worker-builtin-patch-')));
+    const git = (...args: string[]) => execFileSync('git', ['-C', projectRoot, ...args]);
+    git('init', '-q');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgSign=false',
+      'commit', '--allow-empty', '-qm', 'base');
+    const baseCommit = git('rev-parse', 'HEAD').toString().trim();
     const runId = 'run-builtin-patch';
+    const workspaceId = 'wt_builtin';
+    const config = { initSubmodules: false, installDeps: false, toolDistPaths: [] };
+    const original = new WorktreeWorkspaceAdapter(config);
+    const { rootPath: worktreeRoot } = await original.materialize({ projectRoot, workspaceId, ownerRunId: runId, sourceRef: 'HEAD' });
+    if (!worktreeRoot) throw new Error('Missing fixture worktree');
+    const bytes = Buffer.from([0, 1, 128, 255]);
+    await writeFile(path.join(worktreeRoot, 'new.bin'), bytes);
     const jobId = `${runId}:job`;
     const stepId = 'save-patch';
     const run = {
       id: runId,
       tenantId: 'default',
       env: {},
-      metadata: {},
+      metadata: { executionWorkspace: { workspaceId, rootPath: worktreeRoot }, workspaceOwnerRunId: runId },
       jobs: [{
         id: jobId,
         jobName: 'test-job',
@@ -195,11 +207,10 @@ describe('workflow worker lifecycle', () => {
     const releaseDone = createDeferred<void>();
     let queueDrained = false;
     const outputs: Record<string, unknown>[] = [];
-    const provider = {
-      async materialize() { return { workspaceId: 'wt_builtin', provider: 'worktree', status: 'ready', rootPath: worktreeRoot, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; },
-      async exportPatch() { return { patch: Readable.from([Buffer.from('diff --git a/new.txt b/new.txt\n')]), baseCommit: 'a'.repeat(40), changedFiles: ['new.txt'] }; },
-      async release() { await rm(worktreeRoot, { recursive: true, force: true }); releaseDone.resolve(); },
-    };
+    // A restarted worker has a fresh adapter and only the run's persisted workspace binding.
+    const provider = new WorktreeWorkspaceAdapter(config);
+    const release = provider.release.bind(provider);
+    vi.spyOn(provider, 'release').mockImplementation(async (id) => { await release(id); releaseDone.resolve(); });
     const engine = {
       async nextJob() {
         if (queueDrained) return null;
@@ -238,14 +249,15 @@ describe('workflow worker lifecycle', () => {
       await worker.stop();
       await startPromise;
       expect(mockRunnerExecute).not.toHaveBeenCalled();
+      const patch = await readFile(path.join(projectRoot, String(outputs[0]?.artifactKey)));
       expect(outputs[0]).toMatchObject({
-        status: 'captured',
-        baseCommit: 'a'.repeat(40),
-        changedFiles: ['new.txt'],
-        sizeBytes: Buffer.byteLength('diff --git a/new.txt b/new.txt\n'),
+        status: 'captured', baseCommit, changedFiles: ['new.bin'], sizeBytes: patch.length,
+        sha256: createHash('sha256').update(patch).digest('hex'),
       });
-      const artifactKey = String(outputs[0]?.artifactKey).replace('.kb/run-artifacts/', '');
-      await expect(readFile(path.join(projectRoot, '.kb/run-artifacts', artifactKey), 'utf8')).resolves.toBe('diff --git a/new.txt b/new.txt\n');
+      const checkout = path.join(projectRoot, 'apply-checkout');
+      execFileSync('git', ['clone', '-q', projectRoot, checkout]);
+      execFileSync('git', ['-C', checkout, 'apply'], { input: patch });
+      expect(await readFile(path.join(checkout, 'new.bin'))).toEqual(bytes);
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

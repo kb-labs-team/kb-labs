@@ -63,6 +63,7 @@
     "yaml": "^2.8.0"
   },
   "devDependencies": {
+    "@kb-labs/adapters-workspace-worktree": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@kb-labs/shared-testing": "workspace:*",
     "@types/node": "^24.3.3",
