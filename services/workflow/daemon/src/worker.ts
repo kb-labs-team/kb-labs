@@ -30,10 +30,7 @@ import type {
 } from "@kb-labs/workflow-contracts";
 import type { ExecutionBackend } from "@kb-labs/plugin-execution";
 import { createContextLogger, registerProcessSensitiveValues } from "@kb-labs/core-platform";
-import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
 import {
   buildShellSafeCommand,
   interpolateObject,
@@ -50,6 +47,7 @@ import {
   createFileSystemArtifactClient,
   type StepExecutionResult,
 } from "@kb-labs/workflow-runtime";
+import { writeWorkspacePatchArtifact } from './workspace-patch-artifact.js';
 
 interface StepSpecRaw {
   name: string;
@@ -406,6 +404,7 @@ export async function createWorkflowWorker(
         const ws = await wsProvider.materialize({
           workspaceId: wsId,
           projectRoot,
+          ownerRunId: run.id,
           platformRoot,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
@@ -919,6 +918,11 @@ export async function createWorkflowWorker(
           // The platform handles provisioning (workspace, environment, cleanup) transparently.
           let result: StepExecutionResult;
           if (interpolatedSpec.uses === 'builtin:workspace-patch') {
+            const patchStartedAt = Date.now();
+            const patchTimeoutMs = step.spec.timeoutMs ?? defaultTimeout ?? 120_000;
+            const patchDeadline = patchStartedAt + patchTimeoutMs;
+            const patchController = new AbortController();
+            const patchTimer = setTimeout(() => patchController.abort(new Error('Workspace patch step timed out')), patchTimeoutMs);
             try {
               const exportPatch = wsProvider && executionWorkspaceId
                 ? (wsProvider as IWorkspaceProvider).exportPatch
@@ -926,38 +930,35 @@ export async function createWorkflowWorker(
               if (!exportPatch || !executionWorkspaceId) {
                 throw new Error('Workspace patch export capability is unavailable');
               }
-              const exported = await exportPatch.call(wsProvider, executionWorkspaceId, runWorkspace);
-              const artifacts = createFileSystemArtifactClient(path.join(projectRoot, '.kb/run-artifacts'));
+              const ownerRunId = typeof run.metadata?.['workspaceOwnerRunId'] === 'string'
+                ? run.metadata['workspaceOwnerRunId']
+                : run.id;
+              const exported = await exportPatch.call(wsProvider, {
+                workspaceId: executionWorkspaceId,
+                projectRoot,
+                ownerRunId,
+                workspaceRoot: runWorkspace,
+                signal: patchController.signal,
+              });
+              const artifacts = createFileSystemArtifactClient(path.join(projectRoot, '.kb/run-artifacts'), { trustedRoot: projectRoot });
               const encodedId = (value: string) => Buffer.from(value).toString('base64url');
               const artifactKey = `workflow-runs/${encodedId(run.id)}/${encodedId(job.id)}/${encodedId(step.id)}/workspace.patch`;
-              const hash = createHash('sha256');
-              let sizeBytes = 0;
-              const digestStream = new Transform({
-                transform(chunk: Buffer | string, encoding, callback) {
-                  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, encoding);
-                  hash.update(bytes);
-                  sizeBytes += bytes.byteLength;
-                  callback(null, bytes);
-                },
+              const saved = await writeWorkspacePatchArtifact({
+                source: exported,
+                artifacts,
+                artifactKey,
+                signal: patchController.signal,
+                timeoutMs: Math.max(1, patchDeadline - Date.now()),
               });
-              const patchStream = pipeline(exported.patch, digestStream);
-              try {
-                await artifacts.produceAtomic(artifactKey, digestStream);
-                await patchStream;
-              } catch (error) {
-                digestStream.destroy();
-                await patchStream.catch(() => {});
-                throw error;
-              }
               result = {
                 status: 'success',
                 outputs: {
-                  status: sizeBytes === 0 ? 'no_changes' : 'captured',
+                  status: saved.status,
                   artifactKey: `.kb/run-artifacts/${artifactKey}`,
                   baseCommit: exported.baseCommit,
                   changedFiles: exported.changedFiles,
-                  sizeBytes,
-                  sha256: hash.digest('hex'),
+                  sizeBytes: saved.sizeBytes,
+                  sha256: saved.sha256,
                 },
               };
             } catch {
@@ -969,6 +970,8 @@ export async function createWorkflowWorker(
                   hint: 'Keep the task worktree for debugging, verify the workspace provider and artifact storage, then rerun the workflow.',
                 },
               };
+            } finally {
+              clearTimeout(patchTimer);
             }
           } else {
             result = await runner.execute({
