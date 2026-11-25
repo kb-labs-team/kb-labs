@@ -3,6 +3,7 @@ import { HttpSseGatewayTransport } from './http-sse-transport.js';
 import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
 import { authRequiredForGateway } from '@kb-labs/sdk/gateway';
 import { ErrorEnvelopeError, createErrorEnvelope } from '@kb-labs/core-platform';
+import type { ExecutionEvent } from '@kb-labs/core-contracts';
 
 describe('HttpSseGatewayTransport credential origin', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
