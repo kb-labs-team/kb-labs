@@ -254,6 +254,7 @@ export const StepRunErrorSchema = z.object({
   stack: z.string().optional(),
   timestamp: z.string().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
+  diagnostics: z.array(z.unknown()).optional(),
 })
 
 export const StepRunSchema = z.object({

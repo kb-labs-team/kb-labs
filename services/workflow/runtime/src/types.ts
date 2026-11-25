@@ -73,6 +73,7 @@ export interface StepExecutionFailure {
     hint?: string
     stack?: string
     details?: Record<string, unknown>
+    diagnostics?: unknown[]
   }
   /** Output captured before a command failed, retained for run detail and logs. */
   outputs?: Record<string, unknown>

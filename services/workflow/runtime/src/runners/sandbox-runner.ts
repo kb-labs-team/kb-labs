@@ -373,11 +373,16 @@ export class SandboxRunner implements Runner {
         data.ok === false || (typeof data.exitCode === 'number' && data.exitCode !== 0)
       )
       if (commandFailed) {
+        const returnedError = data.error && typeof data.error === 'object'
+          ? data.error as Record<string, unknown>
+          : undefined
         const diagnostic = [data.stderr, data.stdout]
           .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
           .map((value) => value.slice(-500))
           .join('\n')
-        const message = `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})${diagnostic ? `: ${diagnostic}` : ''}`
+        const message = typeof returnedError?.message === 'string'
+          ? returnedError.message
+          : `Step handler reported failure (exitCode: ${data.exitCode ?? 'unknown'})${diagnostic ? `: ${diagnostic}` : ''}`
         const outputs = Object.fromEntries(
           ['stdout', 'stderr', 'exitCode']
             .filter((key) => data[key] !== undefined)
@@ -398,7 +403,12 @@ export class SandboxRunner implements Runner {
           status: 'failed',
           error: {
             message,
-            code: 'HANDLER_REPORTED_FAILURE',
+            code: typeof returnedError?.code === 'string' ? returnedError.code : 'HANDLER_REPORTED_FAILURE',
+            hint: typeof returnedError?.hint === 'string' ? returnedError.hint : undefined,
+            details: returnedError?.details && typeof returnedError.details === 'object'
+              ? returnedError.details as Record<string, unknown>
+              : undefined,
+            diagnostics: Array.isArray(returnedError?.diagnostics) ? returnedError.diagnostics : undefined,
           },
           outputs,
           failure,
@@ -431,6 +441,7 @@ export class SandboxRunner implements Runner {
           code: result.error.code,
           hint: result.error.hint,
           details: result.error?.details,
+          diagnostics: result.error?.diagnostics,
         },
         failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
       }
@@ -451,6 +462,7 @@ export class SandboxRunner implements Runner {
         code: result.error?.code ?? 'UNKNOWN_ERROR',
           hint: result.error?.hint,
           details: result.error?.details,
+          diagnostics: result.error?.diagnostics,
         },
         failure: classifyFailure(result.error, { source: 'execution', phase: 'response' }),
       }

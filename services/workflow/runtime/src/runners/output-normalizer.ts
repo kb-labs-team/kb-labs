@@ -17,7 +17,7 @@
  * A shell result also has `exitCode`, so it must not be mistaken for a
  * plugin result even when its process succeeded.
  */
-type RuntimeCommandResult = { ok: boolean; result?: unknown; error?: unknown; meta?: Record<string, unknown> };
+type RuntimeCommandResult = { ok: boolean; result?: unknown; data?: unknown; error?: unknown; meta?: Record<string, unknown> };
 
 function isCommandResult(value: unknown): value is RuntimeCommandResult {
   if (typeof value !== 'object' || value === null) {
@@ -25,7 +25,9 @@ function isCommandResult(value: unknown): value is RuntimeCommandResult {
   }
 
   const record = value as Record<string, unknown>;
-  return typeof record.ok === 'boolean' && !('exitCode' in record);
+  return typeof record.ok === 'boolean'
+    && !('exitCode' in record)
+    && ('result' in record || 'data' in record);
 }
 
 /**
@@ -36,6 +38,7 @@ function isCommandResult(value: unknown): value is RuntimeCommandResult {
  * |------------------------------------------|---------------------------|
  * | { foo: 'bar' }                           | { foo: 'bar' }            |
  * | { ok: true, result: { x: 1 } }           | { x: 1 }                 |
+ * | { ok: true, data: { x: 1 } }             | { x: 1 }                 |
  * | { ok: true, result: 'hello' }            | { result: 'hello' }      |
  * | { ok: true, result: undefined }          | {}                        |
  * | { ok: true, result: null }               | {}                        |
@@ -48,7 +51,7 @@ function isCommandResult(value: unknown): value is RuntimeCommandResult {
 export function toWorkflowOutputs(data: unknown): Record<string, unknown> {
   // CLI CommandResult — extract the payload
   if (isCommandResult(data)) {
-    const inner = data.result;
+    const inner = 'data' in data ? data.data : data.result;
     if (typeof inner === 'object' && inner !== null) {
       return inner as Record<string, unknown>;
     }

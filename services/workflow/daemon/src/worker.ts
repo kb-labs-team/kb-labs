@@ -976,6 +976,7 @@ export async function createWorkflowWorker(
                 code: result.error?.code,
                 hint: result.error?.hint,
                 details: result.error?.details,
+                diagnostics: result.error?.diagnostics,
               },
             );
 
