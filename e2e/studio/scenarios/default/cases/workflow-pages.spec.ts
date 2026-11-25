@@ -145,8 +145,13 @@ test('workflow run details expose terminal status, logs, and completed step arti
   await expect(page.getByRole('heading', { name: 'journey-hello', exact: true })).toBeVisible();
   await expect(page.getByText(`Run ${healthyRunId!.slice(0, 12)}...`, { exact: true })).toBeVisible();
   await expect(page.getByText('Success', { exact: true })).toBeVisible();
-  await expect(page.getByText('Studio artifact commit', { exact: true })).toBeVisible();
-  await expect(page.getByText('studio-artifact-visible', { exact: true })).toBeVisible();
+  const commitArtifact = page.getByText('Studio artifact commit', { exact: true });
+  await expect(commitArtifact).toBeVisible();
+  await expect(commitArtifact.locator('..').getByText('"studio-artifact-visible"', { exact: true })).toBeVisible();
+  const outputsArtifact = page.getByText('Studio artifact outputs', { exact: true });
+  await expect(outputsArtifact).toBeVisible();
+  await expect(outputsArtifact.locator('..').getByText('"commit"', { exact: true })).toBeVisible();
+  await expect(outputsArtifact.locator('..').getByText('"studio-artifact-visible"', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Engineering', exact: true }).click();
   await expect(page.getByText('hello', { exact: false }).last()).toBeVisible();
 
