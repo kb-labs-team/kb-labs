@@ -14,11 +14,22 @@ import { join } from 'node:path';
  */
 export function resolveDevkitBin(rootDir: string, configPath?: string, owningProjectRoot?: string): string {
   if (configPath) {
-    const full = configPath.startsWith('/') ? configPath : join(rootDir, configPath);
-    if (!existsSync(full)) {
-      throw new Error(`devkitPath "${configPath}" not found at ${full}`);
+    if (configPath.startsWith('/')) {
+      if (!existsSync(configPath)) {
+        throw new Error(`devkitPath "${configPath}" not found at ${configPath}`);
+      }
+      return configPath;
     }
-    return full;
+
+    const workspacePath = join(rootDir, configPath);
+    if (existsSync(workspacePath)) {return workspacePath;}
+
+    if (owningProjectRoot) {
+      const projectPath = join(owningProjectRoot, configPath);
+      if (existsSync(projectPath)) {return projectPath;}
+    }
+
+    throw new Error(`devkitPath "${configPath}" not found at ${workspacePath}`);
   }
 
   const local = join(rootDir, 'tools', 'kb-devkit', 'kb-devkit');
