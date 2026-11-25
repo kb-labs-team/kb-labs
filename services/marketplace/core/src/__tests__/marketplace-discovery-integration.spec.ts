@@ -256,7 +256,7 @@ describe('Marketplace → Discovery Integration', () => {
     });
 
     await expect(tamperedMarketplace.install({ scope: 'project', projectRoot }, [identity]))
-      .rejects.toMatchObject({ code: 'KB_PLUGIN_INTEGRITY_MISMATCH' });
+      .rejects.toMatchObject({ envelope: { code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH' } });
     expect(downloadCount).toBe(1);
     expect(await store.listEntries()).toEqual([]);
     await expect(fs.access(path.join(projectRoot, '.kb', 'marketplace.lock'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -358,7 +358,14 @@ describe('Marketplace → Discovery Integration', () => {
     };
     const source: PackageSource = {
       async resolve(spec: string): Promise<ResolvedPackage> {
-        return { id: spec, version: '1.0.0', integrity, source: 'marketplace', primaryKind: 'plugin' };
+        return {
+          id: spec,
+          version: '1.0.0',
+          integrity,
+          source: 'marketplace',
+          primaryKind: 'plugin',
+          downloadUrl: 'https://registry.example.test/@kb-labs/platform/-/platform-1.0.0.tgz',
+        };
       },
       async install(): Promise<InstalledPackage> { throw new Error('platform plugin must use the extension store'); },
       async remove() {},
