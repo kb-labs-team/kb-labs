@@ -9,7 +9,7 @@ import { WorktreeWorkspaceAdapter } from '@kb-labs/adapters-workspace-worktree';
 import { mockLogger } from '@kb-labs/shared-testing';
 import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { StateStore, WorkflowEngine, WorkflowOperationResult } from '@kb-labs/workflow-engine';
-import type { JobRun, StepRun, StepSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
+import { WorkflowSpecSchema, type JobRun, type StepRun, type StepSpec, type WorkflowRun } from '@kb-labs/workflow-contracts';
 import { EnvSecretProvider } from '@kb-labs/workflow-engine';
 import { createWorkflowExecutionBackendFixture } from '../../test-fixtures/execution-backend-fixture.js';
 
@@ -292,9 +292,7 @@ describe('workflow worker lifecycle', () => {
     if (!worktreeRoot) throw new Error('Missing fixture worktree');
 
     const examplePath = path.resolve(process.cwd(), '../examples/native-agent-qa-dogfood.yml');
-    const example = parse(await readFile(examplePath, 'utf8')) as {
-      jobs: { dogfood: { steps: Array<Record<string, unknown> & { id: string; name: string }> } };
-    };
+    const example = WorkflowSpecSchema.parse(parse(await readFile(examplePath, 'utf8')));
     const exampleSteps = example.jobs.dogfood.steps;
     const patchIndex = exampleSteps.findIndex((step) => step.uses === 'builtin:workspace-patch');
     const qaIndex = exampleSteps.findIndex((step) => step.id === 'qa');
