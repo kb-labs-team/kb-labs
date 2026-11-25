@@ -196,7 +196,7 @@ func scenarioServiceLabel(s *scenario.Scenario) string {
 
 func emitEnsureResult(result *manager.Result) error {
 	if !result.OK {
-		return commandFailure("kb-dev ensure")
+		return serviceCommandFailure("kb-dev ensure", result)
 	}
 	if jsonMode {
 		return JSONOut(result)

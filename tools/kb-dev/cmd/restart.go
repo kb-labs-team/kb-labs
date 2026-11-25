@@ -38,7 +38,7 @@ func runRestart(cmd *cobra.Command, args []string) error {
 	result := mgr.Restart(cmd.Context(), targets, cascade, forceFlag)
 
 	if !result.OK {
-		return commandFailure("kb-dev restart")
+		return serviceCommandFailure("kb-dev restart", result)
 	}
 	if jsonMode {
 		return JSONOut(result)

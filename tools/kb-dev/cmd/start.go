@@ -45,7 +45,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	result := mgr.Start(cmd.Context(), targets, forceFlag)
 
 	if !result.OK {
-		return commandFailure("kb-dev start")
+		return serviceCommandFailure("kb-dev start", result)
 	}
 	if jsonMode {
 		return JSONOut(result)
