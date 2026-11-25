@@ -10,7 +10,7 @@ function adapterFor(stdout: unknown, code = 0) {
 }
 
 describe('DevkitAdapter.run CliKit contract', () => {
-  // case: S-321.1
+  // case: S-326.1
   it('unwraps a successful envelope and preserves current DevKit task fields', async () => {
     const adapter = adapterFor({
       ok: true,
@@ -28,7 +28,7 @@ describe('DevkitAdapter.run CliKit contract', () => {
     });
   });
 
-  // case: S-321.2
+  // case: S-326.2
   it('retains task data from a failing CliKit envelope', async () => {
     const adapter = adapterFor({
       ok: false,
@@ -47,7 +47,7 @@ describe('DevkitAdapter.run CliKit contract', () => {
     });
   });
 
-  // case: S-321.3
+  // case: S-326.3
   it('fails closed when the requested test task has no execution evidence', async () => {
     const adapter = adapterFor({
       ok: true,

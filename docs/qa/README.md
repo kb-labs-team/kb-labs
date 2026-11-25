@@ -117,7 +117,7 @@ Each case uses `id`, `title`, `persona`, `area`, `priority` (`P0`/`P1`/`P2`), `s
 | [S-318](scenarios/S-318-platform-rollback-rebuilds-extension-graph.md) | Platform — rollback rebuilds the Marketplace extension graph | solo-developer | P1 | planned | true | [local, secured] | [cli] | — |
 | [S-319](scenarios/S-319-cli-large-json-result-backpressure.md) | CLI — preserve large JSON results through stdout backpressure | developer | P1 | planned | false | [local] | [cli] | — |
 | [S-320](scenarios/S-320-installed-cli-resolves-platform-sdk-peers.md) | CLI — resolve installed plugins’ SDK peers without shell setup | solo-developer | P1 | planned | true | [local] | [cli] | — |
-| [S-321](scenarios/S-321-qa-run-devkit-envelope.md) | QA — preserve DevKit results and failures | developer | P1 | active | false | [local] | [cli] | — |
+| [S-326](scenarios/S-326-qa-run-devkit-envelope.md) | QA — preserve DevKit results and failures | developer | P1 | active | false | [local] | [cli] | — |
 ## Manual run records
 
 Manual observations can be recorded in `runs/YYYY-MM-DD.md` with the release/index identity, mode, case and step IDs, observed results, and linked defects. Run records are evidence; they do not replace claims or the catalog.
