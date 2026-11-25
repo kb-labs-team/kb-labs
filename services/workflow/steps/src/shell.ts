@@ -362,8 +362,8 @@ async function shellHandler(
       if (pid === undefined) {
         throw new Error('Shell process started without an OS process id');
       }
-      const identity = await captureProcessIdentity(pid);
       try {
+        const identity = await captureProcessIdentity(pid);
         await ctx.onProcessStarted(identity);
       } catch (error) {
         try {
@@ -373,6 +373,8 @@ async function shellHandler(
             throw killError;
           }
         }
+        // Keep ownership until the spawned shell has actually exited.
+        await proc;
         throw error;
       }
     }
