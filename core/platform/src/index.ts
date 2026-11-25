@@ -292,6 +292,7 @@ export type {
   WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
   WorkspacePatchExport,
+  WorkspacePatchExportRequest,
 } from "./workspace/workspace-provider.js";
 
 // Snapshot lifecycle abstraction
