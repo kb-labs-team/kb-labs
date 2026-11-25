@@ -69,6 +69,7 @@ describe('SandboxRunner plugin failure diagnostics', () => {
       backend: {
         execute: vi.fn().mockResolvedValue({
           ok: false,
+          data: { ok: false, stdout: 'partial report', stderr: 'failed fixture-secret', exitCode: 23 },
           error: {
             code: 'KB_RUNTIME_COMMAND_FAILED',
             message: 'QA run failed',
@@ -88,7 +89,7 @@ describe('SandboxRunner plugin failure diagnostics', () => {
       spec: { name: 'QA failure', uses: 'plugin:@kb-labs/test-plugin/run' },
       context: {
         runId: 'run-qa', jobId: 'run-qa:check', stepId: 'qa', attempt: 1,
-        env: {}, secrets: {},
+        env: {}, secrets: { FIXTURE_SECRET: 'fixture-secret' },
         logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
       },
     });
@@ -100,6 +101,9 @@ describe('SandboxRunner plugin failure diagnostics', () => {
       hint: 'Inspect the task result.',
       diagnostics,
     });
+    expect(result.outputs).toMatchObject({ stdout: 'partial report', exitCode: 23 });
+    expect(result.outputs?.stderr).toContain('failed');
+    expect(result.outputs?.stderr).not.toContain('fixture-secret');
   });
 
   // case: S-243.5

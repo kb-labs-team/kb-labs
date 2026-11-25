@@ -26,6 +26,11 @@ describe('toWorkflowOutputs', () => {
       expect(toWorkflowOutputs(data)).toEqual(data);
     });
 
+    it('preserves raw reports with both ok and data fields', () => {
+      const report = { ok: true, id: 'qa-run', data: { passed: 1 } };
+      expect(toWorkflowOutputs(report)).toEqual(report);
+    });
+
     it('passes through arrays as objects', () => {
       // Arrays are objects in JS — they pass through
       const data = [1, 2, 3];
