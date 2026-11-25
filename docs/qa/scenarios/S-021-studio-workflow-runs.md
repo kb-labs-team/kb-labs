@@ -29,4 +29,4 @@ A Studio user selects a project and inspects its workflow run history, run detai
 | S-021.3 | Open the successful run's step logs | The completed step's captured output is visible. |
 | S-021.4 | Open the failed run's step logs | The failed step is identified and its error message is visible. |
 | S-021.5 | Select a different project with no runs | The Runs view shows an empty state for that project and does not show either run from the first project. |
-| S-021.6 | Open a successful run whose step declares a JSON artifact sourced from a step output | The completed step shows the artifact label and its JSON value resolved from that step's outputs. |
+| S-021.6 | Open a successful run whose step declares JSON artifacts sourced from `steps.<step-id>.outputs` and `steps.<step-id>.outputs.<field>` | The completed step shows both artifact labels, its complete outputs object, and the selected field's JSON value. |
