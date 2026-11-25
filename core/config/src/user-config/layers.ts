@@ -113,7 +113,7 @@ async function loadConfigFilesAtRoot(
       paths.push(full);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      if (code === 'ENOENT' || code === 'ENOTDIR') { continue; }
       diagnostics.push({
         level: 'error',
         code: 'FILE_READ_FAILED',
