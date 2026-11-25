@@ -190,7 +190,9 @@ describe('workflow worker lifecycle', () => {
     const config = { initSubmodules: false, installDeps: false, toolDistPaths: [] };
     const original = new WorktreeWorkspaceAdapter(config);
     const { rootPath: worktreeRoot } = await original.materialize({ projectRoot, workspaceId, ownerRunId: runId, sourceRef: 'HEAD' });
-    if (!worktreeRoot) throw new Error('Missing fixture worktree');
+    if (!worktreeRoot) {
+      throw new Error('Missing fixture worktree');
+    }
     const bytes = Buffer.from([0, 1, 128, 255]);
     await writeFile(path.join(worktreeRoot, 'new.bin'), bytes);
     const jobId = `${runId}:job`;
@@ -218,7 +220,9 @@ describe('workflow worker lifecycle', () => {
     vi.spyOn(provider, 'release').mockImplementation(async (id) => { await release(id); releaseDone.resolve(); });
     const engine = {
       async nextJob() {
-        if (queueDrained) return null;
+        if (queueDrained) {
+          return null;
+        }
         queueDrained = true;
         return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job' };
       },
@@ -227,7 +231,11 @@ describe('workflow worker lifecycle', () => {
       async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); return { ancillaryFailures: [] }; },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); return { ancillaryFailures: [] }; },
       async markStepStarted() {},
-      async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) { if (stepOutputs) outputs.push(stepOutputs); },
+      async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) {
+        if (stepOutputs) {
+          outputs.push(stepOutputs);
+        }
+      },
       async markStepFailed() {},
       async markJobInterrupted() {},
       getStateStore: () => ({ updateStep: vi.fn(async () => null), updateRun: vi.fn(async () => null) }),
@@ -289,7 +297,9 @@ describe('workflow worker lifecycle', () => {
     const config = { initSubmodules: false, installDeps: false, toolDistPaths: [] };
     const original = new WorktreeWorkspaceAdapter(config);
     const { rootPath: worktreeRoot } = await original.materialize({ projectRoot, workspaceId, ownerRunId: runId, sourceRef: 'HEAD' });
-    if (!worktreeRoot) throw new Error('Missing fixture worktree');
+    if (!worktreeRoot) {
+      throw new Error('Missing fixture worktree');
+    }
 
     const examplePath = path.resolve(process.cwd(), '../examples/native-agent-qa-dogfood.yml');
     const example = WorkflowSpecSchema.parse(parse(await readFile(examplePath, 'utf8')));
@@ -325,7 +335,9 @@ describe('workflow worker lifecycle', () => {
     const release = vi.spyOn(provider, 'release');
     const engine = {
       async nextJob() {
-        if ((run as { dequeued?: boolean }).dequeued) return null;
+        if ((run as { dequeued?: boolean }).dequeued) {
+          return null;
+        }
         (run as { dequeued?: boolean }).dequeued = true;
         return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'dogfood' };
       },
@@ -335,14 +347,18 @@ describe('workflow worker lifecycle', () => {
       async markJobFailed(_r: string, _j: string, failure: Error) { run.jobs[0]!.status = 'failed'; completion.resolve(failure); return { ancillaryFailures: [] }; },
       async markStepStarted(_r: string, _j: string, stepId: string) {
         const step = run.jobs[0]!.steps.find((candidate) => candidate.id === stepId);
-        if (step) step.status = 'running';
+        if (step) {
+          step.status = 'running';
+        }
       },
       async markStepCompleted(_r: string, _j: string, stepId: string, stepOutputs?: Record<string, unknown>) {
         const step = run.jobs[0]!.steps.find((candidate) => candidate.id === stepId);
         if (step) {
           step.status = 'success';
           step.outputs = stepOutputs;
-          if (step.spec.id && stepOutputs) outputs.set(step.spec.id, stepOutputs);
+          if (step.spec.id && stepOutputs) {
+            outputs.set(step.spec.id, stepOutputs);
+          }
         }
       },
       async markStepFailed(_r: string, _j: string, stepId: string, failure: Error, stepOutputs?: Record<string, unknown>) {
@@ -438,7 +454,9 @@ describe('workflow worker lifecycle', () => {
     };
     const engine = {
       async nextJob() {
-        if (queueDrained) return null;
+        if (queueDrained) {
+          return null;
+        }
         queueDrained = true;
         return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job' };
       },
