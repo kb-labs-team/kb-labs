@@ -31,13 +31,16 @@ test('only registered journey declarations create claims from cases arguments', 
       'journey.step("declared step", "test", check, cases=["S-001.1"])',
       'run_studio_browser_step(command, env, report, "local", True, cases=["S-001.1"])',
       'helper(evidence, cases=["S-001.1"])',
+      'cases = ["S-001.1"]',
+      'def step(name, cases=["S-001.1"]):',
+      '    pass',
       '',
     ].join('\n'));
 
     const scan = scanQACaseClaims(root, [{ id: 'S-001', steps: [{ id: 'S-001.1' }] }]);
     assert.equal(scan.claims.length, 1);
     assert.equal(scan.claims[0].id, 'S-001.1');
-    assert.equal(scan.diagnostics.length, 1);
+    assert.equal(scan.diagnostics.length, 3);
     assert.match(scan.diagnostics[0].message, /registered journey declaration/);
   } finally {
     rmSync(root, { recursive: true, force: true });
