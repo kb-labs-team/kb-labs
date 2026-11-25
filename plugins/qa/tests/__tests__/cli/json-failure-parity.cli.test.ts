@@ -16,10 +16,13 @@ const mocks = vi.hoisted(() => ({
   detectRegressions: vi.fn(),
 }));
 
-vi.mock('@kb-labs/sdk', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@kb-labs/sdk')>();
-  return { ...actual, useConfig: mocks.useConfig };
-});
+vi.mock('@kb-labs/sdk', () => ({
+  defineCommand: (definition: unknown) => ({
+    execute: (context: unknown, input: unknown) =>
+      (definition as { handler: { execute: (context: unknown, input: unknown) => unknown } }).handler.execute(context, input),
+  }),
+  useConfig: mocks.useConfig,
+}));
 
 vi.mock('../../../src/core/index.js', () => ({
   DevkitAdapter: class {
@@ -92,7 +95,7 @@ beforeEach(() => {
 async function execute(command: { execute: (context: never, input: never) => unknown }, flags: Record<string, unknown>): Promise<unknown> {
   const ui = { success: vi.fn(), warn: vi.fn(), error: vi.fn() };
   return command.execute(
-    { ui, cwd: '/workspace', api: { shell: {} } } as never,
+    { ui, cwd: '/workspace', host: 'cli', api: { shell: {} } } as never,
     { flags } as never,
   );
 }
