@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createCapturedUI, createMockContext, mockCLIInput } from '@kb-labs/sdk/testing';
 
 const mocks = vi.hoisted(() => ({
   useConfig: vi.fn(),
@@ -8,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   gate: vi.fn(),
   check: vi.fn(),
   run: vi.fn(),
+  saveRun: vi.fn(),
   loadBaseline: vi.fn(),
   latestCheck: vi.fn(),
   latestStats: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('../../../src/core/index.js', () => ({
   SnapshotStore: class {
     saveGate() { return null; }
     saveCheck() { return null; }
-    saveRun() { return null; }
+    saveRun() { return mocks.saveRun(); }
     loadBaseline() { return mocks.loadBaseline(); }
     latestCheck() { return mocks.latestCheck(); }
     latestStats() { return mocks.latestStats(); }
@@ -90,10 +90,10 @@ beforeEach(() => {
 });
 
 async function execute(command: { execute: (context: never, input: never) => unknown }, flags: Record<string, unknown>): Promise<unknown> {
-  const ui = createCapturedUI().ui;
+  const ui = { success: vi.fn(), warn: vi.fn(), error: vi.fn() };
   return command.execute(
-    createMockContext({ ui, cwd: '/workspace' }) as never,
-    mockCLIInput({ flags }) as never,
+    { ui, cwd: '/workspace', api: { shell: {} } } as never,
+    { flags } as never,
   );
 }
 
@@ -120,6 +120,26 @@ describe('QA command failure parity', () => {
     const human = await execute(qaRun, { save: false });
     expect(json).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_COMMAND_FAILED', diagnostics: [{ code: 'KB_QA_TASK_FAILED' }] } });
     expect(human).toEqual(json);
+  });
+
+  // case: S-321.1
+  it('preserves devkit input failures that do not contain task results', async () => {
+    const failure = {
+      ok: false,
+      error: {
+        code: 'KB_RUNTIME_INPUT_INVALID',
+        message: 'Task "unknown-task" is not declared in devkit.yaml.',
+        hint: 'Add the task under tasks: in devkit.yaml.',
+      },
+    };
+    mocks.run.mockResolvedValue(failure);
+
+    const json = await execute(qaRun, { json: true, tasks: 'unknown-task' });
+    const human = await execute(qaRun, { tasks: 'unknown-task' });
+
+    expect(json).toEqual(failure);
+    expect(human).toEqual(failure);
+    expect(mocks.saveRun).not.toHaveBeenCalled();
   });
 
   // case: S-203.1
