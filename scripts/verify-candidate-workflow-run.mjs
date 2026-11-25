@@ -22,4 +22,3 @@ const response = await fetch(`https://api.github.com/repos/${repository}/actions
 if (!response.ok) throw new Error(`Could not verify candidate workflow run (${response.status})`);
 verifyCandidateWorkflowRun(await response.json(), { repository, expectedBranch });
 console.log(`Verified candidate workflow run ${runId} from ${repository}/${expectedBranch}.`);
-
