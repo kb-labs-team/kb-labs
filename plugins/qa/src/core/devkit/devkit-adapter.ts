@@ -101,7 +101,14 @@ export class DevkitAdapter {
     }
 
     try {
-      return JSON.parse(result.stdout) as T;
+      const parsed: unknown = JSON.parse(result.stdout);
+      if (parsed !== null && typeof parsed === 'object' && 'data' in parsed) {
+        const data = (parsed as { data?: unknown }).data;
+        if (data !== null && typeof data === 'object') {
+          return data as T;
+        }
+      }
+      return parsed as T;
     } catch {
       throw new Error(
         `kb-devkit ${args[0]} produced non-JSON output (exit ${result.code}). ` +

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DevkitAdapter } from '../../src/core/devkit/devkit-adapter.js';
 
-function adapterWithSummary(summary: Record<string, unknown>) {
+function adapterWithSummary(summary: Record<string, unknown>, wrapped = true) {
+  const output = { ok: true, results: [], summary: { passed: 1, failed: 0, cached: 0, ...summary } };
   const exec = vi.fn().mockResolvedValue({
     code: 0,
-    stdout: JSON.stringify({ ok: true, results: [], summary: { passed: 1, failed: 0, cached: 0, ...summary } }),
+    stdout: JSON.stringify(wrapped ? { data: output } : output),
     stderr: '',
   });
   return { adapter: new DevkitAdapter({
@@ -101,6 +102,14 @@ describe('DevkitAdapter scoped runs', () => {
     });
   });
 
+  it('prefers scheduled over a conflicting legacy total', async () => {
+    const { adapter } = adapterWithSummary({ scheduled: 3, total: 0 });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).resolves.toMatchObject({
+      summary: { scheduled: 3, total: 0 },
+    });
+  });
+
   it('rejects current summaries when scheduled is zero', async () => {
     const { adapter } = adapterWithSummary({ scheduled: 0 });
 
@@ -110,7 +119,7 @@ describe('DevkitAdapter scoped runs', () => {
   });
 
   it('normalizes legacy total summaries', async () => {
-    const { adapter } = adapterWithSummary({ total: 2 });
+    const { adapter } = adapterWithSummary({ total: 2 }, false);
 
     await expect(adapter.run(['test'], '@kb-labs/qa')).resolves.toMatchObject({
       summary: { total: 2, scheduled: 2 },
