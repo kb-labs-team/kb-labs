@@ -1,4 +1,4 @@
-import type { ShellAPI } from '@kb-labs/sdk';
+import { PluginError, type ShellAPI } from '@kb-labs/sdk';
 import type {
   DevkitRunOutput,
   DevkitCheckOutput,
@@ -32,11 +32,12 @@ export class DevkitAdapter {
     const response = await this.execute(['run', ...tasks]);
     const envelope = unwrapCliResponse(response.stdout, response.code, response.stderr, 'run');
     const data = envelope.data;
-    if (!isRecord(data) || !Array.isArray(data.results) || !isRecord(data.summary) || typeof data.elapsed !== 'string') {
+    if (!isRecord(data) || (data.results !== null && !Array.isArray(data.results)) || !isRecord(data.summary) || typeof data.elapsed !== 'string') {
       throw new Error('kb-devkit run returned an invalid result payload: expected elapsed, results, and summary.');
     }
 
-    const results = data.results.map((value) => {
+    // Go encodes a nil task slice as null when nothing runs.
+    const results = (data.results ?? []).map((value: unknown) => {
       if (!isRecord(value) || typeof value.Package !== 'string' || typeof value.Task !== 'string' || typeof value.OK !== 'boolean') {
         throw new Error('kb-devkit run returned an invalid task result.');
       }
@@ -50,9 +51,9 @@ export class DevkitAdapter {
         Stdout: typeof value.Stdout === 'string' ? value.Stdout : '',
         Stderr: typeof value.Stderr === 'string' ? value.Stderr : '',
         Error: typeof value.Error === 'string' ? value.Error : '',
-        ...(typeof value.LogPath === 'string' ? { LogPath: value.LogPath } : {}),
-        ...(typeof value.LogError === 'string' ? { LogError: value.LogError } : {}),
-        ...(typeof value.LogDirectory === 'string' ? { LogDirectory: value.LogDirectory } : {}),
+        ...(typeof value.logPath === 'string' ? { LogPath: value.logPath } : {}),
+        ...(typeof value.logError === 'string' ? { LogError: value.logError } : {}),
+        ...(typeof value.logDirectory === 'string' ? { LogDirectory: value.logDirectory } : {}),
       };
     });
 
@@ -75,8 +76,9 @@ export class DevkitAdapter {
       },
     };
 
-    if (tasks.includes('test') && !results.some((item) => item.Task === 'test')) {
-      throw new Error('kb-devkit run produced no test task results; refusing to report a green QA run.');
+    if (envelope.ok && tasks.includes('test') && !results.some((item) => item.Task === 'test')) {
+      throw new PluginError('kb-devkit run produced no test task results.', 'KB_RUNTIME_COMMAND_FAILED', undefined,
+        'Check the test task and package categories in devkit.yaml, then rerun `kb qa run`.');
     }
     return raw;
   }
@@ -122,7 +124,7 @@ export class DevkitAdapter {
     return { ...data, ok: envelope.ok } as T;
   }
 
-  private async execute(args: string[]): Promise<{ stdout: string; stderr: string; code: number; ok: boolean }> {
+  private async execute(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
     const result = await this.shell.exec(this.bin, [...args, '--json'], {
       cwd: this.cwd,
       timeout: this.timeout,
@@ -135,21 +137,8 @@ export class DevkitAdapter {
       );
     }
 
-    try {
-      return { stdout: result.stdout, stderr: result.stderr, code: result.code, ok: result.ok };
-    } catch {
-      throw new Error(
-        `kb-devkit ${args[0]} produced non-JSON output (exit ${result.code}). ` +
-        `stderr: ${result.stderr.slice(0, 300)}`
-      );
-    }
+    return result;
   }
-}
-
-interface CliResponse {
-  ok: boolean;
-  data?: unknown;
-  error?: { code?: string; message?: string; hint?: string };
 }
 
 function unwrapCliResponse(stdout: string, code: number, stderr: string, command: string): { ok: boolean; data: unknown } {
@@ -164,20 +153,19 @@ function unwrapCliResponse(stdout: string, code: number, stderr: string, command
   if (!isRecord(parsed) || typeof parsed.ok !== 'boolean') {
     throw new Error(`kb-devkit ${command} returned an invalid CliKit response.`);
   }
-  const response = parsed as unknown as CliResponse;
-  if (response.ok !== (code === 0)) {
-    throw new Error(`kb-devkit ${command} returned ok:${response.ok} with exit ${code}; refusing to trust inconsistent output.`);
+  if (parsed.ok !== (code === 0)) {
+    throw new Error(`kb-devkit ${command} returned ok:${parsed.ok} with exit ${code}; refusing to trust inconsistent output.`);
   }
-  if (!response.ok && !('data' in response)) {
-    const error = response.error;
-    const message = error?.message ?? `kb-devkit ${command} failed (exit ${code}).`;
-    const hint = error?.hint ? ` Hint: ${error.hint}` : '';
-    throw new Error(`${message}${hint}`);
+  if (!parsed.ok && !('data' in parsed)) {
+    const error = isRecord(parsed.error) ? parsed.error : undefined;
+    const message = typeof error?.message === 'string' ? error.message : `kb-devkit ${command} failed (exit ${code}).`;
+    const hint = typeof error?.hint === 'string' ? error.hint : undefined;
+    throw new PluginError(message, 'KB_RUNTIME_COMMAND_FAILED', undefined, hint);
   }
-  if (!('data' in response)) {
+  if (!('data' in parsed)) {
     throw new Error(`kb-devkit ${command} response is missing data.`);
   }
-  return { ok: response.ok, data: response.data };
+  return { ok: parsed.ok, data: parsed.data };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,7 +176,7 @@ function numberOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function isBlockedTask(value: unknown): value is DevkitRunOutput['summary']['blockedTasks'][number] {
+function isBlockedTask(value: unknown): value is NonNullable<DevkitRunOutput['summary']['blockedTasks']>[number] {
   return isRecord(value) && typeof value.package === 'string' && typeof value.task === 'string' &&
     typeof value.blockedByPackage === 'string' && typeof value.blockedByTask === 'string';
 }
