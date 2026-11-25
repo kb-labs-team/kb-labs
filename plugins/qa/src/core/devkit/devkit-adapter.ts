@@ -105,6 +105,10 @@ export class DevkitAdapter {
       if (parsed !== null && typeof parsed === 'object' && 'data' in parsed) {
         const data = (parsed as { data?: unknown }).data;
         if (data !== null && typeof data === 'object') {
+          const envelopeOk = (parsed as { ok?: unknown }).ok;
+          if (typeof envelopeOk === 'boolean' && !('ok' in data)) {
+            return { ...data, ok: envelopeOk } as T;
+          }
           return data as T;
         }
       }
