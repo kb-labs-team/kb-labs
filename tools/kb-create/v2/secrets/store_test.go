@@ -58,23 +58,7 @@ func TestCommandHintsDoNotHandFormatDynamicCLIArguments(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		ast.Inspect(file, func(node ast.Node) bool {
-			var expression ast.Expr
-			switch current := node.(type) {
-			case *ast.BinaryExpr:
-				if current.Op == token.ADD && containsCLIInvocation(current) && containsPathOrAccountValue(current) && !containsShellCommand(current) {
-					expression = current
-				}
-			case *ast.CallExpr:
-				if len(current.Args) > 1 && isFmtSprintf(current.Fun) && containsCLIInvocation(current.Args[0]) && containsPathOrAccountValue(current) && !containsShellCommand(current) {
-					expression = current
-				}
-			}
-			if expression != nil {
-				violations = append(violations, fset.Position(expression.Pos()).String())
-			}
-			return true
-		})
+		violations = append(violations, commandHintViolations(fset, path, file)...)
 		return nil
 	})
 	if err != nil {
@@ -82,6 +66,77 @@ func TestCommandHintsDoNotHandFormatDynamicCLIArguments(t *testing.T) {
 	}
 	if len(violations) > 0 {
 		t.Fatalf("dynamic CLI hints must render argv with contracts.ShellCommand: %s", strings.Join(violations, ", "))
+	}
+}
+
+// commandHintViolations excludes only the generated shell program, not other
+// expressions in the shim generator or user-facing hints in the shim package.
+func commandHintViolations(fset *token.FileSet, path string, file *ast.File) []string {
+	var shimSource ast.Expr
+	if filepath.Clean(path) == filepath.Join("..", "shim", "shim.go") {
+		for _, declaration := range file.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok || function.Recv != nil || function.Name.Name != "shimContent" || function.Body == nil {
+				continue
+			}
+			for _, statement := range function.Body.List {
+				if result, ok := statement.(*ast.ReturnStmt); ok && len(result.Results) == 1 {
+					shimSource = result.Results[0]
+				}
+			}
+		}
+	}
+	var violations []string
+	ast.Inspect(file, func(node ast.Node) bool {
+		if node != nil && node == shimSource {
+			return false
+		}
+		var expression ast.Expr
+		switch current := node.(type) {
+		case *ast.BinaryExpr:
+			if current.Op == token.ADD && containsCLIInvocation(current) && containsPathOrAccountValue(current) && !containsShellCommand(current) {
+				expression = current
+			}
+		case *ast.CallExpr:
+			if len(current.Args) > 1 && isFmtSprintf(current.Fun) && containsCLIInvocation(current.Args[0]) && containsPathOrAccountValue(current) && !containsShellCommand(current) {
+				expression = current
+			}
+		}
+		if expression != nil {
+			violations = append(violations, fset.Position(expression.Pos()).String())
+		}
+		return true
+	})
+	return violations
+}
+
+func TestCommandHintScannerOnlyExemptsGeneratedShimSource(t *testing.T) {
+	const source = `package shim
+import "fmt"
+func shimContent(path string) string {
+	_ = "kb-create apply " + path
+	return "#!/bin/sh\n# kb-create managed shim\n" + path
+}
+func hint(path string) string { return fmt.Sprintf("kb-create apply %s", path) }
+`
+	for _, test := range []struct {
+		name string
+		path string
+		want int
+	}{
+		{"shim source", filepath.Join("..", "shim", "shim.go"), 2},
+		{"other file", filepath.Join("..", "shim", "other.go"), 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, test.path, source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := commandHintViolations(fset, test.path, file); len(got) != test.want {
+				t.Fatalf("violations = %v; want %d", got, test.want)
+			}
+		})
 	}
 }
 
