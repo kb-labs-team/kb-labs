@@ -238,6 +238,28 @@ describe('release:deliver candidate bundle', () => {
     expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ registry: publicDeliveryTarget.registry }));
   });
 
+  // case: S-284.16
+  it('integrity-checks a stable candidate dry run before gate authorization without publishing', async () => {
+    rmSync(join(root, 'bundle'), { recursive: true, force: true });
+    writeBundle('stable', { policy: 'release-cases', result: 'skipped' });
+    const { ui } = createCapturedUI();
+    const result = await deliverCommand.execute(createMockContext({ ui, cwd: root }) as never, mockCLIInput({ flags: {
+      flow: 'platform',
+      'bundle-dir': 'bundle',
+      'expected-digest': trusted.expectedDigest,
+      'candidate-id': trusted.candidateId,
+      commit: trusted.commit,
+      version: trusted.version,
+      target: 'local',
+      'dry-run': true,
+      json: true,
+    } }));
+
+    expect(result).toMatchObject({ success: true });
+    expect(publishPackagesProgrammatic).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+    expect(verifyAgainstRegistry).not.toHaveBeenCalled();
+  });
+
   // case: S-284.23
   it('refuses a stable candidate without an external gate receipt before publishing', async () => {
     rmSync(join(root, 'bundle'), { recursive: true, force: true });

@@ -81,6 +81,23 @@ jobs:
           fetch-depth: 1
           clean: true
 
+      - name: Download candidate gate receipt
+        if: inputs.channel == 'stable'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: release-gate-attestation-${{ inputs.candidate_id }}
+          path: ${{ runner.temp }}/gate-attestation
+
+      - name: Verify candidate workflow run
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          TRUSTED_WORKFLOW_BRANCH: master
+        run: node scripts/verify-candidate-workflow-run.mjs
+
       - name: Place immutable candidate bundle after checkout
         run: |
           set -euo pipefail
@@ -129,21 +146,30 @@ jobs:
           VERSION: ${{ inputs.version }}
           COMMIT_SHA: ${{ inputs.commit_sha }}
           CANDIDATE_ID: ${{ inputs.candidate_id }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          CHANNEL: ${{ inputs.channel }}
           EXPECTED_DIGEST: ${{ inputs.expected_digest }}
           CANDIDATE_TAG: candidate-${{ inputs.candidate_id }}
           TARGET: ${{ steps.delivery-target.outputs.target }}
+          GATE_ATTESTATION: ${{ inputs.channel == 'stable' && format('{0}/gate-attestation/gate-attestation.json', runner.temp) || '' }}
         run: |
           set -euo pipefail
-          pnpm kb release artifact publish \
-            --flow "$FLOW" \
-            --bundle-dir .kb/release/bundle \
-            --expected-digest "$EXPECTED_DIGEST" \
-            --candidate-id "$CANDIDATE_ID" \
-            --commit "$COMMIT_SHA" \
-            --version "$VERSION" \
-            --target "$TARGET" \
-            --tag "$CANDIDATE_TAG" \
+          args=(
+            release artifact publish
+            --flow "$FLOW"
+            --bundle-dir .kb/release/bundle
+            --expected-digest "$EXPECTED_DIGEST"
+            --candidate-id "$CANDIDATE_ID"
+            --commit "$COMMIT_SHA"
+            --version "$VERSION"
+            --target "$TARGET"
+            --tag "$CANDIDATE_TAG"
             --json
+          )
+          if [[ -n "$GATE_ATTESTATION" ]]; then
+            args+=(--candidate-channel "$CHANNEL" --candidate-run-id "$CANDIDATE_RUN_ID" --gate-attestation "$GATE_ATTESTATION")
+          fi
+          pnpm kb "${args[@]}"
 
       - name: Deliver exact binary assets
         if: inputs.flow == 'platform'

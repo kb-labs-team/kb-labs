@@ -69,11 +69,20 @@ jobs:
     name: Clean installer journey gate
     uses: ./.github/workflows/reusable-installer-journey.yml
     if: needs.resolve-gate-policy.outputs.required == 'true'
-    needs: resolve-gate-policy
+    needs: [resolve-gate-policy, build]
     with:
       ref: ${{ inputs.commit_sha }}
+      candidate_run_id: ${{ github.run_id }}
+      candidate_artifact_name: release-candidate-${{ inputs.candidate_id }}
+      candidate_bundle_digest: ${{ needs.build.outputs.bundle_digest }}
+      candidate_id: ${{ inputs.candidate_id }}
+      candidate_commit: ${{ inputs.commit_sha }}
+      candidate_flow: ${{ inputs.flow }}
+      candidate_version: ${{ inputs.version }}
+      candidate_channel: ${{ inputs.channel }}
     permissions:
       contents: read
+      actions: read
 
   unit-test-gate:
     name: Workspace unit verification
@@ -90,13 +99,10 @@ jobs:
 
   build:
     name: Build candidate ${{ inputs.candidate_id }}
-    needs: [resolve-gate-policy, journey-gate, unit-test-gate]
-    if: >-
-      always() &&
-      needs.resolve-gate-policy.result == 'success' &&
-      needs.unit-test-gate.result == 'success' &&
-      ((needs.resolve-gate-policy.outputs.required != 'true' && needs.journey-gate.result == 'skipped') ||
-       (needs.resolve-gate-policy.outputs.required == 'true' && needs.journey-gate.result == 'success'))
+    needs: [resolve-gate-policy, unit-test-gate]
+    if: needs.unit-test-gate.result == 'success'
+    outputs:
+      bundle_digest: ${{ steps.candidate-digest.outputs.bundle_digest }}
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:
@@ -116,8 +122,19 @@ jobs:
           candidate-id: ${{ inputs.candidate_id }}
           run-id: ${{ github.run_id }}
           gate-policy: ${{ needs.resolve-gate-policy.outputs.policy }}
-          gate-result: ${{ needs.journey-gate.result == 'success' && 'passed' || 'skipped' }}
-          gate-run-id: ${{ needs.journey-gate.result == 'success' && github.run_id || '' }}
+
+      - name: Record sealed candidate payload digest
+        id: candidate-digest
+        env:
+          RELEASE_PREFLIGHT_COVERAGE: hosted-only
+          RELEASE_PREFLIGHT_HOSTED_ONLY_REASON: Publishes the sealed payload digest as a workflow output for the downstream exact-candidate journey.
+          BUNDLE_DIR: .kb/release/bundle
+        run: |
+          set -euo pipefail
+          digest="$(node --input-type=module -e 'import { readFileSync } from "node:fs"; process.stdout.write(JSON.parse(readFileSync(`${process.env.BUNDLE_DIR}/provenance.json`, "utf8")).bundleDigest);')"
+          test -n "$digest"
+          printf 'bundle_digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          printf '\n- **Candidate payload digest:** `%s`\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload immutable candidate bundle
         id: upload-candidate
@@ -156,3 +173,47 @@ jobs:
           CHANNEL: ${{ inputs.channel }}
           VERSION: ${{ inputs.version }}
         run: bash scripts/deliver-canary-ci.sh
+
+  gate-attestation:
+    name: Attest exact candidate journey result
+    needs: [resolve-gate-policy, build, journey-gate]
+    if: needs.resolve-gate-policy.outputs.required == 'true' && needs.journey-gate.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create digest-bound release gate receipt
+        env:
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          FLOW: ${{ inputs.flow }}
+          VERSION: ${{ inputs.version }}
+          CHANNEL: ${{ inputs.channel }}
+          BUNDLE_DIGEST: ${{ needs.build.outputs.bundle_digest }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+          RECEIPT_DIR: ${{ runner.temp }}/release-gate-attestation
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECEIPT_DIR"
+          node --input-type=module <<'NODE'
+          import { writeFileSync } from 'node:fs';
+          const receipt = {
+            schema: 'kb.release-gate-attestation/1',
+            candidateId: process.env.CANDIDATE_ID,
+            commit: process.env.COMMIT_SHA,
+            flow: process.env.FLOW,
+            version: process.env.VERSION,
+            channel: process.env.CHANNEL,
+            bundleDigest: process.env.BUNDLE_DIGEST,
+            workflowRunId: process.env.WORKFLOW_RUN_ID,
+            policy: 'release-cases',
+            result: 'passed',
+          };
+          if (!receipt.bundleDigest || !receipt.workflowRunId) throw new Error('candidate bundle digest and workflow run are required');
+          writeFileSync(`${process.env.RECEIPT_DIR}/gate-attestation.json`, `${JSON.stringify(receipt, null, 2)}\n`);
+          NODE
+      - name: Upload release gate receipt outside the candidate payload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-gate-attestation-${{ inputs.candidate_id }}
+          path: ${{ runner.temp }}/release-gate-attestation/gate-attestation.json
+          if-no-files-found: error
+          retention-days: 30

@@ -8,9 +8,50 @@ on:
         type: string
         required: false
         default: ''
+      candidate_run_id:
+        description: Existing run that uploaded the exact candidate bundle to exercise
+        type: string
+        required: false
+        default: ''
+      candidate_artifact_name:
+        description: Artifact name containing the sealed candidate bundle
+        type: string
+        required: false
+        default: ''
+      candidate_bundle_digest:
+        description: Trusted payload digest from the candidate build job
+        type: string
+        required: false
+        default: ''
+      candidate_id:
+        description: Candidate identifier expected inside the bundle
+        type: string
+        required: false
+        default: ''
+      candidate_commit:
+        description: Candidate source commit expected inside the bundle
+        type: string
+        required: false
+        default: ''
+      candidate_flow:
+        description: Release flow expected inside the bundle
+        type: string
+        required: false
+        default: ''
+      candidate_version:
+        description: Release version expected inside the bundle
+        type: string
+        required: false
+        default: ''
+      candidate_channel:
+        description: Release channel expected inside the bundle
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   prepare:
@@ -54,10 +95,34 @@ jobs:
           path: e2e/packages/
           key: journey-tgz-v1-${{ runner.os }}-${{ hashFiles('**/dist/**/*.js', '**/dist/**/*.d.ts', '**/package.json') }}
       - uses: ./.github/actions/install-goreleaser
-      - name: Pack artifacts and seal the candidate release index
+      - name: Prepare local journey fixture artifacts
         env:
           KB_JOURNEY_PACKAGES_READY: ${{ steps.tgz-cache.outputs.cache-hit == 'true' && '1' || '0' }}
         run: e2e/journey/prepare-candidate.sh
+      - name: Download the sealed release candidate bundle
+        if: inputs.candidate_run_id != ''
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          name: ${{ inputs.candidate_artifact_name }}
+          path: ${{ runner.temp }}/candidate-bundle
+      - name: Stage the verified release bundle as the journey candidate
+        if: inputs.candidate_run_id != ''
+        env:
+          CANDIDATE_BUNDLE_DIR: ${{ runner.temp }}/candidate-bundle
+          CANDIDATE_BUNDLE_DIGEST: ${{ inputs.candidate_bundle_digest }}
+          CANDIDATE_ID: ${{ inputs.candidate_id }}
+          COMMIT_SHA: ${{ inputs.candidate_commit }}
+          FLOW: ${{ inputs.candidate_flow }}
+          VERSION: ${{ inputs.candidate_version }}
+          CHANNEL: ${{ inputs.candidate_channel }}
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+          JOURNEY_PACKAGES_DIR: e2e/packages
+          JOURNEY_CANDIDATE_DIR: .journey/release/journey-candidate
+        run: |
+          pnpm --filter @kb-labs/release run build:cli
+          node plugins/release/scripts/stage-sealed-journey-candidate.mjs
       - id: matrix
         name: Select journeys from release case claims
         run: printf 'journeys=%s\n' "$(python3 e2e/journey/select_from_cases.py)" >> "$GITHUB_OUTPUT"
@@ -89,6 +154,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: installer-journey-candidate
+      - name: Verify the staged payload digest
+        if: inputs.candidate_run_id != ''
+        env:
+          EXPECTED_BUNDLE_DIGEST: ${{ inputs.candidate_bundle_digest }}
+        run: test "$(cat .journey/release/journey-candidate/candidate-bundle-digest.txt)" = "$EXPECTED_BUNDLE_DIGEST"
       - name: Run journey in a fresh container
         env:
           KB_JOURNEY_SERVICE_PROFILE: ${{ startsWith(matrix.case, 'service-') && 'nightly' || '' }}
@@ -172,6 +242,11 @@ jobs:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
           name: installer-journey-candidate
+      - name: Verify the staged payload digest
+        if: inputs.candidate_run_id != ''
+        env:
+          EXPECTED_BUNDLE_DIGEST: ${{ inputs.candidate_bundle_digest }}
+        run: test "$(cat .journey/release/journey-candidate/candidate-bundle-digest.txt)" = "$EXPECTED_BUNDLE_DIGEST"
       - name: Install candidate natively and smoke the installed CLI
         run: e2e/journey/native-macos-smoke.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -19,6 +19,7 @@ jobs:
     uses: ./.github/workflows/reusable-installer-journey.yml
     permissions:
       contents: read
+      actions: read
 
   report:
     name: Nightly report and issue sync

@@ -4,9 +4,54 @@ import { chmodSync, cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, read
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createCandidateBundle, verifyCandidateBundle } from '../../src/shared/candidate-bundle.js';
+import { stageSealedJourneyCandidate } from '../../src/shared/stage-sealed-journey-candidate.js';
 import type { CandidateGateProvenance } from '../../src/core/delivery-policy.js';
 
 let root: string;
+
+function sha256(bytes: Buffer | string): string {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function resealLegacyProvenance(bundleDir: string): string {
+  const provenancePath = join(bundleDir, 'provenance.json');
+  const provenance = JSON.parse(readFileSync(provenancePath, 'utf8')) as Record<string, unknown>;
+  provenance.schema = 'kb.release-provenance/3';
+  provenance.gate = { policy: 'release-cases', result: 'passed', runId: 'legacy-pre-build-journey' };
+  const modesPath = join(bundleDir, 'bundle.modes');
+  const modes = new Map(readFileSync(modesPath, 'utf8').trim().split(/\r?\n/).map(line => {
+    const match = /^([0-7]{3,4})  \.\/(.+)$/.exec(line);
+    if (!match) throw new Error(`Invalid mode entry: ${line}`);
+    return [match[2]!, match[1]!];
+  }));
+  const files = [] as string[];
+  const walk = (directory: string, prefix = '') => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(join(directory, entry.name), path);
+      else if (entry.isFile()) files.push(path);
+    }
+  };
+  walk(bundleDir);
+  const payload = files.filter(path => path !== 'provenance.json' && path !== 'bundle.sha256' && path !== 'bundle.modes')
+    .sort().map(path => `${path}\0${modes.get(path)}\0${sha256(readFileSync(join(bundleDir, path)))}\n`).join('');
+  const policyIdentity = JSON.stringify({
+    schema: provenance.schema,
+    candidateId: provenance.candidateId,
+    commit: provenance.commit,
+    flow: provenance.flow,
+    version: provenance.version,
+    channel: provenance.channel,
+    workflowRunId: provenance.workflowRunId,
+    gate: provenance.gate,
+  });
+  const bundleDigest = sha256(`${payload}\0${policyIdentity}\0${sha256(readFileSync(modesPath))}`);
+  provenance.bundleDigest = bundleDigest;
+  writeFileSync(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
+  writeFileSync(join(bundleDir, 'bundle.sha256'), `${files.filter(path => path !== 'bundle.sha256').sort()
+    .map(path => `${sha256(readFileSync(join(bundleDir, path)))}  ./${path}\n`).join('')}`);
+  return bundleDigest;
+}
 
 const identity = {
   candidateId: 'test-candidate',
@@ -63,6 +108,61 @@ afterEach(() => {
 });
 
 describe('candidate bundle producer and verifier', () => {
+  // case: S-284.23
+  it('stages the sealed npm tarball and binary bytes that the installer journey serves', () => {
+    root = mkdtempSync(join(tmpdir(), 'x241-sealed-journey-'));
+    const sourceArtifacts = join(root, 'source-artifacts');
+    mkdirSync(sourceArtifacts);
+    const tarball = 'kb-labs-fixture-1.0.0.tgz';
+    const tarballBytes = Buffer.from('sealed npm package bytes');
+    writeFileSync(join(sourceArtifacts, tarball), tarballBytes);
+    writeFileSync(join(sourceArtifacts, 'manifest.json'), JSON.stringify([{
+      name: '@kb-labs/fixture',
+      version: '1.0.0',
+      tarball,
+      sha256: createHash('sha256').update(tarballBytes).digest('hex'),
+    }]));
+    const binaryFilename = 'kb-create-linux-amd64';
+    const binaryBytes = Buffer.from('sealed kb-create binary bytes');
+    const binarySha = createHash('sha256').update(binaryBytes).digest('hex');
+    const binariesDir = join(root, 'source-binaries');
+    mkdirSync(join(binariesDir, 'nested'), { recursive: true });
+    writeFileSync(join(binariesDir, 'nested', binaryFilename), binaryBytes);
+    const binaryManifestPath = join(root, 'binary-manifest.json');
+    writeFileSync(binaryManifestPath, JSON.stringify({ binaries: [{
+      id: 'kb-create', os: 'linux', arch: 'amd64', version: '1.0.0',
+      filename: binaryFilename, sha256: binarySha, sizeBytes: binaryBytes.length,
+      url: `https://github.com/kb-labs-team/kb-labs/releases/download/v1/${binaryFilename}`,
+    }] }));
+    const releaseIndexPath = join(root, 'release-index.json');
+    writeFileSync(releaseIndexPath, JSON.stringify({ platforms: [{
+      id: 'platform', version: '1.0.0', binaries: [{ filename: binaryFilename, sha256: binarySha,
+        url: `https://github.com/kb-labs-team/kb-labs/releases/download/v1/${binaryFilename}` }],
+    }] }));
+    const bundleDir = join(root, 'bundle');
+    const provenance = createCandidateBundle({
+      ...identity, channel: 'canary', gate: { policy: 'none' }, workflowRunId: '987654321',
+      artifactsDir: sourceArtifacts, outputDir: bundleDir, releaseIndexPath,
+      binaryManifestPath, binariesDir,
+    });
+    const verified = verifyCandidateBundle(bundleDir, { ...identity, expectedDigest: provenance.bundleDigest }, { targetKind: 'test' });
+    const packagesDir = join(root, 'journey-packages');
+    const candidateDir = join(root, 'journey-candidate');
+    mkdirSync(packagesDir);
+    writeFileSync(join(packagesDir, tarball), 'stale fixture package bytes');
+    mkdirSync(candidateDir);
+    writeFileSync(join(candidateDir, 'release-index-update.json'), 'auxiliary update fixture');
+
+    stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateDir, verified });
+
+    expect(readFileSync(join(packagesDir, tarball))).toEqual(tarballBytes);
+    expect(readFileSync(join(candidateDir, binaryFilename))).toEqual(binaryBytes);
+    const stagedIndex = JSON.parse(readFileSync(join(candidateDir, 'release-index.json'), 'utf8'));
+    expect(stagedIndex.platforms[0].binaries[0].url).toBe(`http://origin:8080/journey-candidate/${binaryFilename}`);
+    expect(readFileSync(join(candidateDir, 'candidate-bundle-digest.txt'), 'utf8')).toBe(`${provenance.bundleDigest}\n`);
+    expect(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')).toBe('auxiliary update fixture');
+  });
+
   // case: S-284.16
   it('rejects a tampered mode manifest before applying its permissions', () => {
     const { bundleDir, trust } = makeBundle();
@@ -187,6 +287,17 @@ describe('candidate bundle producer and verifier', () => {
       gateAttestation: receipt,
       trustedWorkflowRunId: '1234',
     })).not.toThrow();
+  });
+
+  // case: S-284.23
+  it('does not treat the legacy v3 embedded passed result as digest-bound gate proof', () => {
+    const { bundleDir, trust } = makeBundle(false, 'kb-labs-fixture-1.0.0.tgz', 'fixture tarball bytes', 'stable', {
+      policy: 'release-cases', result: 'passed', runId: 'old-journey-run',
+    });
+    const expectedDigest = resealLegacyProvenance(bundleDir);
+    expect(() => verifyCandidateBundle(bundleDir, {
+      ...trust, expectedDigest, channel: 'stable', workflowRunId: '1234',
+    }, { targetKind: 'public', trustedWorkflowRunId: '1234' })).toThrow(/requires matching passed release-case gate evidence/);
   });
 
   // case: S-284.5

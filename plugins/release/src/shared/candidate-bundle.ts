@@ -132,7 +132,8 @@ function copyTree(source: string, target: string): void {
   }
 }
 
-type CandidateDigestIdentity = Pick<CandidateProvenance, 'schema' | 'candidateId' | 'commit' | 'flow' | 'version' | 'channel' | 'workflowRunId'>
+type CandidateDigestIdentity = Pick<CandidateProvenance, 'candidateId' | 'commit' | 'flow' | 'version' | 'channel' | 'workflowRunId'>
+  & { schema: CandidateProvenance['schema'] | LegacyCandidateProvenance['schema'] }
   & { gate: CandidateGatePolicy | CandidateGateProvenance };
 
 function payloadDigest(bundleDir: string, provenance: CandidateDigestIdentity, modes: Map<string, string>): string {
@@ -213,7 +214,7 @@ export function createCandidateBundle(input: CandidateBundleInput): CandidatePro
     commit: input.commit,
     flow: input.flow,
     version: input.version,
-  }, { targetKind: 'test' });
+  });
   return completeProvenance;
 }
 

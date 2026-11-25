@@ -50,3 +50,4 @@ jobs:
     uses: ./.github/workflows/reusable-installer-journey.yml
     permissions:
       contents: read
+      actions: read

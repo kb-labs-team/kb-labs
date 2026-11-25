@@ -32,7 +32,7 @@ import {
 import { verifyPackageTarball } from '../../core/verifier.js';
 import { findRepoRoot } from '../../shared/utils';
 import { publishPackagesProgrammatic, type PackageToPublish } from '../../shared/publish-programmatic';
-import { CandidateBundleError, CandidatePolicyError, verifyCandidateBundle } from '../../shared/candidate-bundle.js';
+import { CandidateBundleError, CandidatePolicyError, verifyCandidateBundle, verifyCandidateBundleIntegrity } from '../../shared/candidate-bundle.js';
 import { resolveFlowName, type FlowResolvableFlags } from '../../shared/resolve-flow';
 
 const REGISTRY_VERIFY_RETRIES = 5;
@@ -181,11 +181,13 @@ export default defineCommand({
       }
       let candidate: ReturnType<typeof verifyCandidateBundle>;
       try {
-        candidate = verifyCandidateBundle(bundleDir, trust, {
-          targetKind: kind,
-          gateAttestation,
-          trustedWorkflowRunId: candidateRunId,
-        });
+        candidate = dryRun && kind === 'test'
+          ? verifyCandidateBundleIntegrity(bundleDir, trust)
+          : verifyCandidateBundle(bundleDir, trust, {
+            targetKind: kind,
+            gateAttestation,
+            trustedWorkflowRunId: candidateRunId,
+          });
       } catch (error) {
         if (!(error instanceof CandidateBundleError)) throw error;
         if (error instanceof CandidatePolicyError) {

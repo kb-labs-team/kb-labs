@@ -70,7 +70,7 @@ test('release gate journey consumes one sealed payload and delivery verifies its
     'the release payload must be built and sealed once');
   assert.ok(build.outputs?.bundle_digest, 'the sealed payload digest must be exposed to the journey job');
   assert.equal(journey.with?.candidate_run_id, '${{ github.run_id }}');
-  assert.equal(journey.with?.bundle_digest, '${{ needs.build.outputs.bundle_digest }}');
+  assert.equal(journey.with?.candidate_bundle_digest, '${{ needs.build.outputs.bundle_digest }}');
 
   const receiptJob = workflow.jobs['gate-attestation'];
   assert.ok(receiptJob.needs.includes('journey-gate'), 'gate evidence must be created after a passing journey');
@@ -87,6 +87,23 @@ test('release gate journey consumes one sealed payload and delivery verifies its
   assert.ok(verifyRun, 'delivery must authenticate the receipt source workflow run');
   const deliveryCommand = delivery.jobs.deliver.steps.find(step => /release artifact publish/.test(step.run ?? ''));
   assert.match(deliveryCommand.run, /--gate-attestation/);
+
+  const reusableJourneyPath = fileURLToPath(new URL('../.github/workflows/reusable-installer-journey.yml', import.meta.url));
+  const reusableJourney = loadYaml(readFileSync(reusableJourneyPath, 'utf8'));
+  const prepareSteps = reusableJourney.jobs.prepare.steps;
+  const candidateDownload = prepareSteps.find(step => step.uses?.startsWith('actions/download-artifact@')
+    && step.with?.name === '${{ inputs.candidate_artifact_name }}');
+  assert.ok(candidateDownload, 'the reusable journey must download the release build artifact');
+  assert.equal(candidateDownload.with['run-id'], '${{ inputs.candidate_run_id }}');
+  const stageCandidate = prepareSteps.find(step => step.name === 'Stage the verified release bundle as the journey candidate');
+  assert.ok(stageCandidate, 'the journey setup must stage the verified sealed candidate as its install target');
+  assert.equal(stageCandidate.env.CANDIDATE_BUNDLE_DIGEST, '${{ inputs.candidate_bundle_digest }}');
+  assert.match(stageCandidate.run, /stage-sealed-journey-candidate\.mjs/);
+  const journeyDigestCheck = reusableJourney.jobs.journey.steps.find(step => step.name === 'Verify the staged payload digest');
+  const nativeDigestCheck = reusableJourney.jobs.native_macos.steps.find(step => step.name === 'Verify the staged payload digest');
+  assert.ok(journeyDigestCheck && nativeDigestCheck, 'every installed candidate lane must confirm the staged payload digest');
+  assert.match(journeyDigestCheck.run, /candidate-bundle-digest\.txt/);
+  assert.equal(journeyDigestCheck.env.EXPECTED_BUNDLE_DIGEST, '${{ inputs.candidate_bundle_digest }}');
 });
 
 test('platform image CI runs the release-index seam test after GoReleaser produces its input', () => {
