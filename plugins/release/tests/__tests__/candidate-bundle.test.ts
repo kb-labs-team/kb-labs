@@ -171,17 +171,28 @@ describe('candidate bundle producer and verifier', () => {
     const updateTarball = join(packagesDir, updateFilename);
     execFileSync('tar', ['-czf', updateTarball, '-C', join(root, 'update-fixture'), 'package']);
     const updateBytes = readFileSync(updateTarball);
+    const transitiveDir = join(root, 'transitive-fixture/package');
+    mkdirSync(transitiveDir, { recursive: true });
+    writeFileSync(join(transitiveDir, 'package.json'), JSON.stringify({ name: '@kb-labs/cli-runtime', version: '1.0.1' }));
+    const transitiveFilename = 'kb-labs-cli-runtime-1.0.1.tgz';
+    const transitiveTarball = join(packagesDir, transitiveFilename);
+    execFileSync('tar', ['-czf', transitiveTarball, '-C', join(root, 'transitive-fixture'), 'package']);
+    const transitiveBytes = readFileSync(transitiveTarball);
     mkdirSync(candidateDir);
     writeFileSync(join(candidateDir, 'release-index-update.json'), JSON.stringify({ artifacts: [{
       package: '@kb-labs/cli-bin', version: '1.0.1',
       tarball: 'http://verdaccio/@kb-labs/cli-bin/-/cli-bin-1.0.1.tgz',
       sha256: sha256(updateBytes),
+    }], provenance: [{
+      package: '@kb-labs/cli-runtime', version: '1.0.1',
+      integrity: `sha512-${createHash('sha512').update(transitiveBytes).digest('base64')}`,
+      distSha256: 'f'.repeat(64),
     }] }));
 
     stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateDir, verified });
 
     expect(readFileSync(join(packagesDir, tarball))).toEqual(tarballBytes);
-    expect(readdirSync(packagesDir).sort()).toEqual([tarball, updateFilename].sort());
+    expect(readdirSync(packagesDir).sort()).toEqual([tarball, updateFilename, transitiveFilename].sort());
     expect(readFileSync(join(candidateDir, binaryFilename))).toEqual(binaryBytes);
     expect(lstatSync(join(candidateDir, binaryFilename)).mode & 0o777).toBe(0o755);
     expect(readFileSync(join(root, 'v1', binaryFilename))).toEqual(binaryBytes);
@@ -243,6 +254,10 @@ describe('candidate bundle producer and verifier', () => {
       const updateMetadata = await updateMetadataResponse.json() as { versions: Record<string, { dist: { tarball: string } }> };
       const servedUpdate = await fetch(updateMetadata.versions['1.0.1']!.dist.tarball);
       expect(Buffer.from(await servedUpdate.arrayBuffer())).toEqual(updateBytes);
+      const transitiveMetadataResponse = await fetch(`${registryUrl}/@kb-labs%2Fcli-runtime`);
+      const transitiveMetadata = await transitiveMetadataResponse.json() as { versions: Record<string, { dist: { tarball: string } }> };
+      const servedTransitive = await fetch(transitiveMetadata.versions['1.0.1']!.dist.tarball);
+      expect(Buffer.from(await servedTransitive.arrayBuffer())).toEqual(transitiveBytes);
     } finally {
       registry.kill('SIGTERM');
     }

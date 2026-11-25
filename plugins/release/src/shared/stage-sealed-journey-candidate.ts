@@ -76,7 +76,7 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
     mirroredBinaries.set(signedTag, group);
   }
   const allowedTarballs = new Set(verified.artifacts.map(artifact => artifact.tarball));
-  const indexedArtifacts = new Map<string, Set<string>>();
+  const indexedArtifacts = new Map<string, { sha256: Set<string>; sha512: Set<string> }>();
   const collectIndexedArtifacts = (value: unknown): void => {
     if (Array.isArray(value)) {
       value.forEach(collectIndexedArtifacts);
@@ -84,10 +84,14 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
       for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
         const entry = value as Record<string, unknown>;
         if (key === 'package' && typeof child === 'string' && typeof entry.version === 'string'
-          && typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256)) {
+          && ((typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256))
+            || (typeof entry.integrity === 'string' && entry.integrity.split(/\s+/).some(value => /^sha512-[A-Za-z0-9+/=]+$/.test(value))))) {
           const identity = `${child}@${entry.version}`;
-          const digests = indexedArtifacts.get(identity) ?? new Set<string>();
-          digests.add(entry.sha256);
+          const digests = indexedArtifacts.get(identity) ?? { sha256: new Set<string>(), sha512: new Set<string>() };
+          if (typeof entry.sha256 === 'string' && /^[a-f0-9]{64}$/.test(entry.sha256)) digests.sha256.add(entry.sha256);
+          if (typeof entry.integrity === 'string') {
+            for (const value of entry.integrity.split(/\s+/)) if (/^sha512-[A-Za-z0-9+/=]+$/.test(value)) digests.sha512.add(value.slice('sha512-'.length));
+          }
           indexedArtifacts.set(identity, digests);
         }
         collectIndexedArtifacts(child);
@@ -108,23 +112,25 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
       if (!existsSync(packageManifest)) continue;
       const manifest = JSON.parse(readFileSync(packageManifest, 'utf8')) as { name?: string; version?: string };
       if (manifest.name && manifest.version && !indexedArtifacts.has(`${manifest.name}@${manifest.version}`)) {
-        indexedArtifacts.set(`${manifest.name}@${manifest.version}`, new Set());
+        indexedArtifacts.set(`${manifest.name}@${manifest.version}`, { sha256: new Set(), sha512: new Set() });
       }
     }
   }
-  const packageIdentities = new Map<string, Array<{ filename: string; digest: string }>>();
+  const packageIdentities = new Map<string, Array<{ filename: string; digest: string; integrity: string }>>();
   for (const filename of readdirSync(packageRoot).filter(name => name.endsWith('.tgz'))) {
     const path = join(packageRoot, filename);
     const manifest = JSON.parse(execFileSync('tar', ['-xOzf', path, 'package/package.json'], { encoding: 'utf8' })) as { name?: string; version?: string };
     if (!manifest.name || !manifest.version) continue;
     const identity = `${manifest.name}@${manifest.version}`;
     const values = packageIdentities.get(identity) ?? [];
-    values.push({ filename, digest: createHash('sha256').update(readFileSync(path)).digest('hex') });
+    const bytes = readFileSync(path);
+    values.push({ filename, digest: createHash('sha256').update(bytes).digest('hex'), integrity: createHash('sha512').update(bytes).digest('base64') });
     packageIdentities.set(identity, values);
   }
   for (const [identity, digests] of indexedArtifacts) {
     for (const candidate of packageIdentities.get(identity) ?? []) {
-      if (digests.size === 0 || digests.has(candidate.digest)) allowedTarballs.add(candidate.filename);
+      if ((digests.sha256.size === 0 && digests.sha512.size === 0)
+        || digests.sha256.has(candidate.digest) || digests.sha512.has(candidate.integrity)) allowedTarballs.add(candidate.filename);
     }
   }
   for (const filename of readdirSync(packageRoot).filter(name => name.endsWith('.tgz') && !allowedTarballs.has(name))) {
