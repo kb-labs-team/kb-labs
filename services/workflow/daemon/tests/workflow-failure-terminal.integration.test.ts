@@ -108,7 +108,8 @@ describe('live workflow failure terminalization', () => {
   });
 
   // case: S-243.5
-  it('expires a real shell step at its declared timeout and terminalizes the run with the catalogue error', async () => {
+  // case: S-008.2
+  it.each(['timeout', 'cancel'] as const)('stops a real shell child on %s and terminalizes the run', async (termination) => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'workflow-live-timeout-'));
     roots.push(workspaceRoot);
     const pidFile = join(workspaceRoot, 'sleep.pid');
@@ -130,7 +131,7 @@ describe('live workflow failure terminalization', () => {
             steps: [{
               name: 'Timed shell',
               uses: 'builtin:shell',
-              timeoutMs: 1500,
+              timeoutMs: termination === 'timeout' ? 1500 : 5000,
               with: { command: `sleep 30 & echo $! > '${pidFile}'; wait`, throwOnError: true },
             }],
           },
@@ -170,6 +171,13 @@ describe('live workflow failure terminalization', () => {
         childPid = Number(pidContents);
         expect(childPid).toBeGreaterThan(1);
       }, { timeout: 4000 });
+      if (termination === 'cancel') {
+        expect(isProcessAlive(childPid!)).toBe(true);
+        await engine.cancelRun(run.id);
+        expect(isProcessAlive(childPid!)).toBe(false);
+        await expect(engine.getRun(run.id)).resolves.toMatchObject({ status: 'cancelled' });
+        return;
+      }
       await vi.waitFor(async () => {
         const current = await engine.getRun(run.id);
         expect(current?.status).toBe('failed');

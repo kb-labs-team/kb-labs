@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import shlex
+import subprocess
 import tempfile
 import time
 import threading
@@ -323,18 +325,29 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
     journey.step("report unknown workflow run", "workflow", unknown, cases=["S-002.6"])
 
 
+def _local_process_running(pid: int) -> bool:
+    result = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+    state = result.stdout.strip()
+    return bool(state) and not state.startswith("Z")
+
+
 def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
                       clock: Callable[[], float], sleep: Callable[[float], None]) -> None:
     marker = project / ".kb" / "workflow-cancel-release"
+    ready = project / ".kb" / "workflow-cancel-pids"
     marker.unlink(missing_ok=True)
+    ready.unlink(missing_ok=True)
+    command = (f"while [ ! -f {shlex.quote(str(marker))} ]; do sleep 0.1; done & "
+               f'printf "%s %s\\n" "$$" "$!" > {shlex.quote(str(ready))}; wait')
     definition = project / ".kb" / "workflows" / "journey-cancel.yml"
     definition.write_text(
         "name: journey-cancel\nversion: 1.0.0\non:\n  manual: true\njobs:\n  wait:\n    runsOn: local\n    steps:\n"
         "      - name: Wait for cancellation\n        id: wait\n        uses: builtin:shell\n        with:\n"
-        f"          command: 'while [ ! -f {marker} ]; do sleep 0.1; done'\n",
+        f"          command: {json.dumps(command)}\n",
         encoding="utf-8")
 
     run_id = [""]
+    process_ids: list[int] = []
 
     def start() -> None:
         run_id[0] = _run_id(_case_json_cli("S-008.1", ["workflow", "run", "--workflow-id=journey-cancel", "--json"],
@@ -346,10 +359,15 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
                                     env=env, cwd=project)
             detail = _contract_object(detail, "kb workflow runs view --json=status")
             status = _contract_status(detail, "kb workflow runs view --json=status")
-            if status == "running":
-                return
+            if status == "running" and ready.exists():
+                reported = ready.read_text(encoding="utf-8").split()
+                if len(reported) == 2 and all(pid.isdecimal() and int(pid) > 1 for pid in reported):
+                    process_ids.extend(map(int, reported))
+                    if not all(map(_local_process_running, process_ids)):
+                        raise AssertionError(f"shell or child exited before cancellation: {process_ids}")
+                    return
             sleep(0.2)
-        raise AssertionError(f"workflow run did not become active after it returned: {detail!r}")
+        raise AssertionError(f"workflow shell did not reach its test gate: {detail!r}")
 
     journey.step("start active workflow for cancellation", "workflow", start, cases=["S-008.1"])
 
@@ -357,6 +375,9 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
         result = _case_cli("S-008.2", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
         if result.returncode or run_id[0] not in result.stdout or "cancellation" not in result.stdout.lower():
             raise AssertionError(f"workflow cancellation was not confirmed: {result.stdout!r}")
+        live = [pid for pid in process_ids if _local_process_running(pid)]
+        if live:
+            raise AssertionError(f"cancel returned while shell processes were still running: {live}")
 
     journey.step("request workflow cancellation", "workflow", cancel, cases=["S-008.2"],
                  requires=("step:start active workflow for cancellation",))
@@ -391,6 +412,7 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
     journey.step("reject cancellation after workflow finished", "workflow", reject_repeat_cancel,
                  cases=["S-008.4"], requires=("step:start active workflow for cancellation",))
     marker.touch()
+    ready.unlink(missing_ok=True)
     definition.unlink(missing_ok=True)
 
 

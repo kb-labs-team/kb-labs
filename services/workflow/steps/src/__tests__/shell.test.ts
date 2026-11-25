@@ -428,6 +428,21 @@ describe('shellHandler — execution-boundary cancellation', () => {
     }
   }, 5000)
 
+  // case: S-008.2
+  it('does not spawn a shell after the execution boundary aborts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'workflow-shell-aborted-'))
+    const marker = join(directory, 'started')
+    const { ctx, cleanup } = makeShellTestContext()
+    Object.defineProperty(ctx, 'signal', { value: AbortSignal.abort() })
+    try {
+      await expect(shellModule.execute(ctx, { command: `echo started > '${marker}'` })).rejects.toMatchObject({ name: 'AbortError' })
+      await expect(readFile(marker, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      cleanup()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   it('keeps successful stderr diagnostics at warn level', async () => {
     const { ctx, cleanup } = makeShellTestContext()
     try {

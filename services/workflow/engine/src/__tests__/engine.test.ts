@@ -281,6 +281,40 @@ describe('WorkflowEngine', () => {
       expect(cancelled?.finishedAt).toBeDefined();
     });
 
+    // case: S-008.2
+    it('waits for active local shell executions and blocks new ones during cancellation', async () => {
+      const spec: WorkflowSpec = {
+        name: 'Long shell', version: '1.0.0', on: { manual: true },
+        jobs: { main: { runsOn: 'local', steps: [{ name: 'Hold', uses: 'builtin:shell', with: { run: 'sleep 30' } }] } },
+      };
+      const run = await engine.createRun({ spec, trigger: { type: 'manual' } });
+      const first = await engine.trackLocalShellExecution(run.id);
+      const second = await engine.trackLocalShellExecution(run.id);
+      const aborted = new Promise<void>((resolve) => first.signal.addEventListener('abort', () => resolve(), { once: true }));
+      const cancellation = engine.cancelRun(run.id);
+      try {
+        await aborted;
+        expect(second.signal.aborted).toBe(true);
+        await expect(engine.getRun(run.id)).resolves.toMatchObject({ status: 'queued' });
+        const late = await engine.trackLocalShellExecution(run.id);
+        expect(late.signal.aborted).toBe(true);
+        late.finish();
+        const repeatedCancellation = engine.cancelRun(run.id);
+        first.finish();
+        await expect(engine.getRun(run.id)).resolves.toMatchObject({ status: 'queued' });
+        second.finish();
+        await Promise.all([cancellation, repeatedCancellation]);
+        await expect(engine.getRun(run.id)).resolves.toMatchObject({ status: 'cancelled' });
+        const after = await engine.trackLocalShellExecution(run.id);
+        expect(after.signal.aborted).toBe(true);
+        after.finish();
+      } finally {
+        first.finish();
+        second.finish();
+        await cancellation;
+      }
+    });
+
     it('cascades cancellation to all persisted child workflow descendants', async () => {
       const spec: WorkflowSpec = {
         name: 'Nested', version: '1.0.0', on: { manual: true },
@@ -297,6 +331,13 @@ describe('WorkflowEngine', () => {
         trigger: { type: 'workflow', parentRunId: child.id },
         metadata: { parentRunId: child.id },
       });
+
+      const parentJob = parent.jobs[0]!;
+      const childJob = child.jobs[0]!;
+      await engine.markJobStarted(parent.id, parentJob.id);
+      await engine.markStepWaitingChild(parent.id, parentJob.id, parentJob.steps[0]!.id, child.id);
+      await engine.markJobStarted(child.id, childJob.id);
+      await engine.markStepWaitingChild(child.id, childJob.id, childJob.steps[0]!.id, grandchild.id);
 
       await engine.cancelRun(parent.id);
 
