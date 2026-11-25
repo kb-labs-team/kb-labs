@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { ExecutionTargetSchema, StepSpecSchema, WorkflowSpecSchema, WorkflowTriggerSchema } from '../schemas'
+import { ExecutionTargetSchema, RunMetadataSchema, StepSpecSchema, WorkflowSpecSchema, WorkflowTriggerSchema } from '../schemas'
 import { WorkflowRunRequestSchema } from '../rest-api'
 
 describe('WorkflowTriggerSchema', () => {
@@ -42,6 +42,21 @@ describe('ExecutionTargetSchema', () => {
     })
     expect(parsed.target?.sourceRef).toBe('workflow-ref')
     expect(parsed.jobs.dogfood?.target?.sourceRef).toBe('job-ref')
+  })
+})
+
+describe('RunMetadataSchema', () => {
+  // case: S-325.5
+  it('preserves the workspace source ref and resolved commit when run metadata is parsed', () => {
+    const metadata = {
+      executionWorkspace: {
+        workspaceId: 'wt_parent',
+        rootPath: '/tmp/worktree',
+        sourceRef: 'HEAD',
+        sourceRefCommit: 'a'.repeat(40),
+      },
+    }
+    expect(RunMetadataSchema.parse(metadata)).toEqual(metadata)
   })
 })
 

@@ -537,6 +537,117 @@ describe('workflow worker lifecycle', () => {
     }));
   });
 
+  // case: S-325.5
+  it('passes the persisted parent workspace and edits to an invoked child workflow', async () => {
+    const runId = 'parent-workspace-run';
+    const childRunId = 'child-workspace-run';
+    const rootPath = await mkdtemp(path.join(tmpdir(), 'workflow-parent-child-workspace-'));
+    const completion = createDeferred<void>();
+    const parentRun = {
+      id: runId,
+      name: 'parent-workflow',
+      version: '1.0.0',
+      tenantId: 'default',
+      env: {},
+      metadata: { workflowId: 'parent-workflow', target: { sourceRef: 'HEAD' } },
+      trigger: { type: 'manual', actor: 'tester' },
+      jobs: [{
+        id: 'parent-job',
+        jobName: 'main',
+        status: 'queued',
+        attempt: 0,
+        steps: [
+          { id: 'edit-step', status: 'queued', spec: { name: 'Edit', uses: 'plugin:test/edit' } },
+          { id: 'child-step', status: 'queued', spec: { name: 'Child', uses: 'workflow:workspace:child-workflow' } },
+        ],
+      }],
+    } as unknown as WorkflowRun;
+    let storedRun = structuredClone(parentRun);
+    let queueDrained = false;
+    const materialize = vi.fn(async () => ({
+      workspaceId: 'wt_parent',
+      provider: 'test',
+      status: 'ready' as const,
+      rootPath,
+      createdAt: '',
+      updatedAt: '',
+      metadata: { baseCommit: 'a'.repeat(40) },
+    }));
+    const runFromSpec = vi.fn(async (_spec: unknown, input: { metadata: Record<string, unknown> }) => {
+      const binding = input.metadata.executionWorkspace as { rootPath?: string } | undefined;
+      expect(binding?.rootPath).toBe(rootPath);
+      expect(await readFile(path.join(rootPath, 'parent-change.txt'), 'utf8')).toBe('prepared for child');
+      expect(input.metadata.workspaceOwnerRunId).toBe(runId);
+      return { id: childRunId, status: 'queued' };
+    });
+    const engine = {
+      maxWorkflowDepth: 4,
+      async nextJob() {
+        if (queueDrained) return null;
+        queueDrained = true;
+        return { id: 'parent-queue', runId, jobId: 'parent-job', priority: 'normal', enqueuedAt: '', availableAt: 0, jobName: 'main' };
+      },
+      async getRun(requestedRunId: string) {
+        return requestedRunId === runId ? structuredClone(storedRun) : null;
+      },
+      async runFromSpec(...args: Parameters<typeof runFromSpec>) { return runFromSpec(...args); },
+      async markStepWaitingChild() { completion.resolve(); },
+      async reconcileChildInvocation() {},
+      async markJobStarted() {},
+      async markStepStarted() {},
+      async markJobFailed(_requestedRunId: string, _jobId: string, error: Error) { completion.reject(error); },
+      getStateStore: vi.fn(() => ({
+        async updateRun(requestedRunId: string, update: (draft: WorkflowRun) => void) {
+          if (requestedRunId === runId) {
+            const draft = structuredClone(storedRun);
+            update(draft);
+            storedRun = draft;
+          }
+        },
+        updateStep: vi.fn(async () => null),
+      })),
+    };
+    const provider = {
+      getCapabilities: () => ({ supportsSourceRef: true }),
+      resolveSourceRef: vi.fn(async () => 'a'.repeat(40)),
+      materialize,
+      release: vi.fn(),
+    };
+    mockRunnerExecute.mockImplementation(async (input: { workspace: string }) => {
+      await writeFile(path.join(input.workspace, 'parent-change.txt'), 'prepared for child');
+      return { status: 'success', outputs: {} };
+    });
+    const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      workflowService: { get: vi.fn(async () => ({ input: {
+        name: 'child-workflow', version: '1.0.0', on: { manual: true }, jobs: { main: { runsOn: 'local', steps: [] } },
+      } })) } as unknown as import('@kb-labs/workflow-engine').WorkflowService,
+      cliApi: {} as IEntityRegistry,
+      logger: mockLogger(),
+      workspaceRoot: '/tmp/test-workspace',
+      projectRoot: rootPath,
+      platform: {
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(provider),
+      },
+      concurrency: 1,
+    });
+
+    const startPromise = worker.start();
+    await Promise.race([
+      completion.promise,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 10_000)),
+    ]);
+    await worker.stop();
+    await startPromise;
+
+    expect(materialize).toHaveBeenCalledOnce();
+    expect(runFromSpec).toHaveBeenCalledOnce();
+  });
+
   // case: S-325.2
   it('passes target hint from workflow spec to runner', async () => {
     const runId = `run-target-${Date.now().toString(36)}`;
