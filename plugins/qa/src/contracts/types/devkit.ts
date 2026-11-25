@@ -14,10 +14,17 @@ export interface DevkitRunResult {
 }
 
 export interface DevkitRunSummary {
-  total: number;
+  /** Number of task variants selected by current kb-devkit versions. */
+  scheduled?: number;
+  /** Legacy kb-devkit summary field, normalized to `scheduled` by DevkitAdapter. */
+  total?: number;
   passed: number;
   failed: number;
   cached: number;
+  blocked?: number;
+  notAffected?: number;
+  skippedManual?: number;
+  blockedTasks?: Array<{ package: string; task: string; reason: string }>;
 }
 
 export interface DevkitRunOutput {

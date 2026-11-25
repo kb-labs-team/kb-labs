@@ -108,7 +108,7 @@ export function HistoryTab() {
       align: 'center',
       render: (_, record) => (
         <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {record.raw.summary.passed}/{record.raw.summary.total}
+          {record.raw.summary.passed}/{record.raw.summary.scheduled ?? record.raw.summary.total ?? 0}
         </span>
       ),
     },

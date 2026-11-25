@@ -537,6 +537,7 @@ describe('workflow worker lifecycle', () => {
     }));
   });
 
+  // case: S-325.2
   it('passes target hint from workflow spec to runner', async () => {
     const runId = `run-target-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
@@ -685,6 +686,7 @@ describe('workflow worker lifecycle', () => {
     expect(executionBackendFixture.execute).not.toHaveBeenCalled(); // no steps to execute
   });
 
+  // case: S-325.2
   it('emits structured diagnostic log when workspace provisioning fails', async () => {
     const runId = `run-ws-fail-${Date.now().toString(36)}`;
     const jobId = `${runId}:job`;
@@ -763,7 +765,6 @@ describe('workflow worker lifecycle', () => {
         serviceId: 'workflow',
       }),
     );
-    // case: S-325.2
     expect(failingWsProvider.materialize).toHaveBeenCalledWith(expect.objectContaining({
       sourceRef: 'job-ref',
     }));

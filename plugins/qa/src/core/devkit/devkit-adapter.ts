@@ -46,11 +46,14 @@ export class DevkitAdapter {
     }
     const packageArgs = packageNames.length > 0 ? ['--packages', packageNames.join(',')] : [];
     const output = await this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
-    const selectedTaskCount = output.summary?.total ?? 0;
-    if (!Number.isInteger(selectedTaskCount) || selectedTaskCount <= 0) {
+    const selectedTaskCount = output.summary?.scheduled ?? output.summary?.total;
+    if (selectedTaskCount === undefined || !Number.isInteger(selectedTaskCount) || selectedTaskCount <= 0) {
       throw new NoDevkitTasksSelectedError(tasks, packageNames);
     }
-    return output;
+    return {
+      ...output,
+      summary: { ...output.summary, scheduled: selectedTaskCount },
+    };
   }
 
   async check(): Promise<DevkitCheckOutput> {

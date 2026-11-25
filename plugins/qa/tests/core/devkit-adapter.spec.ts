@@ -1,6 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { DevkitAdapter } from '../../src/core/devkit/devkit-adapter.js';
 
+function adapterWithSummary(summary: Record<string, unknown>) {
+  const exec = vi.fn().mockResolvedValue({
+    code: 0,
+    stdout: JSON.stringify({ ok: true, results: [], summary: { passed: 1, failed: 0, cached: 0, ...summary } }),
+    stderr: '',
+  });
+  return { adapter: new DevkitAdapter({
+    binaryPath: '/workspace/tools/kb-devkit',
+    cwd: '/workspace',
+    shell: { exec } as never,
+  }) };
+}
+
 describe('DevkitAdapter scoped runs', () => {
   // case: S-326.1
   it('passes selected package names to kb-devkit without changing the unscoped default', async () => {
@@ -77,6 +90,38 @@ describe('DevkitAdapter scoped runs', () => {
     await expect(adapter.run(['test'])).rejects.toMatchObject({
       code: 'KB_RUNTIME_INPUT_INVALID',
       message: expect.stringContaining('selected workspace scope'),
+    });
+  });
+
+  it('accepts the current scheduled count from kb-devkit', async () => {
+    const { adapter } = adapterWithSummary({ scheduled: 3 });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).resolves.toMatchObject({
+      summary: { scheduled: 3 },
+    });
+  });
+
+  it('rejects current summaries when scheduled is zero', async () => {
+    const { adapter } = adapterWithSummary({ scheduled: 0 });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
+    });
+  });
+
+  it('normalizes legacy total summaries', async () => {
+    const { adapter } = adapterWithSummary({ total: 2 });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).resolves.toMatchObject({
+      summary: { total: 2, scheduled: 2 },
+    });
+  });
+
+  it('rejects summaries that omit both current and legacy task counts', async () => {
+    const { adapter } = adapterWithSummary({});
+
+    await expect(adapter.run(['test'], '@kb-labs/qa')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
     });
   });
 });

@@ -34,11 +34,20 @@ export const DevkitRunOutputSchema = z.object({
   ok: z.boolean(),
   results: z.array(DevkitRunResultSchema),
   summary: z.object({
-    total: z.number(),
+    scheduled: z.number().int().nonnegative().optional(),
+    total: z.number().int().nonnegative().optional(),
     passed: z.number(),
     failed: z.number(),
     cached: z.number(),
-  }),
+    blocked: z.number().optional(),
+    notAffected: z.number().optional(),
+    skippedManual: z.number().optional(),
+    blockedTasks: z.array(z.object({
+      package: z.string(),
+      task: z.string(),
+      reason: z.string(),
+    })).optional(),
+  }).refine((summary) => summary.scheduled !== undefined || summary.total !== undefined),
 });
 
 // DevkitCheckOutput

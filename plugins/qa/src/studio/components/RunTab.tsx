@@ -146,7 +146,7 @@ function TaskRunnerCard({ availableTasks, defaultTasks }: { availableTasks: stri
                 <UITag color={result.ok ? 'success' : 'error'} style={{ fontSize: 11 }}>
                   {result.ok ? '✓ passed' : '✗ failed'}
                 </UITag>
-                {' '}{formatElapsed(result.raw.elapsed)} · {result.raw.summary.total} pkgs
+                {' '}{formatElapsed(result.raw.elapsed)} · {result.raw.summary.scheduled ?? result.raw.summary.total ?? 0} tasks
               </span>
             </UICol>
           </UIRow>
