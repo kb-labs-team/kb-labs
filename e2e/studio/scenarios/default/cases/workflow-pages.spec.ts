@@ -134,7 +134,7 @@ test('selected project workflow history shows its successful and failed runs @S-
   await expect(page.getByText('Failed', { exact: true })).toBeVisible();
 });
 
-test('workflow run details expose terminal status and captured step logs @S-021.2 @S-021.3 @S-021.4', async ({ page }) => {
+test('workflow run details expose terminal status, logs, and completed step artifacts @S-021.2 @S-021.3 @S-021.4 @S-021.6', async ({ page }) => {
   test.skip(!journeyEnabled, 'Enabled by the installed Studio journey hook');
   expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   expect(healthyRunId, 'workflow journey must provide a successful run ID').toBeTruthy();
@@ -145,6 +145,8 @@ test('workflow run details expose terminal status and captured step logs @S-021.
   await expect(page.getByRole('heading', { name: 'journey-hello', exact: true })).toBeVisible();
   await expect(page.getByText(`Run ${healthyRunId!.slice(0, 12)}...`, { exact: true })).toBeVisible();
   await expect(page.getByText('Success', { exact: true })).toBeVisible();
+  await expect(page.getByText('Studio artifact commit', { exact: true })).toBeVisible();
+  await expect(page.getByText('studio-artifact-visible', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Engineering', exact: true }).click();
   await expect(page.getByText('hello', { exact: false }).last()).toBeVisible();
 
