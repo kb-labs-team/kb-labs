@@ -50,6 +50,11 @@ export interface WorkflowOperationResult {
   ancillaryFailures: WorkflowAncillaryFailure[]
 }
 
+interface ActiveShellExecution {
+  controller: AbortController
+  finished: Promise<void>
+}
+
 export interface WorkflowEngineOptions {
   /** Registered project identity supplied by the project runtime. */
   projectId: string
@@ -99,6 +104,8 @@ export class WorkflowEngine {
   private readonly events: EventBusBridge
   private readonly snapshotStorage: RunSnapshotStorage
   private readonly options: WorkflowEngineOptions
+  private readonly localShellExecutions = new Map<string, Set<ActiveShellExecution>>()
+  private readonly cancellations = new Map<string, Promise<WorkflowOperationResult>>()
 
   constructor(options: WorkflowEngineOptions) {
     const projectCache = new ProjectScopedCache(options.cache, options.projectId)
@@ -267,22 +274,71 @@ export class WorkflowEngine {
     return this.stateStore.getRun(runId)
   }
 
+  /** Track an execution owned by this daemon so cancellation can join its cleanup. */
+  async trackLocalShellExecution(runId: string): Promise<{ signal: AbortSignal; finish: () => void }> {
+    if (this.cancellations.has(runId)) {
+      return { signal: AbortSignal.abort(), finish: () => {} }
+    }
+
+    const controller = new AbortController()
+    let resolveFinished!: () => void
+    const finished = new Promise<void>((resolve) => { resolveFinished = resolve })
+    const execution = { controller, finished }
+    const executions = this.localShellExecutions.get(runId) ?? new Set<ActiveShellExecution>()
+    executions.add(execution)
+    this.localShellExecutions.set(runId, executions)
+    const finish = () => {
+      if (executions.delete(execution) && executions.size === 0) {
+        this.localShellExecutions.delete(runId)
+      }
+      resolveFinished()
+    }
+
+    try {
+      const run = await this.getRun(runId)
+      if (!run || isTerminal(run.status, 'run')) {
+        controller.abort()
+        finish()
+      }
+      return { signal: controller.signal, finish }
+    } catch (error) {
+      finish()
+      throw error
+    }
+  }
+
   async cancelRun(runId: string): Promise<WorkflowOperationResult> {
+    const pending = this.cancellations.get(runId)
+    if (pending) { return pending }
+
+    const cancellation = this.cancelRunOnce(runId)
+    this.cancellations.set(runId, cancellation)
+    try {
+      return await cancellation
+    } finally {
+      this.cancellations.delete(runId)
+    }
+  }
+
+  private async cancelRunOnce(runId: string): Promise<WorkflowOperationResult> {
     const ancillaryFailures: WorkflowAncillaryFailure[] = []
     const run = await this.getRun(runId)
-    if (!run) {
+    if (!run || isTerminal(run.status, 'run')) {
       return { ancillaryFailures }
     }
+
+    const executions = [...(this.localShellExecutions.get(runId) ?? [])]
+    for (const execution of executions) {
+      execution.controller.abort()
+    }
+    await Promise.all(executions.map((execution) => execution.finished))
 
     try {
       await this.transitionRunTerminal(runId, 'cancelled', (draft) => {
         draft.finishedAt = new Date().toISOString()
       })
     } catch (error) {
-      // Already terminal (or otherwise unreachable from its current status)
-      // — a no-op, same as the old up-front status check, except the check
-      // now happens inside the lock against the live record instead of
-      // racing a stale read taken before it.
+      // A concurrent completion may have already finalized this run.
       if (error instanceof IllegalStateTransitionError) {
         return { ancillaryFailures }
       }
@@ -305,7 +361,9 @@ export class WorkflowEngine {
     // Invocation links are persisted on child trigger metadata, so cancellation
     // survives worker/daemon restarts and naturally cascades through descendants.
     const descendants = await this.findChildRuns(runId)
-    const childResults = await Promise.all(descendants.map((child) => this.cancelRun(child.id)))
+    const childResults = await Promise.all(descendants
+      .filter((child) => !isTerminal(child.status, 'run'))
+      .map((child) => this.cancelRun(child.id)))
     ancillaryFailures.push(...childResults.flatMap((result) => result.ancillaryFailures))
     await this.runAncillaryOperation(runId, '', 'workflow.child.reconcile', async () => {
       await this.reconcileChildInvocation(runId)
@@ -331,7 +389,7 @@ export class WorkflowEngine {
 
           const child = await this.getRun(childRunId)
           if (parent.status === 'cancelled') {
-            if (child) {await this.cancelRun(child.id)}
+            if (child && !isTerminal(child.status, 'run')) {await this.cancelRun(child.id)}
             continue
           }
           if (!child) {

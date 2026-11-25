@@ -346,6 +346,7 @@ async function shellHandler(
     // the entire group (process.kill(-pid, 'SIGKILL')), which takes down both the shell
     // and any children it spawned. Without this, SIGTERM reaches only the shell; child
     // processes (e.g. `sleep N`) inherit the pipe write-end and block await indefinitely.
+    ctx.signal?.throwIfAborted();
     const proc = execaCommand(command, {
       cwd,
       env: mergedEnv,
