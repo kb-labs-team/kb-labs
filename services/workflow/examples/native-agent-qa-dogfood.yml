@@ -1,0 +1,67 @@
+# Native CLI-command dogfood loop. Requires a workspace adapter and the
+# command-step worktree routing from PR #711. The patch step snapshots agent
+# output before QA runs, so failed QA still leaves a reviewable artifact. Files
+# created or changed by QA are outside that snapshot.
+name: native-agent-qa-dogfood
+version: 1.0.0
+description: Run one agent task, then the project's QA test task in the task worktree
+on:
+  manual: true
+
+inputs:
+  task:
+    type: string
+    description: Task description for the coding agent
+    required: true
+  run_review:
+    type: boolean
+    description: Run the optional heuristic review after tests pass
+    default: false
+
+phases:
+  implement:
+    label: Agent
+    description: Implement the requested task in the workflow task worktree
+  verify:
+    label: QA
+    description: Run the project's test task
+  review:
+    label: Review
+    description: Optionally review changed files after tests pass
+
+jobs:
+  dogfood:
+    runsOn: local
+    steps:
+      - name: Implement task
+        id: agent
+        phase: implement
+        uses: command:agent run
+        with:
+          task: "${{ inputs.task }}"
+          mode: execute
+          json: true
+
+      - name: Save agent patch
+        id: patch
+        phase: implement
+        uses: builtin:workspace-patch
+
+      - name: Run QA tests
+        id: qa
+        phase: verify
+        uses: command:qa run
+        with:
+          tasks: test
+          json: true
+
+      - name: Review changes (optional)
+        id: review
+        phase: review
+        if: "${{ inputs.run_review == true }}"
+        uses: command:review run
+        with:
+          mode: heuristic
+          scope: changed
+          json: true
+

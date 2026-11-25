@@ -66,11 +66,14 @@ Workflow Artifacts
 ```typescript
 interface ArtifactClient {
   produce(path: string, input: ArtifactInput): Promise<void>;
+  produceAtomic?(path: string, input: ArtifactInput): Promise<void>;
   consume(path: string): Promise<ArtifactOutput>;
   list?(prefix?: string): Promise<ArtifactReference[]>;
   basePath?: () => string;
 }
 ```
+
+`produceAtomic` writes to a private temporary file beside the target and renames it only after the complete input has been written. A failed stream removes its temporary file and leaves no partial target.
 
 #### `ArtifactInput`
 

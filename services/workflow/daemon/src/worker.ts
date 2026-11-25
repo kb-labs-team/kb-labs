@@ -30,6 +30,7 @@ import type {
 } from "@kb-labs/workflow-contracts";
 import type { ExecutionBackend } from "@kb-labs/plugin-execution";
 import { createContextLogger, registerProcessSensitiveValues } from "@kb-labs/core-platform";
+import path from 'node:path';
 import {
   buildShellSafeCommand,
   interpolateObject,
@@ -43,7 +44,10 @@ import {
   projectStepEnvironment,
   SandboxRunner,
   summarizeWorkflowInput,
+  createFileSystemArtifactClient,
+  type StepExecutionResult,
 } from "@kb-labs/workflow-runtime";
+import { writeWorkspacePatchArtifact } from './workspace-patch-artifact.js';
 
 interface StepSpecRaw {
   name: string;
@@ -371,6 +375,7 @@ export async function createWorkflowWorker(
       ? workspaceRoot
       : (process.env["KB_PROJECT_ROOT"] ?? workspaceRoot);
     let provisionedWorkspaceId: string | undefined;
+    let executionWorkspaceId: string | undefined;
     const workspaceMetadata = run.metadata?.['executionWorkspace'] as
       | { workspaceId?: unknown; rootPath?: unknown }
       | undefined;
@@ -383,6 +388,7 @@ export async function createWorkflowWorker(
       && typeof workspaceMetadata.workspaceId === 'string'
     ) {
       runWorkspace = workspaceMetadata.rootPath;
+      executionWorkspaceId = workspaceMetadata.workspaceId;
       // The owner releases once its terminal job completes. A child must never
       // release a borrowed worktree.
       provisionedWorkspaceId = inheritedWorkspace ? undefined : workspaceMetadata.workspaceId;
@@ -398,6 +404,7 @@ export async function createWorkflowWorker(
         const ws = await wsProvider.materialize({
           workspaceId: wsId,
           projectRoot,
+          ownerRunId: run.id,
           platformRoot,
           metadata: { runId: run.id, jobId: job.id },
           onProgress: (event) => {
@@ -411,6 +418,7 @@ export async function createWorkflowWorker(
           const rootPath = ws.rootPath;
           runWorkspace = rootPath;
           provisionedWorkspaceId = ws.workspaceId;
+          executionWorkspaceId = ws.workspaceId;
           await engine.getStateStore().updateRun(run.id, (draft) => {
             draft.metadata = {
               ...(draft.metadata ?? {}),
@@ -908,7 +916,65 @@ export async function createWorkflowWorker(
 
           // Delegate execution to the execution plane.
           // The platform handles provisioning (workspace, environment, cleanup) transparently.
-          const result = await runner.execute({
+          let result: StepExecutionResult;
+          if (interpolatedSpec.uses === 'builtin:workspace-patch') {
+            const patchStartedAt = Date.now();
+            const patchTimeoutMs = step.spec.timeoutMs ?? defaultTimeout ?? 120_000;
+            const patchDeadline = patchStartedAt + patchTimeoutMs;
+            const patchController = new AbortController();
+            const patchTimer = setTimeout(() => patchController.abort(new Error('Workspace patch step timed out')), patchTimeoutMs);
+            try {
+              const exportPatch = wsProvider && executionWorkspaceId
+                ? (wsProvider as IWorkspaceProvider).exportPatch
+                : undefined;
+              if (!exportPatch || !executionWorkspaceId) {
+                throw new Error('Workspace patch export capability is unavailable');
+              }
+              const ownerRunId = typeof run.metadata?.['workspaceOwnerRunId'] === 'string'
+                ? run.metadata['workspaceOwnerRunId']
+                : run.id;
+              const exported = await exportPatch.call(wsProvider, {
+                workspaceId: executionWorkspaceId,
+                projectRoot,
+                ownerRunId,
+                workspaceRoot: runWorkspace,
+                signal: patchController.signal,
+              });
+              const artifacts = createFileSystemArtifactClient(path.join(projectRoot, '.kb/run-artifacts'), { trustedRoot: projectRoot });
+              const encodedId = (value: string) => Buffer.from(value).toString('base64url');
+              const artifactKey = `workflow-runs/${encodedId(run.id)}/${encodedId(job.id)}/${encodedId(step.id)}/workspace.patch`;
+              const saved = await writeWorkspacePatchArtifact({
+                source: exported,
+                artifacts,
+                artifactKey,
+                signal: patchController.signal,
+                timeoutMs: Math.max(1, patchDeadline - Date.now()),
+              });
+              result = {
+                status: 'success',
+                outputs: {
+                  status: saved.status,
+                  artifactKey: `.kb/run-artifacts/${artifactKey}`,
+                  baseCommit: exported.baseCommit,
+                  changedFiles: exported.changedFiles,
+                  sizeBytes: saved.sizeBytes,
+                  sha256: saved.sha256,
+                },
+              };
+            } catch {
+              result = {
+                status: 'failed',
+                error: {
+                  code: 'KB_RUNTIME_COMMAND_FAILED',
+                  message: 'The task worktree patch could not be exported or stored.',
+                  hint: 'Keep the task worktree for debugging, verify the workspace provider and artifact storage, then rerun the workflow.',
+                },
+              };
+            } finally {
+              clearTimeout(patchTimer);
+            }
+          } else {
+            result = await runner.execute({
             spec: interpolatedSpec as StepSpec,
             context: {
               runId: run.id,
@@ -974,7 +1040,8 @@ export async function createWorkflowWorker(
             // KB_WORKSPACE_ROOT themselves (agent scripts, git operations).
             workspace: workspaceRoot,
             target,
-          });
+            });
+          }
 
           if (result.status === "failed") {
             const stepDurationMs = Date.now() - stepStartTime;
@@ -1003,7 +1070,7 @@ export async function createWorkflowWorker(
               errorCode: result.error?.code,
             });
 
-            if (step.continueOnError) {
+            if (step.continueOnError && step.spec.uses !== 'builtin:workspace-patch') {
               safeStepLogger.warn(
                 "[step] continueOnError=true — continuing despite failure",
                 {

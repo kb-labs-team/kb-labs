@@ -190,6 +190,8 @@ export type {
   WorkspaceStatusResult,
   WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
+  WorkspacePatchExport,
+  WorkspacePatchExportRequest,
 } from "../workspace/workspace-provider.js";
 
 // Snapshot lifecycle

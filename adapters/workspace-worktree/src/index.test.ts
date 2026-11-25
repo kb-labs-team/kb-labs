@@ -7,10 +7,24 @@ vi.mock('node:fs', async (importOriginal) => {
   return { ...actual, existsSync: vi.fn(), mkdirSync: vi.fn(), readdirSync: vi.fn(), symlinkSync: vi.fn(), rmSync: vi.fn() };
 });
 
+// These unit cases use virtual project/platform roots. Real-path ownership
+// checks against the filesystem are exercised by the integration fixtures.
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const fs = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...fs, realpath: vi.fn(async (file: string) => file) };
+});
+
 vi.mock('node:child_process', () => ({
   exec: vi.fn((_cmd: string, _opts: unknown, cb: (err: null, res: { stdout: string }) => void) =>
     cb(null, { stdout: '' })
   ),
+  execFile: vi.fn((_file: string, args: string[], _opts: unknown, cb: (err: null, res: { stdout: string; stderr: string }) => void) => {
+    const stdout = args.join(' ') === 'rev-parse HEAD'
+      ? 'a'.repeat(40)
+      : '';
+    cb(null, { stdout, stderr: '' });
+  }),
+  spawn: vi.fn(),
 }));
 
 describe('WorktreeWorkspaceAdapter', () => {

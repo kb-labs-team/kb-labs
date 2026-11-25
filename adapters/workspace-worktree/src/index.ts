@@ -1,10 +1,13 @@
-import { exec } from 'node:child_process';
+import { exec, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
+import { readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { exportGitPatch, metadataEnvironment } from './export-patch.js';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 import type {
   IWorkspaceProvider,
   MaterializeWorkspaceRequest,
@@ -15,6 +18,8 @@ import type {
   WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
   WorkspaceStatus,
+  WorkspacePatchExport,
+  WorkspacePatchExportRequest,
 } from '@kb-labs/sdk/adapters';
 
 export { manifest } from './manifest.js';
@@ -51,10 +56,12 @@ interface WorktreeRecord {
   status: WorkspaceStatus;
   createdAt: string;
   runId?: string;
+  ownerRunId?: string;
   /** Reference count — number of jobs currently using this workspace */
   refCount: number;
   repoRoot: string;
   worktreeBaseDir: string;
+  baseCommit?: string;
 }
 
 const TIMEOUTS = {
@@ -86,10 +93,143 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     this.toolDistPaths = config.toolDistPaths ?? (config.symlinkPlatformDist === false ? [] : ['cli/bin/dist']);
   }
 
+  private assertWorkspaceId(workspaceId: string): void {
+    if (!workspaceId || workspaceId === '.' || workspaceId === '..' || /[\\/\0]/.test(workspaceId)) {
+      throw Object.assign(new Error('Workspace ID must be a single safe path segment'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+  }
+
+  private assertOwnerRunId(ownerRunId: string): void {
+    if (!ownerRunId || ownerRunId.length > 256 || /[\r\n\0]/.test(ownerRunId)) {
+      throw Object.assign(new Error('Workspace owner run ID could not be verified'), {
+        code: 'KB_WORKSPACE_PATCH_OWNER_UNVERIFIED',
+      });
+    }
+  }
+
+  private async resolveOwnerRoot(projectRoot: string): Promise<string> {
+    try {
+      return await realpath(path.resolve(projectRoot));
+    } catch (cause) {
+      throw Object.assign(new Error('Workspace owner project root could not be verified'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+        cause,
+      });
+    }
+  }
+
+  private async resolveOwnedWorktreeBase(repoRoot: string, create = false): Promise<string> {
+    const basePath = path.resolve(repoRoot, this.worktreeDir);
+    const configuredOutsideProject = path.isAbsolute(this.worktreeDir);
+    if (!configuredOutsideProject && !this.isPathWithin(repoRoot, basePath)) {
+      throw Object.assign(new Error('Workspace directory must remain inside its owning project'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    if (create) mkdirSync(basePath, { recursive: true });
+    const actualBase = await realpath(basePath).catch((cause: unknown) => {
+      throw Object.assign(new Error('Workspace directory could not be verified'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+        cause,
+      });
+    });
+    if (!configuredOutsideProject && !this.isPathWithin(repoRoot, actualBase)) {
+      throw Object.assign(new Error('Workspace directory resolves outside its owning project'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    return actualBase;
+  }
+
+  private isPathWithin(parent: string, candidate: string): boolean {
+    const relative = path.relative(parent, candidate);
+    return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  }
+
+  private async assertGitBelongsToOwner(projectRoot: string, worktreePath: string): Promise<void> {
+    try {
+      const commonDirFor = async (cwd: string): Promise<string> => {
+        const commonDir = (await this.gitOutput(['rev-parse', '--git-common-dir'], cwd)).trim();
+        return realpath(path.resolve(cwd, commonDir));
+      };
+      const [ownerCommonDir, worktreeCommonDir] = await Promise.all([
+        commonDirFor(projectRoot),
+        commonDirFor(worktreePath),
+      ]);
+      const worktreeGitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+      const worktreeGitDir = await realpath(path.resolve(worktreePath, worktreeGitDirRaw));
+      const worktreeRoot = await realpath(worktreePath);
+      const backpointer = (await readFile(path.join(worktreeGitDir, 'gitdir'), 'utf8')).trim();
+      if (
+        worktreeCommonDir !== ownerCommonDir
+        || path.dirname(worktreeGitDir) !== path.join(ownerCommonDir, 'worktrees')
+        || path.resolve(worktreeGitDir, backpointer) !== path.join(worktreeRoot, '.git')
+      ) {
+        throw new Error('Git worktree metadata does not belong to the trusted project');
+      }
+    } catch (cause) {
+      throw Object.assign(new Error('Workspace Git metadata does not belong to the trusted project'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+        cause,
+      });
+    }
+  }
+
+  private async assertRecordOwner(
+    record: WorktreeRecord,
+    workspaceId: string,
+    projectRoot: string,
+    expectedWorktree: string,
+    ownerRunId?: string,
+    allowLegacy = false,
+  ): Promise<void> {
+    if (
+      record.workspaceId !== workspaceId
+      || path.resolve(record.repoRoot) !== projectRoot
+      || path.resolve(record.worktreePath) !== expectedWorktree
+      || path.resolve(record.worktreeBaseDir) !== path.dirname(expectedWorktree)
+    ) {
+      throw Object.assign(new Error('Workspace does not belong to the trusted project root and workspace ID'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    const persistedOwnerRunId = await this.readOwnerRunId(expectedWorktree);
+    if (persistedOwnerRunId !== record.ownerRunId) {
+      throw Object.assign(new Error('Workspace owner metadata does not match its Git worktree'), {
+        code: 'KB_WORKSPACE_PATCH_OWNER_UNVERIFIED',
+      });
+    }
+    if (record.ownerRunId !== ownerRunId && !(allowLegacy && !record.ownerRunId && !persistedOwnerRunId)) {
+      throw Object.assign(new Error('Workspace owner run ID does not match the materialized workspace'), {
+        code: 'KB_WORKSPACE_PATCH_OWNER_UNVERIFIED',
+      });
+    }
+    const [actualRoot, gitTopLevel] = await Promise.all([
+      realpath(expectedWorktree).catch(() => ''),
+      this.gitOutput(['rev-parse', '--show-toplevel'], expectedWorktree)
+        .then((value) => realpath(value.trim()))
+        .catch(() => ''),
+    ]);
+    if (actualRoot !== expectedWorktree || gitTopLevel !== expectedWorktree) {
+      throw Object.assign(new Error('Workspace Git root does not match the trusted owner'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    await this.assertGitBelongsToOwner(projectRoot, expectedWorktree);
+    if (ownerRunId && persistedOwnerRunId && persistedOwnerRunId !== ownerRunId) {
+      throw Object.assign(new Error('Workspace owner run ID does not match the materialized workspace'), {
+        code: 'KB_WORKSPACE_PATCH_OWNER_UNVERIFIED',
+      });
+    }
+  }
+
   async materialize(request: MaterializeWorkspaceRequest): Promise<WorkspaceDescriptor> {
     const workspaceId = request.workspaceId ?? `wt_${randomUUID().slice(0, 8)}`;
+    this.assertWorkspaceId(workspaceId);
     const branch = request.sourceRef ?? this.defaultBranch;
-    const runId = (request.metadata as Record<string, unknown>)?.runId as string | undefined;
+    const runId = request.ownerRunId ?? (request.metadata as Record<string, unknown>)?.runId as string | undefined;
     const onProgress = request.onProgress;
 
     const safeBranch = branch.replace(/[^a-zA-Z0-9_\-./]/g, '');
@@ -105,12 +245,8 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     if (this.toolDistPaths.length > 0 && !platformRoot) {
       throw new Error('Workspace materialization needs the platform root to link CLI tools. Pass platformRoot from the platform runtime.');
     }
-    const repoRoot = path.resolve(projectRoot);
-    const worktreeBaseDir = path.resolve(repoRoot, this.worktreeDir);
-
-    if (!existsSync(worktreeBaseDir)) {
-      mkdirSync(worktreeBaseDir, { recursive: true });
-    }
+    const repoRoot = await this.resolveOwnerRoot(projectRoot);
+    const worktreeBaseDir = await this.resolveOwnedWorktreeBase(repoRoot, true);
 
     const worktreePath = path.join(worktreeBaseDir, workspaceId);
 
@@ -118,6 +254,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     if (existsSync(worktreePath)) {
       const existing = this.records.get(workspaceId);
       if (existing) {
+        await this.assertRecordOwner(existing, workspaceId, repoRoot, worktreePath, runId, true);
         existing.refCount++;
         onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree', progress: 100 });
         return {
@@ -131,9 +268,14 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         };
       }
       // Worktree exists on disk but not in records (stale) — reuse anyway
+      const recovered = await this.recoverRecord(workspaceId, repoRoot, worktreePath, runId, true);
       onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree (recovered)', progress: 100 });
-      const now = new Date().toISOString();
-      this.records.set(workspaceId, { workspaceId, worktreePath, branch, status: 'ready', createdAt: now, runId, refCount: 1, repoRoot, worktreeBaseDir });
+      const now = recovered.createdAt;
+      recovered.branch = branch;
+      recovered.runId = runId;
+      // Do not promote legacy worktrees to trusted ownership during recovery.
+      recovered.refCount = 1;
+      this.records.set(workspaceId, recovered);
       return {
         workspaceId,
         provider: 'worktree',
@@ -195,6 +337,9 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         progress('dist-links', 'Tool binaries linked', 98);
       }
 
+      const baseCommit = await this.persistBaseCommit(worktreePath);
+      await this.persistOwnerRunId(worktreePath, runId);
+
       progress('ready', 'Workspace ready', 100);
 
       const record: WorktreeRecord = {
@@ -204,9 +349,11 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
         status: 'ready',
         createdAt: new Date().toISOString(),
         runId,
+        ownerRunId: runId,
         refCount: 1,
         repoRoot,
         worktreeBaseDir,
+        baseCommit,
       };
       this.records.set(workspaceId, record);
 
@@ -254,6 +401,51 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     record.status = 'released';
   }
 
+  async exportPatch(request: WorkspacePatchExportRequest): Promise<WorkspacePatchExport> {
+    const { workspaceId, ownerRunId, workspaceRoot } = request;
+    this.assertWorkspaceId(workspaceId);
+    this.assertOwnerRunId(ownerRunId);
+    const projectRoot = await this.resolveOwnerRoot(request.projectRoot);
+    const worktreeBaseDir = await this.resolveOwnedWorktreeBase(projectRoot);
+    const expectedWorktree = path.join(worktreeBaseDir, workspaceId);
+    const claimedWorkspaceRoot = await realpath(path.resolve(workspaceRoot)).catch(() => '');
+    if (claimedWorkspaceRoot !== expectedWorktree) {
+      throw Object.assign(new Error('Workspace path does not match the trusted project root and workspace ID'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    let record = this.records.get(workspaceId);
+    if (!record) {
+      record = await this.recoverRecord(workspaceId, projectRoot, workspaceRoot, ownerRunId);
+    } else {
+      await this.assertRecordOwner(record, workspaceId, projectRoot, expectedWorktree, ownerRunId);
+    }
+    if (!record) {
+      throw Object.assign(new Error('Workspace is not available for patch export'), {
+        code: 'KB_WORKSPACE_PATCH_WORKSPACE_MISSING',
+      });
+    }
+
+    const expectedRoot = await realpath(record.worktreePath).catch(() => '');
+    const actualRoot = await this.gitOutput(['rev-parse', '--show-toplevel'], record.worktreePath)
+      .then((value) => realpath(value.trim()))
+      .catch(() => '');
+    if (!expectedRoot || actualRoot !== expectedRoot) {
+      throw Object.assign(new Error('Workspace Git root does not match the materialized workspace'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+
+    const baseCommit = await this.readBaseCommit(record.worktreePath);
+    if (!baseCommit || baseCommit !== record.baseCommit) {
+      throw Object.assign(new Error('Workspace base commit metadata changed'), {
+        code: 'KB_WORKSPACE_PATCH_BASE_MISMATCH',
+      });
+    }
+
+    return exportGitPatch(record.worktreePath, baseCommit, request.signal);
+  }
+
   async destroy(workspaceId: string): Promise<void> {
     const record = this.records.get(workspaceId);
     if (!record) {
@@ -278,11 +470,12 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     if (!projectRoot) {
       return [];
     }
-    const repoRoot = path.resolve(projectRoot);
-    const worktreeBaseDir = path.resolve(repoRoot, this.worktreeDir);
-    if (!existsSync(worktreeBaseDir)) {
+    const repoRoot = await this.resolveOwnerRoot(projectRoot);
+    const configuredWorktreeBase = path.resolve(repoRoot, this.worktreeDir);
+    if (!existsSync(configuredWorktreeBase)) {
       return [];
     }
+    const worktreeBaseDir = await this.resolveOwnedWorktreeBase(repoRoot);
     const preserved: WorkspaceCleanupResult[] = [];
     for (const entry of readdirSync(worktreeBaseDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) {
@@ -387,6 +580,123 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
   private async exec(command: string, cwd: string, timeout = 60_000): Promise<string> {
     const { stdout } = await execAsync(command, { cwd, encoding: 'utf8', timeout });
     return stdout;
+  }
+
+  private async gitOutput(args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
+    const { stdout } = await execFileAsync('git', args, {
+      cwd,
+      encoding: 'utf8',
+      timeout: TIMEOUTS.cleanup,
+      env: env ?? metadataEnvironment(),
+    });
+    return stdout;
+  }
+
+  private async persistBaseCommit(worktreePath: string): Promise<string> {
+    const commit = (await this.gitOutput(['rev-parse', 'HEAD'], worktreePath)).trim();
+    if (!/^[a-f0-9]{40,64}$/.test(commit)) {
+      throw new Error('Materialized workspace has an invalid base commit');
+    }
+    const gitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+    const gitDir = await realpath(path.resolve(worktreePath, gitDirRaw));
+    await writeFile(path.join(gitDir, 'kb-workflow-base'), `${commit}\n`, { flag: 'wx', mode: 0o600 });
+    return commit;
+  }
+
+  private async persistOwnerRunId(worktreePath: string, ownerRunId?: string): Promise<void> {
+    if (!ownerRunId) return;
+    this.assertOwnerRunId(ownerRunId);
+    const gitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+    const gitDir = await realpath(path.resolve(worktreePath, gitDirRaw));
+    await writeFile(path.join(gitDir, 'kb-workflow-owner-run'), `${ownerRunId}\n`, { flag: 'wx', mode: 0o600 });
+  }
+
+  private async readBaseCommit(worktreePath: string, allowMissing = false): Promise<string | undefined> {
+    const gitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+    const gitDir = await realpath(path.resolve(worktreePath, gitDirRaw));
+    let commit: string;
+    try {
+      commit = (await readFile(path.join(gitDir, 'kb-workflow-base'), 'utf8')).trim();
+    } catch (cause) {
+      if (allowMissing && (cause as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw Object.assign(new Error('Workspace base commit metadata is missing or invalid'), {
+        code: 'KB_WORKSPACE_PATCH_BASE_MISSING',
+        cause,
+      });
+    }
+    if (!/^[a-f0-9]{40,64}$/.test(commit)) {
+      throw Object.assign(new Error('Workspace base commit metadata is missing or invalid'), {
+        code: 'KB_WORKSPACE_PATCH_BASE_MISSING',
+      });
+    }
+    return commit;
+  }
+
+  private async readOwnerRunId(worktreePath: string): Promise<string | undefined> {
+    const gitDirRaw = (await this.gitOutput(['rev-parse', '--git-dir'], worktreePath)).trim();
+    const gitDir = await realpath(path.resolve(worktreePath, gitDirRaw));
+    let ownerRunId: string;
+    try {
+      ownerRunId = (await readFile(path.join(gitDir, 'kb-workflow-owner-run'), 'utf8')).trim();
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw cause;
+    }
+    this.assertOwnerRunId(ownerRunId);
+    return ownerRunId;
+  }
+
+  private async recoverRecord(
+    workspaceId: string,
+    projectRoot: string,
+    workspaceRoot: string,
+    ownerRunId?: string,
+    allowLegacy = false,
+  ): Promise<WorktreeRecord> {
+    this.assertWorkspaceId(workspaceId);
+    const repoRoot = await this.resolveOwnerRoot(projectRoot);
+    const worktreeBaseDir = await this.resolveOwnedWorktreeBase(repoRoot);
+    const expectedWorktree = path.join(worktreeBaseDir, workspaceId);
+    const rootPath = await realpath(path.resolve(workspaceRoot)).catch(() => '');
+    const actualWorkspaceRoot = await realpath(rootPath).catch(() => '');
+    const gitTopLevel = rootPath
+      ? await this.gitOutput(['rev-parse', '--show-toplevel'], rootPath)
+        .then((value) => realpath(value.trim()))
+        .catch(() => '')
+      : '';
+    if (
+      rootPath !== expectedWorktree
+      || actualWorkspaceRoot !== expectedWorktree
+      || gitTopLevel !== expectedWorktree
+    ) {
+      throw Object.assign(new Error('Workspace Git root does not match the requested workspace ID'), {
+        code: 'KB_WORKSPACE_PATCH_ROOT_MISMATCH',
+      });
+    }
+    await this.assertGitBelongsToOwner(repoRoot, rootPath);
+    const persistedOwnerRunId = await this.readOwnerRunId(rootPath);
+    if (ownerRunId && persistedOwnerRunId !== ownerRunId && !(allowLegacy && !persistedOwnerRunId)) {
+      throw Object.assign(new Error('Workspace owner could not be verified for patch export'), {
+        code: 'KB_WORKSPACE_PATCH_OWNER_UNVERIFIED',
+      });
+    }
+    const baseCommit = await this.readBaseCommit(rootPath, allowLegacy);
+    const now = new Date().toISOString();
+    const record: WorktreeRecord = {
+      workspaceId,
+      worktreePath: rootPath,
+      branch: 'HEAD',
+      status: 'ready',
+      createdAt: now,
+      runId: persistedOwnerRunId,
+      ownerRunId: persistedOwnerRunId,
+      refCount: 1,
+      repoRoot,
+      worktreeBaseDir,
+      baseCommit,
+    };
+    this.records.set(workspaceId, record);
+    return record;
   }
 }
 

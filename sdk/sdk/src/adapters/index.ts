@@ -186,6 +186,8 @@ export type {
   WorkspaceStatusResult,
   WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
+  WorkspacePatchExport,
+  WorkspacePatchExportRequest,
 } from '@kb-labs/core-platform/adapters';
 
 // Environment provider
