@@ -58,4 +58,44 @@ describe('SandboxRunner CLI command workspace routing', () => {
     });
     expect(captured?.workspace).toEqual({ type: 'local', cwd: '/project/.worktrees/wt_run-1' });
   });
+
+  it('keeps non-command plugin execution in the owner workspace', async () => {
+    let captured: ExecutionRequest | undefined;
+    const backend = {
+      execute: vi.fn(async (request: ExecutionRequest) => {
+        captured = request;
+        return { ok: true, data: { ok: true, outputs: {} } };
+      }),
+    } as unknown as ExecutionBackend;
+    const cliApi = {
+      snapshot: () => ({
+        manifests: [{
+          pluginId: '@kb-labs/test-plugin',
+          pluginRoot: '/project/plugins/test-plugin',
+          manifest: {
+            version: '1.0.0',
+            permissions: {},
+            workflows: { handlers: [{ id: 'handle', handler: 'dist/handle.js' }] },
+          },
+        }],
+      }),
+    } as unknown as IEntityRegistry;
+    const runner = new SandboxRunner({ backend, cliApi, workspaceRoot: '/project' });
+
+    await runner.execute({
+      spec: { name: 'Plugin handler', uses: 'plugin:@kb-labs/test-plugin/handle', with: {} },
+      context: {
+        runId: 'run-plugin',
+        jobId: 'run-plugin:job',
+        stepId: 'plugin',
+        attempt: 1,
+        env: { KB_WORKSPACE_ROOT: '/project/.worktrees/wt_plugin' },
+        secrets: {},
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      },
+      workspace: '/project',
+    });
+
+    expect(captured?.workspace).toEqual({ type: 'local', cwd: '/project' });
+  });
 });
