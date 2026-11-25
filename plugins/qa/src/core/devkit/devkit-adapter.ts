@@ -46,7 +46,8 @@ export class DevkitAdapter {
     }
     const packageArgs = packageNames.length > 0 ? ['--packages', packageNames.join(',')] : [];
     const output = await this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
-    if (output.error) {
+    const hasExecutionResult = Array.isArray(output.results) && output.summary !== undefined;
+    if (output.error && !hasExecutionResult) {
       const failure = output.error;
       throw Object.assign(new Error(failure.message ?? `kb-devkit run failed${failure.code ? ` (${failure.code})` : ''}`), {
         ...(failure.code ? { code: failure.code } : {}),

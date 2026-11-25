@@ -32,6 +32,12 @@ export const DevkitRunResultSchema = z.object({
 export const DevkitRunOutputSchema = z.object({
   elapsed: z.string(),
   ok: z.boolean(),
+  error: z.object({
+    code: z.string().optional(),
+    message: z.string().optional(),
+    hint: z.string().optional(),
+    details: z.record(z.unknown()).optional(),
+  }).optional(),
   results: z.array(DevkitRunResultSchema),
   summary: z.object({
     scheduled: z.number().int().nonnegative().optional(),

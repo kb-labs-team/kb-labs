@@ -259,6 +259,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       if (existing) {
         await this.assertRecordOwner(existing, workspaceId, repoRoot, worktreePath, runId, true);
         if (request.sourceRef) {
+          if (!requestedBaseCommit) throw new Error('Workspace source ref did not resolve to a commit');
           this.assertRequestedBaseMatches(existing, requestedBaseCommit);
         }
         existing.refCount++;
@@ -276,6 +277,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       // Worktree exists on disk but not in records (stale) — reuse anyway
       const recovered = await this.recoverRecord(workspaceId, repoRoot, worktreePath, runId, true);
       if (request.sourceRef) {
+        if (!requestedBaseCommit) throw new Error('Workspace source ref did not resolve to a commit');
         this.assertRequestedBaseMatches(recovered, requestedBaseCommit);
       }
       onProgress?.({ stage: 'reuse', message: 'Reusing existing worktree (recovered)', progress: 100 });

@@ -43,4 +43,22 @@ describe('DevkitRunOutputSchema summary task counts', () => {
       },
     }).success).toBe(true);
   });
+
+  it('accepts a failed execution envelope error in the persisted run payload', () => {
+    expect(DevkitRunOutputSchema.safeParse({
+      ...base,
+      ok: false,
+      error: {
+        code: 'KB_DEVKIT_TASK_FAILED',
+        message: 'Task build failed',
+        hint: 'Inspect the log.',
+        details: { package: '@fixture/core', task: 'build' },
+      },
+      results: [{
+        Package: '@fixture/core', Task: 'build', OK: false, Cached: false, Elapsed: 1,
+        ExitCode: 1, Stdout: '', Stderr: 'failed', Error: 'failed',
+      }],
+      summary: { scheduled: 1, passed: 0, failed: 1, cached: 0 },
+    }).success).toBe(true);
+  });
 });

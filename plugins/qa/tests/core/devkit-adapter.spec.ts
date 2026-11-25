@@ -174,7 +174,7 @@ describe('DevkitAdapter scoped runs', () => {
   });
 
   // case: S-326.2
-  it('preserves the primary prerequisite failure from a failed Go CLI envelope with blocked task details', async () => {
+  it('returns the structured failed run from a Go CLI envelope with blocked task details', async () => {
     const failure = {
       code: 'KB_DEVKIT_TASK_FAILED',
       message: 'Task build failed for @fixture/core',
@@ -204,11 +204,11 @@ describe('DevkitAdapter scoped runs', () => {
       binaryPath: '/workspace/tools/kb-devkit', cwd: '/workspace', shell: { exec } as never,
     });
 
-    await expect(adapter.run(['test'], '@fixture/app')).rejects.toMatchObject({
-      code: 'KB_DEVKIT_TASK_FAILED',
-      message: failure.message,
-      hint: failure.hint,
-      details: failure.details,
+    await expect(adapter.run(['test'], '@fixture/app')).resolves.toMatchObject({
+      ok: false,
+      error: failure,
+      results: [{ Package: '@fixture/core', Task: 'build', OK: false }],
+      summary: { scheduled: 3, failed: 1, blocked: 2 },
     });
   });
 

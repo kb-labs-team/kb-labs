@@ -13,4 +13,17 @@ describe('buildRunReport', () => {
     expect(current.at(-1)?.lines[0]).toContain('total 2');
     expect(legacy.at(-1)?.lines[0]).toContain('total 3');
   });
+
+  it('shows the original DevKit failure in a failed run report', () => {
+    const report = buildRunReport({
+      raw: {
+        ok: false, elapsed: '1s', results: [],
+        error: { code: 'KB_DEVKIT_TASK_FAILED', message: 'core build failed', hint: 'inspect the log' },
+        summary: { scheduled: 3, passed: 0, failed: 1, cached: 0, blocked: 2 },
+      },
+    } as never);
+
+    expect(report.at(-1)?.lines).toContain('DevKit error: core build failed');
+    expect(report.at(-1)?.lines).toContain('Hint: inspect the log');
+  });
 });
