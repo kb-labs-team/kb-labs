@@ -8,7 +8,9 @@ import { ChildIPCServer, IPCTransport, LLMProxy, createStdioChannel, StdioPlatfo
 
 const waitFor = async (predicate: () => boolean): Promise<void> => {
   const deadline = Date.now() + 1000;
-  while (!predicate() && Date.now() < deadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+  while (!predicate() && Date.now() < deadline) {
+    await new Promise<void>((resolve) => { setTimeout(resolve, 5); });
+  }
   if (!predicate()) { throw new Error('Condition did not become true'); }
 };
 
@@ -61,7 +63,7 @@ describe('cancellable host adapter RPC', () => {
     const platform = {
       llm: { complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
         providerSignal = options?.signal;
-        return new Promise((_resolve, reject) => providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true }));
+        return new Promise((_resolve, reject) => { providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason), { once: true }); });
       } },
     } as unknown as IPlatformAdapters;
     const server = new StdioPlatformServer(hostChannel, platform);
@@ -90,7 +92,7 @@ describe('cancellable host adapter RPC', () => {
     const platform = {
       llm: { complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
         providerSignal = options?.signal;
-        return new Promise((_resolve, reject) => providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('closed', 'AbortError')), { once: true }));
+        return new Promise((_resolve, reject) => { providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('closed', 'AbortError')), { once: true }); });
       } },
     } as unknown as IPlatformAdapters;
     const server = new StdioPlatformServer(hostChannel, platform);

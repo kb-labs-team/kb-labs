@@ -88,7 +88,7 @@ export function manifestToStudioRegistryEntry(
   widgetsBasePath = '/plugins',
 ): StudioPluginEntryV2 | null {
   const studio = manifest.studio;
-  if (!studio || studio.version !== 2) return null;
+  if (!studio || studio.version !== 2) { return null; }
 
   const widgetBundleDir = join(pluginRoot, 'dist', 'widgets');
   return {
@@ -314,7 +314,7 @@ export async function registerPluginRegistryRoutes(
       async (request, reply) => {
         const pluginId = `@${request.params.scope}/${request.params.name}`;
         const entry = (await options.getSnapshot()).manifests.find((item) => item.pluginId === pluginId);
-        if (!entry) return reply.code(404).send({ error: `Plugin not found: ${pluginId}` });
+        if (!entry) { return reply.code(404).send({ error: `Plugin not found: ${pluginId}` }); }
         const filePath = join(entry.pluginRoot, name === 'readme' ? 'README.md' : 'CHANGELOG.md');
         try {
           const [realPackageRoot, realFilePath] = await Promise.all([
@@ -341,12 +341,12 @@ export async function registerPluginRegistryRoutes(
     { config: { ux: 'raw' }, schema: { hide: true } },
     async (request, reply) => {
       const filePath = request.params['*'];
-      if (!filePath) return reply.code(400).send({ error: 'Invalid path' });
+      if (!filePath) { return reply.code(400).send({ error: 'Invalid path' }); }
       const pluginId = `@${request.params.scope}/${request.params.name}`;
       const entry = (await options.getSnapshot()).manifests.find((item) =>
         item.pluginId === pluginId && item.manifest.studio?.version === 2,
       );
-      if (!entry) return reply.code(404).send({ error: `No widget bundle for ${pluginId}` });
+      if (!entry) { return reply.code(404).send({ error: `No widget bundle for ${pluginId}` }); }
 
       const bundleRoot = resolve(entry.pluginRoot, 'dist', 'widgets');
       const target = resolve(bundleRoot, filePath);
@@ -364,7 +364,7 @@ export async function registerPluginRegistryRoutes(
           return reply.code(400).send({ error: 'Invalid path' });
         }
         const fileStat = await stat(realTarget);
-        if (!fileStat.isFile()) return reply.code(404).send({ error: 'Widget file not found' });
+        if (!fileStat.isFile()) { return reply.code(404).send({ error: 'Widget file not found' }); }
         const isEntry = filePath === 'remoteEntry.js';
         return reply
           .type(MIME[extname(realTarget)] ?? 'application/octet-stream')
