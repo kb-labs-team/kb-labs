@@ -139,6 +139,7 @@ describe('the gateway really reads what it declares', () => {
   });
 
   it('the default install (defaults only, no answers) uses local access without login', () => {
+    expect(byId('gateway.marketplaceRegistryRoute').default).toBeUndefined();
     const config: Record<string, unknown> = {};
     for (const r of file.requirements.filter((x) => !x.secret && x.default !== undefined)) {
       setPointer(config, r.path!, r.default);
