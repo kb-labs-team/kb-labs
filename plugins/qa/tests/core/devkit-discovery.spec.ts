@@ -38,6 +38,10 @@ describe('resolveDevkitBin', () => {
     writeFileSync(projectTool, '');
 
     expect(resolveDevkitBin(workspace, relativePath, project)).toBe(projectTool);
+    const workspaceTool = join(workspace, relativePath);
+    mkdirSync(join(workspace, 'tools', 'kb-devkit'), { recursive: true });
+    writeFileSync(workspaceTool, '');
+    expect(resolveDevkitBin(workspace, relativePath, project)).toBe(workspaceTool);
     expect(() => resolveDevkitBin(workspace, join(root, 'missing-devkit'), project))
       .toThrow(/devkitPath .* not found/);
   });
