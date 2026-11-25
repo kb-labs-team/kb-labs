@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, expectTypeOf, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import * as processContracts from '@kb-labs/plugin-contracts'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createTestContext, type MockLoggerInstance } from '@kb-labs/sdk/testing'
@@ -427,6 +428,38 @@ describe('shellHandler — execution-boundary cancellation', () => {
       await rm(directory, { recursive: true, force: true })
     }
   }, 5000)
+
+  // case: S-008.1
+  it('stops the spawned shell group when capturing its identity fails', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'workflow-shell-registration-'))
+    const pidFile = join(directory, 'child.pid')
+    const { ctx, cleanup } = makeShellTestContext()
+    const register = vi.fn()
+    Object.defineProperty(ctx, 'onProcessStarted', { value: register })
+    let shellPid: number | undefined
+    let childPid: number | undefined
+    const capture = vi.spyOn(processContracts, 'captureProcessIdentity').mockImplementationOnce(async (pid) => {
+      shellPid = pid
+      await vi.waitFor(async () => {
+        childPid = Number(await readFile(pidFile, 'utf8'))
+        expect(childPid).toBeGreaterThan(1)
+      })
+      throw new Error('identity unavailable')
+    })
+    try {
+      await expect(shellModule.execute(ctx, {
+        command: `sleep 30 & echo $! > '${pidFile}'; wait`,
+      })).rejects.toThrow('identity unavailable')
+      expect(register).not.toHaveBeenCalled()
+      expect(() => process.kill(shellPid!, 0)).toThrow()
+      await vi.waitFor(() => expect(() => process.kill(childPid!, 0)).toThrow())
+    } finally {
+      if (shellPid) { try { process.kill(-shellPid, 'SIGKILL') } catch { /* already gone */ } }
+      capture.mockRestore()
+      cleanup()
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
 
   // case: S-008.2
   it('does not spawn a shell after the execution boundary aborts', async () => {
