@@ -58,6 +58,12 @@ describe('StepSpecSchema', () => {
     })
   })
 
+  it('accepts the opt-in workspace patch builtin', () => {
+    const result = StepSpecSchema.safeParse({ name: 'Save patch', uses: 'builtin:workspace-patch' })
+    expect(result.success).toBe(true)
+    expect(result.data?.uses).toBe('builtin:workspace-patch')
+  })
+
   describe('uses: plugin: syntax', () => {
     it('accepts non-scoped plugin reference', () => {
       const result = StepSpecSchema.safeParse({

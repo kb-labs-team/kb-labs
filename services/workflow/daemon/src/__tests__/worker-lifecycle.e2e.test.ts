@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { Readable } from 'node:stream';
 import { mockLogger } from '@kb-labs/shared-testing';
 import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { StateStore, WorkflowEngine, WorkflowOperationResult } from '@kb-labs/workflow-engine';
@@ -164,6 +168,87 @@ describe('workflow worker lifecycle', () => {
       with: { key: 'value', env: { PATH: process.env.PATH, HOME: process.env.HOME } },
     });
     expect(call.workspace).toBe('/tmp/test-workspace');
+  });
+
+  // case: S-325.4
+  it('runs the explicit workspace patch builtin and records an artifact pointer in step output', async () => {
+    const projectRoot = await mkdtemp(path.join(tmpdir(), 'workflow-worker-builtin-patch-'));
+    const worktreeRoot = path.join(projectRoot, '.worktrees', 'wt_builtin');
+    await mkdir(worktreeRoot, { recursive: true });
+    const runId = 'run-builtin-patch';
+    const jobId = `${runId}:job`;
+    const stepId = 'save-patch';
+    const run = {
+      id: runId,
+      tenantId: 'default',
+      env: {},
+      metadata: {},
+      jobs: [{
+        id: jobId,
+        jobName: 'test-job',
+        status: 'queued' as JobRun['status'],
+        attempt: 0,
+        steps: [{ id: stepId, name: 'Save patch', status: 'queued' as StepRun['status'], spec: { name: 'Save patch', uses: 'builtin:workspace-patch' } }],
+      }],
+    } satisfies WorkerRunTestDouble;
+    const completion = createDeferred<void>();
+    const releaseDone = createDeferred<void>();
+    let queueDrained = false;
+    const outputs: Record<string, unknown>[] = [];
+    const provider = {
+      async materialize() { return { workspaceId: 'wt_builtin', provider: 'worktree', status: 'ready', rootPath: worktreeRoot, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; },
+      async exportPatch() { return { patch: Readable.from([Buffer.from('diff --git a/new.txt b/new.txt\n')]), baseCommit: 'a'.repeat(40), changedFiles: ['new.txt'] }; },
+      async release() { await rm(worktreeRoot, { recursive: true, force: true }); releaseDone.resolve(); },
+    };
+    const engine = {
+      async nextJob() {
+        if (queueDrained) return null;
+        queueDrained = true;
+        return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job' };
+      },
+      async getRun(requestedRunId: string) { return requestedRunId === runId ? run as unknown as WorkflowRun : null; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); return { ancillaryFailures: [] }; },
+      async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); return { ancillaryFailures: [] }; },
+      async markStepStarted() {},
+      async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) { if (stepOutputs) outputs.push(stepOutputs); },
+      async markStepFailed() {},
+      async markJobInterrupted() {},
+      getStateStore: () => ({ updateStep: vi.fn(async () => {}) }),
+    } satisfies Partial<WorkflowEngine>;
+    const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as IEntityRegistry,
+      logger: mockLogger(),
+      workspaceRoot: projectRoot,
+      projectRoot,
+      platform: {
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(provider),
+      },
+      concurrency: 1,
+    });
+    try {
+      const startPromise = worker.start();
+      await Promise.race([completion.promise, new Promise((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 10_000))]);
+      await Promise.race([releaseDone.promise, new Promise((_, reject) => setTimeout(() => reject(new Error('workspace release timeout')), 10_000))]);
+      await worker.stop();
+      await startPromise;
+      expect(mockRunnerExecute).not.toHaveBeenCalled();
+      expect(outputs[0]).toMatchObject({
+        status: 'captured',
+        baseCommit: 'a'.repeat(40),
+        changedFiles: ['new.txt'],
+        sizeBytes: Buffer.byteLength('diff --git a/new.txt b/new.txt\n'),
+      });
+      const artifactKey = String(outputs[0]?.artifactKey).replace('.kb/run-artifacts/', '');
+      await expect(readFile(path.join(projectRoot, '.kb/run-artifacts', artifactKey), 'utf8')).resolves.toBe('diff --git a/new.txt b/new.txt\n');
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 
   // case: S-028.4, S-028.5
