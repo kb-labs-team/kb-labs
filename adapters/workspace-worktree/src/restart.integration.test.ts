@@ -48,7 +48,9 @@ it('keeps the clean worktree when provisioning fails after git add', async () =>
   const workspaceId = 'provisioning';
   await expect(adapter().materialize({
     workspaceId, sourceRef: 'HEAD', onProgress(event) {
-      if (event.progress === 25) throw new Error('interrupted');
+      if (event.progress === 25) {
+        throw new Error('interrupted');
+      }
     },
   })).rejects.toThrow(/preserved for recovery/);
   expect(readFileSync(path.join(root, '.worktrees', workspaceId, '.gitignore'), 'utf8')).toBe('*.local\n');

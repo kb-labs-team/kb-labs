@@ -1,5 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, symlinkSync } from 'node:fs';
-import { exec } from 'node:child_process';
+import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { WorktreeWorkspaceAdapter } from './index.js';
 

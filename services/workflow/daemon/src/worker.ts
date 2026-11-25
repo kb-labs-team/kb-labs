@@ -142,13 +142,11 @@ export async function createWorkflowWorker(
     layer: "service",
   }).forComponent("workflow-worker").with({ projectId });
 
-  // Clean up stale worktrees from previous daemon runs on startup.
+  // Report retained worktrees so users can recover changes after restart.
   const wsProvider = platform.getAdapter<IWorkspaceProvider>("workspace");
   if (typeof wsProvider?.startupCleanup === "function") {
     try {
-      const preserved = await wsProvider.startupCleanup(
-        process.env["KB_PROJECT_ROOT"] ?? workspaceRoot,
-      );
+      const preserved = await wsProvider.startupCleanup(projectRoot);
       for (const workspace of preserved) {
         workerLogger.warn("Preserved workflow worktree for recovery", {
           workspaceId: workspace.workspaceId,
