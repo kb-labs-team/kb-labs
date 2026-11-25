@@ -50,8 +50,7 @@ export class StdioPlatformServer {
   }
 
   private dispatch(payload: unknown): void {
-    let operation: Promise<void>;
-    operation = this.dispatcher.dispatch(payload)
+    const operation = this.dispatcher.dispatch(payload)
       .catch(() => {})
       .finally(() => this.dispatches.delete(operation));
     this.dispatches.add(operation);

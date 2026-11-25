@@ -741,7 +741,7 @@ describe('workflow worker lifecycle', () => {
     const engine = {
       maxWorkflowDepth: 4,
       async nextJob() {
-        if (queueDrained) return null;
+        if (queueDrained) { return null; }
         queueDrained = true;
         return { id: 'parent-queue', runId, jobId: 'parent-job', priority: 'normal', enqueuedAt: '', availableAt: 0, jobName: 'main' };
       },
