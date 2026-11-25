@@ -39,6 +39,7 @@ const pluginPermissions = combinePermissions()
   .with(kbPlatformPreset)
   .with(npmPublishPreset)
   .with(ciEnvironmentPreset)
+  .withNetwork({ fetch: ['api.github.com'] })
   .withEnv(['KB_RELEASE_*', 'NODE_ENV'])
   .withFs({
     mode: 'readWrite',

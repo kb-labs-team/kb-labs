@@ -28,8 +28,11 @@ const version = required('--version');
 const channel = required('--channel');
 const commit = required('--commit');
 const expectedDigest = required('--expected-digest');
+const trustedRepository = 'kb-labs-team/kb-labs';
 const repository = value('--repository') ?? process.env.GITHUB_REPOSITORY;
-if (!repository) throw new Error('--repository or GITHUB_REPOSITORY is required');
+if (!repository || repository.toLowerCase() !== trustedRepository) {
+  throw new Error(`release promotion is trusted only from ${trustedRepository}`);
+}
 if (!['canary', 'stable'].includes(channel)) throw new Error(`unsupported channel: ${channel}`);
 const npmTag = channel === 'stable' ? 'latest' : 'canary';
 const token = process.env.NPM_TOKEN ?? process.env.NODE_AUTH_TOKEN;

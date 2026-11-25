@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { VerifiedCandidateBundle } from './candidate-bundle.js';
 
@@ -73,6 +73,32 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
     const group = mirroredBinaries.get(signedTag) ?? [];
     group.push(binary);
     mirroredBinaries.set(signedTag, group);
+  }
+  const allowedTarballs = new Set(verified.artifacts.map(artifact => artifact.tarball));
+  const addReferencedTarballs = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      value.forEach(addReferencedTarballs);
+    } else if (value && typeof value === 'object') {
+      for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+        if ((key === 'tarball' || key === 'url') && typeof child === 'string' && child.includes('.tgz')) {
+          try {
+            const filename = decodeURIComponent(new URL(child).pathname.split('/').at(-1) ?? child);
+            if (filename.endsWith('.tgz') && !filename.includes('/') && !filename.includes('\\')) allowedTarballs.add(filename);
+          } catch {
+            const filename = child.split(/[/?#]/).at(-1);
+            if (filename?.endsWith('.tgz') && !filename.includes('\\')) allowedTarballs.add(filename);
+          }
+        }
+        addReferencedTarballs(child);
+      }
+    }
+  };
+  for (const filename of readdirSync(candidateRoot).filter(name => /^release-index.*\.json$/.test(name))) {
+    try { addReferencedTarballs(JSON.parse(readFileSync(join(candidateRoot, filename), 'utf8')) as unknown); }
+    catch (error) { throw new Error(`Journey release index ${filename} is invalid: ${error instanceof Error ? error.message : String(error)}`); }
+  }
+  for (const filename of readdirSync(packageRoot).filter(name => name.endsWith('.tgz') && !allowedTarballs.has(name))) {
+    unlinkSync(join(packageRoot, filename));
   }
   for (const [tag, binaries] of mirroredBinaries) {
     const checksums = binaries.map(binary => `${binary.sha256}  ${binary.filename}\n`).join('');

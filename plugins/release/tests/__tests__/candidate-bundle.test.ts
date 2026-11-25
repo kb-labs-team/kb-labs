@@ -4,12 +4,14 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createServer as createNetServer } from 'node:net';
 import { chmodSync, cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createCandidateBundle, verifyCandidateBundle } from '../../src/shared/candidate-bundle.js';
 import { stageSealedJourneyCandidate } from '../../src/shared/stage-sealed-journey-candidate.js';
 import type { CandidateGateProvenance } from '../../src/core/delivery-policy.js';
 
 let root: string;
+const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
 function sha256(bytes: Buffer | string): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -111,7 +113,7 @@ afterEach(() => {
 
 describe('candidate bundle producer and verifier', () => {
   // case: S-284.23
-  it('stages the sealed npm tarball and binary bytes that the installer journey serves', () => {
+  it('stages the sealed npm tarball and binary bytes that the installer journey serves', async () => {
     root = mkdtempSync(join(tmpdir(), 'x241-sealed-journey-'));
     const sourceArtifacts = join(root, 'source-artifacts');
     mkdirSync(sourceArtifacts);
@@ -157,12 +159,18 @@ describe('candidate bundle producer and verifier', () => {
     const candidateDir = join(root, 'journey-candidate');
     mkdirSync(packagesDir);
     writeFileSync(join(packagesDir, tarball), 'stale fixture package bytes');
+    const excludedPackageDir = join(root, 'excluded/package');
+    mkdirSync(excludedPackageDir, { recursive: true });
+    writeFileSync(join(excludedPackageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/source-only', version: '99.0.0' }));
+    const sourceOnlyTarball = join(packagesDir, 'kb-labs-source-only-99.0.0.tgz');
+    execFileSync('tar', ['-czf', sourceOnlyTarball, '-C', join(root, 'excluded'), 'package']);
     mkdirSync(candidateDir);
-    writeFileSync(join(candidateDir, 'release-index-update.json'), 'auxiliary update fixture');
+    writeFileSync(join(candidateDir, 'release-index-update.json'), '{}');
 
     stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateDir, verified });
 
     expect(readFileSync(join(packagesDir, tarball))).toEqual(tarballBytes);
+    expect(readdirSync(packagesDir)).toEqual([tarball]);
     expect(readFileSync(join(candidateDir, binaryFilename))).toEqual(binaryBytes);
     expect(lstatSync(join(candidateDir, binaryFilename)).mode & 0o777).toBe(0o755);
     expect(readFileSync(join(root, 'v1', binaryFilename))).toEqual(binaryBytes);
@@ -172,7 +180,7 @@ describe('candidate bundle producer and verifier', () => {
     expect(candidateChecksums).toContain(`${sha256(sealedIndexBytes)}  release-index.json`);
     expect(candidateChecksums).toContain(`${binarySha}  ${binaryFilename}`);
     expect(readFileSync(join(candidateDir, 'candidate-bundle-digest.txt'), 'utf8')).toBe(`${provenance.bundleDigest}\n`);
-    expect(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')).toBe('auxiliary update fixture');
+    expect(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')).toBe('{}');
 
     // The HTTP origin used by installer.sh exposes the staged exact bytes from
     // these paths, including the URL-derived mirror consumed by the CLI.
@@ -200,7 +208,7 @@ describe('candidate bundle producer and verifier', () => {
 
     // Exercise the actual package registry transport used by installer journeys.
     const registry = spawn(process.execPath, [
-      join(process.cwd(), 'e2e/journey/candidate-package-registry.mjs'), packagesDir, candidateDir, '0', 'http://127.0.0.1:9',
+      join(repositoryRoot, 'e2e/journey/candidate-package-registry.mjs'), packagesDir, candidateDir, '0', 'http://127.0.0.1:9',
     ], { stdio: ['ignore', 'pipe', 'pipe'] });
     try {
       const registryUrl = await new Promise<string>((resolve, reject) => {
