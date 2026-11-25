@@ -297,11 +297,15 @@ describe('Subprocess Integration Tests', () => {
       hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
     let providerSignal: AbortSignal | undefined;
+    let resolveRpcStarted!: () => void;
+    const rpcStarted = new Promise<void>((resolve) => { resolveRpcStarted = resolve; });
+    const channelClose = vi.spyOn(StdioChannel.prototype, 'close');
     const platform = {
       ...createPlatform(),
       llm: {
         complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
           providerSignal = options?.signal;
+          resolveRpcStarted();
           return new Promise((_resolve, reject) => {
             providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('closed', 'AbortError')), { once: true });
           });
@@ -310,12 +314,28 @@ describe('Subprocess Integration Tests', () => {
     } as unknown as IPlatformAdapters;
 
     try {
-      await expect(runInSubprocess({
-        descriptor, platform, handlerPath, input: {}, timeoutMs: 250, cwd: testDir,
-      })).rejects.toThrow(/timed out/);
+      const execution = runInSubprocess({
+        descriptor, platform, handlerPath, input: {}, timeoutMs: 3000, cwd: testDir,
+      }).then(
+        () => ({ status: 'resolved' as const }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+      await Promise.race([
+        rpcStarted,
+        new Promise<never>((_resolve, reject) => {
+          setTimeout(() => reject(new Error('Subprocess never reached the host RPC')), 5_000);
+        }),
+      ]);
+      const outcome = await execution;
+      expect(outcome.status).toBe('rejected');
+      if (outcome.status === 'rejected') {
+        expect(outcome.error).toMatchObject({ message: expect.stringMatching(/timed out/) });
+      }
       expect(providerSignal).toBeDefined();
       expect(providerSignal?.aborted).toBe(true);
+      expect(channelClose).toHaveBeenCalled();
     } finally {
+      channelClose.mockRestore();
       rmSync(testDir, { recursive: true, force: true });
     }
   }, 10_000);
