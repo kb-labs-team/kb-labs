@@ -20,7 +20,10 @@ describe('DevkitAdapter scoped runs', () => {
   it('passes selected package names to kb-devkit without changing the unscoped default', async () => {
     const exec = vi.fn().mockResolvedValue({
       code: 0,
-      stdout: JSON.stringify({ ok: true, results: [{ Package: '@kb-labs/qa', Task: 'test', OK: true, Cached: false }], summary: { total: 2, passed: 2, failed: 0, cached: 0 } }),
+      stdout: JSON.stringify({ ok: true, results: [
+        { Package: 'kb-create', Task: 'test', OK: true, Cached: false },
+        { Package: '@kb-labs/qa', Task: 'test', OK: true, Cached: false },
+      ], summary: { total: 2, passed: 2, failed: 0, cached: 0 } }),
       stderr: '',
     });
     const adapter = new DevkitAdapter({
@@ -167,6 +170,65 @@ describe('DevkitAdapter scoped runs', () => {
 
     await expect(adapter.run(['test'])).rejects.toMatchObject({
       code: 'KB_DEVKIT_TASK_GRAPH_CYCLE', message: 'task graph cycle', hint: 'fix the graph',
+    });
+  });
+
+  // case: S-326.2
+  it('preserves the primary prerequisite failure from a failed Go CLI envelope with blocked task details', async () => {
+    const failure = {
+      code: 'KB_DEVKIT_TASK_FAILED',
+      message: 'Task build failed for @fixture/core',
+      hint: 'Inspect the task log and rerun the selected task.',
+      details: { package: '@fixture/core', task: 'build', logPath: '/tmp/kb-devkit/build.log' },
+    };
+    const exec = vi.fn().mockResolvedValue({
+      code: 1,
+      stdout: JSON.stringify({
+        ok: false,
+        error: failure,
+        data: {
+          elapsed: '1s',
+          results: [{ Package: '@fixture/core', Task: 'build', OK: false, Cached: false }],
+          summary: {
+            scheduled: 3, passed: 0, failed: 1, cached: 0, blocked: 2,
+            blockedTasks: [
+              { package: '@fixture/middle', task: 'build', blockedByPackage: '@fixture/core', blockedByTask: 'build' },
+              { package: '@fixture/app', task: 'build', blockedByPackage: '@fixture/core', blockedByTask: 'build' },
+            ],
+          },
+        },
+      }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit', cwd: '/workspace', shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'], '@fixture/app')).rejects.toMatchObject({
+      code: 'KB_DEVKIT_TASK_FAILED',
+      message: failure.message,
+      hint: failure.hint,
+      details: failure.details,
+    });
+  });
+
+  it('requires successful evidence for every requested task in every selected package', async () => {
+    const exec = vi.fn().mockResolvedValue({
+      code: 0,
+      stdout: JSON.stringify({
+        ok: true,
+        results: [{ Package: '@kb-labs/qa', Task: 'test', OK: true, Cached: false }],
+        summary: { scheduled: 1, passed: 1, failed: 0, cached: 0 },
+      }),
+      stderr: '',
+    });
+    const adapter = new DevkitAdapter({
+      binaryPath: '/workspace/tools/kb-devkit', cwd: '/workspace', shell: { exec } as never,
+    });
+
+    await expect(adapter.run(['test'], '@kb-labs/qa, @kb-labs/sdk')).rejects.toMatchObject({
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message: expect.stringContaining('@kb-labs/sdk'),
     });
   });
 });

@@ -246,7 +246,9 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
       throw new Error('Workspace materialization needs the platform root to link CLI tools. Pass platformRoot from the platform runtime.');
     }
     const repoRoot = await this.resolveOwnerRoot(projectRoot);
-    const requestedBaseCommit = await this.resolveSourceRef(branch, repoRoot);
+    const requestedBaseCommit = request.sourceRef
+      ? await this.resolveSourceRef(request.sourceRef, repoRoot)
+      : undefined;
     const worktreeBaseDir = await this.resolveOwnedWorktreeBase(repoRoot, true);
 
     const worktreePath = path.join(worktreeBaseDir, workspaceId);
@@ -299,10 +301,11 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     };
 
     try {
+      const baseCommitRef = requestedBaseCommit ?? await this.resolveSourceRef(branch, repoRoot);
       // Stage 1: Create worktree
       progress('worktree', `Creating worktree from ${safeBranch}...`, 10);
       await this.exec(
-        `git worktree add --detach "${worktreePath}" ${requestedBaseCommit}`,
+        `git worktree add --detach "${worktreePath}" ${baseCommitRef}`,
         repoRoot,
         TIMEOUTS.worktree,
       );

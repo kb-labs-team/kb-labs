@@ -45,7 +45,8 @@ export const DevkitRunOutputSchema = z.object({
     blockedTasks: z.array(z.object({
       package: z.string(),
       task: z.string(),
-      reason: z.string(),
+      blockedByPackage: z.string(),
+      blockedByTask: z.string(),
     })).optional(),
   }).refine((summary) => summary.scheduled !== undefined || summary.total !== undefined),
 });

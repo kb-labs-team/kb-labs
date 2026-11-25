@@ -28,4 +28,19 @@ describe('DevkitRunOutputSchema summary task counts', () => {
       summary: { passed: 0, failed: 0, cached: 0 },
     }).success).toBe(false);
   });
+
+  it('accepts the blockedBy fields emitted by kb-devkit', () => {
+    expect(DevkitRunOutputSchema.safeParse({
+      ...base,
+      ok: false,
+      results: [],
+      summary: {
+        scheduled: 1, passed: 0, failed: 0, cached: 0, blocked: 1,
+        blockedTasks: [{
+          package: '@fixture/app', task: 'build',
+          blockedByPackage: '@fixture/core', blockedByTask: 'build',
+        }],
+      },
+    }).success).toBe(true);
+  });
 });

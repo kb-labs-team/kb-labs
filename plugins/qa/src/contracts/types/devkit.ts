@@ -24,7 +24,7 @@ export interface DevkitRunSummary {
   blocked?: number;
   notAffected?: number;
   skippedManual?: number;
-  blockedTasks?: Array<{ package: string; task: string; reason: string }>;
+  blockedTasks?: Array<{ package: string; task: string; blockedByPackage: string; blockedByTask: string }>;
 }
 
 export interface DevkitRunOutput {
@@ -32,6 +32,7 @@ export interface DevkitRunOutput {
   ok: boolean;
   results: DevkitRunResult[];
   summary: DevkitRunSummary;
+  error?: { code?: string; message?: string; hint?: string; details?: Record<string, unknown> };
 }
 
 // kb-devkit check --json

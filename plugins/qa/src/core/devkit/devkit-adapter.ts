@@ -46,25 +46,25 @@ export class DevkitAdapter {
     }
     const packageArgs = packageNames.length > 0 ? ['--packages', packageNames.join(',')] : [];
     const output = await this.invoke<DevkitRunOutput>(['run', ...tasks, ...packageArgs]);
-    if (output.ok === false) {
-      const failure = (output as DevkitRunOutput & { error?: { code?: string; message?: string; hint?: string } }).error;
-      if (failure && typeof failure.message === 'string') {
-        throw Object.assign(new Error(failure.message), {
-          ...(failure.code ? { code: failure.code } : {}),
-          ...(failure.hint ? { hint: failure.hint } : {}),
-        });
-      }
+    if (output.error) {
+      const failure = output.error;
+      throw Object.assign(new Error(failure.message ?? `kb-devkit run failed${failure.code ? ` (${failure.code})` : ''}`), {
+        ...(failure.code ? { code: failure.code } : {}),
+        ...(failure.hint ? { hint: failure.hint } : {}),
+        ...(failure.details ? { details: failure.details } : {}),
+      });
     }
     const selectedTaskCount = output.summary?.scheduled ?? output.summary?.total;
     if (selectedTaskCount === undefined || !Number.isInteger(selectedTaskCount) || selectedTaskCount <= 0) {
       throw new NoDevkitTasksSelectedError(tasks, packageNames);
     }
     const results = Array.isArray(output.results) ? output.results : [];
-    const selectedResults = results.filter((result) =>
-      tasks.includes(result.Task)
-      && (packageNames.length === 0 || packageNames.includes(result.Package))
+    const hasSelectedEvidence = output.ok === true && tasks.every((task) =>
+      packageNames.length === 0
+        ? results.some((result) => result.Task === task)
+        : packageNames.every((packageName) => results.some((result) => result.Task === task && result.Package === packageName))
     );
-    if (selectedResults.length === 0) {
+    if (output.ok !== false && !hasSelectedEvidence) {
       throw new NoDevkitTasksSelectedError(tasks, packageNames);
     }
     return {
@@ -122,9 +122,13 @@ export class DevkitAdapter {
       if (parsed !== null && typeof parsed === 'object' && 'data' in parsed) {
         const data = (parsed as { data?: unknown }).data;
         if (data !== null && typeof data === 'object') {
-          const envelopeOk = (parsed as { ok?: unknown }).ok;
-          if (typeof envelopeOk === 'boolean' && !('ok' in data)) {
-            return { ...data, ok: envelopeOk } as T;
+          const envelope = parsed as { ok?: unknown; error?: unknown };
+          if (typeof envelope.ok === 'boolean') {
+            return {
+              ...data,
+              ok: envelope.ok,
+              ...(envelope.error !== undefined ? { error: envelope.error } : {}),
+            } as T;
           }
           return data as T;
         }

@@ -55,3 +55,19 @@ it('keeps the clean worktree when provisioning fails after git add', async () =>
   })).rejects.toThrow(/preserved for recovery/);
   expect(readFileSync(path.join(root, '.worktrees', workspaceId, '.gitignore'), 'utf8')).toBe('*.local\n');
 });
+
+it('reuses a recorded worktree without resolving a removed default branch when no ref was requested', async () => {
+  const workspaceId = 'reuse-without-ref';
+  await adapter().materialize({ workspaceId, sourceRef: 'HEAD' });
+  const missingDefault = new WorktreeWorkspaceAdapter({
+    workspace: { projectRoot: root },
+    branch: 'branch-that-does-not-exist',
+    toolDistPaths: [], initSubmodules: false, installDeps: false,
+  });
+
+  await expect(missingDefault.materialize({ workspaceId })).resolves.toMatchObject({
+    workspaceId,
+    status: 'ready',
+    metadata: { reused: true },
+  });
+});
