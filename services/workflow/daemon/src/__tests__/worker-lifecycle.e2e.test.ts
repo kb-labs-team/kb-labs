@@ -34,6 +34,10 @@ type WorkerRunTestDouble = Omit<Partial<WorkflowRun>, 'jobs'> & {
   }>
 }
 
+type PatchWorkerEngineFixture = Partial<Omit<WorkflowEngine, 'getStateStore'>> & {
+  getStateStore(): Pick<StateStore, 'updateStep' | 'updateRun'>;
+};
+
 function createDeferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -225,8 +229,8 @@ describe('workflow worker lifecycle', () => {
       async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) { if (stepOutputs) outputs.push(stepOutputs); },
       async markStepFailed() {},
       async markJobInterrupted() {},
-      getStateStore: () => ({ updateStep: vi.fn(async () => {}), updateRun: vi.fn(async () => {}) }),
-    } satisfies Partial<WorkflowEngine>;
+      getStateStore: () => ({ updateStep: vi.fn(async () => null), updateRun: vi.fn(async () => null) }),
+    } satisfies PatchWorkerEngineFixture;
     const worker = await createWorkflowWorker({
       projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
@@ -309,8 +313,8 @@ describe('workflow worker lifecycle', () => {
         expect(error.message).not.toContain('private Git failure detail');
       },
       async markJobInterrupted() {},
-      getStateStore: () => ({ updateStep: vi.fn(async () => {}), updateRun: vi.fn(async () => {}) }),
-    } satisfies Partial<WorkflowEngine>;
+      getStateStore: () => ({ updateStep: vi.fn(async () => null), updateRun: vi.fn(async () => null) }),
+    } satisfies PatchWorkerEngineFixture;
     const worker = await createWorkflowWorker({
       projectId: 'prj_0000000000000001',
       engine: engine as unknown as WorkflowEngine,
