@@ -94,6 +94,7 @@ interface PluginCommandResolution {
   input: unknown
   permissions: PermissionSpec
   configSection?: string
+  workspace?: string
 }
 
 /**
@@ -278,6 +279,7 @@ export class SandboxRunner implements Runner {
     const executionId = `exec_${context.stepId}_${Date.now()}_${randomUUID().slice(0, 8)}`
     const spanId = executionId
     const invocationId = executionId
+    const workspace = resolution.workspace ?? request.workspace
 
     const hostContext: HostContext = {
       host: 'workflow',
@@ -311,10 +313,10 @@ export class SandboxRunner implements Runner {
       pluginRoot: resolution.pluginRoot,
       handlerRef: resolution.handler,
       input: resolution.input,
-      workspace: request.workspace
+      workspace: workspace
         ? {
             type: 'local',
-            cwd: request.workspace,
+            cwd: workspace,
           }
         : undefined,
       timeoutMs: request.spec.timeoutMs ?? this.defaultTimeout,
@@ -570,6 +572,7 @@ export class SandboxRunner implements Runner {
   ): Promise<PluginCommandResolution> {
     const commandName = uses.slice('command:'.length)
     const snapshot = this.cliApi.snapshot()
+    const workspace = request.context.env['KB_WORKSPACE_ROOT'] || request.workspace
 
     // Find CLI command in manifests
     for (const entry of snapshot.manifests ?? []) {
@@ -582,9 +585,10 @@ export class SandboxRunner implements Runner {
           pluginVersion: entry.manifest.version,
           pluginRoot: entry.pluginRoot,
           handler: command.handler,
-          input: this.adaptToCLIFormat(input, request), // CLI Adapter
+          input: this.adaptToCLIFormat(input, workspace || this.workspaceRoot),
           permissions: getHandlerPermissions(entry.manifest, 'cli', commandName),
           configSection: entry.manifest.configSection, // For useConfig() auto-detection
+          workspace,
         }
       }
     }
@@ -602,17 +606,17 @@ export class SandboxRunner implements Runner {
    *
    * This allows CLI commands to work in workflow context without modification.
    */
-  private adaptToCLIFormat(input: unknown, request: StepExecutionRequest): unknown {
-    // Pass through if already in CLI format
+  private adaptToCLIFormat(input: unknown, cwd: string): unknown {
+    // Keep an explicit cwd in CLI input. The execution request owns the handler workspace.
     if (input && typeof input === 'object' && ('argv' in input || 'flags' in input)) {
-      return input
+      return 'cwd' in input ? input : { ...input, cwd }
     }
 
     // Adapt workflow input to CLI format
     return {
       argv: [],
       flags: input || {},
-      cwd: request.workspace || this.workspaceRoot,
+      cwd,
     }
   }
 
