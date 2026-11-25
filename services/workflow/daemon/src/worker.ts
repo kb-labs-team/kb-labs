@@ -802,7 +802,10 @@ export async function createWorkflowWorker(
           // avoiding a worker-pool deadlock when many parents invoke children.
           if (step.spec.uses?.startsWith("workflow:")) {
             await invokeChildWorkflow({
-              parentRun: run,
+              // The run passed into this job predates workspace provisioning.
+              // Use the persisted snapshot so nested workflows inherit the
+              // owner workspace binding written through the state store.
+              parentRun: freshRun ?? run,
               parentJob: job,
               parentStep: step,
               workflowRef: step.spec.uses.slice("workflow:".length),

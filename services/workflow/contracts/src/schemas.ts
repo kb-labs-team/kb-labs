@@ -352,6 +352,8 @@ export const RunMetadataSchema = z.object({
   executionWorkspace: z.object({
     workspaceId: z.string().min(1),
     rootPath: z.string().min(1),
+    sourceRef: z.string().min(1).optional(),
+    sourceRefCommit: z.string().regex(/^[a-f0-9]{40,64}$/).optional(),
   }).optional(),
   workspaceOwnerRunId: z.string().optional(),
 })
