@@ -1,5 +1,16 @@
 # Product decisions log
 
+## 2026-11-25
+
+### Native agent workflows capture their patch before QA
+
+The native agent→QA dogfood workflow stores a snapshot of the agent's work
+immediately after agent execution and before QA starts. A later QA failure or
+timeout therefore leaves the agent patch available as a workflow artifact
+while the run retains the original QA failure. Files created or modified by
+QA are outside this snapshot; the QA task is project-configured and is not
+guaranteed to be read-only. Case: S-325.2, S-325.4.
+
 ## 2026-11-23
 
 ### Higher config layers replace arrays consistently

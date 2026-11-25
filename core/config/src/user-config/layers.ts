@@ -113,7 +113,9 @@ async function loadConfigFilesAtRoot(
       paths.push(full);
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT' || code === 'ENOTDIR') continue;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        continue;
+      }
       diagnostics.push({
         level: 'error',
         code: 'FILE_READ_FAILED',
@@ -126,7 +128,9 @@ async function loadConfigFilesAtRoot(
 
     const read = await readJsonWithDiagnostics<unknown>(full);
     diagnostics.push(...read.diagnostics.map((diagnostic) => ({ ...diagnostic, path: diagnostic.path ?? full })));
-    if (!read.ok) continue;
+    if (!read.ok) {
+      continue;
+    }
     if (read.data === null || typeof read.data !== 'object' || Array.isArray(read.data)) {
       diagnostics.push({
         level: 'error',

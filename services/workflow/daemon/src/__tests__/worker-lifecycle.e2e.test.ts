@@ -4,11 +4,12 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { parse } from 'yaml';
 import { WorktreeWorkspaceAdapter } from '@kb-labs/adapters-workspace-worktree';
 import { mockLogger } from '@kb-labs/shared-testing';
 import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { StateStore, WorkflowEngine, WorkflowOperationResult } from '@kb-labs/workflow-engine';
-import type { JobRun, StepRun, StepSpec, WorkflowRun } from '@kb-labs/workflow-contracts';
+import { WorkflowSpecSchema, type JobRun, type StepRun, type StepSpec, type WorkflowRun } from '@kb-labs/workflow-contracts';
 import { EnvSecretProvider } from '@kb-labs/workflow-engine';
 import { createWorkflowExecutionBackendFixture } from '../../test-fixtures/execution-backend-fixture.js';
 
@@ -189,7 +190,9 @@ describe('workflow worker lifecycle', () => {
     const config = { initSubmodules: false, installDeps: false, toolDistPaths: [] };
     const original = new WorktreeWorkspaceAdapter(config);
     const { rootPath: worktreeRoot } = await original.materialize({ projectRoot, workspaceId, ownerRunId: runId, sourceRef: 'HEAD' });
-    if (!worktreeRoot) throw new Error('Missing fixture worktree');
+    if (!worktreeRoot) {
+      throw new Error('Missing fixture worktree');
+    }
     const bytes = Buffer.from([0, 1, 128, 255]);
     await writeFile(path.join(worktreeRoot, 'new.bin'), bytes);
     const jobId = `${runId}:job`;
@@ -217,7 +220,9 @@ describe('workflow worker lifecycle', () => {
     vi.spyOn(provider, 'release').mockImplementation(async (id) => { await release(id); releaseDone.resolve(); });
     const engine = {
       async nextJob() {
-        if (queueDrained) return null;
+        if (queueDrained) {
+          return null;
+        }
         queueDrained = true;
         return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job' };
       },
@@ -226,7 +231,11 @@ describe('workflow worker lifecycle', () => {
       async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(); return { ancillaryFailures: [] }; },
       async markJobFailed(_r: string, _j: string, error: Error) { completion.reject(error); return { ancillaryFailures: [] }; },
       async markStepStarted() {},
-      async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) { if (stepOutputs) outputs.push(stepOutputs); },
+      async markStepCompleted(_r: string, _j: string, _s: string, stepOutputs?: Record<string, unknown>) {
+        if (stepOutputs) {
+          outputs.push(stepOutputs);
+        }
+      },
       async markStepFailed() {},
       async markJobInterrupted() {},
       getStateStore: () => ({ updateStep: vi.fn(async () => null), updateRun: vi.fn(async () => null) }),
@@ -267,6 +276,153 @@ describe('workflow worker lifecycle', () => {
     }
   });
 
+  // case: S-325.2
+  it.each([
+    {
+      outcome: 'failure',
+      error: { code: 'KB_QA_FAILED', message: 'test task failed', hint: 'Inspect the failing test output.' },
+    },
+    {
+      outcome: 'timeout',
+      error: { code: 'KB_RUNTIME_TIMEOUT', message: 'QA test task timed out', hint: 'Increase the QA step timeout or fix the slow task.' },
+    },
+  ])('keeps the agent patch artifact when QA ends in $outcome with its original error', async ({ error }) => {
+    const projectRoot = await realpath(await mkdtemp(path.join(tmpdir(), 'workflow-worker-patch-before-qa-')));
+    const git = (...args: string[]) => execFileSync('git', ['-C', projectRoot, ...args]);
+    git('init', '-q');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', '-c', 'commit.gpgSign=false',
+      'commit', '--allow-empty', '-qm', 'base');
+    const runId = 'run-agent-patch-before-qa';
+    const workspaceId = 'wt_agent_patch_before_qa';
+    const config = { initSubmodules: false, installDeps: false, toolDistPaths: [] };
+    const original = new WorktreeWorkspaceAdapter(config);
+    const { rootPath: worktreeRoot } = await original.materialize({ projectRoot, workspaceId, ownerRunId: runId, sourceRef: 'HEAD' });
+    if (!worktreeRoot) {
+      throw new Error('Missing fixture worktree');
+    }
+
+    const examplePath = path.resolve(process.cwd(), '../examples/native-agent-qa-dogfood.yml');
+    const example = WorkflowSpecSchema.parse(parse(await readFile(examplePath, 'utf8')));
+    const exampleSteps = example.jobs.dogfood.steps;
+    const patchIndex = exampleSteps.findIndex((step) => step.uses === 'builtin:workspace-patch');
+    const qaIndex = exampleSteps.findIndex((step) => step.id === 'qa');
+    expect(patchIndex).toBeGreaterThan(-1);
+    expect(patchIndex).toBeLessThan(qaIndex);
+
+    const jobId = `${runId}:job`;
+    const run = {
+      id: runId,
+      tenantId: 'default',
+      env: {},
+      inputs: { task: 'write one file', run_review: false },
+      metadata: { executionWorkspace: { workspaceId, rootPath: worktreeRoot }, workspaceOwnerRunId: runId },
+      jobs: [{
+        id: jobId,
+        jobName: 'dogfood',
+        status: 'queued' as JobRun['status'],
+        attempt: 0,
+        steps: exampleSteps.map((spec, index) => ({
+          id: `${jobId}:${index}`,
+          name: spec.name,
+          status: 'queued' as StepRun['status'],
+          spec: spec as unknown as StepSpec,
+        })),
+      }],
+    } satisfies WorkerRunTestDouble;
+    const completion = createDeferred<Error | undefined>();
+    const outputs = new Map<string, Record<string, unknown>>();
+    const provider = new WorktreeWorkspaceAdapter(config);
+    const release = vi.spyOn(provider, 'release');
+    const engine = {
+      async nextJob() {
+        if ((run as { dequeued?: boolean }).dequeued) {
+          return null;
+        }
+        (run as { dequeued?: boolean }).dequeued = true;
+        return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'dogfood' };
+      },
+      async getRun(requestedRunId: string) { return requestedRunId === runId ? run as unknown as WorkflowRun : null; },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted() { run.jobs[0]!.status = 'success'; completion.resolve(undefined); return { ancillaryFailures: [] }; },
+      async markJobFailed(_r: string, _j: string, failure: Error) { run.jobs[0]!.status = 'failed'; completion.resolve(failure); return { ancillaryFailures: [] }; },
+      async markStepStarted(_r: string, _j: string, stepId: string) {
+        const step = run.jobs[0]!.steps.find((candidate) => candidate.id === stepId);
+        if (step) {
+          step.status = 'running';
+        }
+      },
+      async markStepCompleted(_r: string, _j: string, stepId: string, stepOutputs?: Record<string, unknown>) {
+        const step = run.jobs[0]!.steps.find((candidate) => candidate.id === stepId);
+        if (step) {
+          step.status = 'success';
+          step.outputs = stepOutputs;
+          if (step.spec.id && stepOutputs) {
+            outputs.set(step.spec.id, stepOutputs);
+          }
+        }
+      },
+      async markStepFailed(_r: string, _j: string, stepId: string, failure: Error, stepOutputs?: Record<string, unknown>) {
+        const step = run.jobs[0]!.steps.find((candidate) => candidate.id === stepId);
+        if (step) {
+          step.status = 'failed';
+          step.error = { message: failure.message, code: (failure as Error & { code?: string }).code };
+          step.outputs = stepOutputs;
+        }
+      },
+      async markJobInterrupted() {},
+      getStateStore: () => ({ updateStep: vi.fn(async () => null), updateRun: vi.fn(async () => null) }),
+    } satisfies PatchWorkerEngineFixture;
+    mockRunnerExecute.mockImplementation(async (request: { spec: StepSpec }) => {
+      const workspace = String(request.spec.with?.['env'] && (request.spec.with['env'] as Record<string, unknown>)['KB_WORKSPACE_ROOT'] || worktreeRoot);
+      if (request.spec.uses === 'command:agent run') {
+        await writeFile(path.join(workspace, 'agent-change.ts'), 'export const agentChange = true;\n');
+        return { status: 'success', outputs: { result: 'implemented' } };
+      }
+      if (request.spec.uses === 'command:qa run') {
+        // Model a project QA task that writes files after the agent snapshot.
+        await writeFile(path.join(workspace, 'qa-generated.txt'), 'not part of the agent patch\n');
+        return { status: 'failed', error };
+      }
+      throw new Error(`Unexpected command step: ${request.spec.uses}`);
+    });
+    const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as IEntityRegistry,
+      logger: mockLogger(),
+      workspaceRoot: projectRoot,
+      projectRoot,
+      platform: {
+        executionBackend: createWorkflowExecutionBackendFixture().backend,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(provider),
+      },
+      concurrency: 1,
+    });
+    try {
+      const startPromise = worker.start();
+      const jobError = await Promise.race([
+        completion.promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 10_000)),
+      ]);
+      await worker.stop();
+      await startPromise;
+
+      expect(jobError).toMatchObject({ message: error.message, code: error.code });
+      expect(run.jobs[0]!.status).toBe('failed');
+      expect(run.jobs[0]!.steps.find((step) => step.spec.id === 'qa')?.status).toBe('failed');
+      expect(run.jobs[0]!.steps.find((step) => step.spec.id === 'patch')?.status).toBe('success');
+      const patch = await readFile(path.join(projectRoot, String(outputs.get('patch')?.artifactKey)), 'utf8');
+      expect(patch).toContain('agent-change.ts');
+      expect(patch).not.toContain('qa-generated.txt');
+      expect(release).not.toHaveBeenCalled();
+      expect(await stat(worktreeRoot).then((value) => value.isDirectory())).toBe(true);
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
   // case: S-325.4
   it('keeps the task worktree when workspace patch export fails', async () => {
     const projectRoot = await mkdtemp(path.join(tmpdir(), 'workflow-worker-builtin-patch-failure-'));
@@ -298,7 +454,9 @@ describe('workflow worker lifecycle', () => {
     };
     const engine = {
       async nextJob() {
-        if (queueDrained) return null;
+        if (queueDrained) {
+          return null;
+        }
         queueDrained = true;
         return { id: `${runId}:queue`, runId, jobId, priority: 'normal', enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job' };
       },

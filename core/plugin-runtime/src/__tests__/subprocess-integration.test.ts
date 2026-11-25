@@ -332,10 +332,10 @@ describe('Subprocess Integration Tests', () => {
     };
     const controller = new AbortController();
     const unhandled: unknown[] = [];
-    let channel: StdioChannel | undefined;
+    let closeChannel: (() => void) | undefined;
     const originalSend = StdioChannel.prototype.send;
     const sendSpy = vi.spyOn(StdioChannel.prototype, 'send').mockImplementation(function (this: StdioChannel, frame) {
-      channel = this;
+      closeChannel = () => this.close();
       return originalSend.call(this, frame);
     });
     const onUnhandled = (error: unknown) => unhandled.push(error);
@@ -352,12 +352,12 @@ describe('Subprocess Integration Tests', () => {
         cwd: testDir,
         onLog: (entry) => {
           if (entry.message.includes('closed-stdio-ready')) {
-            channel?.close();
+            closeChannel?.();
             setTimeout(() => controller.abort(), 50);
           }
         },
       })).rejects.toMatchObject({ name: 'AbortError' });
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
       expect(unhandled).toEqual([]);
     } finally {
       sendSpy.mockRestore();
