@@ -161,6 +161,7 @@ export default defineCommand({
       const candidateChannel = flags['candidate-channel'];
       const candidateRunId = flags['candidate-run-id'];
       let gateReceiptPath: string | undefined;
+      let gateReceiptBytes: Buffer | undefined;
       const trust = {
         expectedDigest, candidateId, commit, flow: flowResult, version,
         ...(candidateChannel ? { channel: candidateChannel } : {}),
@@ -170,7 +171,8 @@ export default defineCommand({
       if (flags['gate-attestation']) {
         try {
           gateReceiptPath = resolve(repoRoot, flags['gate-attestation']);
-          gateAttestation = JSON.parse(readFileSync(gateReceiptPath, 'utf8')) as unknown;
+          gateReceiptBytes = readFileSync(gateReceiptPath);
+          gateAttestation = JSON.parse(gateReceiptBytes.toString('utf8')) as unknown;
         } catch {
           return {
             ok: false,
@@ -182,17 +184,16 @@ export default defineCommand({
           };
         }
       }
-      if (!dryRun && kind === 'public' && candidateRunId && candidateId && gateReceiptPath) {
-        const repository = useEnv('GITHUB_REPOSITORY');
+      if (!dryRun && kind === 'public' && candidateRunId && candidateId && gateReceiptPath && gateReceiptBytes) {
         const token = useEnv('GITHUB_TOKEN') ?? useEnv('GH_TOKEN');
-        if (!repository || !token) {
+        if (!token) {
           return { ok: false, error: createErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
             message: 'Public gated delivery requires authenticated access to the candidate workflow run.',
-            hint: 'Set GITHUB_REPOSITORY and GITHUB_TOKEN (or GH_TOKEN), then retry the delivery.',
+            hint: 'Set GITHUB_TOKEN (or GH_TOKEN), then retry the delivery.',
           }) };
         }
         try {
-          await authenticateCandidateGateReceipt({ repository, runId: candidateRunId, candidateId, receiptPath: gateReceiptPath, token });
+          await authenticateCandidateGateReceipt({ repository: 'kb-labs-team/kb-labs', runId: candidateRunId, candidateId, suppliedBytes: gateReceiptBytes, token });
         } catch (error) {
           return { ok: false, error: createErrorEnvelope('KB_RELEASE_CANDIDATE_POLICY_REJECTED', {
             message: error instanceof Error ? error.message : 'Candidate gate receipt source could not be authenticated.',

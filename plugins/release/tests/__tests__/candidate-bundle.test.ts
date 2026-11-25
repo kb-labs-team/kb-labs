@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
+import { execFileSync, spawn } from 'node:child_process';
+import { createServer as createNetServer } from 'node:net';
 import { chmodSync, cpSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -114,8 +116,12 @@ describe('candidate bundle producer and verifier', () => {
     const sourceArtifacts = join(root, 'source-artifacts');
     mkdirSync(sourceArtifacts);
     const tarball = 'kb-labs-fixture-1.0.0.tgz';
-    const tarballBytes = Buffer.from('sealed npm package bytes');
-    writeFileSync(join(sourceArtifacts, tarball), tarballBytes);
+    const packageDir = join(root, 'package/package');
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(join(packageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/fixture', version: '1.0.0' }));
+    const tarballPath = join(sourceArtifacts, tarball);
+    execFileSync('tar', ['-czf', tarballPath, '-C', join(root, 'package'), 'package']);
+    const tarballBytes = readFileSync(tarballPath);
     writeFileSync(join(sourceArtifacts, 'manifest.json'), JSON.stringify([{
       name: '@kb-labs/fixture',
       version: '1.0.0',
@@ -158,12 +164,63 @@ describe('candidate bundle producer and verifier', () => {
 
     expect(readFileSync(join(packagesDir, tarball))).toEqual(tarballBytes);
     expect(readFileSync(join(candidateDir, binaryFilename))).toEqual(binaryBytes);
+    expect(lstatSync(join(candidateDir, binaryFilename)).mode & 0o777).toBe(0o755);
+    expect(readFileSync(join(root, 'v1', binaryFilename))).toEqual(binaryBytes);
+    expect(readFileSync(join(root, 'v1', 'checksums.txt'), 'utf8')).toBe(`${binarySha}  ${binaryFilename}\n`);
     expect(readFileSync(join(candidateDir, 'release-index.json'))).toEqual(sealedIndexBytes);
     const candidateChecksums = readFileSync(join(candidateDir, 'checksums.txt'), 'utf8');
     expect(candidateChecksums).toContain(`${sha256(sealedIndexBytes)}  release-index.json`);
     expect(candidateChecksums).toContain(`${binarySha}  ${binaryFilename}`);
     expect(readFileSync(join(candidateDir, 'candidate-bundle-digest.txt'), 'utf8')).toBe(`${provenance.bundleDigest}\n`);
     expect(readFileSync(join(candidateDir, 'release-index-update.json'), 'utf8')).toBe('auxiliary update fixture');
+
+    // The HTTP origin used by installer.sh exposes the staged exact bytes from
+    // these paths, including the URL-derived mirror consumed by the CLI.
+    const portServer = createNetServer();
+    const originPort = await new Promise<number>(resolve => portServer.listen(0, '127.0.0.1', () => {
+      const address = portServer.address();
+      if (!address || typeof address === 'string') throw new Error('Could not allocate an origin test port');
+      resolve(address.port);
+    }));
+    await new Promise<void>((resolve, reject) => portServer.close(error => error ? reject(error) : resolve()));
+    const origin = spawn('python3', ['-m', 'http.server', String(originPort), '--bind', '127.0.0.1', '--directory', join(root)]);
+    try {
+      let ready = false;
+      for (let attempt = 0; attempt < 30 && !ready; attempt++) {
+        try { ready = (await fetch(`http://127.0.0.1:${originPort}/journey-candidate/release-index.json`)).ok; }
+        catch { await new Promise(resolve => setTimeout(resolve, 50)); }
+      }
+      expect(ready).toBe(true);
+      expect(Buffer.from(await (await fetch(`http://127.0.0.1:${originPort}/journey-candidate/release-index.json`)).arrayBuffer())).toEqual(sealedIndexBytes);
+      expect(Buffer.from(await (await fetch(`http://127.0.0.1:${originPort}/journey-candidate/${binaryFilename}`)).arrayBuffer())).toEqual(binaryBytes);
+      expect(Buffer.from(await (await fetch(`http://127.0.0.1:${originPort}/v1/${binaryFilename}`)).arrayBuffer())).toEqual(binaryBytes);
+    } finally {
+      origin.kill('SIGTERM');
+    }
+
+    // Exercise the actual package registry transport used by installer journeys.
+    const registry = spawn(process.execPath, [
+      join(process.cwd(), 'e2e/journey/candidate-package-registry.mjs'), packagesDir, candidateDir, '0', 'http://127.0.0.1:9',
+    ], { stdio: ['ignore', 'pipe', 'pipe'] });
+    try {
+      const registryUrl = await new Promise<string>((resolve, reject) => {
+        let output = '';
+        registry.stdout.setEncoding('utf8').on('data', chunk => {
+          output += chunk;
+          const line = output.split(/\r?\n/)[0];
+          if (line) resolve(line);
+        });
+        registry.once('error', reject);
+        registry.once('exit', code => reject(new Error(`candidate registry exited early (${code}): ${output}`)));
+      });
+      const metadataResponse = await fetch(`${registryUrl}/@kb-labs%2Ffixture`);
+      expect(metadataResponse.ok).toBe(true);
+      const metadata = await metadataResponse.json() as { versions: Record<string, { dist: { tarball: string } }> };
+      const received = await fetch(metadata.versions['1.0.0']!.dist.tarball);
+      expect(Buffer.from(await received.arrayBuffer())).toEqual(tarballBytes);
+    } finally {
+      registry.kill('SIGTERM');
+    }
   });
 
   // case: S-284.16

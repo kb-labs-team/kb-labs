@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { VerifiedCandidateBundle } from './candidate-bundle.js';
 
@@ -22,6 +22,7 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
   verified: VerifiedCandidateBundle;
 }): void {
   const root = resolve(bundleDir);
+  const releaseRoot = resolve(candidateDir, '..');
   const packageRoot = resolve(packagesDir);
   const candidateRoot = resolve(candidateDir);
   mkdirSync(packageRoot, { recursive: true });
@@ -45,6 +46,7 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
   const filesByDigest = new Map(binaryFiles.map(path => [
     createHash('sha256').update(readFileSync(path)).digest('hex'), path,
   ]));
+  const mirroredBinaries = new Map<string, CandidateBinary[]>();
   for (const binary of binaryManifest.binaries ?? []) {
     if (typeof binary.filename !== 'string' || !binary.filename || binary.filename.includes('/') || binary.filename.includes('\\')) {
       throw new Error('Sealed candidate binary manifest contains an invalid filename');
@@ -53,7 +55,28 @@ export function stageSealedJourneyCandidate({ bundleDir, packagesDir, candidateD
     if (!source || statSync(source).size !== binary.sizeBytes) {
       throw new Error(`Sealed candidate bundle is missing the exact binary bytes for ${binary.filename}`);
     }
-    copyFileSync(source, join(candidateRoot, binary.filename));
+    const staged = join(candidateRoot, binary.filename);
+    copyFileSync(source, staged);
+    chmodSync(staged, 0o755);
+    const signedUrl = binary.url;
+    if (typeof signedUrl !== 'string') throw new Error(`Sealed candidate binary has no signed URL: ${binary.filename}`);
+    const releaseParts = new URL(signedUrl).pathname.split('/').filter(Boolean);
+    const signedTag = releaseParts.at(-2);
+    if (!signedTag || releaseParts.at(-1) !== binary.filename || signedTag.includes('..')) {
+      throw new Error(`Sealed candidate binary URL has no valid release tag: ${binary.filename}`);
+    }
+    const mirrorDirectory = join(releaseRoot, signedTag);
+    mkdirSync(mirrorDirectory, { recursive: true });
+    const mirrorBinary = join(mirrorDirectory, binary.filename);
+    copyFileSync(source, mirrorBinary);
+    chmodSync(mirrorBinary, 0o755);
+    const group = mirroredBinaries.get(signedTag) ?? [];
+    group.push(binary);
+    mirroredBinaries.set(signedTag, group);
+  }
+  for (const [tag, binaries] of mirroredBinaries) {
+    const checksums = binaries.map(binary => `${binary.sha256}  ${binary.filename}\n`).join('');
+    writeFileSync(join(releaseRoot, tag, 'checksums.txt'), checksums);
   }
   // Keep the signed catalog byte-identical: its signature covers URLs as well
   // as hashes. Installer smoke redirects only the binary source via the

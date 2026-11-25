@@ -56,8 +56,9 @@ trap cleanup EXIT INT TERM
 journey_start_host_services
 export NPM_CONFIG_REGISTRY="$JOURNEY_REGISTRY_HOST_URL"
 export KB_JOURNEY_REGISTRY_URL="$JOURNEY_REGISTRY_HOST_URL"
-export KB_CREATE_DOWNLOAD_BASE_URL="http://origin:8080/journey-candidate"
-export KB_JOURNEY_CANDIDATE_KB_CREATE="$(node -e 'const fs=require("fs"); const arch=process.arch; const manifest=JSON.parse(fs.readFileSync(".journey/release/journey-candidate/binary-manifest.json","utf8")); const binary=manifest.binaries.find(item=>item.id==="kb-create"&&item.os==="darwin"&&item.arch===arch); if(!binary) throw new Error(`sealed candidate has no darwin/${arch} kb-create`); process.stdout.write(require("path").resolve(".journey/release/journey-candidate",binary.filename));')"
+export KB_CREATE_DOWNLOAD_BASE_URL="http://origin:8080"
+export KB_JOURNEY_CANDIDATE_KB_CREATE="$native_root/kb-create"
+node -e 'const fs=require("fs"),path=require("path"),crypto=require("crypto"); const arch=process.arch==="x64"?"amd64":process.arch; const dir=".journey/release/journey-candidate"; const manifest=JSON.parse(fs.readFileSync(path.join(dir,"binary-manifest.json"),"utf8")); const binary=manifest.binaries.find(item=>item.id==="kb-create"&&item.os==="darwin"&&item.arch===arch); if(!binary) throw new Error(`sealed candidate has no darwin/${arch} kb-create`); const source=path.join(dir,binary.filename), bytes=fs.readFileSync(source); if(crypto.createHash("sha256").update(bytes).digest("hex")!==binary.sha256) throw new Error("staged Darwin candidate digest mismatch"); fs.copyFileSync(source,process.env.KB_JOURNEY_CANDIDATE_KB_CREATE); fs.chmodSync(process.env.KB_JOURNEY_CANDIDATE_KB_CREATE,0o755);'
 if [[ ! -x "$KB_JOURNEY_CANDIDATE_KB_CREATE" ]]; then
   echo "Sealed Darwin candidate binary is missing or not executable: $KB_JOURNEY_CANDIDATE_KB_CREATE" >&2
   exit 1
