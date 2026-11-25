@@ -25,6 +25,6 @@ A user cancels an active workflow run and verifies its terminal state.
 | # | Action | Expected |
 |---|---|---|
 | S-008.1 | Run `kb workflow run --workflow-id=long-task`; copy the returned run ID | CLI returns the run ID, and the step reports both process IDs while the run is `running`. |
-| S-008.2 | Run `kb workflow runs cancel <run-id>` using that ID | CLI confirms the cancellation request for that run ID after the step’s shell and child processes have stopped. |
+| S-008.2 | Run `kb workflow runs cancel <run-id>` using that ID | CLI confirms the cancellation request for that run ID after the step’s shell and child processes have stopped. For nested runs, confirmation also waits for local shell shutdown in descendants whose cancellation is already in progress. |
 | S-008.3 | Poll `kb workflow runs view <run-id> --json=status` for up to 30 seconds | JSON reports status `cancelled`. |
-| S-008.4 | Run `kb workflow runs cancel <run-id>` again after cancellation | CLI reports that the run is already finished and exits non-zero; the stored status remains `cancelled`. |
+| S-008.4 | Run `kb workflow runs cancel <run-id>` again after cancellation | CLI reports that the run is already finished and exits non-zero; the stored status remains `cancelled`. If a run finishes successfully or fails while its cancellation request is being processed, the CLI reports a cancellation conflict and exits non-zero. |
