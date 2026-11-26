@@ -1,8 +1,8 @@
 # Plugin E2E matrix
 
-Per-plugin end-to-end suites, run **only for the plugins that actually changed**.
+Per-plugin end-to-end suites, selected by affected packages locally and by E2E zones in CI.
 
-## Two matrices
+## Test categories
 
 `devkit.yaml` splits the e2e domains into two categories (same `e2e-suite` preset,
 same `pnpm run e2e` task, same `--affected` tracking):
@@ -36,16 +36,15 @@ unless their env flag is set — for mind: `MIND_BENCH_REAL=1` plus live OpenAI 
 
 ## CI
 
-`.github/workflows/e2e-plugins.yml` — `discover` job asks kb-devkit which packages
-the PR diff affects, maps them to suites via `scripts/ci/affected-plugin-e2e.mjs`,
-and emits a dynamic matrix. Only affected suites spin up a Docker stack
-(`reusable-e2e-docker.yml`); a PR touching no plugin runs zero shards.
+The E2E test plan in [CI (PR)](../.github/workflows/ci-pr.yml) matches the full PR
+diff against [E2E zones](./CI-ZONES.md). [Affected E2E](../.github/workflows/e2e-affected.yml)
+runs the selected suites against the same merge commit as the plan. Each selected
+plugin suite starts its own Docker stack.
 
 ## Adding a new plugin suite
 
 1. Create `e2e/<plugin>/` (mirror an existing domain; `package.json` `devDepends`
    on the plugin's `@kb-labs/<plugin>-*` packages — this is the affected link).
 2. Add `e2e/<plugin>` to the `plugin-e2e-suite` category in `devkit.yaml`.
-3. Add `<plugin>` to `PLUGIN_E2E_SUITES` in `scripts/ci/affected-plugin-e2e.mjs`.
-
-That's it — local `--affected` and the CI matrix pick it up automatically.
+3. Add `e2e/<plugin>/ci.zone.json` with the source paths the suite exercises and
+   its `e2e-<plugin>` suite ID. See [E2E zones](./CI-ZONES.md) for a manifest example.
