@@ -1626,6 +1626,7 @@ exec "$REAL_TAR" "$@"
         shutil.copy2(REPO / "e2e/compose-owner.sh", self.root / "e2e/compose-owner.sh")
         shutil.copy2(REPO / "e2e/journey/candidate-services.sh", self.root / "e2e/journey/candidate-services.sh")
         shutil.copy2(REPO / "e2e/journey/phase-timing.sh", self.root / "e2e/journey/phase-timing.sh")
+        shutil.copy2(REPO / "e2e/journey/prepare-candidate-indexes.sh", self.root / "e2e/journey/prepare-candidate-indexes.sh")
         compose_source = self.root / "compose-workspace-source.txt"
         self._script(self.bin / "docker", '''#!/bin/sh
 if [ "$1 $2" = "compose version" ]; then
