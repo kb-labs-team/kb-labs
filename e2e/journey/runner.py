@@ -66,7 +66,7 @@ from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, ru
 from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
-from scoreboard import load_cases, release_claims_for_case, write_scoreboards
+from scoreboard import release_claims_for_case, write_scoreboards
 from gateway_sessions import SavedGatewaySession
 from invocations import (
     CompletedProcess,
@@ -2454,7 +2454,7 @@ def _main(*, update_variant_runner=None):
                 fail(handoff_diagnostic)
                 invalidate_project_b_handoff(outer_graph, project_b_handoff)
                 export_graph_state_to_child_environment(outer_graph, service_env)
-        workflow_domains = service_journey_domain_registry()
+        workflow_domains = service_journey_domain_registry(mode=mode)
         workflow_domain = workflow_domains.get("workflow-execution")
         if workflow_domain is None:
             raise JourneyContractError("service journey registry omitted the workflow domain")
@@ -2470,21 +2470,13 @@ def _main(*, update_variant_runner=None):
                 restart_host=restart_for_workflow_history)
             return workflow_journey
 
-        workflow_release_claims = tuple(sorted({
-            claim
-            for case in load_cases(case_catalog_root())
-            if case.get("status") == "active" and case.get("release")
-            and (not case.get("modes") or mode in case.get("modes", []))
-            for claim in case.get("claims", [])
-            if claim in workflow_domain.cases
-        }))
         workflow_domains.run(
             outer_graph, "workflow-execution",
             lambda: run_workflow_with_host_boundary(
                 outer_graph, env=env, launcher=launcher,
                 action=execute_workflow_domain,
             ),
-            expected_claims=workflow_release_claims,
+            expected_claims=workflow_domain.required_claims,
         )
         if isinstance(project_b_handoff, ProjectBRootValid):
             project_b_fixture_root = project_b_handoff.root

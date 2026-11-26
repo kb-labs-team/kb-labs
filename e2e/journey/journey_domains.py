@@ -19,6 +19,7 @@ class JourneyDomain:
     capability: str
     cases: tuple[str, ...]
     runners: tuple[str, ...]
+    required_claims: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
     runner_modes: tuple[tuple[str, str], ...] = ()
     implementation_sources: tuple[str, ...] = ()
@@ -62,6 +63,11 @@ class JourneyDomainRegistry:
         domain = self._domains.get(domain_id)
         if domain is None:
             raise JourneyContractError(f"unknown journey domain {domain_id!r}")
+        if expected_claims is None and domain.required_claims:
+            expected_claims = domain.required_claims
+        if domain.child_result_required and expected_claims is None:
+            raise JourneyContractError(
+                f"journey domain {domain.id!r} requires an independent expected-claim inventory")
 
         lease = graph.journey.selection_boundary.execution_lease
         if lease is not None:
@@ -88,19 +94,21 @@ class JourneyDomainRegistry:
             if owner.get("id") != expected_owner_id or owner.get("id") not in set(lease.get("directStepIds", [])):
                 raise JourneyContractError(
                     f"execution lease has a mismatched direct owner for domain {domain.id!r}")
-            if set(owner.get("claimIds", ())) != domain_claims:
+            independent_claims = (set(expected_claims) if expected_claims is not None else domain_claims)
+            if domain_claims != independent_claims or set(owner.get("claimIds", ())) != independent_claims:
                 raise JourneyContractError(
-                    f"execution lease claims do not match the registered owner for domain {domain.id!r}")
-        for dependency_ref in domain.requires:
-            dependency = Dependency.parse(dependency_ref)
-            prior = graph.journey.find_outcome(dependency)
-            if prior is None or prior[0] != "PASS":
-                raise JourneyContractError(
-                    f"journey domain {domain.id!r} prerequisite {dependency_ref!r} "
-                    f"did not pass before callback (observed {prior[0] if prior else 'missing'})")
+                    f"execution lease claims do not match independent domain inventory for {domain.id!r}")
 
         def invoke() -> object:
             try:
+                for dependency_ref in domain.requires:
+                    dependency = Dependency.parse(dependency_ref)
+                    prior = graph.journey.find_outcome(dependency)
+                    if prior is None or prior[0] != "PASS":
+                        raise JourneyContractError(
+                            f"journey domain {domain.id!r} prerequisite {dependency_ref!r} "
+                            f"did not pass before callback "
+                            f"(observed {prior[0] if prior else 'missing'})")
                 if setup is not None:
                     setup()
                 outcome = action()
@@ -117,21 +125,21 @@ class JourneyDomainRegistry:
                         f"journey domain {domain.id!r} child result is {child.status} "
                         f"in mode {outcome.mode}")
                 if lease is not None:
-                    expected_claims = set(lease.get("claimIds", ())).intersection(domain.cases)
-                elif graph.journey.selection_active:
-                    expected_claims = graph.journey.selected_claims.intersection(domain.cases)
+                    expected_claim_set = set(expected_claims or ())
+                elif graph.selection_active:
+                    expected_claim_set = graph.journey.selected_claims.intersection(domain.cases)
                 else:
-                    expected_claims = set(expected_claims if expected_claims is not None else domain.cases)
+                    expected_claim_set = set(expected_claims or ())
                 claim_status: dict[str, str] = {}
                 for row in child.steps:
                     for claim in row.get("cases", []):
-                        if claim in expected_claims:
+                        if claim in expected_claim_set:
                             previous = claim_status.get(claim)
                             if row.get("status") != "PASS" or previous == "FAIL":
                                 claim_status[claim] = row.get("status", "FAIL")
                             else:
                                 claim_status.setdefault(claim, "PASS")
-                missing = sorted(claim for claim in expected_claims if claim_status.get(claim) != "PASS")
+                missing = sorted(claim for claim in expected_claim_set if claim_status.get(claim) != "PASS")
                 if missing:
                     raise JourneyContractError(
                         f"journey domain {domain.id!r} lacks PASS child evidence for claims: "
@@ -143,8 +151,10 @@ class JourneyDomainRegistry:
                           runners=domain.runners)
 
 
-def service_journey_domain_registry() -> JourneyDomainRegistry:
+def service_journey_domain_registry(*, mode: str | None = None) -> JourneyDomainRegistry:
     """Authoritative declarative service-domain inventory used at runtime and by planning."""
+    if mode is not None and mode not in {"local", "secured"}:
+        raise ValueError(f"unsupported service journey mode {mode!r}")
     workflow_claims = tuple(
         [f"S-002.{step}" for step in range(1, 7)]
         + ["S-006.3"]
@@ -156,10 +166,23 @@ def service_journey_domain_registry() -> JourneyDomainRegistry:
         + [f"S-029.{step}" for step in range(1, 4)]
         + [f"S-044.{step}" for step in range(1, 10)]
         + ["S-056.1", "S-056.2", "S-056.3"]
+        + ["S-041.17"]
         + ["PC-002.5"]
         + [f"S-143.{step}" for step in range(1, 5)]
     )
     registry = JourneyDomainRegistry()
+    required_claims: tuple[str, ...] = ()
+    if mode is not None:
+        from journey_resources import case_catalog_root
+        from scoreboard import load_cases
+        required_claims = tuple(sorted({
+            claim
+            for case in load_cases(case_catalog_root())
+            if case.get("status") == "active" and case.get("release")
+            and (not case.get("modes") or mode in case.get("modes", []))
+            for claim in case.get("claims", [])
+            if claim in workflow_claims
+        }))
     registry.register(JourneyDomain(
         id="workflow-execution",
         owner_name="workflow execution journey",
@@ -167,6 +190,7 @@ def service_journey_domain_registry() -> JourneyDomainRegistry:
         capability="workflow",
         cases=workflow_claims,
         runners=("service-local:explore", "service-secured:explore"),
+        required_claims=required_claims,
         runner_modes=(
             ("service-local:explore", "local"),
             ("service-secured:explore", "secured"),

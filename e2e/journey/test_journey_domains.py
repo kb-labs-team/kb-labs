@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import unittest
 import json
+from unittest.mock import patch
 
 from journey_domains import (JourneyDomain, JourneyDomainRegistry,
                              service_journey_domain_registry)
 from journey_selection import JourneySelection, read_journey_selection
 from service_steps import FlowGraph, Journey, JourneyContractError
+import runner
 
 
 def selection_with_lease(steps: list[dict]) -> JourneySelection:
@@ -24,13 +26,17 @@ def selection_with_lease(steps: list[dict]) -> JourneySelection:
 
 
 def strict_workflow_selection(selector: str = "service-local:explore",
-                              claim: str = "S-002.1") -> JourneySelection:
+                              claims: tuple[str, ...] | None = None) -> JourneySelection:
     owner_name = "workflow execution journey"
     owner_id = f"{selector}|flow:{owner_name}"
+    required_claims = claims
+    if required_claims is None:
+        mode = "secured" if selector == "service-secured:explore" else "local"
+        required_claims = service_journey_domain_registry(mode=mode).get("workflow-execution").required_claims
     lease = {
         "schema": "kb.devkit-journey-shard-lease/v1", "planId": "plan", "runId": "run",
         "sourceSHA": "a" * 40, "shardId": "local-01", "attemptId": "attempt-1",
-        "mode": "local", "runner": selector, "claimIds": [claim],
+        "mode": "local", "runner": selector, "claimIds": list(required_claims),
         "directStepIds": [owner_id], "directStepNames": [owner_name],
         "selectedStepNames": ["workflow fixture lint", owner_name],
         "steps": [
@@ -38,7 +44,7 @@ def strict_workflow_selection(selector: str = "service-local:explore",
              "kind": "flow", "claimIds": [], "capabilities": ["workflow"], "states": [],
              "direct": False},
             {"id": owner_id, "name": owner_name, "kind": "flow",
-             "claimIds": [claim], "capabilities": ["workflow"], "states": [],
+             "claimIds": list(required_claims), "capabilities": ["workflow"], "states": [],
              "direct": True},
         ],
     }
@@ -55,6 +61,14 @@ def outer_with_workflow_prerequisite(selection: JourneySelection, run_id: str) -
     return journey
 
 
+def full_service_selection() -> JourneySelection:
+    return JourneySelection(
+        requested=(), claims=frozenset(), owning_steps={}, prerequisite_steps=frozenset(),
+        prerequisite_flows=frozenset(), capabilities=frozenset(),
+        runner_selector="service-local:explore", requested_runners="",
+    )
+
+
 class JourneyDomainRegistryTests(unittest.TestCase):
     # case: S-262.20
     def test_workflow_domain_matches_the_existing_full_route_identity(self):
@@ -68,8 +82,13 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         self.assertEqual(domain.capability, "workflow")
         self.assertIn("S-006.3", domain.cases)
         self.assertIn("S-044.9", domain.cases)
-        self.assertNotIn("S-041.17", domain.cases)
+        self.assertIn("S-041.17", domain.cases)
+        self.assertNotIn("S-041.7", domain.cases)
         self.assertEqual(domain.runners, ("service-local:explore", "service-secured:explore"))
+        runtime_domain = service_journey_domain_registry(mode="local").get("workflow-execution")
+        self.assertIn("S-002.1", runtime_domain.required_claims)
+        self.assertIn("S-041.17", service_journey_domain_registry(mode="secured")
+                      .get("workflow-execution").required_claims)
 
     # case: S-262.20
     def test_full_route_runs_one_callback_with_common_setup_and_cleanup(self):
@@ -153,7 +172,7 @@ class JourneyDomainRegistryTests(unittest.TestCase):
 
     # case: S-262.20
     def test_strict_lease_runs_real_child_assertion_without_step_filtering(self):
-        registry = service_journey_domain_registry()
+        registry = service_journey_domain_registry(mode="local")
         domain = registry.get("workflow-execution")
         selection = strict_workflow_selection()
         outer = outer_with_workflow_prerequisite(selection, "domain-strict-lease")
@@ -162,21 +181,66 @@ class JourneyDomainRegistryTests(unittest.TestCase):
 
         def run_child():
             child = Journey("local", "workflow-child", selection=domain.child_selection(selection))
-            result = child.step("real workflow assertion", "workflow",
-                                lambda: executed.append("assertion"), cases=["S-002.1"])
-            self.assertEqual(result.status, "PASS")
+            for claim in domain.required_claims:
+                result = child.step(f"real workflow assertion {claim}", "workflow",
+                                    lambda claim=claim: executed.append(claim), cases=[claim])
+                self.assertEqual(result.status, "PASS")
             self.assertFalse(child.selection_boundary.active)
             return child
 
-        status = registry.run(graph, domain.id, run_child)
+        status = registry.run(graph, domain.id, run_child, expected_claims=domain.required_claims)
 
         self.assertEqual(status, "PASS")
-        self.assertEqual(executed, ["assertion"])
+        self.assertEqual(executed, list(domain.required_claims))
         self.assertEqual(graph.journey.flow_events[-1]["status"], "PASS")
 
     # case: S-262.20
+    def test_unsharded_production_domain_runs_catalogued_children_and_real_host_boundary(self):
+        registry = service_journey_domain_registry(mode="local")
+        domain = registry.get("workflow-execution")
+        outer = outer_with_workflow_prerequisite(full_service_selection(), "domain-full-production")
+        graph = FlowGraph(outer, {})
+        executed: list[str] = []
+        child = Journey("local", "workflow-child-full", selection=domain.child_selection(
+            outer.selection_boundary))
+        for claim in domain.required_claims:
+            child.step(f"workflow assertion {claim}", "workflow",
+                       lambda claim=claim: executed.append(claim), cases=[claim])
+
+        with patch.object(runner, "probe_platform_state") as host_cleanup:
+            status = registry.run(
+                graph, domain.id,
+                lambda: runner.run_workflow_with_host_boundary(
+                    graph, env={}, launcher="kb-create", action=lambda: child),
+                expected_claims=domain.required_claims,
+            )
+
+        self.assertEqual(status, "PASS")
+        self.assertEqual(executed, list(domain.required_claims))
+        host_cleanup.assert_called_once()
+        self.assertEqual(host_cleanup.call_args.kwargs["mutator_group"], "workflow")
+
+    # case: S-262.20
+    def test_unrelated_legacy_selection_skips_domain_before_prerequisite_validation(self):
+        registry = service_journey_domain_registry(mode="local")
+        domain = registry.get("workflow-execution")
+        selection = JourneySelection(
+            requested=("S-041.1",), claims=frozenset({"S-041.1"}), owning_steps={},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(), capabilities=frozenset(),
+            runner_selector="service-local:explore", requested_runners="",
+        )
+        graph = FlowGraph(Journey("local", "domain-unrelated-case", selection=selection), {})
+        calls: list[str] = []
+
+        status = registry.run(graph, domain.id, lambda: calls.append("callback"),
+                              expected_claims=domain.required_claims)
+
+        self.assertEqual(status, "SKIPPED")
+        self.assertEqual(calls, [])
+
+    # case: S-262.20
     def test_domain_rejects_pass_child_with_missing_claim_evidence(self):
-        registry = service_journey_domain_registry()
+        registry = service_journey_domain_registry(mode="local")
         domain = registry.get("workflow-execution")
         selection = strict_workflow_selection()
         graph = FlowGraph(outer_with_workflow_prerequisite(selection, "domain-missing-child-evidence"), {})
@@ -185,6 +249,7 @@ class JourneyDomainRegistryTests(unittest.TestCase):
             graph, domain.id,
             lambda: Journey("local", "workflow-child-empty",
                             selection=domain.child_selection(selection)),
+            expected_claims=domain.required_claims,
         )
 
         self.assertEqual(status, "FAIL")
@@ -192,14 +257,29 @@ class JourneyDomainRegistryTests(unittest.TestCase):
 
     # case: S-262.20
     def test_domain_rejects_foreign_runner_before_callback(self):
-        registry = service_journey_domain_registry()
+        registry = service_journey_domain_registry(mode="local")
         domain = registry.get("workflow-execution")
         selection = strict_workflow_selection("agent:commit")
         graph = FlowGraph(outer_with_workflow_prerequisite(selection, "domain-foreign-runner"), {})
         calls: list[str] = []
 
         with self.assertRaisesRegex(JourneyContractError, "not authorized"):
-            registry.run(graph, domain.id, lambda: calls.append("callback"))
+            registry.run(graph, domain.id, lambda: calls.append("callback"),
+                         expected_claims=domain.required_claims)
+
+        self.assertEqual(calls, [])
+
+    # case: S-262.20
+    def test_empty_lease_claims_cannot_self_validate_a_required_domain(self):
+        registry = service_journey_domain_registry(mode="local")
+        domain = registry.get("workflow-execution")
+        selection = strict_workflow_selection(claims=())
+        graph = FlowGraph(outer_with_workflow_prerequisite(selection, "domain-empty-claims"), {})
+        calls: list[str] = []
+
+        with self.assertRaisesRegex(JourneyContractError, "independent domain inventory"):
+            registry.run(graph, domain.id, lambda: calls.append("callback"),
+                         expected_claims=domain.required_claims)
 
         self.assertEqual(calls, [])
 

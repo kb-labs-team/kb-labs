@@ -1255,7 +1255,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                 capabilities.add(domain.capability)
                 for case_id in domain.cases:
                     active_case = active_steps[runner.mode].get(case_id)
-                    if active_case is None:
+                    if active_case is None or not active_case.get("release"):
                         continue
                     case_ids.add(case_id)
                     area = active_case.get("area")
