@@ -1321,6 +1321,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
             raise RuntimeError("platform marketplace install did not record the portable exact plugin identity")
         if _platform_snapshot(platform_root) != sealed_platform_before:
             raise RuntimeError("marketplace install changed the platform receipt or installed package versions")
+        raise RuntimeError("S-010.1 deliberate failure for the required-check verification PR")
     def prepare_clean_scopes_for_s010() -> None:
         for scope in ("platform", "project"):
             command = ["marketplace", "uninstall", commit_package, "--scope", scope, "--json"]
