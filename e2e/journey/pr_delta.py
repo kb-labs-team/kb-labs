@@ -64,6 +64,7 @@ def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -
         raise ValueError(f"{mode}: the selection plan omits a claim owner for commit {sha}")
     obligations.update((name, "") for name in plan["prerequisiteSteps"])
     measured = defaultdict(set)
+    unnamed_claim_results = defaultdict(list)
     for path in sorted(directory.glob("*.json")):
         if not path.name.startswith(REPORT_PREFIXES):
             continue
@@ -78,8 +79,17 @@ def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -
             reason = "" if status == "PASS" else _service_message_for_comparison(row["message"])
             for claim in (*row.get("cases", []), ""):
                 key = name, claim
+                evidence = path.name, status, reason
                 if key in obligations:
-                    measured[key].add((path.name, status, reason))
+                    measured[key].add(evidence)
+                elif claim in selected and row.get("capability") != "journey.selection":
+                    unnamed_claim_results[claim].append(evidence)
+    for key in obligations - measured.keys():
+        _, claim = key
+        results = unnamed_claim_results.get(claim, [])
+        if (len(results) == 1 and results[0][1] == "BLOCKED" and results[0][2]
+                and sum(claim in ids for ids in owners.values()) == 1):
+            measured[key].update(results)
     missing = obligations - measured.keys()
     if missing:
         label = ", ".join(f"{claim or 'prerequisite'} / {name}" for name, claim in sorted(missing))
