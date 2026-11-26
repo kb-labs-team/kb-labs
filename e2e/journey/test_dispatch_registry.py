@@ -24,12 +24,62 @@ from select_from_cases import (coverage_results, read_coverage_result, selection
                                validate_dependency_declarations,
                                lint_direct_module_global_state_handoffs,
                                validate_runner_conditions, validate_journey_environment_reads,
-                               full_runner_plans, resolve_selection, journey_source_group_declaration)
+                               full_runner_plans, full_runnable_selection, resolve_selection,
+                               journey_source_group_declaration)
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
 from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import JourneySelection, SELECTION_KEYS
 from service_steps import FlowGraph, Journey
+
+
+class FullRunnableSelectionTests(unittest.TestCase):
+    # case: S-262.20
+    def test_full_route_selection_uses_both_authoritative_runner_plans_and_owner_edges(self):
+        source = "e2e/journey/runner.py"
+        local = SimpleNamespace(mode="local", journey_sources=(source,))
+        secured = SimpleNamespace(mode="secured", journey_sources=(source,))
+        runner_registry = {"route-local": local, "route-secured": secured}
+        declarations = {
+            "step:prepare": {"name": "prepare", "kind": "step", "requires": [],
+                             "runners": ["route-local"], "locations": [(source, 1, [])]},
+            "step:check": {"name": "check", "kind": "step", "requires": ["step:prepare"],
+                           "runners": ["route-local"], "locations": [(source, 2, [])]},
+            "flow:prepare": {"name": "prepare", "kind": "flow", "requires": [],
+                             "runners": ["route-secured"], "locations": [(source, 3, [])]},
+            "flow:check": {"name": "check", "kind": "flow", "requires": ["flow:prepare"],
+                           "runners": ["route-secured"], "locations": [(source, 4, [])]},
+        }
+        def case_declarations(_source, _root):
+            return {
+                1: {"cases": None, "capability": "setup"},
+                2: {"cases": ["S-001.1"], "capability": "platform-core"},
+                3: {"cases": None, "capability": "setup"},
+                4: {"cases": ["S-001.1"], "capability": "platform-core"},
+            }
+        coverage = [
+            {"mode": "local", "cases": [{"id": "S-001", "area": "platform-core", "status": "active",
+                                           "steps": [{"stepId": "S-001.1"}]}]},
+            {"mode": "secured", "cases": [{"id": "S-001", "area": "platform-core", "status": "active",
+                                             "steps": [{"stepId": "S-001.1"}]}]},
+        ]
+        with patch("select_from_cases.RUNNERS", runner_registry), \
+                patch("select_from_cases.selectors_from_coverage", return_value=["route-local", "route-secured"]), \
+                patch("select_from_cases.full_runner_plans", return_value={
+                    "route-local": ["prepare", "check"], "route-secured": ["prepare", "check"]}), \
+                patch("select_from_cases._imported_journey_sources", return_value={source}), \
+                patch("select_from_cases._source_step_declarations_cached", return_value=declarations), \
+                patch("select_from_cases._case_declarations", side_effect=case_declarations):
+            selection = full_runnable_selection(coverage, Path("."), "0123456789abcdef0123456789abcdef01234567")
+
+        self.assertEqual(selection["requiredModes"], ["local", "secured"])
+        self.assertEqual(selection["selectors"], ["route-local", "route-secured"])
+        self.assertEqual(len(selection["steps"]), 4)
+        local_check = next(row for row in selection["steps"] if row["id"] == "route-local|step:check")
+        self.assertEqual(local_check["requires"], ["route-local|step:prepare"])
+        self.assertEqual(local_check["claimIds"], ["S-001.1"])
+        self.assertEqual(local_check["area"], "platform-core")
+        self.assertEqual(len(selection["mandatoryStepIds"]), 4)
 
 
 def helper_read(memory, key):

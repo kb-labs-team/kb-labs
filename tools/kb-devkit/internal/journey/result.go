@@ -191,7 +191,8 @@ func validatePlan(plan Plan) error {
 		return fmt.Errorf("invalid journey plan identity")
 	}
 	canonical, err := BuildPlan(Selection{Schema: SelectionSchema, SourceSHA: plan.SourceSHA,
-		MandatoryStepIDs: plan.MandatoryStepIDs, Steps: plan.FullSelection}, plan.ShardsPerMode)
+		Producer: plan.Producer, Policy: plan.Policy, RequiredModes: plan.RequiredModes,
+		Selectors: plan.Selectors, MandatoryStepIDs: plan.MandatoryStepIDs, Steps: plan.FullSelection}, plan.ShardsPerMode)
 	canonicalBytes, canonicalErr := json.Marshal(canonical)
 	planBytes, planErr := json.Marshal(plan)
 	if err != nil || canonicalErr != nil || planErr != nil || !bytes.Equal(canonicalBytes, planBytes) {

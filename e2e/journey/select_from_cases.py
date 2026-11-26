@@ -12,6 +12,7 @@ import json
 import os
 import ast
 import re
+import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -1017,6 +1018,129 @@ def selectors_from_coverage(results: list[dict]) -> list[str]:
     return sorted(selected)
 
 
+def full_runnable_selection(results: list[dict], root: Path, source_sha: str) -> dict:
+    """Describe the complete old full-run route from active release-owned runners.
+
+    Runner membership comes from QA coverage; every step and flow in each
+    selected runner's established full plan is retained, including lifecycle
+    steps without a product claim. Dependencies stay qualified by their actual
+    runner owner, so importing a shared declaration cannot pull in a sibling
+    runner's route.
+    """
+    if not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("full route source identity must be a full commit SHA")
+    selectors = selectors_from_coverage(results)
+    if not selectors:
+        raise ValueError("active release coverage selects no runnable journey owners")
+    plans = full_runner_plans(root)
+    active_steps: dict[str, dict[str, dict]] = {"local": {}, "secured": {}}
+    for coverage in results:
+        mode = coverage.get("mode")
+        if mode not in active_steps:
+            raise ValueError(f"unsupported QA coverage mode: {mode!r}")
+        for case in coverage.get("cases", []):
+            if case.get("status") == "active" and isinstance(case.get("id"), str):
+                for case_step in case.get("steps", []):
+                    step_id = case_step.get("stepId")
+                    if isinstance(step_id, str):
+                        active_steps[mode][step_id] = {**case, "stepId": step_id}
+
+    rows: list[dict] = []
+    for selector in selectors:
+        runner = RUNNERS[selector]
+        if selector not in plans:
+            raise ValueError(f"active release owner {selector!r} has no complete runnable route")
+        sources = set().union(*(_imported_journey_sources({source}, root)
+                                for source in runner.journey_sources))
+        declarations = _source_step_declarations_cached(tuple(sorted(sources)), root)
+        by_name: dict[tuple[str, str], dict] = {}
+        for declaration in declarations.values():
+            name = declaration.get("name")
+            if not isinstance(name, str):
+                continue
+            declared_runners = declaration.get("runners", ())
+            if declared_runners and selector not in declared_runners:
+                continue
+            by_name[(str(declaration.get("kind", "step")), name)] = declaration
+        owner_rows: dict[str, dict] = {}
+        for name in plans[selector]:
+            matches = [declaration for (kind, item_name), declaration in by_name.items()
+                       if item_name == name]
+            if len(matches) != 1:
+                raise ValueError(f"{selector}: full route step {name!r} resolves to {len(matches)} owner declarations")
+            declaration = matches[0]
+            kind = str(declaration.get("kind", "step"))
+            owner_id = f"{selector}|{kind}:{name}"
+            case_ids: set[str] = set()
+            capabilities: set[str] = set()
+            areas: set[str] = set()
+            for source, line, _required in declaration.get("locations", ()):
+                source_cases = _case_declarations(source, root).get(line, {})
+                capability = source_cases.get("capability")
+                if isinstance(capability, str):
+                    capabilities.add(capability)
+                for case_id in source_cases.get("cases") or ():
+                    active_case = active_steps[runner.mode].get(case_id)
+                    if active_case is None:
+                        continue
+                    case_ids.add(case_id)
+                    area = active_case.get("area")
+                    if isinstance(area, str) and area:
+                        areas.add(area)
+            required_ids: list[str] = []
+            required_states: list[str] = []
+            for reference in declaration.get("requires", ()):
+                dependency = Dependency.parse(reference)
+                if dependency.kind == "state":
+                    required_states.append(dependency.name)
+                    continue
+                required_id = f"{selector}|{dependency.kind}:{dependency.name}"
+                required_ids.append(required_id)
+            rows.append({
+                "id": owner_id,
+                "name": name,
+                "kind": kind,
+                "mode": runner.mode,
+                "area": "+".join(sorted(areas)) if areas else "unclaimed",
+                "runner": selector,
+                "claimIds": sorted(case_ids),
+                "capabilities": sorted(capabilities),
+                "requires": sorted(set(required_ids)),
+                "states": sorted(set(required_states)),
+                "mandatory": True,
+            })
+            owner_rows[owner_id] = rows[-1]
+        owner_ids = set(owner_rows)
+        for row in rows[-len(plans[selector]):]:
+            for required_id in row["requires"]:
+                if required_id not in owner_ids:
+                    raise ValueError(f"{selector}: prerequisite {required_id!r} is absent from its full owner route")
+
+    modes = sorted({RUNNERS[selector].mode for selector in selectors})
+    if modes != ["local", "secured"]:
+        raise ValueError(f"full installer release route must select local and secured owners; got {modes}")
+    rows.sort(key=lambda row: (row["mode"], row["runner"], row["id"]))
+    return {
+        "schema": "kb.qa-journey-selection/v1",
+        "producer": "e2e/journey/select_from_cases.py:full_runnable_selection",
+        "policy": "installer-full-release/v1",
+        "sourceSHA": source_sha,
+        "requiredModes": modes,
+        "selectors": selectors,
+        "mandatoryStepIds": sorted(f"{row['mode']}:{row['id']}" for row in rows),
+        "steps": rows,
+    }
+
+
+def current_source_sha(root: Path) -> str:
+    result = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "HEAD"],
+                            check=False, capture_output=True, text=True)
+    source_sha = result.stdout.strip()
+    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError(f"could not resolve the full source commit SHA in {root}")
+    return source_sha
+
+
 def _area_step_groups(results: list[dict], area: str, mode: str | None = None) -> tuple[list[str], list[str]]:
     """Split active area step IDs by whether each has a journey claim."""
     if mode is not None and mode not in {"local", "secured"}:
@@ -1195,6 +1319,12 @@ def runners_for_case_selection(results: list[dict], requested: str, mode: str) -
 
 
 def main() -> int:
+    if sys.argv[1:] == ["--full-runnable-selection"]:
+        root = resource_root()
+        results = coverage_results(root)
+        print_report_text(json.dumps(full_runnable_selection(
+            results, root, current_source_sha(root))), flush=True)
+        return 0
     if sys.argv[1:] == ["--write-plan-baseline"]:
         root = resource_root()
         print_report_text(str(write_full_runner_plan_baseline(root)), flush=True)

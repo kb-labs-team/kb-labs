@@ -43,15 +43,16 @@ func TestFinalizeFailsClosedOnMissingDuplicateForeignAndStaleShards(t *testing.T
 	root := t.TempDir()
 	a := writeResultDir(t, root, "a", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
 	b := writeResultDir(t, root, "b", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[1].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
+	secure := writeResultDir(t, root, "secure", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[2].ID, Mode: "secured", Status: "passed", Reports: []string{"journey.json"}})
 	duplicate := writeResultDir(t, root, "duplicate", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
 	foreign := writeResultDir(t, root, "foreign", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: "other", Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
 	stale := writeResultDir(t, root, "stale", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
 
 	for name, dirs := range map[string][]string{
 		"missing":   {a},
-		"duplicate": {a, duplicate, b},
-		"foreign":   {a, b, foreign},
-		"stale":     {stale, b},
+		"duplicate": {a, duplicate, secure},
+		"foreign":   {a, foreign, secure},
+		"stale":     {stale, b, secure},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Finalize(plan, dirs, func(string, []string) error { t.Fatal("coverage must not run for invalid shard evidence"); return nil }); err == nil {
@@ -65,11 +66,12 @@ func TestFinalizeFailsWhenRuntimeCoverageFailsOrReportEscapesShardDirectory(t *t
 	plan := makePlan(t, "local")
 	root := t.TempDir()
 	valid := writeResultDir(t, root, "valid", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	if _, err := Finalize(plan, []string{valid}, func(string, []string) error { return fmt.Errorf("release claim incomplete") }); err == nil {
+	secured := writeResultDir(t, root, "secured", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[1].ID, Mode: "secured", Status: "passed", Reports: []string{"journey.json"}})
+	if _, err := Finalize(plan, []string{valid, secured}, func(string, []string) error { return fmt.Errorf("release claim incomplete") }); err == nil {
 		t.Fatal("runtime coverage failure must fail finalization")
 	}
 	unsafe := writeResultDir(t, root, "unsafe", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"../valid/journey.json"}})
-	if _, err := Finalize(plan, []string{unsafe}, func(string, []string) error { t.Fatal("coverage must not run for escaped report path"); return nil }); err == nil {
+	if _, err := Finalize(plan, []string{unsafe, secured}, func(string, []string) error { t.Fatal("coverage must not run for escaped report path"); return nil }); err == nil {
 		t.Fatal("report outside evidence directory must fail closed")
 	}
 	tampered := plan
@@ -102,12 +104,21 @@ func TestRecordShardResultOnlyRecordsPlannedShardAndDoesNotOverwrite(t *testing.
 
 func makePlan(t *testing.T, modes ...string) Plan {
 	t.Helper()
-	selection := Selection{Schema: SelectionSchema, SourceSHA: "0123456789abcdef0123456789abcdef01234567"}
+	steps := make([]RunnableStep, 0, len(modes))
+	hasSecured := false
 	for index, mode := range modes {
 		id := fmt.Sprintf("step-%02d", index)
-		selection.Steps = append(selection.Steps, RunnableStep{ID: id, Mode: mode, Area: "platform-core", Runner: "runner-" + mode, Mandatory: true})
-		selection.MandatoryStepIDs = append(selection.MandatoryStepIDs, mode+":"+id)
+		runner := "service-local:explore"
+		if mode == "secured" {
+			runner = "service-secured:explore"
+			hasSecured = true
+		}
+		steps = append(steps, RunnableStep{ID: runner + "|step:" + id, Name: id, Kind: "step", Mode: mode, Area: "platform-core", Runner: runner, Mandatory: true})
 	}
+	if !hasSecured {
+		steps = append(steps, RunnableStep{ID: "service-secured:explore|step:required-secured", Name: "required-secured", Kind: "step", Mode: "secured", Area: "platform-core", Runner: "service-secured:explore", Mandatory: true})
+	}
+	selection := selectionFixture(steps...)
 	plan, err := BuildPlan(selection, 2)
 	if err != nil {
 		t.Fatal(err)

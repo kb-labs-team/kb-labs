@@ -15,7 +15,6 @@ import (
 )
 
 var journeyPlanFile string
-var journeySelectionFile string
 var journeyShardsPerMode int
 var journeyEvidenceDirs []string
 var journeyShardID string
@@ -29,19 +28,25 @@ var journeyCmd = &cobra.Command{
 
 var journeyPlanCmd = &cobra.Command{
 	Use:   "plan",
-	Short: "Create a deterministic plan from a full QA-resolved runnable selection",
+	Short: "Create a deterministic plan from the complete QA-resolved installer route",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if journeySelectionFile == "" || journeyPlanFile == "" {
-			return fmt.Errorf("--selection and --plan-file are required")
+		if journeyPlanFile == "" {
+			return fmt.Errorf("--plan-file is required")
 		}
-		data, err := os.ReadFile(journeySelectionFile)
+		ws, _, err := loadWorkspace()
 		if err != nil {
-			return fmt.Errorf("read full runnable selection: %w", err)
+			return fmt.Errorf("discover workspace: %w", err)
+		}
+		producer := exec.Command("python3", "e2e/journey/select_from_cases.py", "--full-runnable-selection")
+		producer.Dir = ws.Root
+		data, err := producer.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("produce authoritative full route selection: %w: %s", err, strings.TrimSpace(string(data)))
 		}
 		var selection journey.Selection
 		if err := json.Unmarshal(data, &selection); err != nil {
-			return fmt.Errorf("parse full runnable selection: %w", err)
+			return fmt.Errorf("parse authoritative full route selection: %w", err)
 		}
 		plan, err := journey.BuildPlan(selection, journeyShardsPerMode)
 		if err != nil {
@@ -122,7 +127,6 @@ var journeyRecordCmd = &cobra.Command{
 }
 
 func init() {
-	journeyPlanCmd.Flags().StringVar(&journeySelectionFile, "selection", "", "QA-resolved full runnable selection JSON")
 	journeyPlanCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "write the immutable shard plan to this new file")
 	journeyPlanCmd.Flags().IntVar(&journeyShardsPerMode, "shards-per-mode", 4, "target shard count for each execution mode")
 	journeyResultCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")

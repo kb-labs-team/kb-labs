@@ -15,6 +15,8 @@ import (
 
 const (
 	SelectionSchema   = "kb.qa-journey-selection/v1"
+	SelectionProducer = "e2e/journey/select_from_cases.py:full_runnable_selection"
+	JourneyPolicy     = "installer-full-release/v1"
 	PlanSchema        = "kb.devkit-journey-plan/v1"
 	ShardResultSchema = "kb.devkit-journey-shard-result/v1"
 	FinalResultSchema = "kb.devkit-journey-result/v1"
@@ -28,38 +30,52 @@ var sourceSHAPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
 // edge accidentally.
 type Selection struct {
 	Schema           string         `json:"schema"`
+	Producer         string         `json:"producer"`
+	Policy           string         `json:"policy"`
 	SourceSHA        string         `json:"sourceSHA"`
+	RequiredModes    []string       `json:"requiredModes"`
+	Selectors        []string       `json:"selectors"`
 	MandatoryStepIDs []string       `json:"mandatoryStepIds"`
 	Steps            []RunnableStep `json:"steps"`
 }
 
 type RunnableStep struct {
-	ID        string   `json:"id"`
-	Mode      string   `json:"mode"`
-	Area      string   `json:"area"`
-	Runner    string   `json:"runner"`
-	Weight    int      `json:"weight,omitempty"`
-	Mandatory bool     `json:"mandatory,omitempty"`
-	Requires  []string `json:"requires,omitempty"`
+	ID           string   `json:"id"`
+	Name         string   `json:"name"`
+	Kind         string   `json:"kind"`
+	Mode         string   `json:"mode"`
+	Area         string   `json:"area"`
+	Runner       string   `json:"runner"`
+	ClaimIDs     []string `json:"claimIds"`
+	Capabilities []string `json:"capabilities"`
+	States       []string `json:"states"`
+	Weight       int      `json:"weight,omitempty"`
+	Mandatory    bool     `json:"mandatory"`
+	Requires     []string `json:"requires,omitempty"`
 }
 
 type Plan struct {
 	Schema           string         `json:"schema"`
 	ID               string         `json:"id"`
+	Producer         string         `json:"producer"`
+	Policy           string         `json:"policy"`
 	SourceSHA        string         `json:"sourceSHA"`
 	ShardsPerMode    int            `json:"shardsPerMode"`
+	RequiredModes    []string       `json:"requiredModes"`
+	Selectors        []string       `json:"selectors"`
 	MandatoryStepIDs []string       `json:"mandatoryStepIds"`
 	FullSelection    []RunnableStep `json:"fullSelection"`
 	Shards           []Shard        `json:"shards"`
 }
 
 type Shard struct {
-	ID            string        `json:"id"`
-	Mode          string        `json:"mode"`
-	Domains       []string      `json:"domains"`
-	DirectStepIDs []string      `json:"directStepIds"`
-	Steps         []PlannedStep `json:"steps"`
-	Runners       []string      `json:"runners"`
+	ID                  string        `json:"id"`
+	Mode                string        `json:"mode"`
+	Domains             []string      `json:"domains"`
+	PrerequisiteDomains []string      `json:"prerequisiteDomains,omitempty"`
+	DirectStepIDs       []string      `json:"directStepIds"`
+	Steps               []PlannedStep `json:"steps"`
+	Runners             []string      `json:"runners"`
 }
 
 type PlannedStep struct {
@@ -73,6 +89,9 @@ func BuildPlan(selection Selection, shardsPerMode int) (Plan, error) {
 	if selection.Schema != SelectionSchema {
 		return Plan{}, fmt.Errorf("unsupported journey selection schema %q", selection.Schema)
 	}
+	if selection.Producer != SelectionProducer || selection.Policy != JourneyPolicy {
+		return Plan{}, fmt.Errorf("journey selection must come from the authoritative installer full-route producer and policy")
+	}
 	if !sourceSHAPattern.MatchString(selection.SourceSHA) {
 		return Plan{}, fmt.Errorf("sourceSHA must be the full 40-character lowercase commit SHA")
 	}
@@ -82,14 +101,21 @@ func BuildPlan(selection Selection, shardsPerMode int) (Plan, error) {
 	if len(selection.Steps) == 0 {
 		return Plan{}, fmt.Errorf("full runnable selection is empty")
 	}
+	if !equalStrings(uniqueSorted(selection.RequiredModes), []string{"local", "secured"}) {
+		return Plan{}, fmt.Errorf("installer full-route policy requires both local and secured modes")
+	}
+	selectors := uniqueSorted(selection.Selectors)
+	if len(selectors) == 0 || len(selectors) != len(selection.Selectors) {
+		return Plan{}, fmt.Errorf("full-route selection must list unique runner selectors")
+	}
 
 	steps := append([]RunnableStep(nil), selection.Steps...)
 	byKey := make(map[string]RunnableStep, len(steps))
 	modes := map[string]bool{}
 	for i := range steps {
 		step := &steps[i]
-		if step.ID == "" || step.Area == "" || step.Runner == "" {
-			return Plan{}, fmt.Errorf("runnable step at index %d must have id, area, and runner", i)
+		if step.ID == "" || step.Name == "" || step.Area == "" || step.Runner == "" || step.Kind == "" {
+			return Plan{}, fmt.Errorf("runnable step at index %d must have id, name, kind, area, and runner", i)
 		}
 		if step.Mode != "local" && step.Mode != "secured" {
 			return Plan{}, fmt.Errorf("step %q has unsupported mode %q", step.ID, step.Mode)
@@ -97,13 +123,28 @@ func BuildPlan(selection Selection, shardsPerMode int) (Plan, error) {
 		if step.Weight < 0 {
 			return Plan{}, fmt.Errorf("step %q has negative weight", step.ID)
 		}
+		if step.Runner+"|"+step.Kind+":"+step.Name != step.ID {
+			return Plan{}, fmt.Errorf("step %q is not qualified by its actual selector, kind, and owner name", step.ID)
+		}
+		if !containsString(selectors, step.Runner) {
+			return Plan{}, fmt.Errorf("step %q has a runner outside the authoritative route selectors", step.ID)
+		}
+		if step.Kind != "step" && step.Kind != "flow" {
+			return Plan{}, fmt.Errorf("step %q has unsupported owner kind %q", step.ID, step.Kind)
+		}
 		key := stepKey(step.Mode, step.ID)
 		if _, exists := byKey[key]; exists {
 			return Plan{}, fmt.Errorf("duplicate runnable step %s", key)
 		}
 		step.Requires = uniqueSorted(step.Requires)
+		step.ClaimIDs = uniqueSorted(step.ClaimIDs)
+		step.Capabilities = uniqueSorted(step.Capabilities)
+		step.States = uniqueSorted(step.States)
 		byKey[key] = *step
 		modes[step.Mode] = true
+	}
+	if !modes["local"] || !modes["secured"] {
+		return Plan{}, fmt.Errorf("full runnable route has no runnable steps for both local and secured modes")
 	}
 	for _, step := range steps {
 		for _, requiredID := range step.Requires {
@@ -145,17 +186,23 @@ func BuildPlan(selection Selection, shardsPerMode int) (Plan, error) {
 		}
 	}
 	selectionBytes, err := json.Marshal(struct {
+		Producer         string         `json:"producer"`
+		Policy           string         `json:"policy"`
 		SourceSHA        string         `json:"sourceSHA"`
+		RequiredModes    []string       `json:"requiredModes"`
+		Selectors        []string       `json:"selectors"`
 		MandatoryStepIDs []string       `json:"mandatoryStepIds"`
 		Steps            []RunnableStep `json:"steps"`
 		Count            int            `json:"shardsPerMode"`
-	}{selection.SourceSHA, mandatory, canonicalSteps(steps), shardsPerMode})
+	}{selection.Producer, selection.Policy, selection.SourceSHA, []string{"local", "secured"}, selectors, mandatory, canonicalSteps(steps), shardsPerMode})
 	if err != nil {
 		return Plan{}, fmt.Errorf("encode journey plan identity: %w", err)
 	}
 	sum := sha256.Sum256(selectionBytes)
-	plan := Plan{Schema: PlanSchema, ID: "journey-" + hex.EncodeToString(sum[:]), SourceSHA: selection.SourceSHA,
+	plan := Plan{Schema: PlanSchema, ID: "journey-" + hex.EncodeToString(sum[:]), Producer: selection.Producer, Policy: selection.Policy, SourceSHA: selection.SourceSHA,
 		ShardsPerMode:    shardsPerMode,
+		RequiredModes:    []string{"local", "secured"},
+		Selectors:        selectors,
 		MandatoryStepIDs: mandatory,
 		FullSelection:    canonicalSteps(steps)}
 
@@ -165,42 +212,59 @@ func BuildPlan(selection Selection, shardsPerMode int) (Plan, error) {
 	}
 	sort.Strings(orderedModes)
 	for _, mode := range orderedModes {
-		modeSteps := make([]RunnableStep, 0)
+		groups := map[string][]RunnableStep{}
 		for _, step := range steps {
 			if step.Mode == mode {
-				modeSteps = append(modeSteps, step)
+				groupKey := step.Area + "\x00" + step.Runner
+				groups[groupKey] = append(groups[groupKey], step)
 			}
 		}
-		shardCount := shardsPerMode
-		if len(modeSteps) < shardCount {
-			shardCount = len(modeSteps)
+		groupKeys := make([]string, 0, len(groups))
+		totalWeight := 0
+		for key, group := range groups {
+			groupKeys = append(groupKeys, key)
+			for _, step := range group {
+				totalWeight += effectiveWeight(step)
+			}
 		}
-		buckets := make([][]RunnableStep, shardCount)
-		weights := make([]int, shardCount)
-		sort.Slice(modeSteps, func(i, j int) bool {
-			wi, wj := effectiveWeight(modeSteps[i]), effectiveWeight(modeSteps[j])
-			if wi != wj {
-				return wi > wj
+		sort.Strings(groupKeys)
+		targetWeight := (totalWeight + shardsPerMode - 1) / shardsPerMode
+		shardNumber := 1
+		for _, groupKey := range groupKeys {
+			group := groups[groupKey]
+			sort.Slice(group, func(i, j int) bool {
+				wi, wj := effectiveWeight(group[i]), effectiveWeight(group[j])
+				if wi != wj {
+					return wi > wj
+				}
+				return group[i].ID < group[j].ID
+			})
+			groupWeight := 0
+			for _, step := range group {
+				groupWeight += effectiveWeight(step)
 			}
-			if modeSteps[i].Area != modeSteps[j].Area {
-				return modeSteps[i].Area < modeSteps[j].Area
+			chunks := 1
+			if targetWeight > 0 && groupWeight > targetWeight {
+				chunks = (groupWeight + targetWeight - 1) / targetWeight
 			}
-			if modeSteps[i].Runner != modeSteps[j].Runner {
-				return modeSteps[i].Runner < modeSteps[j].Runner
+			if chunks > len(group) {
+				chunks = len(group)
 			}
-			return modeSteps[i].ID < modeSteps[j].ID
-		})
-		for _, step := range modeSteps {
-			bucket := lightestBucket(weights)
-			buckets[bucket] = append(buckets[bucket], step)
-			weights[bucket] += effectiveWeight(step)
-		}
-		for index, direct := range buckets {
-			shard, err := buildShard(mode, index+1, direct, byKey)
-			if err != nil {
-				return Plan{}, err
+			buckets := make([][]RunnableStep, chunks)
+			weights := make([]int, chunks)
+			for _, step := range group {
+				bucket := lightestBucket(weights)
+				buckets[bucket] = append(buckets[bucket], step)
+				weights[bucket] += effectiveWeight(step)
 			}
-			plan.Shards = append(plan.Shards, shard)
+			for _, direct := range buckets {
+				shard, err := buildShard(mode, shardNumber, direct, byKey)
+				if err != nil {
+					return Plan{}, err
+				}
+				plan.Shards = append(plan.Shards, shard)
+				shardNumber++
+			}
 		}
 	}
 	return plan, nil
@@ -244,19 +308,30 @@ func buildShard(mode string, index int, direct []RunnableStep, byKey map[string]
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
-	domains, runners := map[string]bool{}, map[string]bool{}
+	domains, prerequisites, runners := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, key := range keys {
 		step := closure[key]
 		shard.Steps = append(shard.Steps, PlannedStep{RunnableStep: step, Direct: directIDs[key]})
-		domains[step.Area], runners[step.Runner] = true, true
+		if directIDs[key] {
+			domains[step.Area] = true
+		} else {
+			prerequisites[step.Area] = true
+		}
+		runners[step.Runner] = true
 	}
 	for domain := range domains {
 		shard.Domains = append(shard.Domains, domain)
+	}
+	for domain := range prerequisites {
+		if !domains[domain] {
+			shard.PrerequisiteDomains = append(shard.PrerequisiteDomains, domain)
+		}
 	}
 	for runner := range runners {
 		shard.Runners = append(shard.Runners, runner)
 	}
 	sort.Strings(shard.Domains)
+	sort.Strings(shard.PrerequisiteDomains)
 	sort.Strings(shard.Runners)
 	return shard, nil
 }
@@ -335,4 +410,25 @@ func uniqueSorted(values []string) []string {
 	}
 	sort.Strings(result)
 	return result
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+func equalStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
