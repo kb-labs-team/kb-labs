@@ -230,14 +230,15 @@ class Journey:
             message = (f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "
                        f"this execution used {self.runner_selector or 'no runner selector'}")
             result = StepResult(name, capability, self.mode, "FAIL", 0.0, message, case_ids,
-                                {**(dependency_details or {}), "selectionRole": "selected"}, step_id)
+                                {**(dependency_details or {}), "selectionRole": "selected"}, step_id,
+                                owner_kind)
             self.steps.append(result)
             return result
         if not selected and eligible_runners and self.runner_selector not in eligible_runners:
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0,
                                 f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "
                                 f"this execution used {self.runner_selector or 'no runner selector'}",
-                                case_ids, dependency_details, step_id)
+                                case_ids, dependency_details, step_id, owner_kind)
             self.steps.append(result)
             return result
         prerequisite = (name in self.prerequisite_steps or
@@ -248,7 +249,7 @@ class Journey:
                                        and name not in self.planned_step_names
                                        and name not in self.allowed_state_probes)):
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids,
-                                dependency_details, step_id)
+                                dependency_details, step_id, owner_kind)
             self.steps.append(result)
             return result
         provided_items = tuple(provides)
@@ -259,7 +260,8 @@ class Journey:
             details = dict(dependency_details or {})
             if selected:
                 details["selectionRole"] = "selected"
-            result = StepResult(name, capability, self.mode, "FAIL", 0.0, str(error), case_ids, details or None, step_id)
+            result = StepResult(name, capability, self.mode, "FAIL", 0.0, str(error), case_ids,
+                                details or None, step_id, owner_kind)
             self.steps.append(result)
             return result
         required = {Dependency.parse(item) for item in required_items}
@@ -293,7 +295,7 @@ class Journey:
                 elif lifecycle:
                     step_details["selectionRole"] = "lifecycle"
                 result = StepResult(name, capability, self.mode, "BLOCKED", 0.0, message, case_ids,
-                                    step_details, step_id)
+                                    step_details, step_id, owner_kind)
                 self.steps.append(result)
                 return result
         started = time.monotonic()
@@ -345,7 +347,7 @@ class Journey:
                 step_details["invocation_evidence"] = reference
         result = StepResult(name, capability, self.mode, status,
                             round(time.monotonic() - started, 3), message or "passed", case_ids,
-                            step_details, step_id)
+                            step_details, step_id, owner_kind)
         self.steps.append(result)
         return result
 

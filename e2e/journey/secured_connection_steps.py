@@ -382,13 +382,17 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     journey.step("member signs in to secured gateway", "auth.secured", member_login, cases=["S-005.2"],
-                 requires=("step:apply isolated client platform",))
+                 requires=("step:apply isolated client platform",),
+                 runners=("service-secured:explore",))
     journey.step("member auth status identifies gateway", "auth.secured", member_status, cases=["S-005.3"],
-                 requires=("step:apply isolated client platform",))
+                 requires=("step:apply isolated client platform",),
+                 runners=("service-secured:explore",))
     journey.step("member reads authorized permissions", "auth.secured", member_permissions, cases=["S-005.4"],
-                 requires=("step:member signs in to secured gateway",))
+                 requires=("step:member signs in to secured gateway",),
+                 runners=("service-secured:explore",))
     journey.step("member cannot read tenant users", "auth.secured", member_users_denied, cases=["S-005.5"],
-                 requires=("step:member signs in to secured gateway",))
+                 requires=("step:member signs in to secured gateway",),
+                 runners=("service-secured:explore",))
 
     def expired_status():
         with invocation_context(step_id="journey.setup"):

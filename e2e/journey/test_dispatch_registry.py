@@ -118,6 +118,20 @@ class FullRunnableSelectionTests(unittest.TestCase):
         self.assertEqual(selection["selectors"], ["service-local:explore", "service-secured:explore"])
         self.assertFalse(any(row["name"] == "human interactive install" for row in selection["steps"]))
 
+    def test_real_service_route_excludes_secured_only_registration_from_local_owner_plan(self):
+        root = Path(__file__).resolve().parents[2]
+        plans = full_runner_owner_plans(root)
+        secured_only = {
+            ("step", "secured marketplace requires a saved CLI session"),
+            ("step", "S-010.6 secured marketplace requires the catalogued login error"),
+            ("step", "member signs in to secured gateway"),
+            ("step", "member auth status identifies gateway"),
+            ("step", "member reads authorized permissions"),
+            ("step", "member cannot read tenant users"),
+        }
+        self.assertTrue(secured_only.issubset(set(plans["service-secured:explore"])))
+        self.assertTrue(secured_only.isdisjoint(set(plans["service-local:explore"])))
+
 
 def helper_read(memory, key):
     return memory.get(key)

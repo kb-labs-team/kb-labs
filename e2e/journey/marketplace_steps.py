@@ -440,11 +440,13 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
             assert_auth_required("S-041.7", scope)
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
-                 assert_both_marketplace_scopes_require_auth, cases=["S-041.7"])
+                 assert_both_marketplace_scopes_require_auth, cases=["S-041.7"],
+                 runners=("service-secured:explore",))
 
 
     journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
-                 lambda: assert_auth_required("S-010.6", ["--scope", "platform"]), cases=["S-010.6"])
+                 lambda: assert_auth_required("S-010.6", ["--scope", "platform"]), cases=["S-010.6"],
+                 runners=("service-secured:explore",))
 
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from journey_selection import JourneySelectionError, read_journey_selection
-from service_steps import Journey
+from service_steps import FlowGraph, Journey
 
 
 def lease() -> dict:
@@ -61,6 +61,22 @@ class JourneyExecutionLeaseTests(unittest.TestCase):
         state_probe = next(row for row in rows if row["name"] == "state probe: host-running")
         self.assertEqual(state_probe["details"]["selectionRole"], "lifecycle")
         self.assertEqual(journey.result().flows[0]["plannedStepId"], "service-local:explore|flow:setup")
+
+    def test_flow_graph_fallback_row_cannot_claim_same_named_step(self):
+        selection = read_journey_selection({
+            "KB_JOURNEY_EXECUTION_LEASE_JSON": json.dumps(lease()),
+            "KB_JOURNEY_ONLY": "service-local:explore",
+            "KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore",
+        }, strict=True)
+        journey = Journey("local", "lease-run", selection=selection)
+        graph = FlowGraph(journey, {})
+        called = []
+        self.assertEqual(graph.flow("setup", "setup", "install", lambda: called.append(True)), "PASS")
+        self.assertEqual(called, [True])
+        report = journey.result()
+        self.assertFalse(any(row.get("plannedStepId") == "service-local:explore|step:setup"
+                             for row in report.steps))
+        self.assertEqual(report.flows[0]["plannedStepId"], "service-local:explore|flow:setup")
 
     def test_lease_rejects_foreign_runner_mode_and_incomplete_selected_inventory(self):
         with self.assertRaisesRegex(JourneySelectionError, "selector does not match"):
