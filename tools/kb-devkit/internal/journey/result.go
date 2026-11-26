@@ -376,8 +376,13 @@ func validateRunnerReports(lease ShardLease, reports [][]byte) error {
 	for _, state := range requiredStates {
 		name := "state probe: " + state
 		rows := observedNames[name]
-		if len(rows) != 1 || rows[0].Status != "PASS" || rows[0].Details.SelectionRole != "lifecycle" {
-			return fmt.Errorf("combined runner reports do not prove required state %q with one passing lifecycle probe", state)
+		if len(rows) == 0 {
+			return fmt.Errorf("combined runner reports do not prove required state %q with a passing lifecycle probe", state)
+		}
+		for _, row := range rows {
+			if row.Status != "PASS" || row.Details.SelectionRole != "lifecycle" {
+				return fmt.Errorf("combined runner reports contain a non-passing lifecycle probe for required state %q", state)
+			}
 		}
 	}
 	return nil

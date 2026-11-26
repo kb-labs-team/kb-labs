@@ -210,6 +210,69 @@ func TestEvidenceRequiresLifecycleProofForPlannedStatePrerequisites(t *testing.T
 	}
 }
 
+func TestEvidenceAcceptsRepeatedPassingLifecycleProbesForStatePrerequisite(t *testing.T) {
+	steps := []RunnableStep{
+		{ID: "service-local:explore|step:check host", Name: "check host", Kind: "step", Mode: "local", Area: "platform-core", Runner: "service-local:explore", States: []string{"host-running"}, Mandatory: true},
+		{ID: "service-secured:explore|step:secure check", Name: "secure check", Kind: "step", Mode: "secured", Area: "platform-core", Runner: "service-secured:explore", Mandatory: true},
+	}
+	plan, err := BuildPlan(selectionFixture(steps...), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := PrepareRun(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shard Shard
+	for _, item := range plan.Shards {
+		if item.Mode == "local" {
+			shard = item
+			break
+		}
+	}
+	lease, err := PreparedLease(plan, prepared, shard.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	writeRunnerReport(t, dir, lease)
+	path := filepath.Join(dir, "journey.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(data, &report); err != nil {
+		t.Fatal(err)
+	}
+	rows := report["steps"].([]any)
+	for _, raw := range rows {
+		row := raw.(map[string]any)
+		if row["name"] == "state probe: host-running" {
+			duplicate, err := json.Marshal(row)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var copied map[string]any
+			if err := json.Unmarshal(duplicate, &copied); err != nil {
+				t.Fatal(err)
+			}
+			report["steps"] = append(rows, copied)
+			break
+		}
+	}
+	data, err = json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordShardResult(plan, prepared, lease, dir, []string{"journey.json"}); err != nil {
+		t.Fatalf("repeated passing lifecycle probes were rejected: %v", err)
+	}
+}
+
 func TestRecordAggregatesOwnerRowsAcrossRunnerReports(t *testing.T) {
 	steps := []RunnableStep{
 		{ID: "service-local:explore|step:first", Name: "first", Kind: "step", Mode: "local", Area: "platform-core", Runner: "service-local:explore", Mandatory: true},
