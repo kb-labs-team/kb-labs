@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -162,6 +163,44 @@ func TestExecutorAllowsTestTaskWithoutOptionalCoverageOutput(t *testing.T) {
 	second := executor.Run(pkg, def, false, nil)
 	if !second.OK || !second.Cached {
 		t.Fatalf("second test run = %+v, want successful cache hit", second)
+	}
+}
+
+type failingPutFileStore struct {
+	cache.ObjectStore
+}
+
+func (failingPutFileStore) PutFile(string) (string, error) {
+	return "", errors.New("cache object store unavailable")
+}
+
+// case: S-321.4
+func TestExecutorKeepsSuccessfulBuildWhenCacheObjectStoreFails(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writePkg(t, pkgDir, `{"name":"@kb/app"}`)
+	initTrackedFixture(t, root)
+
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(failingPutFileStore{ObjectStore: store}, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+	pkg := workspace.Package{Name: "@kb/app", Dir: pkgDir, Language: "typescript"}
+	def := TaskDef{Name: "build", Command: `sh -c "mkdir -p dist && echo built > dist/app.js"`, Outputs: []string{"dist/*.js"}, Cache: true}
+
+	first := executor.Run(pkg, def, false, nil)
+	if !first.OK || first.Cached {
+		t.Fatalf("first build = %+v, want successful uncached build", first)
+	}
+	if _, err := os.Stat(filepath.Join(pkgDir, "dist", "app.js")); err != nil {
+		t.Fatalf("build output missing after cache store failure: %v", err)
+	}
+	second := executor.Run(pkg, def, false, nil)
+	if !second.OK || second.Cached {
+		t.Fatalf("second build = %+v, want successful fresh build", second)
 	}
 }
 
