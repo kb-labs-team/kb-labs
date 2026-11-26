@@ -44,6 +44,20 @@ test('test (full) gates the shipped lane only', () => {
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
+// case: S-262.22
+test('master unit tests use the shipped lane while lint and type-check stay workspace-wide', () => {
+  const ci = load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  const steps = ci.jobs.checks.steps;
+  const shipped = steps.find((step) => step.name === 'Run ${{ matrix.task }} (shipped lane)');
+  const broad = steps.find((step) => step.name === 'Run ${{ matrix.task }} (lint / type-check)');
+
+  assert.equal(shipped.if, "matrix.task == 'test' || matrix.task == 'test:cli'");
+  assert.match(shipped.run, /kb-devkit run \$\{\{ matrix\.task \}\} --lane shipped --no-cache/);
+  assert.equal(broad.if, "matrix.task == 'lint' || matrix.task == 'type-check'");
+  assert.match(broad.run, /kb-devkit run \$\{\{ matrix\.task \}\} --no-cache/);
+  assert.doesNotMatch(broad.run, /--lane/);
+});
+
 test('full workspace dist is built once and shared by full tests and Devkit checks', () => {
   const producerId = 'full-dist-for-devkit-build';
   const producer = ciPr.jobs[producerId];
