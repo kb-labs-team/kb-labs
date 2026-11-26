@@ -13,6 +13,8 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertEqual(plan_claims(["e2e/journey/marketplace_steps.py", "docs/guide.md"]),
                          ["S-010.1", "S-010.8", "S-012.1"])
         self.assertIn("S-160.5", plan_claims(["e2e/journey/plugin_author_steps.py"]))
+        self.assertEqual(plan_claims(["tools/kb-devkit/internal/engine/executor.go"]), [])
+        self.assertIn("PC-001.2", plan_claims(["tools/kb-devkit/internal/engine/executor.go", "tools/kb-create/main.go"]))
         self.assertIn("PC-001.2", plan_claims(["core/runtime/src/main.ts"]))
         self.assertTrue(plan_claims(["services/new-service/src/main.ts"]))
 
