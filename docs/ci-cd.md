@@ -24,6 +24,24 @@ Apply `full-ci` to request the full platform E2E matrix for a PR. Apply `candida
 to request the candidate profile of remote verification. Both appear in the PR's
 checks alongside the regular jobs. PR description lint and Docs Bot run separately.
 
+## Stabilization workflow
+
+1. Link the product case and the failing step or contract in the PR description.
+   Include the base commit, profile, expected result and the check that reproduced
+   the failure. For CI and docs changes, link the job or source being changed.
+2. Keep the PR scoped to one independently verifiable change. List any prerequisite
+   PRs, and verify against `master` again after those land. Run the affected checks
+   locally before starting hosted verification.
+3. Use the `Journey baseline delta` summary to verify the result on both SHAs. An
+   unchanged failure with matching evidence remains known debt. A new failure, a
+   different failure reason, or missing required evidence blocks the merge. A PR
+   in the selected product scope must also show a recovery during stabilization.
+4. Merge after checks on the current revision pass. Remove resolved entries from
+   the [DevKit baseline](../scripts/ci/devkit-baseline.json) in the fixing PR.
+   Retain the full Journey report from the exact release candidate for release
+   acceptance. Use [the QA strategy](qa/TESTING-STRATEGY.md) to choose the nearest
+   test boundary for the fix.
+
 ## Master, scheduled runs, and releases
 
 | Workflow | When it runs |
