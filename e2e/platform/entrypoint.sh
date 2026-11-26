@@ -165,6 +165,9 @@ EOF
 # platform root through its supported CLI entrypoint so the host can route
 # /api/v1/projects/{id}/... to its runtime.
 echo "==> [3/3] Registering the project..."
+# Secured Gateway registration requires an authenticated CLI session. Feed the
+# bootstrap password over stdin so it never appears in the process arguments.
+printf '%s\n' "$GATEWAY_BOOTSTRAP_ADMIN_PASSWORD" | kb auth login --gateway-url http://127.0.0.1:4000 --email "$GATEWAY_BOOTSTRAP_ADMIN_EMAIL" --password-stdin
 kb project add "$PLATFORM_ROOT"
 if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
   kb-create restart --platform-root "$PLATFORM_ROOT"

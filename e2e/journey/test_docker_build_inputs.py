@@ -133,6 +133,7 @@ class DockerBuildInputsTest(unittest.TestCase):
     def test_e2e_platform_uses_installed_cli_and_restarts_for_oauth_override(self):
         entrypoint = (ROOT / "e2e" / "platform" / "entrypoint.sh").read_text()
         apply_index = entrypoint.index("kb-create apply \\")
+        login_index = entrypoint.index('kb auth login --gateway-url http://127.0.0.1:4000 --email "$GATEWAY_BOOTSTRAP_ADMIN_EMAIL" --password-stdin')
         project_add_index = entrypoint.index('kb project add "$PLATFORM_ROOT"')
         override_index = entrypoint.index('cat > "$PLATFORM_ROOT/current/.kb/kb.config.override.json"')
         restart_index = entrypoint.index('kb-create restart --platform-root "$PLATFORM_ROOT"')
@@ -143,6 +144,10 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertIn('--scenario custom --scenario-answers "$SCENARIO_ANSWERS"', entrypoint)
         self.assertIn('--secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD', entrypoint)
         self.assertLess(apply_index, project_add_index)
+        self.assertLess(apply_index, login_index)
+        self.assertLess(login_index, project_add_index)
+        self.assertIn('printf \'%s\\n\' "$GATEWAY_BOOTSTRAP_ADMIN_PASSWORD" | kb auth login', entrypoint)
+        self.assertNotIn('--password "$GATEWAY_BOOTSTRAP_ADMIN_PASSWORD"', entrypoint)
         self.assertLess(apply_index, override_index)
         self.assertLess(override_index, restart_index)
         self.assertIn('"clientSecretEnv": "OIDC_CORP_CLIENT_SECRET"', entrypoint)
