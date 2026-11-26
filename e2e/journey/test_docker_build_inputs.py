@@ -1,6 +1,7 @@
 import fnmatch
 import glob
 import json
+import re
 import shlex
 import unittest
 from pathlib import Path
@@ -77,6 +78,16 @@ def copy_sources(dockerfile):
 
 
 class DockerBuildInputsTest(unittest.TestCase):
+    @staticmethod
+    def _compose_service(compose, service):
+        match = re.search(
+            rf"(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^volumes:\n|\Z)",
+            compose,
+        )
+        if not match:
+            return ""
+        return match.group(1)
+
     def test_copy_sources_are_available_in_the_root_docker_context(self):
         rules = dockerignore_rules(ROOT / ".dockerignore")
         dockerfile = ROOT / "e2e/journey/Dockerfile.runner"
@@ -96,6 +107,25 @@ class DockerBuildInputsTest(unittest.TestCase):
 
         self.assertEqual([], excluded,
                          f"Dockerfile COPY sources are excluded by .dockerignore: {sorted(set(excluded))}")
+
+    def test_e2e_platform_serves_the_prepared_candidate_binary_from_origin(self):
+        compose = (ROOT / "e2e" / "docker-compose.yml").read_text()
+        workflow = (ROOT / ".github" / "workflows" / "reusable-e2e-platform-build.yml").read_text()
+        preparation = (ROOT / "e2e" / "platform" / "prepare-container-binaries.sh").read_text()
+        staging = (ROOT / "e2e" / "platform" / "stage-release-binaries.mjs").read_text()
+
+        self.assertIn("  origin:\n", compose)
+        origin = self._compose_service(compose, "origin")
+        self.assertIn("python:3.12-alpine", origin)
+        self.assertIn("./.journey/e2e-platform-binaries:/release/journey-candidate:ro", origin)
+        self.assertIn("http.server", origin)
+        self.assertIn("/journey-candidate/kb-create-linux-amd64", origin)
+
+        platform = self._compose_service(compose, "platform")
+        self.assertRegex(platform, r"(?s)depends_on:.*?origin:\s*\n\s+condition: service_healthy")
+        self.assertIn("e2e/.journey/e2e-platform-binaries", workflow)
+        self.assertIn("--asset-base-url http://origin:8080/journey-candidate", preparation)
+        self.assertIn("copyFileSync(artifact.path, join(outputDirectory, artifact.name))", staging)
 
 
 if __name__ == "__main__":
