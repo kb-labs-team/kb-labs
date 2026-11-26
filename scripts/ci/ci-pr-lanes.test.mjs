@@ -42,6 +42,24 @@ test('test (full) gates the shipped lane only', () => {
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
+test('full workspace dist is built once and shared by full tests and Devkit checks', () => {
+  const producerId = 'full-dist-for-devkit-build';
+  const producer = ciPr.jobs[producerId];
+  const consumers = [ciPr.jobs['full-unit-tests'], ciPr.jobs['devkit-checks']];
+
+  assert.ok(producer, 'the shared full-dist producer must exist');
+  assert.equal(producer.steps.filter((step) => /kb-devkit run build\b/.test(step.run ?? '')).length, 1);
+  assert.equal(producer.steps.find((step) => /kb-devkit run build\b/.test(step.run ?? '')).run, './tools/kb-devkit/kb-devkit run build');
+  assert.ok(producer.steps.some((step) => step.with?.name === 'full-dist-for-devkit-checks'));
+  for (const consumer of consumers) {
+    assert.ok(consumer.needs.includes(producerId), 'both consumers must depend on the producer');
+    assert.ok(consumer.steps.some((step) => step.with?.name === 'full-dist-for-devkit-checks'));
+  }
+  assert.ok(!ciPr.jobs['devkit-checks'].needs.includes('full-unit-tests'), 'Devkit checks can run alongside full tests');
+  assert.equal(ciPr.jobs['full-unit-tests'].name, 'test (full)');
+  assert.ok(ciPr.jobs['ci-evidence'].needs.includes(producerId));
+});
+
 test('internal tools run in their own visible job on their own affected inputs', () => {
   const lane = jobs.filter(([, job]) => devkitTestRuns(job).some((step) => step.run.includes(`--lane ${internalLane[0]}`)));
   assert.equal(lane.length, 1, 'exactly one job runs the internal-tool lane');
