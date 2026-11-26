@@ -28,26 +28,37 @@ PLATFORM_ROOT=/workspace/kb-e2e
 # starts installing the platform into that directory.
 mkdir -p "$PLATFORM_ROOT"
 
-# The platform runs as one supervised host process (kb-host): the launcher
-# installs it, `kb-create start` runs it. Marketplace and state bind internal
-# loopback ports, rest and workflow run in a per-project runtime the host starts
-# on demand; there is no kb-dev, no --net-offset and no devservices.yaml here.
+# The initial host starts during apply and needs the E2E admin credentials.
+# Compose can supply different values for the auth suites.
+GATEWAY_BOOTSTRAP_ADMIN_EMAIL="${GATEWAY_BOOTSTRAP_ADMIN_EMAIL:-admin@e2e.test}"
+GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:-E2eBootstrapPass1!}"
+GATEWAY_BOOTSTRAP_TENANT_ID="${GATEWAY_BOOTSTRAP_TENANT_ID:-kblabs-cloud}"
+export GATEWAY_BOOTSTRAP_ADMIN_EMAIL GATEWAY_BOOTSTRAP_ADMIN_PASSWORD GATEWAY_BOOTSTRAP_TENANT_ID
+
+# The secured scenario exposes Gateway to the runner and selects sqlite-stores
+# for auth. Request the remaining catalog adapters without duplicating it.
+SCENARIO_ANSWERS=$(jq -cn --arg email "$GATEWAY_BOOTSTRAP_ADMIN_EMAIL" --arg tenant "$GATEWAY_BOOTSTRAP_TENANT_ID" \
+  '{"access.mode": "secured", "admin.email": $email, "admin.tenant": $tenant}')
+ADAPTERS=$(jq -r '[.adapters[].id | select(. != "sqlite-stores")] | join(",")' /release-index.json)
+
+# Apply installs and starts the supervised host. The host starts the
+# per-project REST and workflow runtimes on demand.
 kb-create apply \
   --index /release-index.json \
   --platform-root "$PLATFORM_ROOT" \
   --project-root "$PLATFORM_ROOT" \
   --platform-channel stable \
   --service-profile default \
+  --scenario custom --scenario-answers "$SCENARIO_ANSWERS" \
+  --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD \
   --plugins "$(jq -r '[.plugins[] | select(.default == true) | .id] | join(",")' /e2e-registry-manifest.json)" \
-  --adapters "$(jq -r '[.adapters[].id] | join(",")' /release-index.json)" \
+  --adapters "$ADAPTERS" \
   --registry http://verdaccio:4873
 cd "$PLATFORM_ROOT"
 
 # ── OIDC redirect-provider config (OAuth E2E stack only) ───────────────────────
-# kb-create apply establishes the versioned platform root. Gateway reads the
-# platform container override when kb-create start boots services, so write it
-# after apply and before start. The client secret stays in an env var
-# (clientSecretEnv), never in the config file.
+# Apply creates the active platform root. Restart the host after writing the
+# override so Gateway loads it. The override refers to the secret by env name.
 if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
   echo "    OIDC_E2E_ENABLED=true — writing gateway config override"
   OIDC_ISSUER="${OIDC_CORP_ISSUER:-https://idp-stub:9443}"
@@ -72,19 +83,6 @@ if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
 }
 OIDC_OVERRIDE
 fi
-
-# Bootstrap admin for E2E — gateway creates this user on first start.
-# Tests obtain machine-client credentials by logging in as admin and calling
-# POST /auth/register (no static tokens needed).
-#
-# Use ${VAR:-default} so docker-compose overrides take precedence.
-# docker-compose.auth-ci.yml injects auth-specific credentials; without this
-# guard the assignments below would overwrite those injected values and the
-# auth E2E tests would always get 401 (wrong bootstrap email / tenant).
-GATEWAY_BOOTSTRAP_ADMIN_EMAIL="${GATEWAY_BOOTSTRAP_ADMIN_EMAIL:-admin@e2e.test}"
-GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:-E2eBootstrapPass1!}"
-GATEWAY_BOOTSTRAP_TENANT_ID="${GATEWAY_BOOTSTRAP_TENANT_ID:-kblabs-cloud}"
-export GATEWAY_BOOTSTRAP_ADMIN_EMAIL GATEWAY_BOOTSTRAP_ADMIN_PASSWORD GATEWAY_BOOTSTRAP_TENANT_ID
 
 # Scaffold test workflows used by E2E suite
 mkdir -p .kb/workflows
@@ -162,11 +160,11 @@ jobs:
           command: echo "after approval"
 EOF
 
-# ── Step 3: Start the host ─────────────────────────────────────────────────
+# ── Step 3: Register the project ────────────────────────────────────────────
 # `kb-create apply` started the supervised host. Register the installed
 # platform root through its supported CLI entrypoint so the host can route
 # /api/v1/projects/{id}/... to its runtime.
-echo "==> [3/3] Starting the host..."
+echo "==> [3/3] Registering the project..."
 kb project add "$PLATFORM_ROOT"
 if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
   kb-create restart --platform-root "$PLATFORM_ROOT"

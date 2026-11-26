@@ -137,6 +137,11 @@ class DockerBuildInputsTest(unittest.TestCase):
         override_index = entrypoint.index('cat > "$PLATFORM_ROOT/current/.kb/kb.config.override.json"')
         restart_index = entrypoint.index('kb-create restart --platform-root "$PLATFORM_ROOT"')
 
+        self.assertLess(entrypoint.index('export GATEWAY_BOOTSTRAP_ADMIN_EMAIL GATEWAY_BOOTSTRAP_ADMIN_PASSWORD'),
+                        apply_index)
+        self.assertIn('"access.mode": "secured"', entrypoint)
+        self.assertIn('--scenario custom --scenario-answers "$SCENARIO_ANSWERS"', entrypoint)
+        self.assertIn('--secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD', entrypoint)
         self.assertLess(apply_index, project_add_index)
         self.assertLess(apply_index, override_index)
         self.assertLess(override_index, restart_index)
