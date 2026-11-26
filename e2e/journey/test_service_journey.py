@@ -36,6 +36,7 @@ from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_sel
                             run_grouped_service_steps, run_service_steps)
 from service_steps import FlowGraph, Journey, record_runner_exception, record_runner_failure, replay_steps
 from journey_selection import JourneySelection
+from journey_dependencies import required_state_closure
 from invocations import catalogued_error_hint, run_pty_command, store_report_secret
 from nightly_report import load_results
 from steps.auth import run_secured_auth_steps
@@ -134,6 +135,16 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_state_closure_includes_state_producer_group_prerequisites(self):
+        dependencies = {
+            "gateway": ("host-running", "service-api-session"),
+            "host": ("platform-installed",),
+            "auth": ("host-running",),
+        }
+        producers = {"host-running": "host", "service-api-session": "auth"}
+        self.assertEqual(required_state_closure({"gateway"}, dependencies, producers),
+                         {"host-running", "service-api-session", "platform-installed"})
+
     def test_commit_claims_select_only_the_marketplace_lifecycle_owner(self):
         root = Path(__file__).resolve().parents[2]
         cases = ("S-160.3", "S-160.5", "S-030.1")

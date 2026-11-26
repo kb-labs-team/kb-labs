@@ -78,6 +78,27 @@ class JourneyExecutionLeaseTests(unittest.TestCase):
                              for row in report.steps))
         self.assertEqual(report.flows[0]["plannedStepId"], "service-local:explore|flow:setup")
 
+    def test_selected_child_owner_activates_its_enclosing_group_flow(self):
+        payload = lease()
+        payload["steps"][0]["capabilities"] = ["gateway"]
+        selection = read_journey_selection({
+            "KB_JOURNEY_EXECUTION_LEASE_JSON": json.dumps(payload),
+            "KB_JOURNEY_ONLY": "service-local:explore",
+            "KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore",
+        }, strict=True)
+        journey = Journey("local", "lease-run", selection=selection)
+        graph = FlowGraph(journey, {}, groups={"gateway": {
+            "capabilities": {"gateway"}, "depends_on": (), "steps": ()}})
+        child_called = []
+
+        def selected_child():
+            journey.step("setup", "install", lambda: child_called.append(True), cases=["S-001.1"])
+
+        self.assertEqual(graph.flow("container", "gateway", "gateway", selected_child), "PASS")
+        self.assertEqual(child_called, [True])
+        self.assertTrue(any(row.get("plannedStepId") == "service-local:explore|step:setup"
+                            for row in journey.result().steps))
+
     def test_lease_rejects_foreign_runner_mode_and_incomplete_selected_inventory(self):
         with self.assertRaisesRegex(JourneySelectionError, "selector does not match"):
             read_journey_selection({"KB_JOURNEY_EXECUTION_LEASE_JSON": json.dumps(lease()),

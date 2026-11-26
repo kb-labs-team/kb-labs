@@ -27,7 +27,7 @@ from invocations import (
     read_ux_cli_result,
 )
 from dispatch_registry import RUNNERS, RUNNER_GROUPS, lanes_for_runners, runners_for_source
-from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS
+from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS, owner_state_prerequisites
 from journey_selection import read_journey_selection, read_requested_cases
 from journey_resources import resource_root
 from journey_values import journey_value
@@ -1062,12 +1062,20 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                         active_steps[mode][step_id] = {**case, "stepId": step_id}
 
     rows: list[dict] = []
+    group_specs_by_selector: dict[str, dict] = {}
     for selector in selectors:
         runner = RUNNERS[selector]
         if selector not in plans:
             raise ValueError(f"active release owner {selector!r} has no complete runnable route")
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
+        if selector not in group_specs_by_selector:
+            if selector.startswith("service-"):
+                from service_runner import service_selection_groups
+                group_specs_by_selector[selector] = service_selection_groups(root, selector)
+            else:
+                from runner import outer_selection_groups
+                group_specs_by_selector[selector] = outer_selection_groups()
         declarations = _source_step_declarations_cached(tuple(sorted(sources)), root)
         by_name: dict[tuple[str, str], dict] = {}
         for declaration in declarations.values():
@@ -1109,6 +1117,8 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                     continue
                 required_id = f"{selector}|{dependency.kind}:{dependency.name}"
                 required_ids.append(required_id)
+            states = owner_state_prerequisites(
+                name, case_ids, capabilities, group_specs_by_selector[selector], required_states)
             rows.append({
                 "id": owner_id,
                 "name": name,
@@ -1119,7 +1129,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                 "claimIds": sorted(case_ids),
                 "capabilities": sorted(capabilities),
                 "requires": sorted(set(required_ids)),
-                "states": sorted(set(required_states)),
+                "states": sorted(states),
                 "mandatory": True,
             })
             owner_rows[owner_id] = rows[-1]

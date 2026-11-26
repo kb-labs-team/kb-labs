@@ -68,6 +68,7 @@ class FullRunnableSelectionTests(unittest.TestCase):
                 patch("select_from_cases.full_runner_owner_plans", return_value={
                     "route-local": [("step", "prepare"), ("step", "check")],
                     "route-secured": [("flow", "prepare"), ("flow", "check")]}), \
+                patch("runner.outer_selection_groups", return_value={}), \
                 patch("select_from_cases._imported_journey_sources", return_value={source}), \
                 patch("select_from_cases._source_step_declarations_cached", return_value=declarations), \
                 patch("select_from_cases._case_declarations", side_effect=case_declarations):
@@ -117,6 +118,11 @@ class FullRunnableSelectionTests(unittest.TestCase):
         selection = full_runnable_selection(coverage, root, source_sha)
         self.assertEqual(selection["selectors"], ["service-local:explore", "service-secured:explore"])
         self.assertFalse(any(row["name"] == "human interactive install" for row in selection["steps"]))
+        local_rows = {row["name"]: row for row in selection["steps"]
+                      if row["runner"] == "service-local:explore"}
+        readiness = local_rows["platform readiness (gateway + project workflow)"]
+        self.assertEqual(readiness["states"], ["host-running", "project-registered", "service-api-session"])
+        self.assertEqual(local_rows["installed platform bootstrap"]["states"], [])
 
     def test_real_service_route_excludes_secured_only_registration_from_local_owner_plan(self):
         root = Path(__file__).resolve().parents[2]

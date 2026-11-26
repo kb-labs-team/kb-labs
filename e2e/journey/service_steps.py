@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, overload
 from invocations import invocation_context, invocation_link, write_report_json, write_report_text
-from journey_dependencies import Dependency
+from journey_dependencies import Dependency, required_state_closure
 from journey_values import MissingJourneyState
 from journey_values import journey_value
 from journey_selection import (JourneySelection, active_journey_selection,
@@ -555,20 +555,13 @@ class FlowGraph:
                 or (self.journey.prerequisite_steps | self.journey.planned_step_names).intersection(
                     self.unique_group_steps[group]))
         }
-        self.needed_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
-        for group in self.selected_groups:
-            self.needed_states.update(self.dependencies.get(
-                group, self.groups.get(group, {}).get("depends_on", ())))
-        pending_states = list(self.needed_states)
-        while pending_states:
-            producer = self.state_producers.get(pending_states.pop())
-            if producer is None:
-                continue
-            for state in self.dependencies.get(
-                    producer, self.groups.get(producer, {}).get("depends_on", ())):
-                if state not in self.needed_states:
-                    self.needed_states.add(state)
-                    pending_states.append(state)
+        group_dependencies = {
+            group: self.dependencies.get(group, self.groups.get(group, {}).get("depends_on", ()))
+            for group in set(self.dependencies) | set(self.groups)
+        }
+        initial_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
+        self.needed_states = required_state_closure(
+            self.selected_groups, group_dependencies, self.state_producers, initial_states)
 
     @property
     def selection_active(self) -> bool:
@@ -811,6 +804,10 @@ class FlowGraph:
             planned_flow = self.journey.planned_execution_steps.get(("flow", name))
             selected_owner = bool(planned_flow and planned_flow["direct"])
             prerequisite = bool(planned_flow and not planned_flow["direct"])
+            if planned_flow is None and group in self.selected_groups:
+                # A selected child owner still needs its enclosing group flow to
+                # run, even when the flow container is not itself a lease owner.
+                prerequisite = True
         else:
             selected_owner = (group in self.selected_groups
                               or self._flow_owns_selected_claim(group, case_ids))
