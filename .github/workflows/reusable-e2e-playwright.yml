@@ -292,7 +292,8 @@ jobs:
             if curl -sf http://localhost:4000/health > /dev/null 2>&1; then
               echo "Gateway ready after $((i * 5))s"; break
             fi
-            if [ "$i" = "${{ inputs.health-steps }}" ]; then
+            if [ "$i" = "${{ inputs.health-steps }}" ] ||
+              [ -n "$(docker compose ps --all --status exited --quiet platform)" ]; then
               echo "Gateway failed to start — dumping logs"
               docker compose logs platform | tail -100
               exit 1

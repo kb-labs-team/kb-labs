@@ -195,4 +195,12 @@ test('affected E2E is triggered once from CI(PR) and checks out the planned SHA'
   assert.equal(playwright.find((step) => step.name === 'Checkout').with.ref, checkout.with.ref);
   const platformLogs = playwright.find((step) => step.with?.name?.includes('platform-logs'));
   assert.match(platformLogs.with.name, /inputs\.artifact-prefix \|\| inputs\.suite/);
+  for (const [steps, name] of [
+    [reusableDockerE2e.jobs.e2e.steps, 'Wait for platform to be healthy'],
+    [playwright, 'Wait for gateway to be healthy'],
+  ]) {
+    const readiness = steps.find((step) => step.name === name).run;
+    assert.match(readiness, /docker compose ps --all --status exited --quiet platform/);
+    assert.match(readiness, /docker compose logs platform/);
+  }
 });
