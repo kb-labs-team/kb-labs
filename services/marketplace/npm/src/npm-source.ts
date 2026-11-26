@@ -44,16 +44,32 @@ export class PlatformArtifactPinsError extends Error {
 
 export interface NpmPackageSourceOptions {
   registryUrl: string;
+  redactSensitiveValues?: (value: string) => string;
+}
+
+export interface PackageManagerDiagnostic {
+  operation: 'pnpm.add' | 'pnpm.install-repair';
+  exitCode?: number;
+  stderr: string;
 }
 
 export class PackageInstallError extends Error {
   readonly code: 'NOT_FOUND' | 'INSTALL_FAILED' | 'RELEASE_TOO_FRESH' | 'INTEGRITY_MISMATCH';
   readonly spec: string;
-  constructor(code: PackageInstallError['code'], spec: string, message: string, options?: ErrorOptions) {
+  readonly packageManagerDiagnostics: readonly PackageManagerDiagnostic[];
+
+  constructor(
+    code: PackageInstallError['code'],
+    spec: string,
+    message: string,
+    options?: ErrorOptions,
+    packageManagerDiagnostics: readonly PackageManagerDiagnostic[] = [],
+  ) {
     super(message, options);
     this.name = 'PackageInstallError';
     this.code = code;
     this.spec = spec;
+    this.packageManagerDiagnostics = packageManagerDiagnostics;
   }
 }
 
@@ -61,10 +77,14 @@ export class NpmPackageSource implements MarketplaceSource {
   readonly kind = 'npm' as const;
   readonly dependencyRegistryUrl: string;
   private readonly registryUrl: string;
+  private readonly registrySecrets: readonly string[];
+  private readonly redactSensitiveValues?: (value: string) => string;
   private readonly pendingInstalls = new Map<string, PackageManagerFileSnapshot[]>();
 
   constructor(options: NpmPackageSourceOptions) {
     this.registryUrl = options.registryUrl.replace(/\/$/, '');
+    this.registrySecrets = extractRegistrySecrets(this.registryUrl);
+    this.redactSensitiveValues = options.redactSensitiveValues;
     const dependencyRegistry = new URL(this.registryUrl);
     dependencyRegistry.username = '';
     dependencyRegistry.password = '';
@@ -164,14 +184,23 @@ export class NpmPackageSource implements MarketplaceSource {
         await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const code = msg.includes('ERR_PNPM_FETCH_404') || msg.includes('Not Found - 404')
+        const diagnostic = this.packageManagerDiagnostic('pnpm.add', err);
+        const failureText = `${msg}\n${diagnostic.stderr}`;
+        const code = failureText.includes('ERR_PNPM_FETCH_404') || failureText.includes('Not Found - 404')
           ? 'NOT_FOUND'
-          : msg.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || msg.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+          : failureText.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || failureText.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
             ? 'RELEASE_TOO_FRESH'
-            : msg.includes('ERR_PNPM_TARBALL_INTEGRITY') || msg.includes('ERR_PNPM_TARBALL_INTEGRITY_FAILED')
+            : failureText.includes('ERR_PNPM_TARBALL_INTEGRITY') || failureText.includes('ERR_PNPM_TARBALL_INTEGRITY_FAILED')
               ? 'INTEGRITY_MISMATCH'
               : 'INSTALL_FAILED';
-        throw new PackageInstallError(code, spec, `pnpm add ${spec} failed: ${msg}`, { cause: err });
+        const safeMessage = redactPackageManagerOutput(msg, this.registrySecrets, this.redactSensitiveValues);
+        throw new PackageInstallError(
+          code,
+          spec,
+          `pnpm add ${spec} failed: ${safeMessage}`,
+          { cause: safePackageManagerError(err, this.registrySecrets, this.redactSensitiveValues) },
+          [diagnostic],
+        );
       }
 
       const packageRoot = path.join(root, 'node_modules', pkg.id);
@@ -198,11 +227,18 @@ export class NpmPackageSource implements MarketplaceSource {
         if (pnpmStarted) {await reconcileRestoredPackageGraph(root, state);}
         else {await restorePackageManagerState(root, state);}
       } catch (rollbackError) {
+        const packageManagerDiagnostics = [
+          ...(error instanceof PackageInstallError ? error.packageManagerDiagnostics : []),
+          this.packageManagerDiagnostic('pnpm.install-repair', rollbackError),
+        ];
+        const safeInstallError = safePackageManagerError(error, this.registrySecrets, this.redactSensitiveValues);
+        const safeRepairError = safePackageManagerError(rollbackError, this.registrySecrets, this.redactSensitiveValues);
         throw new PackageInstallError(
           'INSTALL_FAILED',
           spec,
           `Marketplace could not restore package-manager state after installing ${spec}. Run "pnpm install --offline" in ${root}, then retry "kb marketplace install ${spec}".`,
-          { cause: new AggregateError([error, rollbackError], 'Marketplace package-manager rollback failed') },
+          { cause: new AggregateError([safeInstallError, safeRepairError], 'Marketplace package-manager rollback failed') },
+          packageManagerDiagnostics,
         );
       }
       throw error;
@@ -224,6 +260,71 @@ export class NpmPackageSource implements MarketplaceSource {
   async remove(packageId: string, root: string): Promise<void> {
     await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
   }
+
+  private packageManagerDiagnostic(operation: PackageManagerDiagnostic['operation'], error: unknown): PackageManagerDiagnostic {
+    const result = error !== null && typeof error === 'object'
+      ? error as { exitCode?: unknown; stderr?: unknown }
+      : {};
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const exitCode = typeof result.exitCode === 'number' ? result.exitCode : undefined;
+    return {
+      operation,
+      ...(exitCode === undefined ? {} : { exitCode }),
+      stderr: redactPackageManagerOutput(stderr, this.registrySecrets, this.redactSensitiveValues),
+    };
+  }
+}
+
+const MAX_PACKAGE_MANAGER_STDERR_LENGTH = 8 * 1024;
+const CREDENTIAL_NAME = /(?:auth|token|password|passwd|secret|credential|api[_-]?key)/i;
+
+function extractRegistrySecrets(registryUrl: string): string[] {
+  let parsed: URL;
+  try {
+    parsed = new URL(registryUrl);
+  } catch {
+    return [];
+  }
+  const values = [parsed.username, parsed.password]
+    .filter(Boolean)
+    .flatMap(value => {
+      try { return [value, decodeURIComponent(value)]; } catch { return [value]; }
+    });
+  for (const [name, value] of parsed.searchParams) {
+    if (CREDENTIAL_NAME.test(name) && value) { values.push(value); }
+  }
+  return [...new Set(values)];
+}
+
+function redactPackageManagerOutput(
+  output: string,
+  registrySecrets: readonly string[],
+  redactSensitiveValues?: (value: string) => string,
+): string {
+  const limited = output
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
+  const configuredRedacted = registrySecrets
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .reduce((value, secret) => value.split(secret).join('[REDACTED]'), limited);
+  const structurallyRedacted = configuredRedacted
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 [REDACTED]')
+    .replace(/(https?:\/\/)[^/\s:@]+(?::[^/\s@]*)?@/gi, '$1[REDACTED]@')
+    .replace(/([?&][^=&#\s]*(?:auth|token|password|secret|credential|api[_-]?key)[^=&#\s]*=)[^&#\s]*/gi, '$1[REDACTED]')
+    .replace(/((?:_authToken|_auth|authorization|password|passwd|token|api[_-]?key)\s*[:=]\s*)(?:Bearer\s+)?[^\s,;]+/gi, '$1[REDACTED]');
+  return redactSensitiveValues?.(structurallyRedacted) ?? structurallyRedacted;
+}
+
+function safePackageManagerError(
+  error: unknown,
+  registrySecrets: readonly string[],
+  redactSensitiveValues?: (value: string) => string,
+): Error {
+  const raw = error instanceof Error ? error : new Error(String(error));
+  const safe = new Error(redactPackageManagerOutput(raw.message, registrySecrets, redactSensitiveValues));
+  safe.name = redactPackageManagerOutput(raw.name, registrySecrets, redactSensitiveValues);
+  return safe;
 }
 
 function installKey(root: string, packageId: string): string {

@@ -115,6 +115,65 @@ describe('NpmPackageSource', () => {
     expect(source.dependencyRegistryUrl).toBe('https://npm.fixture.example/path');
   });
 
+  // case: S-220.1
+  it('captures the add and offline repair stderr causes and removes registry credentials', async () => {
+    const { root, home } = await createInstallRoot();
+    const binDirectory = path.join(root, 'bin');
+    await fs.mkdir(binDirectory, { recursive: true });
+    const callsPath = path.join(root, 'pnpm-calls.txt');
+    const pnpmShim = path.join(binDirectory, 'pnpm');
+    await fs.writeFile(pnpmShim, [
+      '#!/bin/sh',
+      'printf "%s\\n" "$1" >> "$PNPM_CALLS"',
+      'if [ "$1" = "add" ]; then',
+      '  printf "%s\\n" "ERR_PNPM_NO_MATURE_MATCHING_VERSION: direct package is too fresh" "registry=https://user:registry-password@npm.fixture.example/path?token=query-secret" >&2',
+      'else',
+      '  printf "%s\\n" "ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: offline repair rejected the restored package graph" "authorization: Bearer environment-token" >&2',
+      'fi',
+      'exit 1',
+      '',
+    ].join('\n'), { mode: 0o700 });
+    vi.stubEnv('PATH', `${binDirectory}:${process.env.PATH ?? ''}`);
+    vi.stubEnv('PNPM_CALLS', callsPath);
+    const source = new NpmPackageSource({
+      registryUrl: 'https://user:registry-password@npm.fixture.example/path?token=query-secret',
+    });
+
+    let failure: unknown;
+    try {
+      await source.install({
+        id: '@kb-labs/test-adapter',
+        version: '1.0.0',
+        integrity: '',
+        source: 'marketplace',
+        primaryKind: 'adapter',
+      }, root);
+    } catch (error) {
+      failure = error;
+    }
+
+    expect(await fs.readFile(callsPath, 'utf8')).toBe('add\ninstall\n');
+    expect(failure).toMatchObject({
+      code: 'INSTALL_FAILED',
+      packageManagerDiagnostics: [
+        { operation: 'pnpm.add', stderr: expect.stringContaining('ERR_PNPM_NO_MATURE_MATCHING_VERSION') },
+        { operation: 'pnpm.install-repair', stderr: expect.stringContaining('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH') },
+      ],
+    });
+    const serialized = JSON.stringify(failure);
+    const repairCause = (failure as Error & { cause?: AggregateError }).cause;
+    const causeMessages = repairCause instanceof AggregateError
+      ? repairCause.errors.map(error => error instanceof Error ? error.message : String(error)).join('\n')
+      : '';
+    expect(serialized).not.toContain('registry-password');
+    expect(serialized).not.toContain('query-secret');
+    expect(serialized).not.toContain('environment-token');
+    expect(causeMessages).not.toContain('registry-password');
+    expect(causeMessages).not.toContain('query-secret');
+    expect(causeMessages).not.toContain('environment-token');
+    expect((failure as Error).message).toContain('could not restore package-manager state');
+  });
+
   async function createInstallRoot(): Promise<{ root: string; home: string }> {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'kb-marketplace-pnpm-install-'));
     const home = path.join(root, 'home');

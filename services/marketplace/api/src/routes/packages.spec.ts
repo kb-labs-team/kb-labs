@@ -268,6 +268,59 @@ describe('Marketplace API error boundary', () => {
   });
 
   // case: S-220.1
+  it('logs redacted pnpm repair stderr without adding it to the public error envelope', async () => {
+    const { logger, errors } = makeContextLogger();
+    logger.registerSensitiveValues(['npm-repair-secret', 'registry-password', 'url-secret']);
+    const packageManagerError = new PackageInstallError(
+      'INSTALL_FAILED',
+      '@kb-labs/test-adapter@1.0.0',
+      'Marketplace could not restore package-manager state after installing @kb-labs/test-adapter@1.0.0. Retry after running pnpm install --offline.',
+    );
+    Object.assign(packageManagerError, {
+      packageManagerDiagnostics: [{
+        operation: 'pnpm.install-repair',
+        exitCode: 1,
+        stderr: 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: token=npm-repair-secret https://registry-password:registry-password@registry.test/?_authToken=url-secret',
+      }],
+    });
+    const service = makeMarketplaceService({
+      platformRoot: tmpdir(),
+      logger,
+      source: createFailingSource(packageManagerError, false),
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
+    });
+    const result = response.json();
+
+    expect(response.statusCode).toBe(422);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_MARKETPLACE_INSTALL_FAILED',
+        cause: packageManagerError.message,
+        details: { package: '@kb-labs/test-adapter@1.0.0', scope: 'platform', source: 'npm' },
+      },
+    });
+    expect(response.body).not.toContain('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
+    expect(response.body).not.toContain('npm-repair-secret');
+    expect(response.body).not.toContain('url-secret');
+    expect(response.body).not.toContain('registry-password');
+    expect(errors).toHaveLength(1);
+    const diagnostics = errors[0]?.fields?.packageManagerDiagnostics as Array<{ stderr: string }> | undefined;
+    expect(diagnostics?.[0]?.stderr).toContain('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
+    expect(diagnostics?.[0]?.stderr).toContain('[REDACTED]');
+    expect(JSON.stringify(errors[0])).not.toContain('npm-repair-secret');
+    expect(JSON.stringify(errors[0])).not.toContain('url-secret');
+    expect(JSON.stringify(errors[0])).not.toContain('registry-password');
+  });
+
+  // case: S-220.1
   it('returns a typed freshness refusal without exposing pnpm output', async () => {
     const { logger, errors } = makeContextLogger();
     const packageManagerError = new PackageInstallError(
