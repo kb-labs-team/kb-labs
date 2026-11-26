@@ -70,6 +70,27 @@ func TestEveryCanaryIndexArtifactUsesItsSelectedSource(t *testing.T) {
 	}
 }
 
+func TestJourneyBinarySourceRetainsVersionedTail(t *testing.T) {
+	const version = "2.120.2-cand.fixture"
+	const filename = "kb-create-linux-amd64"
+	items := []contracts.Artifact{
+		{ID: "kb-create", Kind: "binary", Version: version, URL: "http://origin:8080/journey-candidate/binaries/" + version + "/" + filename, Target: filename},
+		{ID: "kb-create", Kind: "binary", Version: version, URL: "http://origin:8080/journey-candidate/checksum-corrupt/" + version + "-bad-checksum/" + filename, Target: filename},
+	}
+	want := []string{
+		"http://origin:8080/" + version + "/" + filename,
+		"http://origin:8080/" + version + "-bad-checksum/" + filename,
+	}
+	if err := annotateArtifactResolution(contracts.InstallRequest{}, items, "http://origin:8080", "http://verdaccio:4873"); err != nil {
+		t.Fatal(err)
+	}
+	for index := range items {
+		if items[index].ResolvedURL != want[index] {
+			t.Fatalf("binary URL = %q, want %q", items[index].ResolvedURL, want[index])
+		}
+	}
+}
+
 func TestUnknownCanaryArtifactKindIsRejected(t *testing.T) {
 	items := []contracts.Artifact{{ID: "future", Kind: "unrecognized", Package: "@kb/future", Version: "1", Tarball: "https://registry.test/future.tgz"}}
 	if err := annotateArtifactResolution(contracts.InstallRequest{}, items, "http://binary.test", "http://registry.test"); err == nil {

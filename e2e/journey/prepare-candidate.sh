@@ -88,6 +88,14 @@ journey_phase_start "seal-versioned-release-indexes"
 journey_prepare_candidate_indexes "$ROOT" "$PACKAGES" "$OUT" "$TARGET" "$BINARY_VERSION" "$COMMIT"
 journey_phase_end
 
+# kb-create applies the configured binary source to the final two URL path
+# segments. The static origin serves from .journey/release, so stage aliases
+# for versioned assets at /<version>/<filename> as well as the canonical
+# /journey-candidate/binaries/<version>/<filename> paths in the index.
+journey_phase_start "stage-versioned-origin-assets"
+node "$ROOT/e2e/journey/stage-versioned-origin-assets.mjs" "$TARGET" "$OUT/release"
+journey_phase_end
+
 # Install the real candidate graph through kb-create's staging and package
 # installer, then run the same built-entrypoint checker used by S-054.16.
 RUNTIME_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/kb-candidate-runtime-root.XXXXXX")"

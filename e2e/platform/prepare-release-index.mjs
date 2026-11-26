@@ -267,7 +267,10 @@ const badChecksumManifestPath = join(resolve(output, '..'), 'binary-manifests', 
 const badChecksumManifest = {
   binaries: updateBinaryManifest.binaries.map(binary => ({
     ...binary,
-    url: `${binaryBaseUrl}/checksum-corrupt/binaries/${encodeURIComponent(updateVersion)}/${binary.filename}`,
+    // KB_CREATE_DOWNLOAD_BASE_URL resolves binary requests using the final
+    // two path segments. Give the corrupt fixture its own route version so it
+    // cannot alias the valid /<version>/<filename> asset at the static origin.
+    url: `${binaryBaseUrl}/checksum-corrupt/${encodeURIComponent(updateVersion)}-bad-checksum/${binary.filename}`,
   })),
 };
 writeFileSync(badChecksumManifestPath, `${JSON.stringify(badChecksumManifest, null, 2)}\n`);
@@ -294,7 +297,7 @@ for (const binary of updateBinaryManifest.binaries) {
   const versionedPath = join(binaryDirectory, 'binaries', updateVersion, binary.filename);
   const basePath = join(binaryDirectory, binary.filename);
   const sourcePath = existsSync(versionedPath) ? versionedPath : basePath;
-  const corruptPath = join(resolve(output, '..'), 'checksum-corrupt', 'binaries', updateVersion, binary.filename);
+  const corruptPath = join(resolve(output, '..'), 'checksum-corrupt', `${updateVersion}-bad-checksum`, binary.filename);
   mkdirSync(dirname(corruptPath), { recursive: true });
   const corrupted = readFileSync(sourcePath);
   writeFileSync(corruptPath, Buffer.concat([corrupted, Buffer.from('checksum-corruption')]));
