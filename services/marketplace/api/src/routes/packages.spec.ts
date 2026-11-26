@@ -282,7 +282,7 @@ describe('Marketplace API error boundary', () => {
         operation: 'pnpm.install-repair',
         stream: 'stderr',
         exitCode: 1,
-        output: 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: token=npm-repair-secret https://registry-password:registry-password@registry.test/?_authToken=url-secret',
+        output: 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: token=npm-repair-secret https://registry-password:registry-password@registry.test/?_authToken=url-secret ERR_PNPM_FAKE_CANARY_123',
       }],
     });
     const service = makeMarketplaceService({
@@ -315,8 +315,8 @@ describe('Marketplace API error boundary', () => {
     expect(response.body).not.toContain('registry-password');
     expect(errors).toHaveLength(1);
     const diagnostics = errors[0]?.fields?.packageManagerDiagnostics as Array<{ output: string }> | undefined;
-    expect(diagnostics?.[0]?.output).toContain('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
-    expect(diagnostics?.[0]?.output).toContain('[REDACTED]');
+    expect(diagnostics?.[0]?.output).toBe('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
+    expect(JSON.stringify(diagnostics)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
     expect(JSON.stringify(errors[0])).not.toContain('npm-repair-secret');
     expect(JSON.stringify(errors[0])).not.toContain('url-secret');
     expect(JSON.stringify(errors[0])).not.toContain('registry-password');
@@ -332,7 +332,7 @@ describe('Marketplace API error boundary', () => {
       { cause: new Error('Package-manager command failed (exit 1).') },
     );
     Object.assign(packageManagerError, {
-      packageManagerDiagnostics: [{ operation: 'pnpm.install-repair', stream: 'stdout', exitCode: 1, output: 'ERR_PNPM_NO_OFFLINE_META: token=[REDACTED]' }],
+      packageManagerDiagnostics: [{ operation: 'pnpm.install-repair', stream: 'stdout', exitCode: 1, output: 'ERR_PNPM_NO_OFFLINE_META: token=[REDACTED] ERR_PNPM_FAKE_CANARY_123' }],
     });
     const rollbackError = new MarketplaceInstallRollbackError(
       '@kb-labs/test-adapter', 'platform', 'npm', tmpdir(),
@@ -352,7 +352,7 @@ describe('Marketplace API error boundary', () => {
     expect(response.body).not.toContain('ERR_PNPM_NO_OFFLINE_META');
     expect(response.json().error?.code).toBe('KB_MARKETPLACE_INSTALL_FAILED');
     expect(errors[0]?.fields?.packageManagerDiagnostics).toMatchObject([{
-      operation: 'pnpm.install-repair', stream: 'stdout', output: expect.stringContaining('ERR_PNPM_NO_OFFLINE_META'),
+      operation: 'pnpm.install-repair', stream: 'stdout', output: 'ERR_PNPM_NO_OFFLINE_META',
     }]);
   });
 

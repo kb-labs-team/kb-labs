@@ -48,8 +48,8 @@ export interface NpmPackageSourceOptions {
 }
 
 export interface PackageManagerDiagnostic {
-  operation: 'pnpm.add' | 'pnpm.install-repair';
-  stream: 'stdout' | 'stderr';
+  operation: 'pnpm.add' | 'pnpm.install-repair' | 'pnpm.remove';
+  stream: 'stdout' | 'stderr' | 'none';
   exitCode?: number;
   output: string;
 }
@@ -72,6 +72,32 @@ export class PackageInstallError extends Error {
     this.spec = spec;
     this.packageManagerDiagnostics = packageManagerDiagnostics;
   }
+}
+
+const SAFE_PNPM_CODES = new Set([
+  'ERR_PNPM_ADDING_TO_ROOT',
+  'ERR_PNPM_FETCH_404',
+  'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH',
+  'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION',
+  'ERR_PNPM_NO_MATURE_MATCHING_VERSION',
+  'ERR_PNPM_NO_OFFLINE_META',
+  'ERR_PNPM_TARBALL_INTEGRITY',
+  'ERR_PNPM_TARBALL_INTEGRITY_FAILED',
+]);
+
+export function projectPackageManagerDiagnostics(
+  diagnostics: readonly PackageManagerDiagnostic[],
+): PackageManagerDiagnostic[] {
+  return diagnostics.map(diagnostic => ({
+    ...diagnostic,
+    output: safePackageManagerOutput(diagnostic.output),
+  }));
+}
+
+function safePackageManagerOutput(output: string): string {
+  const safeCodes = [...new Set(output.match(/\bERR_PNPM_[A-Z0-9_]+\b/g) ?? [])]
+    .filter(code => SAFE_PNPM_CODES.has(code));
+  return safeCodes.length > 0 ? safeCodes.join('\n') : 'No recognized pnpm error code';
 }
 
 export class NpmPackageSource implements MarketplaceSource {
@@ -185,8 +211,8 @@ export class NpmPackageSource implements MarketplaceSource {
         await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const diagnostic = this.packageManagerDiagnostic('pnpm.add', err);
-        const failureText = `${msg}\n${diagnostic.output}`;
+        const diagnostics = this.packageManagerDiagnostics('pnpm.add', err);
+        const failureText = `${msg}\n${diagnostics.map(diagnostic => diagnostic.output).join('\n')}`;
         const code = failureText.includes('ERR_PNPM_FETCH_404') || failureText.includes('Not Found - 404')
           ? 'NOT_FOUND'
           : failureText.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || failureText.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
@@ -199,7 +225,7 @@ export class NpmPackageSource implements MarketplaceSource {
           spec,
           `pnpm add ${spec} failed (${code}).`,
           { cause: safePackageManagerError(err) },
-          [diagnostic],
+          diagnostics,
         );
       }
 
@@ -229,7 +255,7 @@ export class NpmPackageSource implements MarketplaceSource {
       } catch (rollbackError) {
         const packageManagerDiagnostics = [
           ...(error instanceof PackageInstallError ? error.packageManagerDiagnostics : []),
-          this.packageManagerDiagnostic('pnpm.install-repair', rollbackError),
+          ...this.packageManagerDiagnostics('pnpm.install-repair', rollbackError),
         ];
         const safeInstallError = safePackageManagerError(error);
         const safeRepairError = safePackageManagerError(rollbackError);
@@ -262,29 +288,43 @@ export class NpmPackageSource implements MarketplaceSource {
         packageId,
         `pnpm install repair failed for ${packageId}.`,
         { cause: safePackageManagerError(error) },
-        [this.packageManagerDiagnostic('pnpm.install-repair', error)],
+        this.packageManagerDiagnostics('pnpm.install-repair', error),
       );
     }
   }
 
   async remove(packageId: string, root: string): Promise<void> {
-    await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
+    try {
+      await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
+    } catch (error) {
+      throw new PackageInstallError(
+        'INSTALL_FAILED', packageId, `pnpm remove failed for ${packageId}.`,
+        { cause: safePackageManagerError(error) }, this.packageManagerDiagnostics('pnpm.remove', error),
+      );
+    }
   }
 
-  private packageManagerDiagnostic(operation: PackageManagerDiagnostic['operation'], error: unknown): PackageManagerDiagnostic {
+  private packageManagerDiagnostics(operation: PackageManagerDiagnostic['operation'], error: unknown): PackageManagerDiagnostic[] {
     const result = error !== null && typeof error === 'object'
       ? error as { exitCode?: unknown; stderr?: unknown; stdout?: unknown }
       : {};
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
     const stdout = typeof result.stdout === 'string' ? result.stdout : '';
     const exitCode = typeof result.exitCode === 'number' ? result.exitCode : undefined;
-    const stream = stderr ? 'stderr' : 'stdout';
-    return {
+    const streams: Array<PackageManagerDiagnostic['stream']> = [];
+    if (stderr) { streams.push('stderr'); }
+    if (stdout) { streams.push('stdout'); }
+    if (streams.length === 0) { streams.push('none'); }
+    return streams.map(stream => ({
       operation,
       stream,
       ...(exitCode === undefined ? {} : { exitCode }),
-      output: redactPackageManagerOutput(stderr || stdout, this.registrySecrets, this.redactSensitiveValues),
-    };
+      output: stream === 'stderr'
+        ? redactPackageManagerOutput(stderr, this.registrySecrets, this.redactSensitiveValues)
+        : stream === 'stdout'
+          ? redactPackageManagerOutput(stdout, this.registrySecrets, this.redactSensitiveValues)
+          : 'No output captured',
+    }));
   }
 }
 
@@ -320,9 +360,7 @@ function redactPackageManagerOutput(
     .sort((left, right) => right.length - left.length)
     .reduce((value, secret) => value.split(secret).join('[REDACTED]'), plain);
   const platformRedacted = redactSensitiveValues?.(configuredRedacted) ?? configuredRedacted;
-  const safeCodes = [...new Set(platformRedacted.match(/\bERR_PNPM_[A-Z0-9_]+\b/g) ?? [])];
-  const safeSummary = safeCodes.length > 0 ? safeCodes.join('\n') : 'No ERR_PNPM code in captured output';
-  return safeSummary.slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
+  return safePackageManagerOutput(platformRedacted).slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
 }
 
 function safePackageManagerError(error: unknown): Error {

@@ -127,8 +127,10 @@ describe('NpmPackageSource', () => {
       'printf "%s\\n" "$1" >> "$PNPM_CALLS"',
       'if [ "$1" = "add" ]; then',
       '  printf "%s\\n" "ERR_PNPM_NO_MATURE_MATCHING_VERSION: direct package is too fresh" "registry=https://user:registry-password@npm.fixture.example/path?token=query-secret" >&2',
+      '  printf "%s\\n" "ERR_PNPM_FAKE_CANARY_123"',
       'else',
-      '  printf "%s\\n" "ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: offline repair rejected the restored package graph" "authorization: Bearer environment-token" >&2',
+      '  printf "%s\\n" "offline repair warning" >&2',
+      '  printf "%s\\n" "ERR_PNPM_NO_OFFLINE_META: offline metadata unavailable"',
       'fi',
       'exit 1',
       '',
@@ -157,7 +159,9 @@ describe('NpmPackageSource', () => {
       code: 'INSTALL_FAILED',
       packageManagerDiagnostics: [
         { operation: 'pnpm.add', stream: 'stderr', output: expect.stringContaining('ERR_PNPM_NO_MATURE_MATCHING_VERSION') },
-        { operation: 'pnpm.install-repair', stream: 'stderr', output: expect.stringContaining('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH') },
+        { operation: 'pnpm.add', stream: 'stdout', output: 'No recognized pnpm error code' },
+        { operation: 'pnpm.install-repair', stream: 'stderr', output: 'No recognized pnpm error code' },
+        { operation: 'pnpm.install-repair', stream: 'stdout', output: 'ERR_PNPM_NO_OFFLINE_META' },
       ],
     });
     const serialized = JSON.stringify(failure);
@@ -183,7 +187,7 @@ describe('NpmPackageSource', () => {
       '#!/bin/sh',
       'if [ "$1" = "add" ]; then',
       '  printf "%08189d%s\\n" 0 "registry-password-marker" >&2',
-      '  printf "%s\\n" \'{"password":"prefix SECRET_SUFFIX"}\' \'password=prefix,SECRET_SUFFIX\' \'https://:SECRET_SUFFIX@registry.invalid/download\' \'https://registry.invalid/download?X-Amz-Signature=SECRET_SUFFIX\' \'client_secret=SECRET_SUFFIX\' \'ERR_PNPM_SECRET_VALUE\' \'ERR_PNPM_NO_OFFLINE_META\' >&2',
+      '  printf "%s\\n" \'{"password":"prefix SECRET_SUFFIX"}\' \'password=prefix,SECRET_SUFFIX\' \'https://:SECRET_SUFFIX@registry.invalid/download\' \'https://registry.invalid/download?X-Amz-Signature=SECRET_SUFFIX\' \'client_secret=SECRET_SUFFIX\' \'ERR_PNPM_SECRET_VALUE\' \'ERR_PNPM_FAKE_CANARY_123\' \'ERR_PNPM_NO_OFFLINE_META\' >&2',
       'fi',
       'exit 1',
       '',

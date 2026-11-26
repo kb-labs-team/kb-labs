@@ -16,7 +16,7 @@ import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/cor
 import { registerRoutes } from './routes/index.js';
 import { MarketplaceInstallRollbackError, MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
 import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
-import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError, RegistryPackageError } from '@kb-labs/marketplace-npm';
+import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError, projectPackageManagerDiagnostics, RegistryPackageError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
 
 export interface CreateServerOptions {
@@ -85,7 +85,7 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         const mapped = mapMarketplaceError(err, correlationId, scope);
         const capturedPackageManagerDiagnostics = collectPackageManagerDiagnostics(err);
         const packageManagerDiagnostics = capturedPackageManagerDiagnostics.length > 0
-          ? logger.redactSensitiveValues(capturedPackageManagerDiagnostics)
+          ? logger.redactSensitiveValues(projectPackageManagerDiagnostics(capturedPackageManagerDiagnostics))
           : undefined;
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
