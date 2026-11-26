@@ -1573,7 +1573,7 @@ func TestProductionArtifactWiringSharesBinaryCacheAcrossInstallAndUpdates(t *tes
 		t.Fatalf("stop before production rollback: %d %s", code, raw)
 	}
 	if _, failure := executeRollback(context.Background(), rollbackCommandInput{
-		PlatformRoot: root, Snapshot: rollbackSnapshot, Yes: true, Executable: "kb-create", ArtifactRunner: operationLogTestRunner{},
+		PlatformRoot: root, Snapshot: rollbackSnapshot, Yes: true, Executable: "kb-create", ArtifactRunner: packageRunner,
 	}); failure != nil {
 		t.Fatalf("production rollback construction failed: %v (reason=%s cause=%s meta=%v)", failure, failure.Reason, failure.Cause, failure.Meta)
 	}
