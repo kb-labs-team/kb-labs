@@ -923,7 +923,7 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
             health_url = receipt.get("verification", {}).get("hostHealthUrl")
             installed_gateway = next((item for item in installed_plan.get("serviceGraph", {}).get("services", [])
                                       if item.get("id") == "gateway"), {})
-            config_path = active_platform_root(root) / ".kb/kb.config.jsonc"
+            config_path = active_platform_root(root) / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')
             config = json.loads(config_path.read_text(encoding="utf-8"))
             gateway_config = (config.get("platform", {}).get("adapterOptions", {})
                               .get("serviceTransport", {}).get("services", {}).get("gateway", {}))
@@ -947,7 +947,7 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
             updated_health = updated_receipt.get("verification", {}).get("hostHealthUrl")
             updated_gateway = next((item for item in updated_plan.get("serviceGraph", {}).get("services", [])
                                     if item.get("id") == "gateway"), {})
-            updated_config = json.loads((active_platform_root(root) / ".kb/kb.config.jsonc").read_text(encoding="utf-8"))
+            updated_config = json.loads((active_platform_root(root) / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_text(encoding="utf-8"))
             effective_gateway = (updated_config.get("platform", {}).get("adapterOptions", {})
                                  .get("serviceTransport", {}).get("services", {}).get("gateway", {}))
             if (updated.get("operation") != "update"
