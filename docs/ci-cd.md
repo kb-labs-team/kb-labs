@@ -1,213 +1,80 @@
 # CI/CD reference
 
-How the GitHub Actions setup of this repo works: what runs when,
-what it checks, and how to see the current state.
+The default branch is `master`. Workflow files define triggers and job dependencies.
+The repository rules show which checks are required for merging.
 
-> **Living document.** If you change a workflow's triggers or what it
-> does, update this file in the same PR. The corresponding ADRs
-> ([0017](./adr/0017-e2e-pipeline-sharding-and-caching.md),
-> [0018](./adr/0018-ci-compute-budget-and-transparency.md)) record
-> *why* each rule exists; this file is the *what runs when*.
+## Pull requests
 
----
+[CI (PR)](../.github/workflows/ci-pr.yml) runs preflight, affected build, lint and type
+checks, shipped unit and CLI handler tests, and workspace standards checks. The
+`kb-create` checks run when the launcher or its selected E2E zones change.
 
-## At a glance
+The E2E test plan in that run selects [zones](../e2e/CI-ZONES.md) from the full pull
+request diff. [Affected E2E](../.github/workflows/e2e-affected.yml) starts after successful PR CI and checks out the current PR head when the follow-on
+workflow discovers the PR. Its run lists the plan and the outcome of each job.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│  PR opens/updates  ──┬──────►  CI (PR)                          │
-│                      └──────►  E2E Platform Tests  (paths-ignore)│
-│                                                                 │
-│  Push to main      ──┬──────►  CI                  (paths-ignore)│
-│                      ├──────►  E2E Platform Tests  (paths-ignore)│
-│                      ├──────►  Deploy              (paths-only)  │
-│                      └──────►  CodeQL              (every push)  │
-│                                                                 │
-│  Workflow engine   ──┬──────►  Build candidate (reusable CI)    │
-│                      └──────►  Deliver candidate + smoke        │
-│                                                                 │
-│  Manual dispatch   ─────────►  Release promotion (engine gate)  │
-│                                                                 │
-│  Weekly cron       ──┬──────►  E2E Platform Tests  (Mon 9am UTC) │
-│                      └──────►  Post-publish Smoke (Mon 8am UTC) │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+[Journey baseline delta](../.github/workflows/journey-pr.yml) compares the selected
+installed Journey cases on the base SHA and tested merge SHA. The check lists
+recoveries, regressions, and missing evidence for the selected cases. A change
+outside the product scope gets a no-cases result. The workspace standards check
+uses the committed DevKit baseline for inherited findings.
 
----
+Apply `full-ci` to request the full platform E2E matrix for a PR. Apply `candidate`
+to request the candidate profile of remote verification. Both appear in the PR's
+checks alongside the regular jobs. PR description lint and Docs Bot run separately.
 
-## Trigger matrix
+## Stabilization workflow
 
-| Workflow | push main | PR | Tag | workflow_run | Cron | Dispatch |
-|---|:-:|:-:|:-:|:-:|:-:|:-:|
-| **CI** (`ci.yml`) | ✅ paths-ignore | — | — | — | — | ✅ |
-| **CI (PR)** (`ci-pr.yml`) | — | ✅ open/sync/reopen | — | — | — | — |
-| **E2E Platform Tests** (`e2e-platform.yml`) | ✅ paths-ignore | ✅ open/sync/reopen, paths-ignore | — | ✅ after Release Binaries | ✅ Mon 9:00 UTC | ✅ |
-| **Post-publish Smoke** (`e2e-user-journey.yml`) | — | — | — | ✅ after binary/npm delivery | ✅ Mon 8:00 UTC | ✅ |
-| **Deploy** (`deploy.yml`) | ✅ paths-only | — | — | — | — | ✅ |
-| **Build candidate** (`release-build-candidate.yml`) | — | — | — | — | — | ✅ via engine |
-| **Deliver candidate** (`release-deliver-candidate.yml`) | — | — | — | — | — | ✅ via engine |
-| **CodeQL** ("Push on main") | ✅ every push | ✅ | — | — | ✅ default | — |
-| **KB Deploy — Apply** (`kb-deploy-apply.yml`) | reusable — invoked by other workflows via `workflow_call` |
+1. Link the product case and the failing step or contract in the PR description.
+   Include the base commit, profile, expected result and the check that reproduced
+   the failure. For CI and docs changes, link the job or source being changed.
+2. Keep the PR scoped to one independently verifiable change. List any prerequisite
+   PRs, and verify against `master` again after those land. Run the affected checks
+   locally before starting hosted verification.
+3. Use the `Journey baseline delta` summary to verify the result on both SHAs. An
+   unchanged failure with matching evidence remains known debt. A new failure, a
+   different failure reason, or missing required evidence blocks the merge. A PR
+   in the selected product scope must also show a recovery during stabilization.
+4. Merge after checks on the current revision pass. Remove resolved entries from
+   the [DevKit baseline](../scripts/ci/devkit-baseline.json) in the fixing PR.
+   Retain the full Journey report from the exact release candidate for release
+   acceptance. Use [the QA strategy](qa/TESTING-STRATEGY.md) to choose the nearest
+   test boundary for the fix.
 
----
+## Master, scheduled runs, and releases
 
-## What each workflow does
-
-### CI (`ci.yml`)
-**Purpose:** lint, type-check, unit tests, and coverage for the entire monorepo.
-**When:** every push to `main` (with `paths-ignore`); manual dispatch.
-**Skips:** `**/*.md`, `docs/**`, `.claude/**`, `.vscode/**`, `.idea/**`, `.editorconfig`, `LICENSE`, `.github/ISSUE_TEMPLATE/**`, `.github/PULL_REQUEST_TEMPLATE.md`. `sites/**` is **not** skipped — site code is part of the monorepo and is linted/typed.
-**Concurrency:** `ci-main-${{ github.ref }}`, `cancel-in-progress: true`. New commit on main cancels in-flight CI.
-**Typical duration:** ~17 min.
-
-### CI (PR) (`ci-pr.yml`)
-**Purpose:** same checks as `CI` but scoped to the PR's diff base for `--affected` modes. Runs on every PR update.
-**When:** PR `opened`, `synchronize`, `reopened`.
-**Concurrency:** per PR number; pushing to a PR cancels the prior CI (PR) run.
-
-### E2E Platform Tests (`e2e-platform.yml`)
-**Purpose:** end-to-end platform tests via `kb-devkit run e2e` across 8 domains. See [ADR-0017](./adr/0017-e2e-pipeline-sharding-and-caching.md) for architecture, [ADR-0019](./adr/0019-pr-e2e-gate.md) for the PR-gate decision.
-**When:**
-- **Every PR push** (`opened`, `synchronize`, `reopened`) with `paths-ignore`.
-- Every push to `main` (with `paths-ignore`) — safety net.
-- After every successful "Release Binaries" run (smoke test on the published binaries).
-- Weekly Monday 09:00 UTC (canary).
-- Manual dispatch.
-
-**Skips:** same as CI plus `sites/**`. Marketing site is deployed by `deploy.yml` and doesn't run on the platform.
-**Concurrency:** `e2e-platform-${{ github.event.pull_request.number || github.ref }}`, `cancel-in-progress: true`. Successive pushes inside the same PR (typical agent flow) cancel earlier runs, so the cost is one full run per PR settle point, not per push.
-**Structure:** 8-shard matrix (one per `@kb-labs/e2e-<suite>`) + aggregator. Branch protection points at the aggregator's `Platform E2E` check.
-**Typical duration:** ~8 min wall-clock; per shard ~5–8 min.
-
-### Cache policy
-
-PR callers use the `read-write` cache mode: kb-devkit's addressable build CAS
-and BuildKit's GHA layer cache may be restored and updated. Packed packages and
-Verdaccio storage are never restored from a cross-run cache; the prepare job
-passes an immutable same-run bundle to its shards.
-
-Main, scheduled, and release-triggered E2E runs use `off`: they rebuild the
-platform, npm tarballs, Verdaccio registry, and images from source. This is the
-authoritative verification path. See [ADR-0038](./adr/0038-ci-cache-policy-and-authoritative-builds.md)
-for fingerprints, metrics, and the warm-vs-cold audit.
-
-### Post-publish Smoke (`e2e-user-journey.yml`)
-**Purpose:** verify delivery of the public installer and published artifacts in
-a clean container. Full source/CI user journeys run against Verdaccio in
-`e2e-platform.yml` and the launcher E2E workflow; this job is the final public
-artifact smoke and intentionally catches npm/GitHub Release packaging errors.
-**When:** after successful binary or npm delivery, weekly Monday 08:00 UTC,
-or manual dispatch.
-**Typical duration:** ~5–15 min.
-
-### Deploy (`deploy.yml`)
-**Purpose:** declarative delivery to staging/prod via `kb-deploy`. See [ADR-0014](./adr/0014-declarative-delivery-and-fleet-distribution.md).
-**When:** push to `main` *only* if it touches one of:
-- `sites/web/**`, `core/**`, `shared/**`, `tools/kb-deploy/**`
-- specific adapters: `openai`, `redis`, `sqlite`, `pino`, `fs`, `log-sqlite`, `log-ringbuffer`, `eventbus-cache`
-- `plugins/gateway/**`, `.kb/deploy.yaml`, `.github/workflows/deploy.yml`
-- Manual dispatch with optional `target` input.
-
-**Reuses:** `KB Deploy — Apply` via `workflow_call`.
-**Typical duration:** ~10 min.
-
-### Build and deliver candidate workflows
-The workflow engine supplies an immutable release intent to
-`release-build-candidate.yml`. That workflow builds packages and binaries once,
-seals the unified release-index and uploads one candidate bundle. Its run
-summary exposes the candidate ID, commit, flow, version, and semantic bundle
-digest outside the bundle; the upload step also records GitHub's artifact
-archive digest. The engine supplies the summary's trusted identity and bundle
-digest to `release-deliver-candidate.yml`, whose artifact download verifies
-the archive and whose shared candidate verifier checks the extracted bytes
-before publishing.
-
-Neither workflow chooses versions, resolves compatibility, performs a second
-build, or has a legacy tag-triggered fallback. Stable promotion is another
-workflow-engine transition using the same candidate ID and bundle.
-
-### CodeQL ("Push on main")
-**Purpose:** static-analysis security scanning.
-**When:** GitHub-managed "default setup" — runs on every push to `main` and on PRs.
-**Where to configure:** Settings → Code security → CodeQL. Not a workflow YAML in this repo.
-**Trade-off:** moving to weekly cron saves ~5 min/push but trades latency on catching new vulnerabilities. See [docs/ci-budget.md](./ci-budget.md) for the UI step.
-
-### KB Deploy — Apply (`kb-deploy-apply.yml`)
-**Purpose:** reusable workflow for `kb-deploy plan` + `apply`. Called via `workflow_call` from other workflows (e.g. `deploy.yml` in this repo, or downstream consumer repos).
-**No direct triggers** — only invoked by callers.
-
----
-
-## State inspection
-
-### Badges (README)
-The README top renders main-branch status badges for **CI**, **E2E Platform Tests**, and **Deploy**. Green/red at a glance.
-
-### Terminal (`scripts/ci-status.sh`)
-```bash
-./scripts/ci-status.sh           # latest run per workflow on main (✅/❌)
-./scripts/ci-status.sh 24h       # what ran in the last 24h + compute spend
-./scripts/ci-status.sh 7d        # 7-day pass/fail summary
-```
-
-### GitHub Actions UI
-- **Skipped runs** (matched by `paths-ignore`) do not appear in the Actions tab at all. Audit by checking `paths-ignore:` blocks in the workflow YAML directly.
-- **Cancelled runs** (from concurrency cancellation) **do** appear, marked "cancelled". Hover to see which subsequent commit pre-empted them.
-
-### Branch protection (the required check)
-For `main`, only the aggregator job is required: **Platform E2E**. The 8 individual shards (`Platform E2E / services`, `… / workflows`, etc.) are visible in the PR/commit view for triage and re-run, but only the aggregator gates merges.
-
-**Required checks (set in `Settings → Branches → main`):**
-- `Platform E2E` — the aggregator from `e2e-platform.yml` matrix
-- `CI (PR)` jobs — `Release build preflight`, `Build Go tools`, `Build TS (devkit)`, `Deps (syncpack)`, `Plugin structure`, `lint`, `type-check`, `test`
-
-The `Release build preflight` job runs the versioned release build on the PR commit. With these checks required, a PR cannot merge until the preflight, remaining `CI (PR)` jobs, and PR-triggered `Platform E2E` are green. See [ADR-0019](./adr/0019-pr-e2e-gate.md).
-
----
-
-## Common scenarios
-
-| What I push | What runs |
+| Workflow | When it runs |
 |---|---|
-| `README.md` only (to main) | CodeQL only |
-| `docs/**/*.md` only (to main) | CodeQL only |
-| `sites/web/**` only (to main) | Deploy + CI + CodeQL (E2E skipped) |
-| `services/workflow/**` (to main) | CI + E2E Platform Tests + CodeQL |
-| `core/runtime/**` (to main) | CI + E2E Platform Tests + Deploy + CodeQL |
-| `.github/workflows/e2e-platform.yml` (to main) | CI + E2E Platform Tests + CodeQL (the workflow file itself isn't in `paths-ignore`) |
-| Any non-doc/-site code in a **PR** | CI (PR) + E2E Platform Tests (full matrix, branch protection required) |
-| Doc-only / sites-only in a **PR** | CI (PR) only — E2E skipped by `paths-ignore` |
-| `v0.5.0-binaries` tag pushed | Release Binaries → triggers Post-publish Smoke + E2E Platform Tests |
-| `kb commit` / `git commit` on a release | Whatever the diff matches above |
-| Three commits in 30 seconds (PR or main) | Only the last one's CI + E2E run fully; earlier two are cancelled (visible in UI) |
+| [CI](../.github/workflows/ci.yml) | Pushes to `master` that match its path filters, or manual dispatch. |
+| [Platform E2E](../.github/workflows/e2e-platform.yml) | After successful master CI, on its Monday schedule, by manual dispatch, or for a PR with `full-ci`. |
+| [Nightly user journeys](../.github/workflows/nightly-user-journey.yml) | Daily at 21:00 UTC and by manual dispatch. |
+| [Journey batch](../.github/workflows/journey-batch.yml) | Pushes to `batch/**` and manual dispatch. The workflow retains full installed runs and targeted diagnostics. |
+| [Installer journey](../.github/workflows/installer-journey.yml) | Manual dispatch. Releases and Nightly call the reusable installer workflow. |
+| [Security scan](../.github/workflows/security.yml) and [Deploy](../.github/workflows/deploy.yml) | Their respective schedules, deployment paths, and manual triggers are in the workflow files. |
 
----
+[Release build](../.github/workflows/release-build-candidate.yml) verifies the exact
+candidate commit with strict workspace checks and the installer Journey required
+by its release policy. [Release delivery](../.github/workflows/release-deliver-candidate.yml)
+verifies and delivers the immutable bundle. The run summaries show the source
+revision, candidate ID, and bundle digest.
 
-## When things go wrong
+## Inspect runs
 
-1. **Main turned red unexpectedly.** Open the README badge, click the failing workflow, find the run. Then:
-   - Workflow file changed in last 5 commits? → suspect the workflow.
-   - Source code changed? → run the failing job locally if reproducible.
-   - Neither? → likely flake or external service. Re-run only the failing job from the GitHub UI.
+Run these commands from the repository with an authenticated GitHub CLI. Replace
+`123456789` with the run ID from the list.
 
-2. **A workflow I expected to run didn't.** Check `paths-ignore` in the workflow YAML against your diff. If nothing matches, also check `concurrency.cancel-in-progress` — was your push pre-empted by a faster subsequent push?
+```bash
+gh run list --branch master --limit 20
+gh run list --workflow ci-pr.yml --limit 20
+gh run view 123456789
+gh run view 123456789 --log-failed
+gh run view 123456789 --json jobs --jq '.jobs[] | [.name, .conclusion, .startedAt, .completedAt] | @tsv'
+```
 
-3. **Compute spend is creeping up.** Run `./scripts/ci-status.sh 7d` and `./scripts/ci-status.sh 24h`. Compare against typical ranges in [docs/ci-budget.md](./ci-budget.md). The first lever is usually CodeQL — see that doc.
-
-4. **Branch protection is blocking a merge.** Look at the **Platform E2E** aggregator status. If it's red while individual shards are green, the aggregator job itself failed — most often because `needs.e2e.result != "success"` due to a cancelled shard. Re-run-cancelled from the UI.
-
----
-
-## References
-
-- [ADR-0017: E2E pipeline sharding and incremental caching](./adr/0017-e2e-pipeline-sharding-and-caching.md) — why the pipeline runs the way it does
-- [ADR-0018: CI compute budget and transparency](./adr/0018-ci-compute-budget-and-transparency.md) — why some pushes skip some workflows
-- [ADR-0014: Declarative delivery](./adr/0014-declarative-delivery-and-fleet-distribution.md) — Deploy workflow architecture
-- [docs/ci-budget.md](./ci-budget.md) — operational spend reference + CodeQL UI step
-- [scripts/ci-status.sh](../scripts/ci-status.sh) — terminal state inspection helper
-
+Compare the same workflow and trigger type when measuring runtime. Check the job
+conclusion before using its timestamps. A skipped job contributes no test evidence.
+The [delivery metrics script](../scripts/ci/delivery-metrics.mjs) measures build and
+test times from recorded GitHub Actions jobs.
 
 ## Local gate while GitHub is unavailable
 

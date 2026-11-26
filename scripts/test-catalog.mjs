@@ -105,7 +105,7 @@ function detectLevel(relPath) {
   if (relPath.includes('__tests__/cli') || relPath.endsWith('.cli.test.ts')) return 'cli';
   if (relPath.includes('/sse/') || relPath.includes('.sse.')) return 'sse';
   if (relPath.includes('/ws/') || relPath.includes('.ws.')) return 'ws';
-  if (relPath.includes('e2e/') || relPath.includes('.e2e.') || relPath.includes('.spec.ts')) return 'e2e';
+  if (relPath.split('/').includes('e2e') || relPath.includes('.e2e.')) return 'e2e';
   if (relPath.includes('integration')) return 'integration';
   return 'unit';
 }
@@ -174,7 +174,7 @@ for (const file of walkFiles(ROOT)) {
 }
 
 if (FLAG_JSON) {
-  process.stdout.write(JSON.stringify({ totalTests, totalFiles, catalog }, null, 2));
+  writeFileSync(1, JSON.stringify({ totalTests, totalFiles, catalog }, null, 2));
   process.exit(0);
 }
 
