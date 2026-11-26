@@ -10,6 +10,7 @@ const ciPr = load(readFileSync(join(root, '.github/workflows/ci-pr.yml'), 'utf8'
 const devkit = load(readFileSync(join(root, 'devkit.yaml'), 'utf8'));
 const affectedE2e = load(readFileSync(join(root, '.github/workflows/e2e-affected.yml'), 'utf8'));
 const reusableDockerE2e = load(readFileSync(join(root, '.github/workflows/reusable-e2e-docker.yml'), 'utf8'));
+const reusablePlaywrightE2e = load(readFileSync(join(root, '.github/workflows/reusable-e2e-playwright.yml'), 'utf8'));
 const installerJourney = load(readFileSync(join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
 
 const jobs = Object.entries(ciPr.jobs);
@@ -161,6 +162,7 @@ test('affected E2E is triggered once from CI(PR) and checks out the planned SHA'
   assert.match(affectedE2e.jobs['replay-evidence'].if, /workflow_dispatch.*replay-run-id != ''/);
   assert.match(affectedE2e.jobs.evidence.if, /always\(\) && github\.event_name == 'workflow_dispatch'/);
   assert.ok(ciPr.jobs['ci-evidence'].needs.includes('affected-e2e'));
+  assert.ok(ciPr.jobs['ci-evidence'].needs.includes('e2e-platform'));
   assert.equal(ciPr.jobs['ci-evidence'].with['artifact-pattern'], '*platform-logs-${{ github.run_id }}*');
   const resolveManualPr = discover.steps.find((step) => step.name === 'Resolve pull request refs');
   assert.equal(resolveManualPr.if, "inputs.checkout-ref == ''");
@@ -174,4 +176,8 @@ test('affected E2E is triggered once from CI(PR) and checks out the planned SHA'
   }
   const checkout = reusableDockerE2e.jobs.e2e.steps.find((step) => step.name === 'Checkout');
   assert.equal(checkout.with.ref, '${{ inputs.checkout-ref || github.sha }}');
+  const playwright = reusablePlaywrightE2e.jobs.e2e.steps;
+  assert.equal(playwright.find((step) => step.name === 'Checkout').with.ref, checkout.with.ref);
+  const platformLogs = playwright.find((step) => step.with?.name?.includes('platform-logs'));
+  assert.match(platformLogs.with.name, /inputs\.artifact-prefix \|\| inputs\.suite/);
 });
