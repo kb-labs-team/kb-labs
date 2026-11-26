@@ -400,7 +400,29 @@ class CandidatePackageRegistryTests(unittest.TestCase):
             candidate = root / "candidate"
             packages.mkdir()
             candidate.mkdir()
-            (candidate / "release-index.json").write_text("{}", encoding="utf-8")
+            version = "2.120.2-cand.registry-fixture"
+            nested_binary = candidate / "binaries" / version / "kb-create-linux-amd64"
+            nested_binary.parent.mkdir(parents=True)
+            nested_binary.write_bytes(b"versioned journey binary")
+            corrupt_binary = candidate / "checksum-corrupt" / "binaries" / version / nested_binary.name
+            corrupt_binary.parent.mkdir(parents=True)
+            corrupt_binary.write_bytes(b"corrupt journey binary")
+            (candidate / "release-index.json").write_text(json.dumps({
+                "binaries": [
+                    {
+                        "id": "kb-create", "version": version, "os": "linux", "arch": "amd64",
+                        "filename": nested_binary.name,
+                        "sha256": "fixture-sha256",
+                        "url": f"http://origin:8080/journey-candidate/binaries/{version}/{nested_binary.name}",
+                    },
+                    {
+                        "id": "kb-create", "version": version, "os": "linux", "arch": "amd64",
+                        "filename": nested_binary.name,
+                        "sha256": "fixture-corrupt-sha256",
+                        "url": f"http://origin:8080/journey-candidate/checksum-corrupt/binaries/{version}/{nested_binary.name}",
+                    },
+                ],
+            }), encoding="utf-8")
             tarball = packages / "candidate.tgz"
             self._write_tarball(tarball, "first candidate")
             upstream_requests: list[str] = []
@@ -431,6 +453,12 @@ class CandidatePackageRegistryTests(unittest.TestCase):
                 registry_url = process.stdout.readline().strip()
                 process.stdout.close()
                 self.assertTrue(registry_url.startswith("http://127.0.0.1:"), registry_url)
+                self.assertEqual(self._get(
+                    registry_url, f"/journey-candidate/binaries/{version}/{nested_binary.name}"),
+                    b"versioned journey binary")
+                self.assertEqual(self._get(
+                    registry_url, f"/journey-candidate/checksum-corrupt/binaries/{version}/{nested_binary.name}"),
+                    b"corrupt journey binary")
                 self.assertEqual(self._get_json(registry_url, "/third-party"),
                                  {"name": "third-party", "servedBy": "cache"})
                 self.assertEqual(upstream_requests, ["/third-party"])

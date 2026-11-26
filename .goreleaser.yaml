@@ -11,6 +11,9 @@ version: 2
 
 project_name: kb-labs-binaries
 
+snapshot:
+  version_template: '{{ with index .Env "KBLABS_CANDIDATE_BINARY_VERSION" }}{{ . }}{{ else }}{{ .Version }}-SNAPSHOT-{{ .ShortCommit }}{{ end }}'
+
 before:
   hooks:
     - sh -c "cd tools/kb-create && go mod tidy"

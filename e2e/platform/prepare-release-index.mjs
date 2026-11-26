@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { clearGeneratedReleasePackages, readPackedPackageManifests } from './release-index-package-stage.mjs';
-import { binaryManifestForVersion } from './binary-manifest-map.mjs';
+import { binaryManifestForVersion, ensureBinaryManifestDirectory } from './binary-manifest-map.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
@@ -31,6 +31,7 @@ const registryManifest = JSON.parse(readFileSync(resolve(required('--registry-ma
 const releaseConfigPath = resolve(value('--release-config') ?? 'tools/kb-create/config/platform-release.jsonc');
 const releaseConfig = readPlatformReleaseConfig(releaseConfigPath);
 const output = resolve(required('--output'));
+ensureBinaryManifestDirectory(output);
 clearGeneratedReleasePackages(packagesDir, resolve(output, '..'));
 const sealer = resolve(required('--sealer'));
 const binaryDirectory = resolve(required('--binary-dir'));
@@ -43,7 +44,7 @@ const packageRegistry = value('--package-registry') ?? process.env.KB_JOURNEY_RE
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
 const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
 
-const binaryManifestFor = version => binaryManifestForVersion(version, binaryManifest, binaryManifestMap);
+const binaryManifestFor = version => binaryManifestForVersion(version, binaryManifest, binaryManifestMap, binaryVersion);
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 

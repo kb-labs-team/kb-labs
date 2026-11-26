@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isNativeBinaryTarget } from '../platform/binary-manifest-map.mjs';
 
 const args = process.argv.slice(2);
 const value = name => {
@@ -21,13 +22,14 @@ const versionsFile = resolve(required('--versions'));
 const output = resolve(required('--output'));
 const assetBaseURL = required('--asset-base-url').replace(/\/$/, '');
 const commit = required('--commit');
+const baseVersion = required('--base-version');
 const parsedBaseURL = new URL(assetBaseURL);
 if (!['http:', 'https:'].includes(parsedBaseURL.protocol) || parsedBaseURL.search || parsedBaseURL.hash) {
   throw new Error('--asset-base-url must be an absolute HTTP(S) URL without query or fragment');
 }
 const versions = JSON.parse(readFileSync(versionsFile, 'utf8'));
 if (!Array.isArray(versions) || versions.length === 0) throw new Error('versions file must be a non-empty array');
-const uniqueVersions = [...new Set(versions)];
+const uniqueVersions = [...new Set(versions)].filter(version => version !== baseVersion);
 if (uniqueVersions.some(version => typeof version !== 'string' || !/^[0-9][0-9A-Za-z.+-]*$/.test(version))) {
   throw new Error('versions file contains an invalid platform version');
 }
@@ -62,7 +64,7 @@ for (const version of uniqueVersions) {
     if (build.error) throw build.error;
     if (build.status !== 0) throw new Error(`build kb-create ${version} ${os}/${arch} failed: ${build.stderr || build.stdout}`);
 
-    if (os === 'linux' && arch === 'amd64') {
+    if (isNativeBinaryTarget(os, arch)) {
       const versionCheck = spawnSync(binaryPath, ['--version'], { encoding: 'utf8' });
       if (versionCheck.error) throw versionCheck.error;
       if (versionCheck.status !== 0 || versionCheck.stdout.trim() !== `kb-create ${version}`) {

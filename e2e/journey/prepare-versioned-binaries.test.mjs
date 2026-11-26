@@ -34,7 +34,8 @@ test('versioned journey binaries are stamped, staged and sealed for the target p
     writeFileSync(versions, JSON.stringify([version]));
 
     const result = spawnSync(process.execPath, [script, '--versions', versions, '--output', output,
-      '--asset-base-url', 'http://origin:8080/journey-candidate', '--commit', 'fixture'], {
+      '--asset-base-url', 'http://origin:8080/journey-candidate', '--commit', 'fixture',
+      '--base-version', '2.120.1'], {
       env: { ...process.env, PATH: `${bin}:${process.env.PATH}` }, encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr || result.stdout);
