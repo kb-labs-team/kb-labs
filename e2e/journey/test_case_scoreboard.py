@@ -1,4 +1,6 @@
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -530,6 +532,119 @@ class CaseScoreboardTests(unittest.TestCase):
         delta = render_delta(before, after)
         self.assertIn("delta omitted because a scoreboard is partial", delta)
         self.assertNotIn("Regressed:", delta)
+
+
+class BaselineCheckTests(unittest.TestCase):
+    # case: S-262.20
+    def test_baseline_check_exit_codes_and_evidence(self):
+        baseline = {"S-001.1": ("PASS", "passed"), "S-001.2": ("FAIL", "same old error"),
+                    "S-002.1": ("FAIL", "needs repair"), "S-002.2": ("BLOCKED", "waiting on S-002.1")}
+        fixed = {**baseline, "S-002.1": ("PASS", "passed")}
+        with tempfile.TemporaryDirectory() as temporary:
+            before, after = (Path(temporary) / name for name in ("before", "after"))
+            before.mkdir()
+            after.mkdir()
+            for mode in ("local", "secured"):
+                self.write_reports(before, mode, baseline)
+                for label, rows, expected in (
+                    ("positive", fixed, 0),
+                    ("unchanged", baseline, 1),
+                    ("passing step fails", {**fixed, "S-001.1": ("FAIL", "new error")}, 1),
+                    ("passing step skipped", {**fixed, "S-001.1": ("SKIPPED", "unexpected skip")}, 1),
+                    ("known failure changes", {**fixed, "S-001.2": ("FAIL", "new error")}, 1),
+                    ("known failure omitted", {key: value for key, value in fixed.items() if key != "S-001.2"}, 1),
+                ):
+                    with self.subTest(mode=mode, label=label):
+                        self.write_reports(after, mode, rows)
+                        result = self.check(mode, before, after)
+                        self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+                        if label == "positive":
+                            self.assertIn("Passed on candidate: S-002.1", result.stdout)
+                            self.assertIn("Known failures: S-001.2", result.stdout)
+                        if label == "unchanged":
+                            self.assertIn("No demonstrated improvement", result.stdout)
+
+                self.write_reports(after, mode, fixed, selection=["S-002.1"])
+                partial = self.check(mode, before, after)
+                self.assertNotEqual(partial.returncode, 0)
+                self.assertIn("partial", partial.stdout + partial.stderr)
+
+                self.write_reports(after, mode, fixed, passing_claims=[])
+                lost_claim = self.check(mode, before, after)
+                self.assertEqual(lost_claim.returncode, 1)
+                self.assertIn("Lost passing claims: S-003.1", lost_claim.stdout)
+
+                (after / f"case-scoreboard-{mode}.json").unlink()
+                missing = self.check(mode, before, after)
+                self.assertNotEqual(missing.returncode, 0)
+                self.assertIn(f"case-scoreboard-{mode}.json", missing.stdout + missing.stderr)
+
+    # case: S-262.20
+    def test_baseline_check_requires_progress_in_one_mode_and_preserves_both(self):
+        baseline = {"S-001.1": ("FAIL", "needs repair"), "S-001.2": ("BLOCKED", "waiting on S-001.1"),
+                    "S-002.1": ("PASS", "passed")}
+        fixed = {step: ("PASS", "passed") for step in baseline}
+        with tempfile.TemporaryDirectory() as temporary:
+            before, after = (Path(temporary) / name for name in ("before", "after"))
+            for mode in ("local", "secured"):
+                (before / mode).mkdir(parents=True)
+                (after / mode).mkdir(parents=True)
+                self.write_reports(before / mode, mode, baseline)
+            self.write_reports(after / "local", "local", fixed)
+            self.write_reports(after / "secured", "secured", baseline)
+            result = self.check("all", before, after)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("S-001.2 / sample / S-001.2", result.stdout)
+            self.write_reports(after / "secured", "secured", {**baseline, "S-002.1": ("FAIL", "regressed")})
+            result = self.check("all", before, after)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("New failures or changed outcomes: S-002.1", result.stdout)
+
+    # case: S-262.20
+    def test_baseline_check_compares_individual_claim_owners(self):
+        baseline = {"S-001.1": ("PASS", "passed")}
+        with tempfile.TemporaryDirectory() as temporary:
+            before, after = (Path(temporary) / name for name in ("before", "after"))
+            for directory, status in ((before, "FAIL"), (after, "PASS")):
+                directory.mkdir()
+                self.write_reports(directory, "local", baseline)
+                self.write_installer_claim(directory, "explore", status)
+                self.write_installer_claim(directory, "upgrade", "PASS")
+            result = self.check("local", before, after)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Restored claim evidence: S-003.1 / installer-case-local-explore.json", result.stdout)
+            self.write_installer_claim(after, "upgrade", "FAIL")
+            result = self.check("local", before, after)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("Regressed claim evidence: S-003.1 / installer-case-local-upgrade.json", result.stdout)
+
+    def write_installer_claim(self, directory, journey, status):
+        (directory / f"installer-case-local-{journey}.json").write_text(json.dumps({
+            "case_run": {"mode": "local", "claims": [{"claimId": "S-003.1", "status": status}]},
+        }), encoding="utf-8")
+
+    def check(self, mode, before, after):
+        return subprocess.run(
+            [sys.executable, str(JOURNEY_ROOT / "scoreboard.py"), "--check", mode, str(before), str(after)],
+            text=True, capture_output=True,
+        )
+
+    def write_reports(self, directory, mode, states, selection=(), passing_claims=("S-003.1",)):
+        rows = [{"stepId": step, "capability": "sample", "name": step, "status": status, "message": message}
+                for step, (status, message) in states.items()]
+        status = "FAIL" if any(row["status"] == "FAIL" for row in rows) else "PASS"
+        (directory / f"service-{mode}.json").write_text(json.dumps({
+            "schema": "kb.service-journey/v1", "status": status,
+            "case_run": {"mode": mode, "selection": list(selection)}, "steps": rows,
+        }), encoding="utf-8")
+        (directory / f"case-scoreboard-{mode}.json").write_text(json.dumps({
+            "schema": "kb.journey-case-scoreboard/v2", "selection": list(selection),
+            "modes": [mode], "observedModes": [mode],
+            "cases": [{"id": "S-003", "caseStatus": "active", "modes": [mode], "release": True,
+                       "status": "Fully green" if passing_claims else "Red",
+                       "claims": ["S-003.1"], "passingClaims": list(passing_claims)}],
+            "releaseCases": {"fullyGreen": bool(passing_claims), "total": 1},
+        }), encoding="utf-8")
 
 
 if __name__ == "__main__":

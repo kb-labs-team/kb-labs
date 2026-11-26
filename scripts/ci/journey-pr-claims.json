@@ -1,0 +1,78 @@
+{
+  "crossCutting": [
+    "PC-001.2",
+    "S-010.1",
+    "S-002.1"
+  ],
+  "scopes": [
+    {
+      "paths": [
+        "tools/kb-create/**",
+        "tools/kb-dev/**",
+        "e2e/journey/installer_case_steps.py",
+        ".kb/release/**",
+        "e2e/install-flow/**",
+        "e2e/kb-create/**"
+      ],
+      "claims": [
+        "PC-001.2",
+        "PC-001.10"
+      ]
+    },
+    {
+      "paths": [
+        "**/marketplace/**",
+        "services/marketplace*/**",
+        "e2e/marketplace*/**",
+        "e2e/journey/marketplace_steps.py"
+      ],
+      "claims": [
+        "S-010.1",
+        "S-010.8",
+        "S-012.1"
+      ]
+    },
+    {
+      "paths": [
+        "services/workflow/**",
+        ".kb/workflows/**",
+        "e2e/workflows/**",
+        "e2e/journey/workflow_steps.py"
+      ],
+      "claims": [
+        "S-002.1",
+        "S-056.1"
+      ]
+    },
+    {
+      "paths": [
+        "studio/**",
+        "e2e/studio/**"
+      ],
+      "claims": [
+        "S-120.1"
+      ]
+    },
+    {
+      "paths": [
+        "plugins/commit/**",
+        "e2e/journey/plugin_author_steps.py"
+      ],
+      "claims": [
+        "S-010.7",
+        "S-030.1"
+      ]
+    },
+    {
+      "paths": [
+        "services/gateway/**",
+        "e2e/auth/**",
+        "e2e/gateway/**"
+      ],
+      "claims": [
+        "S-010.1",
+        "S-010.6"
+      ]
+    }
+  ]
+}
