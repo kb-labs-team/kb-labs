@@ -141,6 +141,23 @@ describe('QA case claim scanning', () => {
     expect(scanQACaseClaims(directory, [testCase]).claims).toEqual(scanned.claims);
   });
 
+  // case: S-262.8
+  it('does not turn a blocked fallback into a second journey claim owner', () => {
+    const directory = fixture();
+    const testCase = parsedCase(directory);
+    const source = join(directory, 'e2e/journey');
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, 'journey.py'), [
+      'journey.step("install plugin", "marketplace", install, cases=["S-010.1"])',
+      'journey.blocked("marketplace fallback", "marketplace", reason, cases=["S-010.1"])',
+    ].join('\n'));
+
+    const scanned = scanQACaseClaims(directory, [testCase]);
+
+    expect(scanned.diagnostics).toEqual([]);
+    expect(scanned.claims.map(claim => claim.stepId)).toEqual(['S-010.1']);
+  });
+
   it('scans journey, Playwright, and adjacent unit claims and rejects unknown ids', () => {
     const directory = fixture();
     const testCase = parsedCase(directory);

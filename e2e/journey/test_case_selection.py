@@ -400,6 +400,25 @@ class CaseJourneySelectionTests(unittest.TestCase):
             [coverage("local", source="e2e/journey/secured_connection_steps.py")], "S-042.1", "secured"), [])
 
     # case: S-262.8
+    def test_empty_project_studio_claim_keeps_its_local_runner_and_owning_step(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        line = next(line for line, declaration in _case_declarations(source, root).items()
+                    if "S-120.1" in (declaration.get("cases") or ()))
+        case = {"id": "S-120", "status": "active", "steps": [{
+            "stepId": "S-120.1", "claims": [
+                {"kind": "journey", "source": source, "line": line},
+                {"kind": "e2e", "source": "e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts"},
+            ],
+        }]}
+        results = [{"mode": mode, "cases": [case]} for mode in ("local", "secured")]
+
+        local = selection_from_coverage(results, "S-120.1", mode="local", requested_runners="")
+        self.assertEqual(local["runners"], ["service-local:explore"])
+        self.assertEqual(local["selectedClaimOwners"], {"Studio dashboard with empty project registry": ["S-120.1"]})
+        self.assertEqual(runners_for_case_selection(results, "S-120.1", "secured"), [])
+
+    # case: S-262.8
     def test_partial_batch_keeps_all_same_mode_claim_owners(self):
         source = "e2e/journey/installer_case_steps.py"
         root = Path(__file__).resolve().parents[2]

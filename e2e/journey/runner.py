@@ -1754,8 +1754,8 @@ def _main(*, update_variant_runner=None):
         return None if passed else message
 
     if mode == "local":
-        outer_graph.flow(
-            "Studio dashboard with empty project registry", "studio-empty-project", "studio",
+        CASE_JOURNEY.step(
+            "Studio dashboard with empty project registry", "studio",
             run_empty_project_studio_case, cases=["S-120.1"],
             runners=("service-local:explore",),
         )

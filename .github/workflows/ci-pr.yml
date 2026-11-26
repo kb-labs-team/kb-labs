@@ -389,7 +389,8 @@ jobs:
         with:
           name: full-dist-for-devkit-checks
       - run: tar xf full-dist-artifacts.tar
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies and provision pinned pnpm for clean Go tests
+        run: corepack pnpm install --frozen-lockfile
       - name: Configure job-local project registry
         run: echo "KB_HOME=${RUNNER_TEMP}/kb-home" >> "$GITHUB_ENV"
       - name: Register checkout for project-scoped CLI checks
@@ -397,7 +398,14 @@ jobs:
       - name: Lint workflow definitions
         run: pnpm kb workflow lint --path .kb/workflows --strict
       - name: Devkit workspace checks (structure, dependencies, boundaries)
-        run: ./tools/kb-devkit/kb-devkit check
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          report="$RUNNER_TEMP/devkit-check.json"
+          status=0
+          ./tools/kb-devkit/kb-devkit check --json > "$report" || status=$?
+          node scripts/ci/devkit-baseline.mjs "$report" "$PR_BASE_SHA" "$status" | tee -a "$GITHUB_STEP_SUMMARY"
 
   ci-evidence:
     name: CI evidence
