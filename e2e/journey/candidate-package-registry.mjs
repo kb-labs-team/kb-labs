@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createReadStream, existsSync, readFileSync, readdirSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, resolve, sep } from 'node:path';
 
 const packagesDirectory = resolve(process.argv[2] ?? '');
 const candidateDirectory = resolve(process.argv[3] ?? '');
@@ -115,9 +115,28 @@ const server = createServer(async (request, response) => {
     response.end();
     return;
   }
-  const artifact = !entry.tarball
-    ? join(candidateDirectory, basename(requestedPath))
-    : packagesByDigest.get(entry.sha256);
+  let artifact;
+  if (!entry.tarball) {
+    const artifactURL = new URL(entry.url);
+    const pathSegments = decodeURIComponent(artifactURL.pathname).split('/').filter(Boolean);
+    const versionedBinaryStart = pathSegments.length - 3;
+    const isVersionedBinary = versionedBinaryStart >= 0
+      && pathSegments[versionedBinaryStart] === 'binaries'
+      && pathSegments[versionedBinaryStart + 1] === entry.version
+      && pathSegments[versionedBinaryStart + 2] === entry.filename;
+    const corruptionIndex = pathSegments.lastIndexOf('checksum-corrupt');
+    const relativePath = isVersionedBinary
+      ? join(...(corruptionIndex >= 0 ? ['checksum-corrupt'] : []), ...pathSegments.slice(-3))
+      : basename(requestedPath);
+    const candidatePath = resolve(candidateDirectory, relativePath);
+    if (candidatePath === candidateDirectory || !candidatePath.startsWith(`${candidateDirectory}${sep}`)) {
+      response.writeHead(404).end();
+      return;
+    }
+    artifact = candidatePath;
+  } else {
+    artifact = packagesByDigest.get(entry.sha256);
+  }
   if (!artifact || !existsSync(artifact)) {
     response.writeHead(404).end();
     return;

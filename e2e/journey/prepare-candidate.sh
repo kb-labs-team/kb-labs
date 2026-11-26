@@ -6,6 +6,7 @@ cd "$ROOT"
 source "$ROOT/e2e/compose-owner.sh"
 source "$ROOT/e2e/journey/candidate-services.sh"
 source "$ROOT/e2e/journey/phase-timing.sh"
+source "$ROOT/e2e/journey/prepare-candidate-indexes.sh"
 journey_compose_init "$ROOT"
 trap journey_compose_cleanup EXIT
 OUT="$ROOT/.journey"
@@ -65,25 +66,34 @@ bash "$ROOT/scripts/prepare-candidate-binaries.sh" build "$BINARY_VERSION" \
 journey_phase_end
 journey_phase_start "stage-candidate-binaries"
 node "$ROOT/e2e/platform/stage-release-binaries.mjs" "$ROOT/dist/artifacts.json" "$TARGET"
-BINARY_FILES=()
-while IFS= read -r filename; do BINARY_FILES+=("$filename"); done < <(node -e 'const fs=require("fs"); for (const b of JSON.parse(fs.readFileSync(process.argv[1])).binaries) console.log(b.filename)' "$TARGET/binary-manifest.json")
+node --input-type=module -e 'import { verifyManifestBinaryFiles, verifyNativeBinaryVersion } from "./e2e/platform/binary-manifest-map.mjs"; verifyManifestBinaryFiles(process.argv[1]); verifyNativeBinaryVersion(process.argv[1]);' "$TARGET/binary-manifest.json"
 journey_phase_end
 
-journey_phase_start "prepare-and-seal-release-indexes"
-node "$ROOT/e2e/platform/prepare-release-index.mjs" \
-  --packages-dir "$PACKAGES" \
-  --registry-manifest "$ROOT/e2e/platform/registry-manifest.json" \
-  --sealer "$OUT/kb-create-release-index" \
-  --binary-dir "$TARGET" \
-  --binary-manifest "$TARGET/binary-manifest.json" \
-  --binary-manifest-tool "$ROOT/scripts/prepare-candidate-binaries.sh" \
-  --binary-artifacts "$ROOT/dist/artifacts.json" \
-  --binary-checksums "$ROOT/dist/checksums.txt" \
-  --release-config "$ROOT/tools/kb-create/config/platform-release.jsonc" \
-  --binary-version "$BINARY_VERSION" \
-  --source-revision "$COMMIT" \
-  --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \
-  --output "$TARGET/release-index.json"
+journey_phase_start "prepare-provisional-release-indexes"
+journey_prepare_candidate_indexes "$ROOT" "$PACKAGES" "$OUT" "$TARGET" "$BINARY_VERSION" "$COMMIT"
+journey_phase_end
+
+journey_phase_start "build-versioned-journey-binaries"
+node "$ROOT/e2e/journey/prepare-versioned-binaries.mjs" \
+  --versions "$TARGET/journey-binary-target-versions.json" \
+  --output "$TARGET" \
+  --asset-base-url "${KB_JOURNEY_BINARY_BASE_URL:-http://origin:8080/journey-candidate}" \
+  --commit "$COMMIT" \
+  --base-version "$BINARY_VERSION"
+BINARY_FILES=()
+while IFS= read -r filename; do BINARY_FILES+=("$filename"); done < <(node --input-type=module -e 'import { binaryPathsForChecksums } from "./e2e/platform/binary-manifest-map.mjs"; for (const path of binaryPathsForChecksums(process.argv[1], process.argv[2])) console.log(path)' "$TARGET/binary-manifest.json" "$TARGET/binary-manifest-map.json")
+journey_phase_end
+
+journey_phase_start "seal-versioned-release-indexes"
+journey_prepare_candidate_indexes "$ROOT" "$PACKAGES" "$OUT" "$TARGET" "$BINARY_VERSION" "$COMMIT"
+journey_phase_end
+
+# kb-create applies the configured binary source to the final two URL path
+# segments. The static origin serves from .journey/release, so stage aliases
+# for versioned assets at /<version>/<filename> as well as the canonical
+# /journey-candidate/binaries/<version>/<filename> paths in the index.
+journey_phase_start "stage-versioned-origin-assets"
+node "$ROOT/e2e/journey/stage-versioned-origin-assets.mjs" "$TARGET" "$OUT/release"
 journey_phase_end
 
 # Install the real candidate graph through kb-create's staging and package

@@ -17,12 +17,13 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 
-const base = process.env.KB_DEVKIT_BASE_REF ?? 'HEAD';
+const base = process.env.KB_DEVKIT_BASE_REF || 'HEAD';
+const diffRef = base.includes('..') ? base : `${base}...HEAD`;
 const cwd = process.cwd();
 
 /** Get files added in this diff within the current package dir */
 function getNewFiles() {
-  const out = execFileSync('git', ['diff', '--diff-filter=A', `${base}...HEAD`, '--name-only'], {
+  const out = execFileSync('git', ['diff', '--diff-filter=A', '--name-only', diffRef, '--'], {
     cwd,
     encoding: 'utf-8',
   }).trim();

@@ -42,6 +42,7 @@ from installed_fixture import installed_path, layout_value
 from journey_selection import JourneySelection
 from marketplace_tamper_proxy import Handler as MarketplaceProxyHandler, tamper_tarball
 from journey_dependencies import Dependency
+from select_from_cases import _case_declarations, selection_from_coverage
 import service_runner
 from test_install_layout import create_test_install_container
 from invocations import catalogued_error_hint, catalogued_error_message, invocation_context, open_http, run_command
@@ -1124,6 +1125,7 @@ class MarketplaceStepTests(unittest.TestCase):
                            "--email", "admin@example.test", "--password-stdin", "--json"), calls)
             self.assertIn(("kb", "auth", "status", "--json"), calls)
 
+    # case: S-262.19
     def test_marketplace_and_adapter_flows_claim_only_asserted_case_steps(self):
         with tempfile.TemporaryDirectory(prefix="kb-marketplace-journey-") as directory:
             home = Path(directory)
@@ -1570,6 +1572,21 @@ class MarketplaceStepTests(unittest.TestCase):
                 ("batch", set()),
                 ("selected", set(all_case_claims)),
             )
+            marketplace_source = "e2e/journey/marketplace_steps.py"
+            source_root = Path(__file__).resolve().parents[2]
+            update_line = next(
+                line for line, declaration in _case_declarations(marketplace_source, source_root).items()
+                if "S-012.1" in declaration.get("cases", ()))
+            update_coverage = {"mode": "local", "cases": [{
+                "id": "S-012", "status": "active", "steps": [{
+                    "stepId": "S-012.1", "claims": [{
+                        "kind": "journey", "source": marketplace_source, "line": update_line,
+                    }],
+                }],
+            }]}
+            update_selection = selection_from_coverage([update_coverage], "S-012.1", mode="local")
+            self.assertIn("publish next-major Commit update fixture",
+                          update_selection["prerequisiteSteps"])
             for mode_name, selected_steps in modes:
                 for index, failpoint in enumerate(lifecycle_assertions):
                     with self.subTest(mode=mode_name, lifecycle_assertion=failpoint):
@@ -1583,6 +1600,7 @@ class MarketplaceStepTests(unittest.TestCase):
                         trial.selected_claims = set(selected_steps)
                         if selected_steps:
                             trial.selected_capabilities = {"marketplace"}
+                            trial.prerequisite_steps = set(update_selection["prerequisiteSteps"])
                     trial_fixture_entry = prepare_commit_project_fixture(
                         trial, project, "http://registry.test", env, fake_run)
                     self.assertEqual(trial_fixture_entry, original_commit_entry)

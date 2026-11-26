@@ -31,7 +31,7 @@ describe('plugin registry routes', () => {
   afterEach(async () => {
     await app?.close();
     app = undefined;
-    if (root) await rm(root, { recursive: true, force: true });
+    if (root) { await rm(root, { recursive: true, force: true }); }
     root = undefined;
   });
 

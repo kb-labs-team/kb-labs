@@ -706,7 +706,7 @@ export async function registerLogRoutes(
         const result = await platform.logs.query(query, { limit: 1000 });
         const frontendLogs = result.logs.map(toFrontendLogRecord);
 
-        let filteredLogs = frontendLogs;
+        const filteredLogs = frontendLogs;
         // Calculate aggregated statistics
         const stats = {
           total: filteredLogs.length,
