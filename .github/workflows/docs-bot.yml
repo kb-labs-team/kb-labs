@@ -13,28 +13,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-tools:
-    uses: ./.github/workflows/build-go-tools.yml
-
   # ── Structural audit — fails CI on violations ──────────────────────────────
   # Errors (missing files, bad naming, depth violations) block merge via
   # branch protection "Require status checks to pass".
   # Warnings are printed to the log but do not fail the job.
   docs-audit:
-    needs: build-tools
     name: Doc conventions
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
-        with:
-          name: go-tools
-          path: tools-bin/
-      - name: Install kb-devkit
-        run: |
-          chmod +x tools-bin/kb-devkit
-          cp tools-bin/kb-devkit tools/kb-devkit/kb-devkit
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
         with: { run_install: false }
@@ -47,11 +34,12 @@ jobs:
       - name: Install docs workspace dependencies
         run: pnpm install --frozen-lockfile --filter @kb-labs/docs-site
 
-      - name: Run docs-audit through kb-devkit
-        run: ./tools/kb-devkit/kb-devkit check --only docs-audit
+      - name: Run docs-audit
+        working-directory: sites/web/apps/docs
+        run: node scripts/docs-audit.mjs
 
       - name: Check generated docs sources and deprecated CLI examples
-        run: ./tools/kb-devkit/kb-devkit check --only docs-source-check
+        run: node sites/web/apps/docs/scripts/docs-source-check.mjs
 
   # ── Staleness check — posts reminder threads, never blocks merge ───────────
   # Inline threads on changed files tell the author which doc pages to verify.
