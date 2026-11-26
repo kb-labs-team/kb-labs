@@ -939,6 +939,15 @@ def run_harness_command(argv: list[str], *, timeout: float = 300) -> subprocess.
     return subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=False)
 
 
+def probe_harness_command(argv: list[str], *, timeout: float = 5) -> subprocess.CompletedProcess[str] | None:
+    """Run a best-effort harness probe, returning None when it cannot succeed."""
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return result
+
+
 def run_with_runner(runner: Callable[..., subprocess.CompletedProcess[str]], argv: list[str],
                     **kwargs: Any) -> subprocess.CompletedProcess[str]:
     """Use the evidence helper for real or injected command runners without double-recording."""
