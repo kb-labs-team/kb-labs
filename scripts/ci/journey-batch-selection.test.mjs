@@ -66,6 +66,9 @@ test('ordinary PRs run only affected Journey and release keeps the installer mat
   assert.equal(pullRequest.defaults.run.shell, 'bash');
   assert.equal(pullRequest.jobs['baseline-delta'].name, 'Journey baseline delta');
   assert.equal(pullRequest.jobs['baseline-delta'].if, 'always()');
+  const runModes = pullRequest.jobs.journey.steps.find((step) => step.name === 'Run selected Journey cases');
+  assert.ok(runModes.run.includes('COMPOSE_PROJECT_NAME="kb-journey-pr-${mode}"'));
+  assert.ok(runModes.run.includes('KB_JOURNEY_NETWORK="kb-journey-pr-${mode}"'));
   assert.deepEqual(Object.keys(installer.on), ['workflow_dispatch']);
   assert.equal(release.jobs['journey-gate'].uses, './.github/workflows/reusable-installer-journey.yml');
 });

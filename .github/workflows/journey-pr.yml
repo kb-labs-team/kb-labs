@@ -90,7 +90,8 @@ jobs:
       - name: Run selected Journey cases
         run: |
           for mode in local secured; do
-            if ! e2e/journey/batch.sh mode "$mode" "$RUNNER_TEMP/journey-producer" "$RUNNER_TEMP/journey-evidence" --cases "$CLAIMS"; then
+            if ! COMPOSE_PROJECT_NAME="kb-journey-pr-${mode}" KB_JOURNEY_NETWORK="kb-journey-pr-${mode}" \
+              e2e/journey/batch.sh mode "$mode" "$RUNNER_TEMP/journey-producer" "$RUNNER_TEMP/journey-evidence" --cases "$CLAIMS"; then
               echo "$mode did not pass. The delta check will inspect the recorded evidence."
             fi
           done
