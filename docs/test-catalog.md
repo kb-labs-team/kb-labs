@@ -31,7 +31,7 @@
 | `adapters-workspace-localfs` | — | — | — | — | — | 4 | **4** |
 | `adapters-workspace-worktree` | — | — | — | — | — | 17 | **17** |
 | `agents` | 10 | — | — | — | — | 554 | **564** |
-| `cli-bin` | 4 | — | — | — | — | 189 | **193** |
+| `cli-bin` | 4 | — | — | — | — | 188 | **192** |
 | `cli-commands` | 158 | — | — | 3 | 13 | 193 | **367** |
 | `cli-contracts` | — | — | — | — | — | 9 | **9** |
 | `cli-runtime` | — | — | — | 7 | — | 122 | **129** |
@@ -105,7 +105,7 @@
 | `plugin-execution-factory` | — | — | — | 6 | — | 143 | **149** |
 | `plugin-runtime` | — | — | — | 20 | 1 | 630 | **651** |
 | `project-runtime-app` | — | — | — | — | — | 37 | **37** |
-| `qa` | 26 | — | — | — | 77 | 2 | **105** |
+| `qa` | 26 | — | — | — | 78 | 2 | **106** |
 | `quality` | 1 | — | — | — | 23 | 3 | **27** |
 | `release` | 60 | — | — | 2 | — | 273 | **335** |
 | `rest-api-app` | — | — | — | — | 215 | 5 | **220** |
@@ -139,7 +139,7 @@
 | `workflow-steps` | — | — | — | — | — | 89 | **89** |
 | `kb-create` | — | — | — | — | — | 1 | **1** |
 | `sdk-packed-plugin-fixture` | — | — | — | — | — | 2 | **2** |
-| **Total** | **736** | **13** | **54** | **198** | **2211** | **6452** | **9664** |
+| **Total** | **736** | **13** | **54** | **198** | **2212** | **6451** | **9664** |
 
 ## Test Cases by Package
 
@@ -1984,7 +1984,6 @@
 **`cli/bin/src/runtime/gateway-executor.test.ts`**
 
 - **secured project runtime command execution**
-  - routes Gateway stdout diagnostics to stderr in JSON mode
   - uses project identity and canonical command instead of sending a client handler reference
   - cancels by request ID and exits 130 when interrupted before the first event
   - handles cancellation after the first output event and exits 130
@@ -12418,6 +12417,7 @@
   - parses draft cases as non-release product proposals
 - **QA case claim scanning**
   - scans multiline journey claims and exact-step helpers
+  - does not turn a blocked fallback into a second journey claim owner
   - scans journey, Playwright, and adjacent unit claims and rejects unknown ids
   - scans adjacent claims above parameterized Vitest declarations
   - scans Python unittest claims from comments immediately above test functions
