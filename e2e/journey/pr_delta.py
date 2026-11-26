@@ -15,35 +15,25 @@ from scoreboard import MODES, _service_message_for_comparison
 
 # These smoke claims cover the corresponding installed product surfaces.
 # The Journey selector adds their executable owners and prerequisites.
-SCOPES = (
-    (("tools/kb-create/**", "tools/kb-dev/**", "e2e/journey/installer_case_steps.py", ".kb/release/**",
-      "e2e/install-flow/**", "e2e/kb-create/**"), ("PC-001.2", "PC-001.10")),
-    (("**/marketplace/**", "services/marketplace*/**", "e2e/marketplace*/**",
-      "e2e/journey/marketplace_steps.py"), ("S-010.1", "S-010.8", "S-012.1")),
-    (("services/workflow/**", ".kb/workflows/**", "e2e/workflows/**",
-      "e2e/journey/workflow_steps.py"), ("S-002.1", "S-056.1")),
-    (("studio/**", "e2e/studio/**"), ("S-120.1",)),
-    (("plugins/commit/**", "e2e/journey/plugin_author_steps.py"), ("S-010.7", "S-030.1")),
-    (("services/gateway/**", "e2e/auth/**", "e2e/gateway/**"), ("S-010.1", "S-010.6")),
-)
-CROSS_CUTTING = ("PC-001.2", "S-010.1", "S-002.1")
+CLAIM_MAP = Path(__file__).resolve().parents[2] / "scripts/ci/journey-pr-claims.json"
 PRODUCT_PREFIXES = ("adapters/", "cli/", "core/", "plugins/", "sdk/", "services/", "shared/",
                     "studio/", "tools/", "e2e/", ".kb/")
 REPORT_PREFIXES = ("service-", "installer-case-", "platform-")
 
 
 def plan_claims(paths: list[str]) -> list[str]:
+    policy = read_json(CLAIM_MAP)
     claims = set()
     for path in paths:
         if path.endswith((".md", ".mdx")) or path in {"e2e/journey/scoreboard.py", "e2e/journey/pr_delta.py"}:
             continue
         if fnmatchcase(path, "e2e/journey/test_*.py"):
             continue
-        scoped = {claim for patterns, selected in SCOPES for claim in selected
-                  if any(fnmatchcase(path, pattern) for pattern in patterns)}
+        scoped = {claim for scope in policy["scopes"] for claim in scope["claims"]
+                  if any(fnmatchcase(path, pattern) for pattern in scope["paths"])}
         if not scoped and (path.startswith(PRODUCT_PREFIXES)
                            or path in {"package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "devkit.yaml"}):
-            scoped.update(CROSS_CUTTING)
+            scoped.update(policy["crossCutting"])
         claims.update(scoped)
     return sorted(claims)
 
