@@ -130,15 +130,19 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertIn("--asset-base-url http://origin:8080/journey-candidate", preparation)
         self.assertIn("copyFileSync(artifact.path, join(outputDirectory, artifact.name))", staging)
 
-    def test_oauth_gateway_override_is_written_after_install_and_before_start(self):
+    def test_e2e_platform_uses_installed_cli_and_restarts_for_oauth_override(self):
         entrypoint = (ROOT / "e2e" / "platform" / "entrypoint.sh").read_text()
         apply_index = entrypoint.index("kb-create apply \\")
-        override_index = entrypoint.index('cat > "$PLATFORM_ROOT/.kb/kb.config.override.json"')
-        start_index = entrypoint.index("\nkb-create start --platform-root")
+        project_add_index = entrypoint.index('kb project add "$PLATFORM_ROOT"')
+        override_index = entrypoint.index('cat > "$PLATFORM_ROOT/current/.kb/kb.config.override.json"')
+        restart_index = entrypoint.index('kb-create restart --platform-root "$PLATFORM_ROOT"')
 
+        self.assertLess(apply_index, project_add_index)
         self.assertLess(apply_index, override_index)
-        self.assertLess(override_index, start_index)
+        self.assertLess(override_index, restart_index)
         self.assertIn('"clientSecretEnv": "OIDC_CORP_CLIENT_SECRET"', entrypoint)
+        self.assertNotIn('node "$PLATFORM_ROOT/node_modules/@kb-labs/cli-bin/dist/bin.js"', entrypoint)
+        self.assertNotIn('\nkb-create start --platform-root', entrypoint)
 
 
 if __name__ == "__main__":

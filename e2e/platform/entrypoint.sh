@@ -52,7 +52,7 @@ if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
   echo "    OIDC_E2E_ENABLED=true — writing gateway config override"
   OIDC_ISSUER="${OIDC_CORP_ISSUER:-https://idp-stub:9443}"
   OIDC_CLIENT_ID="${OIDC_CORP_CLIENT_ID:-kb-gateway}"
-  cat > "$PLATFORM_ROOT/.kb/kb.config.override.json" << OIDC_OVERRIDE
+  cat > "$PLATFORM_ROOT/current/.kb/kb.config.override.json" << OIDC_OVERRIDE
 {
   "gateway": {
     "auth": {
@@ -163,11 +163,14 @@ jobs:
 EOF
 
 # ── Step 3: Start the host ─────────────────────────────────────────────────
-# One supervised process; the launcher waits until it is healthy. The project
-# is registered so the host can route /api/v1/projects/{id}/... to its runtime.
+# `kb-create apply` started the supervised host. Register the installed
+# platform root through its supported CLI entrypoint so the host can route
+# /api/v1/projects/{id}/... to its runtime.
 echo "==> [3/3] Starting the host..."
-node "$PLATFORM_ROOT/node_modules/@kb-labs/cli-bin/dist/bin.js" project add "$PLATFORM_ROOT"
-kb-create start --platform-root "$PLATFORM_ROOT"
+kb project add "$PLATFORM_ROOT"
+if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
+  kb-create restart --platform-root "$PLATFORM_ROOT"
+fi
 
 echo "==> Waiting for gateway process to start (/health)..."
 ATTEMPTS=0
