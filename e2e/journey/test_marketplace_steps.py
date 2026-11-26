@@ -1106,7 +1106,8 @@ class MarketplaceStepTests(unittest.TestCase):
                     }), "")
                 return subprocess.CompletedProcess(command, 2, "", f"unexpected command: {command[1:3]}")
 
-            journey = Journey("secured", "marketplace-auth-fixture")
+            with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore"}):
+                journey = Journey("secured", "marketplace-auth-fixture")
             authenticate_secured_marketplace(journey, project, env, fake_run)
 
             self.assertEqual(journey.result().status, "PASS", journey.result().first_failure)
