@@ -59,6 +59,12 @@ class PullRequestDeltaTests(unittest.TestCase):
                                         "cases": ["S-010.1"], "message": "required fixture was not ready"}
                                        for i in range(row_count)]
                     report_path.write_text(json.dumps(report))
+                    (base / "secured" / "installer-case-secured.json").write_text(json.dumps({
+                        "case_run": {"mode": "secured"},
+                        "steps": [{"name": "selected step never ran: install (claim S-010.1)",
+                                   "capability": "journey.selection", "status": "FAIL", "cases": ["S-010.1"],
+                                   "message": "selected step never ran: install (claim S-010.1)"}],
+                    }))
                     summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, ["S-010.1"])
                     self.assertEqual(passed, expected, summary)
                     self.assertIn("secured / S-010.1 / install" if expected else "missing evidence", summary)
