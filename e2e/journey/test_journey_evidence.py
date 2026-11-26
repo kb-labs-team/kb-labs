@@ -18,11 +18,12 @@ from service_steps import Journey
 class CleanInstallCaseEvidenceTests(unittest.TestCase):
     def test_profile_uses_observed_node_major_and_cli_surface(self):
         with patch("journey_evidence.platform.system", return_value="Linux"), \
-             patch("journey_evidence.subprocess.run") as run:
-            run.return_value.stdout = "v24.1.0\n"
+             patch("journey_evidence.probe_harness_command") as probe:
+            probe.return_value.stdout = "v24.1.0\n"
             self.assertEqual(clean_install_evidence_profile(), {
                 "os": "linux", "runtime": "node-24", "surface": "cli",
             })
+            probe.assert_called_once_with(["node", "--version"], timeout=5)
 
     # case: S-315.2
     def test_real_journey_invocation_and_platform_config_symlink_are_captured(self):
