@@ -16,7 +16,9 @@ from plugin_author_steps import (
     run_commit_case_steps,
     run_plugin_author_flow,
 )
+from installed_fixture import layout_value
 from service_steps import Journey
+from journey_selection import JourneySelection
 from invocations import open_http
 from marketplace_sync_fixture import (
     marketplace_sync_request_count,
@@ -425,6 +427,71 @@ class PluginAuthorJourneyTests(unittest.TestCase):
                     ["commit", "--help"], self.project, env, command_runner, self.kb,
                 )
 
+    def test_group_preflight_uses_the_installed_platform_kb_home(self):
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {
+            "enabled": True, "version": "2.120.1", "integrity": "sha512-fixture",
+        }}}))
+        platform_root = self.root / "kb-platform"
+        active = platform_root / "versions" / "candidate"
+        self._create_pnpm_extension_store_tree(active)
+        (platform_root / "current").symlink_to(Path("versions/candidate"))
+        env = {
+            **self.env,
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root),
+            "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+        }
+        observed = {}
+
+        def command_runner(_runner, command, **kwargs):
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                observed["kb_home"] = kwargs["env"].get("KB_HOME")
+                if "store.lookup" in command[3]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(["commit plan show"]), "")
+                return subprocess.run(command, capture_output=True, text=True, **kwargs)
+            return subprocess.CompletedProcess(command, 0, "registered plugin command", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=command_runner):
+            preflight_installed_plugin_command(
+                ["commit", "plan", "show", "--json"], self.project, env, command_runner, self.kb,
+            )
+
+        expected = platform_root / layout_value("sharedStateDirectory") / layout_value("kbHomeDirectory")
+        self.assertEqual(observed.get("kb_home"), str(expected.resolve()))
+
+    def test_group_preflight_preserves_an_explicit_kb_home(self):
+        lock = self.project / ".kb/marketplace.lock"
+        lock.write_text(json.dumps({"plugins": {"@kb-labs/commit": {
+            "enabled": True, "version": "2.120.1", "integrity": "sha512-fixture",
+        }}}))
+        explicit_home = self.root / "explicit-kb-home"
+        platform_root = self.root / "kb-platform"
+        active = platform_root / "versions" / "candidate"
+        self._create_pnpm_extension_store_tree(active)
+        (platform_root / "current").symlink_to(Path("versions/candidate"))
+        env = {
+            **self.env,
+            "KB_HOME": str(explicit_home),
+            "KB_JOURNEY_WORKSPACE_ROOT": str(self.root),
+            "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+        }
+        observed = {}
+
+        def command_runner(_runner, command, **kwargs):
+            if command[:3] == ["node", "--input-type=module", "-e"]:
+                observed["kb_home"] = kwargs["env"].get("KB_HOME")
+                if "store.lookup" in command[3]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps(["commit plan show"]), "")
+                return subprocess.run(command, capture_output=True, text=True, **kwargs)
+            return subprocess.CompletedProcess(command, 0, "registered plugin command", "")
+
+        with patch("plugin_author_steps.run_with_runner", side_effect=command_runner):
+            preflight_installed_plugin_command(
+                ["commit", "plan", "show", "--json"], self.project, env, command_runner, self.kb,
+            )
+
+        self.assertEqual(observed.get("kb_home"), str(explicit_home))
+
     def run_flow(self, *, mode="local", fail_build=False):
         if fail_build:
             self.env["FAIL_PNPM_BUILD"] = "1"
@@ -489,6 +556,39 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual({step: claims[step] for step in ("S-030.1", "S-030.2", "S-030.3", "S-030.4")}, {
             "S-030.1": "PASS", "S-030.2": "PASS", "S-030.3": "PASS", "S-030.4": "PASS",
         })
+
+    def test_selected_s160_5_runs_its_fixture_prerequisite_before_host_command(self):
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True, "version": "2.120.1", "integrity": "sha256-fixture",
+                "source": "marketplace", "package": "@kb-labs/commit",
+            }},
+        }))
+        selection = JourneySelection(
+            requested=("S-160.5",),
+            claims=frozenset({"S-160.5"}),
+            owning_steps={"execute the installed Commit command through the secured project runtime":
+                          ("S-160.5",)},
+            prerequisite_steps=frozenset({"prepare Commit and Review case fixtures"}),
+            prerequisite_flows=frozenset(),
+            capabilities=frozenset({"commit-plugin"}),
+            runner_selector="service-secured:explore",
+            requested_runners="",
+        )
+        journey = Journey("secured", "selected-s160-fixture-prerequisite", selection=selection)
+        with patch("plugin_author_steps.preflight_installed_plugin_command"):
+            run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
+                                  subprocess.run, self.env)
+
+        statuses = {step.name: step.status for step in journey.steps}
+        self.assertEqual(statuses["prepare Commit and Review case fixtures"], "PASS", journey.result().steps)
+        self.assertEqual(
+            statuses["execute the installed Commit command through the secured project runtime"],
+            "PASS", journey.result().steps,
+        )
+        claims = {claim["claimId"]: claim["status"] for claim in journey.result().case_run["claims"]}
+        self.assertEqual(claims, {"S-160.5": "PASS"})
 
     def test_commit_and_review_fixture_finishes_with_a_clean_worktree(self):
         (self.project / ".kb/marketplace.lock").write_text(json.dumps({

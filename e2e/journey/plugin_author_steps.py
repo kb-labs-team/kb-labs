@@ -287,16 +287,24 @@ def preflight_installed_plugin_command(
     if not platform_root_value or not lock_path.is_file() or not args:
         return
 
+    inspection_env = dict(env)
+    if not inspection_env.get("KB_HOME", "").strip():
+        inspection_env["KB_HOME"] = str(
+            Path(platform_root_value).resolve()
+            / layout_value("sharedStateDirectory")
+            / layout_value("kbHomeDirectory")
+        )
+
     active_root = active_platform_root(Path(platform_root_value))
     resolved_module = _resolve_installed_extension_store_module(
-        active_root, env, command_runner)
+        active_root, inspection_env, command_runner)
 
     result = run_with_runner(
         command_runner,
         ["node", "--input-type=module", "-e", _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
          str(lock_path), str(resolved_module)],
         cwd=active_root,
-        env=env,
+        env=inspection_env,
         timeout=60,
     )
     if result.returncode != 0:
@@ -501,7 +509,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                 raise RuntimeError("S-160.1 secured execution did not report its host-owned project runtime receipt")
 
     journey.step("preview the deterministic fixture Commit plan", "commit-plugin",
-                 s160_dry_run, cases=["S-160.1"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_dry_run, cases=["S-160.1"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     def s160_missing_llm() -> None:
         with invocation_context():
@@ -524,7 +534,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("could not restore the deterministic fixture LLM binding after S-160.2")
 
     journey.step("report missing deterministic LLM capability", "commit-plugin",
-                 s160_missing_llm, cases=["S-160.2"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_missing_llm, cases=["S-160.2"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s160-apply")
 
@@ -537,7 +549,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError(f"S-160.3 did not apply the deterministic fixture subject: {subject!r}")
 
     journey.step("apply the deterministic fixture Commit plan", "commit-plugin",
-                 s160_apply, cases=["S-160.3"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_apply, cases=["S-160.3"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     before_s160_noop = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
     before_s160_noop_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
@@ -555,7 +569,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-160.4 expected a successful empty result without changing Git state")
 
     journey.step("return a successful empty Commit result", "commit-plugin",
-                 s160_no_changes, cases=["S-160.4"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_no_changes, cases=["S-160.4"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     def s160_host_command() -> None:
         result = cli(["commit", "plan", "delete", "--json"], step_id="S-160.5")
@@ -572,7 +588,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-160.5 command did not report execution by its registered project runtime")
 
     journey.step("execute the installed Commit command through the secured project runtime", "commit-plugin",
-                 s160_host_command, cases=["S-160.5"], runners=("service-secured:explore",))
+                 s160_host_command, cases=["S-160.5"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-secured:explore",))
 
     _stage_case_file(project, env, "s030-progress")
 
