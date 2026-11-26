@@ -32,6 +32,7 @@ from journey_selection import read_journey_selection, read_requested_cases
 from journey_resources import resource_root
 from journey_values import journey_value
 from journey_domains import service_journey_domain_registry
+from workflow_domain_contract import WORKFLOW_STEP_BY_ID
 
 
 RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
@@ -330,10 +331,16 @@ def journey_source_group_declaration(source: str, root: Path,
                                      selector: str = "") -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
     sources = _imported_journey_sources({source}, root)
+    domain_sources = {
+        implementation_source
+        for domain in service_journey_domain_registry().domains_for_runner(selector)
+        for implementation_source in domain.implementation_sources
+    } if selector else set()
+    ast_sources = sources - domain_sources
     # Keep this declaration scoped to the source's import closure. The broader
     # registry also scans every runner entry point, which can assign an unrelated
     # lane's step names to this group and make that flow run for the wrong cases.
-    registrations = _source_step_declarations_cached(tuple(sorted(sources)), root)
+    registrations = _source_step_declarations_cached(tuple(sorted(ast_sources)), root)
     cases: set[str] = set()
     steps: set[str] = set()
     mode = RUNNERS[selector].mode if selector else ""
@@ -348,7 +355,7 @@ def journey_source_group_declaration(source: str, root: Path,
             if not declared_runners and RUNNERS[selector].lane:
                 continue
         steps.add(str(name))
-    for registered_source in sources:
+    for registered_source in ast_sources:
         for declaration in _case_declarations(registered_source, root).values():
             declared_runners = declaration.get("runners") or ()
             if selector:
@@ -357,6 +364,14 @@ def journey_source_group_declaration(source: str, root: Path,
                 if not declared_runners and RUNNERS[selector].lane:
                     continue
             cases.update(str(case) for case in declaration.get("cases") or ())
+    if selector:
+        for domain in service_journey_domain_registry().domains_for_runner(selector):
+            if not set(domain.implementation_sources).intersection(sources):
+                continue
+            cases.update(domain.cases_for_mode(mode))
+            steps.add(domain.owner_name)
+            steps.update(WORKFLOW_STEP_BY_ID[step_id].name
+                         for step_id in domain.step_ids_for_mode(mode))
     return {"cases": tuple(sorted(cases)), "steps": tuple(sorted(steps))}
 
 
@@ -892,6 +907,12 @@ def full_runner_owner_plans(root: Path) -> dict[str, list[tuple[str, str]]]:
     for selector, runner in RUNNERS.items():
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
+        domain_implementation_sources = {
+            implementation_source
+            for domain in domain_registry.domains_for_runner(selector)
+            for implementation_source in domain.implementation_sources
+        }
+        sources.difference_update(domain_implementation_sources)
         registrations = _source_step_declarations(sources, root)
         domains = domain_registry.domains_for_runner(selector)
         domain_sources = {source for domain in domains for source in domain.implementation_sources}
@@ -1214,6 +1235,12 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
             raise ValueError(f"active release owner {selector!r} has no complete runnable route")
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
+        domain_sources = {
+            implementation_source
+            for domain in domain_registry.domains_for_runner(selector)
+            for implementation_source in domain.implementation_sources
+        }
+        sources.difference_update(domain_sources)
         if selector not in group_specs_by_selector:
             if selector.startswith("service-"):
                 from service_runner import service_selection_groups
@@ -1236,7 +1263,8 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
         domains_by_owner = {}
         for domain in domain_registry.domains_for_runner(selector):
             pseudo = {"name": domain.owner_name, "kind": "flow", "requires": list(domain.requires),
-                      "domainId": domain.id, "domainCases": list(domain.cases),
+                      "domainId": domain.id,
+                      "domainCases": list(domain.cases_for_mode(runner.mode)),
                       "capability": domain.capability, "locations": []}
             by_name[("flow", domain.owner_name)] = pseudo, []
             domains_by_owner[("flow", domain.owner_name)] = domain
@@ -1253,7 +1281,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
             areas: set[str] = set()
             if domain is not None:
                 capabilities.add(domain.capability)
-                for case_id in domain.cases:
+                for case_id in domain.cases_for_mode(runner.mode):
                     active_case = active_steps[runner.mode].get(case_id)
                     if active_case is None or not active_case.get("release"):
                         continue
@@ -1277,7 +1305,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                         areas.add(area)
             if domain is None:
                 domain_claims = {claim for registered in domain_registry.domains_for_runner(selector)
-                                 for claim in registered.cases}
+                                 for claim in registered.cases_for_mode(runner.mode)}
                 case_ids.difference_update(domain_claims)
             required_ids: list[str] = []
             required_states: list[str] = []

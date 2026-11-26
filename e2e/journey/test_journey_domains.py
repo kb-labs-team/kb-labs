@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import unittest
 import json
+from pathlib import Path
+import re
 from unittest.mock import patch
 
 from journey_domains import (JourneyDomain, JourneyDomainRegistry,
@@ -9,6 +11,8 @@ from journey_domains import (JourneyDomain, JourneyDomainRegistry,
 from journey_selection import JourneySelection, read_journey_selection
 from service_steps import FlowGraph, Journey, JourneyContractError
 import runner
+from workflow_domain_contract import WORKFLOW_STEP_BY_ID
+from workflow_steps import run_registered_workflow_step
 
 
 def selection_with_lease(steps: list[dict]) -> JourneySelection:
@@ -83,12 +87,35 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         self.assertIn("S-006.3", domain.cases)
         self.assertIn("S-044.9", domain.cases)
         self.assertIn("S-041.17", domain.cases)
-        self.assertNotIn("S-041.7", domain.cases)
+        self.assertIn("S-041.7", domain.cases)
+        self.assertNotIn("S-007.4", domain.cases_for_mode("local"))
+        self.assertNotIn("S-041.17", domain.cases_for_mode("local"))
+        self.assertIn("S-007.4", domain.cases_for_mode("secured"))
         self.assertEqual(domain.runners, ("service-local:explore", "service-secured:explore"))
         runtime_domain = service_journey_domain_registry(mode="local").get("workflow-execution")
         self.assertIn("S-002.1", runtime_domain.required_claims)
         self.assertIn("S-041.17", service_journey_domain_registry(mode="secured")
                       .get("workflow-execution").required_claims)
+        self.assertNotIn("S-007.4", runtime_domain.required_claims)
+        self.assertNotIn("S-041.17", runtime_domain.required_claims)
+        self.assertIn("S-007.4", service_journey_domain_registry(mode="secured")
+                      .get("workflow-execution").required_claims)
+
+    # case: S-262.20
+    def test_domain_mode_claims_match_real_workflow_step_registrations(self):
+        source = Path(__file__).with_name("workflow_steps.py").read_text()
+        wired_ids = {re.sub(r"^(workflow-S-\d+)-(\d+)$", r"\1.\2", step_id)
+                     for step_id in re.findall(
+                         r"run_registered_workflow_step\(journey,\s*['\"]([^'\"]+)['\"]", source)}
+        self.assertEqual(wired_ids, set(WORKFLOW_STEP_BY_ID))
+        domain = service_journey_domain_registry().get("workflow-execution")
+        for mode in ("local", "secured"):
+            registered_claims = {claim for step_id in domain.step_ids_for_mode(mode)
+                                 for claim in WORKFLOW_STEP_BY_ID[step_id].cases}
+            self.assertEqual(set(domain.cases_for_mode(mode)), registered_claims, mode)
+        for claim in ("S-007.4", "S-041.7", "S-041.8", "S-041.12", "S-041.17"):
+            self.assertNotIn(claim, domain.cases_for_mode("local"))
+            self.assertIn(claim, domain.cases_for_mode("secured"))
 
     # case: S-262.20
     def test_full_route_runs_one_callback_with_common_setup_and_cleanup(self):
@@ -181,9 +208,10 @@ class JourneyDomainRegistryTests(unittest.TestCase):
 
         def run_child():
             child = Journey("local", "workflow-child", selection=domain.child_selection(selection))
-            for claim in domain.required_claims:
-                result = child.step(f"real workflow assertion {claim}", "workflow",
-                                    lambda claim=claim: executed.append(claim), cases=[claim])
+            for step_id in domain.step_ids_for_mode("local"):
+                spec = WORKFLOW_STEP_BY_ID[step_id]
+                result = run_registered_workflow_step(
+                    child, step_id, lambda spec=spec: executed.extend(spec.cases))
                 self.assertEqual(result.status, "PASS")
             self.assertFalse(child.selection_boundary.active)
             return child
@@ -191,7 +219,7 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         status = registry.run(graph, domain.id, run_child, expected_claims=domain.required_claims)
 
         self.assertEqual(status, "PASS")
-        self.assertEqual(executed, list(domain.required_claims))
+        self.assertTrue(set(domain.required_claims).issubset(executed))
         self.assertEqual(graph.journey.flow_events[-1]["status"], "PASS")
 
     # case: S-262.20
@@ -203,9 +231,10 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         executed: list[str] = []
         child = Journey("local", "workflow-child-full", selection=domain.child_selection(
             outer.selection_boundary))
-        for claim in domain.required_claims:
-            child.step(f"workflow assertion {claim}", "workflow",
-                       lambda claim=claim: executed.append(claim), cases=[claim])
+        for step_id in domain.step_ids_for_mode("local"):
+            spec = WORKFLOW_STEP_BY_ID[step_id]
+            run_registered_workflow_step(child, step_id,
+                                         lambda spec=spec: executed.extend(spec.cases))
 
         with patch.object(runner, "probe_platform_state") as host_cleanup:
             status = registry.run(
@@ -216,7 +245,7 @@ class JourneyDomainRegistryTests(unittest.TestCase):
             )
 
         self.assertEqual(status, "PASS")
-        self.assertEqual(executed, list(domain.required_claims))
+        self.assertTrue(set(domain.required_claims).issubset(executed))
         host_cleanup.assert_called_once()
         self.assertEqual(host_cleanup.call_args.kwargs["mutator_group"], "workflow")
 

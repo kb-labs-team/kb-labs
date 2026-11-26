@@ -7,6 +7,8 @@ from typing import Callable
 from journey_selection import JourneySelection
 from journey_dependencies import Dependency
 from service_steps import FlowGraph, Journey, JourneyContractError
+from workflow_domain_contract import (WORKFLOW_STEP_BY_ID, workflow_cases_for_mode,
+                                      workflow_step_ids_for_mode)
 
 
 @dataclass(frozen=True)
@@ -19,12 +21,22 @@ class JourneyDomain:
     capability: str
     cases: tuple[str, ...]
     runners: tuple[str, ...]
+    mode_cases: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    mode_step_ids: tuple[tuple[str, tuple[str, ...]], ...] = ()
     required_claims: tuple[str, ...] = ()
     requires: tuple[str, ...] = ()
     runner_modes: tuple[tuple[str, str], ...] = ()
     implementation_sources: tuple[str, ...] = ()
     child_result_required: bool = False
     position_after: str = ""
+
+    def cases_for_mode(self, mode: str) -> tuple[str, ...]:
+        if not self.mode_cases:
+            return self.cases
+        return dict(self.mode_cases).get(mode, ())
+
+    def step_ids_for_mode(self, mode: str) -> tuple[str, ...]:
+        return dict(self.mode_step_ids).get(mode, ())
 
     def child_selection(self, parent: JourneySelection) -> JourneySelection:
         """Let an atomic lease run its internal assertions without owner filtering."""
@@ -80,7 +92,7 @@ class JourneyDomainRegistry:
                 raise JourneyContractError(
                     f"runner {selector!r} is registered for mode {expected_mode!r}, "
                     f"not {graph.journey.mode!r}, in domain {domain.id!r}")
-            domain_claims = set(lease.get("claimIds", ())).intersection(domain.cases)
+            domain_claims = set(lease.get("claimIds", ())).intersection(domain.cases_for_mode(graph.journey.mode))
             owner = graph.journey.planned_execution_steps.get(("flow", domain.owner_name))
             if not owner or owner.get("direct") is not True:
                 if not domain_claims:
@@ -127,11 +139,27 @@ class JourneyDomainRegistry:
                 if lease is not None:
                     expected_claim_set = set(expected_claims or ())
                 elif graph.selection_active:
-                    expected_claim_set = graph.journey.selected_claims.intersection(domain.cases)
+                    expected_claim_set = graph.journey.selected_claims.intersection(
+                        domain.cases_for_mode(graph.journey.mode))
                 else:
                     expected_claim_set = set(expected_claims or ())
+                if lease is not None or not graph.selection_active:
+                    expected_step_ids = set(domain.step_ids_for_mode(graph.journey.mode))
+                else:
+                    expected_step_ids = {
+                        step_id for step_id in domain.step_ids_for_mode(graph.journey.mode)
+                        if set(WORKFLOW_STEP_BY_ID[step_id].cases).intersection(expected_claim_set)
+                    }
                 claim_status: dict[str, str] = {}
+                observed_domain_steps: dict[str, str] = {}
                 for row in child.steps:
+                    details = row.get("details") or {}
+                    step_id = details.get("domainStepId") if isinstance(details, dict) else None
+                    if isinstance(step_id, str):
+                        if step_id in observed_domain_steps:
+                            raise JourneyContractError(
+                                f"journey domain {domain.id!r} emitted duplicate child step ID {step_id!r}")
+                        observed_domain_steps[step_id] = row.get("status", "FAIL")
                     for claim in row.get("cases", []):
                         if claim in expected_claim_set:
                             previous = claim_status.get(claim)
@@ -144,10 +172,17 @@ class JourneyDomainRegistry:
                     raise JourneyContractError(
                         f"journey domain {domain.id!r} lacks PASS child evidence for claims: "
                         + ", ".join(missing))
+                missing_steps = sorted(expected_step_ids - observed_domain_steps.keys())
+                failed_steps = sorted(step_id for step_id in expected_step_ids
+                                      if observed_domain_steps.get(step_id) != "PASS")
+                if missing_steps or failed_steps:
+                    raise JourneyContractError(
+                        f"journey domain {domain.id!r} child assertion inventory is incomplete; "
+                        f"missing={missing_steps!r}, nonPass={failed_steps!r}")
             return outcome
 
         return graph.flow(domain.owner_name, domain.group, domain.capability, invoke,
-                          cases=domain.cases, record_empty_success=False,
+                          cases=domain.cases_for_mode(graph.journey.mode), record_empty_success=False,
                           runners=domain.runners)
 
 
@@ -155,21 +190,12 @@ def service_journey_domain_registry(*, mode: str | None = None) -> JourneyDomain
     """Authoritative declarative service-domain inventory used at runtime and by planning."""
     if mode is not None and mode not in {"local", "secured"}:
         raise ValueError(f"unsupported service journey mode {mode!r}")
-    workflow_claims = tuple(
-        [f"S-002.{step}" for step in range(1, 7)]
-        + ["S-006.3"]
-        + [f"S-007.{step}" for step in range(1, 6)]
-        + [f"S-008.{step}" for step in range(1, 5)]
-        + [f"S-009.{step}" for step in range(1, 5)]
-        + [f"S-027.{step}" for step in range(1, 4)]
-        + [f"S-028.{step}" for step in range(1, 4)]
-        + [f"S-029.{step}" for step in range(1, 4)]
-        + [f"S-044.{step}" for step in range(1, 10)]
-        + ["S-056.1", "S-056.2", "S-056.3"]
-        + ["S-041.17"]
-        + ["PC-002.5"]
-        + [f"S-143.{step}" for step in range(1, 5)]
-    )
+    implementation_sources = ("e2e/journey/workflow_steps.py",)
+    mode_cases = {mode_name: workflow_cases_for_mode(mode_name)
+                  for mode_name in ("local", "secured")}
+    mode_step_ids = {mode_name: workflow_step_ids_for_mode(mode_name)
+                     for mode_name in ("local", "secured")}
+    workflow_claims = tuple(sorted(set(mode_cases["local"]) | set(mode_cases["secured"])))
     registry = JourneyDomainRegistry()
     required_claims: tuple[str, ...] = ()
     if mode is not None:
@@ -181,7 +207,7 @@ def service_journey_domain_registry(*, mode: str | None = None) -> JourneyDomain
             if case.get("status") == "active" and case.get("release")
             and (not case.get("modes") or mode in case.get("modes", []))
             for claim in case.get("claims", [])
-            if claim in workflow_claims
+            if claim in mode_cases[mode]
         }))
     registry.register(JourneyDomain(
         id="workflow-execution",
@@ -190,12 +216,16 @@ def service_journey_domain_registry(*, mode: str | None = None) -> JourneyDomain
         capability="workflow",
         cases=workflow_claims,
         runners=("service-local:explore", "service-secured:explore"),
+        mode_cases=tuple((selected_mode, mode_cases[selected_mode])
+                         for selected_mode in ("local", "secured")),
+        mode_step_ids=tuple((selected_mode, mode_step_ids[selected_mode])
+                            for selected_mode in ("local", "secured")),
         required_claims=required_claims,
         runner_modes=(
             ("service-local:explore", "local"),
             ("service-secured:explore", "secured"),
         ),
-        implementation_sources=("e2e/journey/workflow_steps.py",),
+        implementation_sources=implementation_sources,
         child_result_required=True,
         position_after="workflow fixture lint",
         requires=("flow:workflow fixture lint",),

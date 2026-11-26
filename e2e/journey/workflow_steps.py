@@ -9,7 +9,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
-from service_steps import Journey, journey_modes
+from service_steps import Journey, JourneyContractError, journey_modes
+from workflow_domain_contract import WORKFLOW_STEP_BY_ID
 from kb_invocation import kb_command, kb_login_shell
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (
@@ -23,6 +24,26 @@ from invocations import (
     write_report_json,
     write_report_jsonl,
 )
+
+
+def run_registered_workflow_step(journey: Journey, step_id: str, check: Callable[[], object],
+                                 *args, **kwargs):
+    """Execute one child assertion from the shared workflow domain inventory."""
+    spec = WORKFLOW_STEP_BY_ID.get(step_id)
+    if spec is None:
+        raise JourneyContractError(f"unknown registered workflow step {step_id!r}")
+    if journey.mode not in spec.modes:
+        raise JourneyContractError(
+            f"workflow step {step_id!r} is registered for {spec.modes}, not {journey.mode!r}")
+    details_callback = kwargs.pop("details", None)
+    result = journey.step(spec.name, spec.capability, check, *args,
+                          cases=spec.cases, details=details_callback, **kwargs)
+    details = dict(result.details or {})
+    if "domainStepId" in details:
+        raise JourneyContractError(f"workflow step {step_id!r} supplied a reserved domainStepId detail")
+    details["domainStepId"] = step_id
+    result.details = details
+    return result
 
 
 def run_cli(args: list[str], *, env: dict[str, str], cwd: Path, timeout: int = 120,
@@ -260,14 +281,14 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
         if "manual: true" not in content or "echo hello-workflow" not in content:
             raise AssertionError("workflow create created a hello workflow with unexpected trigger or command")
 
-    journey.step("initialize solo project workflow", "workflow", initialize, cases=["S-002.1"])
+    run_registered_workflow_step(journey, 'workflow-S-002-1', initialize)
 
     def lint() -> None:
         result = _case_cli("S-002.2", ["workflow", "lint"], env=env, cwd=project)
         if result.returncode or ".kb/workflows/hello.yml" not in result.stdout or "valid" not in result.stdout.lower():
             raise AssertionError(f"workflow lint did not report hello.yml valid: {result.stdout!r}")
 
-    journey.step("lint solo project workflow", "workflow", lint, cases=["S-002.2"])
+    run_registered_workflow_step(journey, 'workflow-S-002-2', lint)
 
     run_id = ""
 
@@ -276,7 +297,7 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
         run_id = _run_id(_case_json_cli("S-002.3", ["workflow", "run", "--workflow-id=hello", "--json"],
                                         env=env, cwd=project))
 
-    journey.step("start solo project workflow", "workflow", start, cases=["S-002.3"])
+    run_registered_workflow_step(journey, 'workflow-S-002-3', start)
 
     def inspect() -> None:
         with invocation_context(step_id="S-002.4"):
@@ -288,7 +309,7 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
         if detail.get("status") != "success" or "hello-workflow" not in output:
             raise AssertionError(f"hello workflow detail omitted success or its output: {detail!r}")
 
-    journey.step("inspect solo project workflow result", "workflow", inspect, cases=["S-002.4"])
+    run_registered_workflow_step(journey, 'workflow-S-002-4', inspect)
 
     def listed() -> None:
         data = _case_json_cli("S-002.5", ["workflow", "runs", "list", "--workflow=hello", "--json"],
@@ -302,7 +323,7 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
                     "case S-002.5 requires `data[].workflowId`, but the command result omits it")
             raise AssertionError(f"workflow list omitted the successful hello run {run_id}")
 
-    journey.step("find solo project workflow in history", "workflow", listed, cases=["S-002.5"])
+    run_registered_workflow_step(journey, 'workflow-S-002-5', listed)
 
     def unknown() -> None:
         result = _case_cli("S-002.6", ["workflow", "runs", "view", "journey-run-does-not-exist", "--json"],
@@ -320,7 +341,7 @@ def _solo_workflow_case(journey: Journey, *, env: dict[str, str], project: Path,
                 or hint != 'Run "kb workflow runs list" to inspect available runs.'):
             raise AssertionError(f"unknown workflow run did not return the typed not-found contract: {result.stdout!r}")
 
-    journey.step("report unknown workflow run", "workflow", unknown, cases=["S-002.6"])
+    run_registered_workflow_step(journey, 'workflow-S-002-6', unknown)
 
 
 def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
@@ -351,15 +372,14 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
             sleep(0.2)
         raise AssertionError(f"workflow run did not become active after it returned: {detail!r}")
 
-    journey.step("start active workflow for cancellation", "workflow", start, cases=["S-008.1"])
+    run_registered_workflow_step(journey, 'workflow-S-008-1', start)
 
     def cancel() -> None:
         result = _case_cli("S-008.2", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
         if result.returncode or run_id[0] not in result.stdout or "cancellation" not in result.stdout.lower():
             raise AssertionError(f"workflow cancellation was not confirmed: {result.stdout!r}")
 
-    journey.step("request workflow cancellation", "workflow", cancel, cases=["S-008.2"],
-                 requires=("step:start active workflow for cancellation",))
+    run_registered_workflow_step(journey, 'workflow-S-008-2', cancel, requires=("step:start active workflow for cancellation",))
 
     def verify_cancelled() -> None:
         deadline = clock() + 30
@@ -374,8 +394,7 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
             sleep(1)
         raise AssertionError(f"workflow run did not become cancelled: {detail!r}")
 
-    journey.step("verify cancelled workflow status", "workflow", verify_cancelled, cases=["S-008.3"],
-                 requires=("step:start active workflow for cancellation",))
+    run_registered_workflow_step(journey, 'workflow-S-008-3', verify_cancelled, requires=("step:start active workflow for cancellation",))
 
     def reject_repeat_cancel() -> None:
         result = _case_cli("S-008.4", ["workflow", "runs", "cancel", run_id[0]], env=env, cwd=project)
@@ -388,8 +407,8 @@ def _cancellation_case(journey: Journey, *, env: dict[str, str], project: Path,
         if _contract_status(detail, "kb workflow runs view --json=status") != "cancelled":
             raise AssertionError(f"repeat cancellation changed the terminal status: {detail!r}")
 
-    journey.step("reject cancellation after workflow finished", "workflow", reject_repeat_cancel,
-                 cases=["S-008.4"], requires=("step:start active workflow for cancellation",))
+    run_registered_workflow_step(journey, 'workflow-S-008-4', reject_repeat_cancel,
+                 requires=("step:start active workflow for cancellation",))
     marker.touch()
     definition.unlink(missing_ok=True)
 
@@ -518,8 +537,8 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
                             result, command, gateway,
                             require_context=True)
 
-    journey.step("secured auth precedes unregistered project resolution", "workflow",
-                 verify_unregistered_project_auth, cases=["S-041.17"])
+    run_registered_workflow_step(journey, 'workflow-S-041-17',
+                 verify_unregistered_project_auth)
 
     def verify_auth() -> None:
         commands = [
@@ -577,8 +596,7 @@ def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project:
             if isinstance(error, dict) and error.get("code") == "KB_AUTH_REQUIRED":
                 raise AssertionError(f"authenticated {' '.join(command)} still returned KB_AUTH_REQUIRED")
 
-    journey.step("secured CLI deny-by-default authentication", "workflow", verify_auth,
-                 cases=["S-007.4", "S-041.7", "S-041.8", "S-041.12"])
+    run_registered_workflow_step(journey, 'workflow-S-007-4', verify_auth)
 
 
 def _logs(run_id: str, *, env: dict[str, str], cwd: Path) -> str:
@@ -646,7 +664,7 @@ def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path)
     def start() -> None:
         run_id[0] = _run_id(_case_json_cli("S-027.1", ["workflow", "run", "--workflow-id=journey-progress", "--json"],
                                            env=env, cwd=project))
-    journey.step("start live progress workflow", "workflow", start, cases=["S-027.1"])
+    run_registered_workflow_step(journey, 'workflow-S-027-1', start)
 
     cli_path = env.get("KB_JOURNEY_CLI_PATH")
     watch_args = ["workflow", "runs", "watch", run_id[0]]
@@ -670,8 +688,7 @@ def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path)
                        or f"step.succeeded step:{step_id}" not in result.stdout
                        for step_id in ("first-id", "second-i"))):
             raise AssertionError(f"watch did not observe both active steps: {result.stdout!r}")
-    journey.step("watch live workflow progress", "workflow", watch, cases=["S-027.2"],
-                 requires=("step:start live progress workflow",))
+    run_registered_workflow_step(journey, 'workflow-S-027-2', watch, requires=("step:start live progress workflow",))
 
     def terminal() -> None:
         result = watched[0]
@@ -680,8 +697,7 @@ def _live_progress_case(journey: Journey, *, env: dict[str, str], project: Path)
         detail = _case_terminal_run("S-027.3", run_id[0], env=env, cwd=project)
         if detail.get("status") != "success":
             raise AssertionError(f"watched workflow ended {detail.get('status')!r}")
-    journey.step("verify live workflow terminal result", "workflow", terminal, cases=["S-027.3"],
-                 requires=("step:start live progress workflow", "step:watch live workflow progress"))
+    run_registered_workflow_step(journey, 'workflow-S-027-3', terminal, requires=("step:start live progress workflow", "step:watch live workflow progress"))
     definition.unlink(missing_ok=True)
 
 
@@ -714,7 +730,7 @@ def _real_work_case(journey: Journey, *, env: dict[str, str], project: Path,
             result = _case_cli("S-028.1", ["workflow", "lint"], env=env, cwd=project)
             if result.returncode or "real-work.yml" not in result.stdout or "valid" not in result.stdout.lower():
                 raise AssertionError(f"workflow lint rejected real-work.yml: {result.stdout!r}")
-        journey.step("lint real-work workflow", "workflow", lint_first_step, cases=["S-028.1"])
+        run_registered_workflow_step(journey, 'workflow-S-028-1', lint_first_step)
         with definition.open("a", encoding="utf-8") as stream:
             stream.write(
                 "      - name: Check local health\n        id: check-health\n        uses: builtin:shell\n        with:\n"
@@ -724,7 +740,7 @@ def _real_work_case(journey: Journey, *, env: dict[str, str], project: Path,
             result = _case_cli("S-028.2", ["workflow", "lint"], env=env, cwd=project)
             if result.returncode or "real-work.yml" not in result.stdout or "valid" not in result.stdout.lower():
                 raise AssertionError(f"workflow lint rejected real-work.yml: {result.stdout!r}")
-        journey.step("lint real-work workflow", "workflow", lint_both_steps, cases=["S-028.2"])
+        run_registered_workflow_step(journey, 'workflow-S-028-2', lint_both_steps)
 
         def execute() -> None:
             data = _case_json_cli("S-028.3", ["workflow", "run", "--workflow-id=real-work", "--json"],
@@ -740,7 +756,7 @@ def _real_work_case(journey: Journey, *, env: dict[str, str], project: Path,
                     or {step.get("spec", {}).get("id") for step in steps} != {"write-marker", "check-health"}
                     or any(step.get("status") != "success" for step in steps)):
                 raise AssertionError(f"real-work output was incomplete: {detail!r}; {logs!r}")
-        journey.step("run real shell work and inspect outputs", "workflow", execute, cases=["S-028.3"])
+        run_registered_workflow_step(journey, 'workflow-S-028-3', execute)
     finally:
         server.shutdown()
         server.server_close()
@@ -765,7 +781,7 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
         source = _terminal_run(source_id[0], env=env, cwd=project, clock=clock, sleep=sleep)
         if source.get("status") != "failed" or (source.get("inputs") or {}).get("message") != "rerun-input":
             raise AssertionError(f"rerun source did not fail with resolved input: {source!r}")
-    journey.step("prepare failed workflow run for rerun", "workflow", create_source)
+    run_registered_workflow_step(journey, 'workflow-prepare-rerun', create_source)
 
     rerun_ids: list[str] = []
     def rerun_all() -> None:
@@ -775,8 +791,7 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
         if new_id == source_id[0] or outcome["status"] not in {"queued", "running"}:
             raise AssertionError(f"rerun did not return a new active run: {data!r}")
         rerun_ids.append(new_id)
-    journey.step("rerun all workflow jobs", "workflow", rerun_all, cases=["S-143.1"],
-                 requires=("step:prepare failed workflow run for rerun",))
+    run_registered_workflow_step(journey, 'workflow-S-143-1', rerun_all, requires=("step:prepare failed workflow run for rerun",))
 
     def inspect() -> None:
         detail = _case_terminal_run("S-143.2", rerun_ids[0], env=env, cwd=project,
@@ -787,8 +802,7 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
                 or not any(step.get("status") == "success" and step.get("spec", {}).get("id") == "succeeds"
                            for step in steps)):
             raise AssertionError(f"rerun did not preserve workflow input and executed jobs: {detail!r}")
-    journey.step("verify rerun result and inputs", "workflow", inspect, cases=["S-143.2"],
-                 requires=("step:rerun all workflow jobs",))
+    run_registered_workflow_step(journey, 'workflow-S-143-2', inspect, requires=("step:rerun all workflow jobs",))
 
     def rerun_failed() -> None:
         data = _case_json_cli("S-143.3", ["workflow", "runs", "rerun", source_id[0], "--failed-only", "--json"],
@@ -806,8 +820,7 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
                 or not any(step.get("spec", {}).get("id") == "succeeds" and step.get("status") == "success"
                            for step in steps)):
             raise AssertionError(f"failed-only rerun did not retain successful outputs and replay failure: {detail!r}")
-    journey.step("rerun failed jobs only", "workflow", rerun_failed, cases=["S-143.3"],
-                 requires=("step:prepare failed workflow run for rerun", "step:rerun all workflow jobs"))
+    run_registered_workflow_step(journey, 'workflow-S-143-3', rerun_failed, requires=("step:prepare failed workflow run for rerun", "step:rerun all workflow jobs"))
 
     def unknown_source() -> None:
         before = _case_json_cli("S-143.4", ["workflow", "runs", "list", "--json"], env=env, cwd=project)
@@ -827,7 +840,7 @@ def _rerun_case(journey: Journey, *, env: dict[str, str], project: Path,
         after_runs = _workflow_run_list_data(after)
         if [run["id"] for run in before_runs] != [run["id"] for run in after_runs]:
             raise AssertionError("unknown rerun created a workflow run")
-    journey.step("report unknown rerun source", "workflow", unknown_source, cases=["S-143.4"])
+    run_registered_workflow_step(journey, 'workflow-S-143-4', unknown_source)
     definition.unlink(missing_ok=True)
 
 
@@ -890,7 +903,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             sleep(1)
         raise AssertionError(f"runtime did not register enabled journey-cron with input and next fire time: {match!r}")
 
-    journey.step("enable workflow cron schedule", "workflow", enable_schedule, cases=["S-044.1"])
+    run_registered_workflow_step(journey, 'workflow-S-044-1', enable_schedule)
 
     scheduled_run: dict = {}
 
@@ -909,7 +922,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         if "journey-cron-fired" not in logs:
             raise AssertionError("scheduled workflow log did not contain journey-cron-fired")
 
-    journey.step("observe scheduled workflow run and log", "workflow", observe_schedule, cases=["S-044.2"])
+    run_registered_workflow_step(journey, 'workflow-S-044-2', observe_schedule)
 
     def disable_and_confirm() -> None:
         disabled = _case_cli("S-044.3", ["workflow", "crons", "disable", "journey-cron"], env=env, cwd=cwd)
@@ -937,7 +950,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         if later_ids != baseline_ids:
             raise AssertionError("workflow cron created another run after its schedule was disabled")
 
-    journey.step("disable cron and verify no later run", "workflow", disable_and_confirm, cases=["S-044.3", "S-044.4"])
+    run_registered_workflow_step(journey, 'workflow-S-044-3', disable_and_confirm)
 
     def enable_again() -> None:
         result = _case_cli("S-044.5", ["workflow", "crons", "enable", "journey-cron"], env=env, cwd=cwd)
@@ -948,7 +961,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         if not any(item["id"] == "journey-cron" and item["enabled"] is True for item in crons):
             raise AssertionError("cron list did not report journey-cron enabled")
 
-    journey.step("enable cron again", "workflow", enable_again, cases=["S-044.5"])
+    run_registered_workflow_step(journey, 'workflow-S-044-5', enable_again)
 
     def invalid_expression() -> None:
         schedule_file.write_text(_schedule_yaml(True).replace("* * * * *", "not a cron"), encoding="utf-8")
@@ -963,7 +976,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             sleep(1)
         raise AssertionError(f"invalid cron diagnostic omitted its file or reason: {errors!r}")
 
-    journey.step("report invalid cron expression", "workflow", invalid_expression, cases=["S-044.6"])
+    run_registered_workflow_step(journey, 'workflow-S-044-6', invalid_expression)
 
     def unknown_workflow() -> None:
         schedule_file.write_text(_schedule_yaml(True).replace("journey-cron-target", "missing-workflow"), encoding="utf-8")
@@ -978,7 +991,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
             sleep(1)
         raise AssertionError(f"unknown workflow diagnostic omitted its file or reason: {errors!r}")
 
-    journey.step("report unknown workflow target", "workflow", unknown_workflow, cases=["S-044.7"])
+    run_registered_workflow_step(journey, 'workflow-S-044-7', unknown_workflow)
 
     def refuse_plugin_enable() -> None:
         listed = _case_json_cli("S-044.8", ["workflow", "crons", "list", "--json"], env=env, cwd=cwd)
@@ -997,7 +1010,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         if after is None or {key: after.get(key) for key in before} != before:
             raise AssertionError("refused plugin cron enable changed the listed cron")
 
-    journey.step("refuse enabling plugin cron", "workflow", refuse_plugin_enable, cases=["S-044.8"])
+    run_registered_workflow_step(journey, 'workflow-S-044-8', refuse_plugin_enable)
 
     def accept_standard_cron_range() -> None:
         schedule_file.write_text(_schedule_yaml(True).replace("* * * * *", "0 9 * * 1-5"), encoding="utf-8")
@@ -1007,7 +1020,7 @@ def _cron_case(journey: Journey, *, env: dict[str, str], cwd: Path,
         if cron is None or cron.get("schedule") != "0 9 * * 1-5":
             raise AssertionError(f"weekday range cron was not accepted and listed: {cron_data!r}")
 
-    journey.step("accept standard cron field range", "workflow", accept_standard_cron_range, cases=["S-044.9"])
+    run_registered_workflow_step(journey, 'workflow-S-044-9', accept_standard_cron_range)
     schedule_file.unlink(missing_ok=True)
 
 
@@ -1027,7 +1040,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
 
     if journey.mode == "secured":
         run_secured_cli_auth_step(journey, env=env, project=project)
-    journey.step("install plugin cron fixture", "workflow", install_plugin_cron_fixture)
+    run_registered_workflow_step(journey, 'workflow-install-plugin-cron', install_plugin_cron_fixture)
     _solo_workflow_case(journey, env=env, project=project, clock=clock, sleep=sleep)
     prepare_workflow_fixtures(project)
 
@@ -1039,8 +1052,8 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if not isinstance(plugins, dict) or "@kb-labs/workflow" in plugins:
             raise AssertionError("workflow definitions must be available without the workflow plugin installed")
 
-    discovery = journey.step("discover installed project workflow definitions", "workflow",
-                             discover_fixtures, cases=["S-006.3"])
+    discovery = run_registered_workflow_step(journey, 'workflow-S-006-3',
+                             discover_fixtures)
     if discovery.status != "PASS":
         return
 
@@ -1048,7 +1061,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         with invocation_context(step_id="S-007.5"):
             _workflow_health(env=env, cwd=project)
 
-    journey.step("report workflow service health", "workflow", inspect_health, cases=["S-007.5"])
+    run_registered_workflow_step(journey, 'workflow-S-007-5', inspect_health)
     successful_id = ""
     failed_id = ""
 
@@ -1063,7 +1076,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                          env=env, cwd=project)
         successful_id = _run_id(data)
 
-    journey.step("start workflow with input", "workflow", start_success, cases=["S-007.1"])
+    run_registered_workflow_step(journey, 'workflow-S-007-1', start_success)
 
     success_detail: dict = {}
 
@@ -1078,14 +1091,13 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                 or (success_detail.get("inputs") or {}).get("message") != "hello"):
             raise AssertionError(f"run did not complete with the submitted input: {success_detail!r}")
 
-    journey.step("verify terminal status and submitted input", "workflow", inspect_success,
-                 cases=["S-007.2", "S-056.1", "PC-002.5"])
+    run_registered_workflow_step(journey, 'workflow-S-007-2', inspect_success)
     def inspect_success_logs() -> None:
         with invocation_context(step_id="S-007.3"):
             logs = _logs(successful_id, env=env, cwd=project)
         if "hello" not in logs:
             raise AssertionError("workflow logs did not contain the submitted value hello")
-    journey.step("verify input appears in workflow log", "workflow", inspect_success_logs, cases=["S-007.3"])
+    run_registered_workflow_step(journey, 'workflow-S-007-3', inspect_success_logs)
 
     def start_failure() -> None:
         nonlocal failed_id
@@ -1093,7 +1105,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                               env=env, cwd=project)
         failed_id = _run_id(data)
 
-    journey.step("start failing workflow", "workflow", start_failure, cases=["S-029.1"])
+    run_registered_workflow_step(journey, 'workflow-S-029-1', start_failure)
 
     failed_detail: dict = {}
 
@@ -1115,8 +1127,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
             raise AssertionError("failed step detail did not include an error message")
         env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = failed_id
 
-    journey.step("inspect failed step and error", "workflow", inspect_failure,
-                 cases=["S-029.2"])
+    run_registered_workflow_step(journey, 'workflow-S-029-2', inspect_failure)
 
     def inspect_failure_history() -> None:
         with invocation_context(step_id="S-009.4"):
@@ -1125,7 +1136,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                         for step in job["steps"] if step.get("status") == "failed"]
         if detail.get("status") != "failed" or not failed_steps or not failed_steps[0].get("error"):
             raise AssertionError("failed run detail omitted the failure reason and failed step")
-    journey.step("inspect failed run history details", "workflow", inspect_failure_history, cases=["S-009.4"])
+    run_registered_workflow_step(journey, 'workflow-S-009-4', inspect_failure_history)
 
     def inspect_failure_logs() -> None:
         with invocation_context(step_id="S-029.3"):
@@ -1135,8 +1146,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if any(marker in logs.lower() for marker in ("goroutine ", "traceback", "stack trace")):
             raise AssertionError("workflow logs exposed a raw service stack trace")
 
-    journey.step("inspect failing command logs", "workflow", inspect_failure_logs,
-                 cases=["S-029.3"])
+    run_registered_workflow_step(journey, 'workflow-S-029-3', inspect_failure_logs)
 
     def inspect_history() -> None:
         with invocation_context(step_id="S-009.1"):
@@ -1148,19 +1158,19 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if not any(run.get("id") == failed_id and run.get("status") == "failed" for run in failed_runs):
             raise AssertionError("workflow history omitted the failed run")
 
-    journey.step("list recent workflow history", "workflow", inspect_history, cases=["S-009.1"])
+    run_registered_workflow_step(journey, 'workflow-S-009-1', inspect_history)
     def inspect_selected_run() -> None:
         detail = _case_terminal_run("S-009.2", successful_id, env=env, cwd=project, clock=clock, sleep=sleep)
         if detail.get("status") != "success":
             raise AssertionError("selected workflow run was not successful")
-    journey.step("inspect selected successful run", "workflow", inspect_selected_run, cases=["S-009.2"])
+    run_registered_workflow_step(journey, 'workflow-S-009-2', inspect_selected_run)
 
     def inspect_selected_run_logs() -> None:
         with invocation_context(step_id="S-009.3"):
             logs = _logs(successful_id, env=env, cwd=project)
         if "hello" not in logs:
             raise AssertionError("selected workflow run logs were empty")
-    journey.step("inspect selected successful run logs", "workflow", inspect_selected_run_logs, cases=["S-009.3"])
+    run_registered_workflow_step(journey, 'workflow-S-009-3', inspect_selected_run_logs)
 
     def restart_and_verify_project() -> None:
         with invocation_context(step_id="S-056.2"):
@@ -1170,8 +1180,8 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if not any(workflow["id"] == "journey-hello" for workflow in workflows):
             raise AssertionError("registered project workflow was unavailable after host restart")
 
-    journey.step("restart host and verify project availability", "platform",
-                 restart_and_verify_project, cases=["S-056.2"])
+    run_registered_workflow_step(journey, 'workflow-S-056-2',
+                 restart_and_verify_project)
 
     def inspect_history_after_restart() -> None:
         runs = _case_json_cli("S-056.3", ["workflow", "runs", "list", "--limit=100", "--json"],
@@ -1189,8 +1199,8 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         if "hello" not in logs:
             raise AssertionError(f"workflow logs after host restart omitted known output for {successful_id}")
 
-    journey.step("read workflow history and logs after restart", "workflow",
-                 inspect_history_after_restart, cases=["S-056.3"])
+    run_registered_workflow_step(journey, 'workflow-S-056-3',
+                 inspect_history_after_restart)
 
     try:
         _cron_case(journey, env=env, cwd=project, clock=clock, sleep=sleep)
