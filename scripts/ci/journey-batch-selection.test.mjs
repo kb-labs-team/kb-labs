@@ -45,19 +45,16 @@ test('a pushed area ref selects that QA catalog area as a partial run', () => {
 });
 
 // case: S-262.8
-test('PR and dispatch run the full gating batch, never an empty --cases', () => {
-  for (const event of ['pull_request', 'workflow_dispatch']) {
-    assert.equal(resolveSelection(event, 'any'), 'full');
-    assert.deepEqual(batchArguments('full'), []);
-  }
+test('manual dispatch uses the full batch and a PR cannot start it', () => {
+  assert.equal(resolveSelection('workflow_dispatch', 'any'), 'full');
+  assert.deepEqual(batchArguments('full'), []);
+  assert.throws(() => resolveSelection('pull_request', 'any'), /no declared case selection/);
 });
 
-test('journey runs use independent concurrency groups for each PR and dispatch', () => {
-  assert.equal(
-    workflow.concurrency.group,
-    'journey-batch-${{ github.event.pull_request.number || github.run_id }}',
-  );
+test('full journey runs use independent concurrency groups without a PR trigger', () => {
+  assert.equal(workflow.concurrency.group, 'journey-batch-${{ github.run_id }}');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.equal(workflow.on.pull_request, undefined);
 });
 
 // case: S-262.8
@@ -66,7 +63,6 @@ test('only an explicit case selection skips the shared generic unit suite', () =
   assert.equal(sharedUnitSuiteMode(targeted), 'skip');
   for (const selection of [
     resolveSelection('push', 'batch/plain'),
-    resolveSelection('pull_request', 'refs/pull/1/merge'),
     resolveSelection('workflow_dispatch', 'main'),
   ]) {
     assert.equal(sharedUnitSuiteMode(selection), 'run');

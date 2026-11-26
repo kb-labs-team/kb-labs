@@ -35,7 +35,6 @@ export const TRIGGER_SELECTIONS = {
     }
     return 'full';
   },
-  pull_request: () => 'full',
   workflow_dispatch: () => 'full',
 };
 

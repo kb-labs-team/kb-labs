@@ -1534,7 +1534,7 @@ exec "$REAL_TAR" "$@"
         spec = json.loads(parsed.stdout)
         self.assertIn("workflow_dispatch", spec["on"])
         self.assertEqual(spec["on"]["push"]["branches"], ["batch/**"])
-        self.assertIn("pull_request", spec["on"])
+        self.assertNotIn("pull_request", spec["on"])
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
         self.assertNotIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
@@ -1545,10 +1545,9 @@ exec "$REAL_TAR" "$@"
             command = next(step["run"] for step in spec["jobs"][mode]["steps"]
                            if step.get("name") == f"Run {mode} journey stage")
             self.assertIn('journey-batch-selection.mjs run "$BATCH_SELECTION" --', command)
-        self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(
             spec["concurrency"]["group"],
-            "journey-batch-${{ github.event.pull_request.number || github.run_id }}",
+            "journey-batch-${{ github.run_id }}",
         )
         self.assertFalse(spec["concurrency"]["cancel-in-progress"])
         jobs = spec["jobs"]
