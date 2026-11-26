@@ -77,7 +77,9 @@ function runtimeModulePort(outputTail: string, moduleId: string): number | undef
   for (const line of outputTail.split(/\r?\n/u)) {
     try {
       const metadataStart = line.indexOf("{");
-      if (metadataStart < 0) continue;
+      if (metadataStart < 0) {
+        continue;
+      }
       const record = JSON.parse(line.slice(metadataStart)) as { event?: unknown; moduleId?: unknown; port?: unknown };
       if (record.event === "service.starting" && record.moduleId === moduleId
           && typeof record.port === "number" && Number.isInteger(record.port)) {
