@@ -262,8 +262,18 @@ jobs:
         with:
           name: dist
       - run: tar xf dist-artifacts.tar
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies and provision pinned pnpm for clean Go tests
+        run: corepack pnpm install --frozen-lockfile
+      - name: Compare master workspace standards against its committed snapshot
+        if: github.ref == 'refs/heads/master'
+        shell: bash
+        run: |
+          report="$RUNNER_TEMP/devkit-check.json"
+          status=0
+          ./tools/kb-devkit/kb-devkit check --json > "$report" || status=$?
+          node scripts/ci/devkit-baseline.mjs "$report" "$GITHUB_SHA" "$status" | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Run repository checks through kb-devkit
+        if: github.ref != 'refs/heads/master'
         run: ./tools/kb-devkit/kb-devkit check
 
   # ── 5. Coverage — run tests with instrumentation + check thresholds ─────────
