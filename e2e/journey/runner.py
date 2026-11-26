@@ -54,6 +54,7 @@ from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
                            run_selected_smoke,
                            record_runner_exception, replay_steps)
+from journey_domains import JourneyDomain, JourneyDomainRegistry
 from redaction import redact_text
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
@@ -108,6 +109,18 @@ FIRST_FAILURE = ""
 CASE_JOURNEY: Journey | None = None
 SELECTED_CLAIM_COMPLETION_CHECKED = False
 ACTIVE_OUTER_GRAPH: FlowGraph | None = None
+
+
+def workflow_journey_domain(claims: list[str]) -> JourneyDomain:
+    """Return the existing workflow route as one atomic runner callback."""
+    return JourneyDomain(
+        id="workflow-execution",
+        owner_name="workflow execution journey",
+        group="workflow",
+        capability="workflow",
+        cases=tuple([*claims, "S-007.5"]),
+        runners=("service-local:explore", "service-secured:explore"),
+    )
 ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
@@ -2460,8 +2473,10 @@ def _main(*, update_variant_runner=None):
                            + [f"S-027.{step}" for step in range(1, 4)]
                            + [f"S-028.{step}" for step in range(1, 4)]
                            + [f"S-143.{step}" for step in range(1, 5)])
-        outer_graph.flow(
-            "workflow execution journey", "workflow", "workflow",
+        workflow_domains = JourneyDomainRegistry()
+        workflow_domains.register(workflow_journey_domain(workflow_claims))
+        workflow_domains.run(
+            outer_graph, "workflow-execution",
             lambda: run_workflow_with_host_boundary(
                 outer_graph, env=env, launcher=launcher,
                 action=lambda: run_workflow_journey(
@@ -2471,8 +2486,6 @@ def _main(*, update_variant_runner=None):
                     restart_host=restart_for_workflow_history,
                 ),
             ),
-            cases=[*workflow_claims, "S-007.5"], record_empty_success=False,
-            runners=("service-local:explore", "service-secured:explore"),
         )
         if isinstance(project_b_handoff, ProjectBRootValid):
             project_b_fixture_root = project_b_handoff.root
