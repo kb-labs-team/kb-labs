@@ -12,16 +12,18 @@ from service_steps import Journey
 
 def lease() -> dict:
     return {
-        "schema": "kb.devkit-journey-shard-lease/v1", "planId": "journey-plan",
+        "schema": "kb.devkit-journey-shard-lease/v1", "planId": "journey-plan", "runId": "run-1",
         "sourceSHA": "a" * 40, "shardId": "local-01", "attemptId": "attempt-1",
         "mode": "local", "runner": "service-local:explore", "claimIds": ["S-001.1"],
-        "directStepIds": ["service-local:explore|step:setup"],
-        "directStepNames": ["setup"], "selectedStepNames": ["setup", "prerequisite"],
+        "directStepIds": ["service-local:explore|flow:setup", "service-local:explore|step:setup"],
+        "directStepNames": ["setup", "setup"], "selectedStepNames": ["setup", "setup", "prerequisite"],
         "steps": [
             {"id": "service-local:explore|step:setup", "name": "setup", "kind": "step",
              "claimIds": ["S-001.1"], "direct": True},
+            {"id": "service-local:explore|flow:setup", "name": "setup", "kind": "flow",
+             "claimIds": [], "direct": True},
             {"id": "service-local:explore|step:prerequisite", "name": "prerequisite", "kind": "step",
-             "claimIds": [], "direct": False},
+             "claimIds": [], "states": ["host-running"], "direct": False},
         ],
     }
 
@@ -34,20 +36,31 @@ class JourneyExecutionLeaseTests(unittest.TestCase):
             "KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore",
         }, strict=True)
         self.assertEqual(selection.claims, {"S-001.1"})
-        self.assertEqual(selection.direct_step_names, ("setup",))
+        self.assertEqual(selection.direct_step_names, ("setup", "setup"))
         self.assertEqual(selection.prerequisite_steps, {"prerequisite"})
         self.assertEqual(selection.runner_selector, "service-local:explore")
         journey = Journey("local", "lease-run", selection=selection)
         journey.step("setup", "install", lambda: None, cases=["S-001.1"])
+        outside = journey.step("same claim, unplanned owner", "install", lambda: None, cases=["S-001.1"])
+        self.assertEqual(outside.status, "SKIPPED")
+        journey.record_flow("setup", "PASS")
         journey.step("prerequisite", "install", lambda: None)
+        probe = journey.step("state probe: host-running", "journey.state", lambda: None, role="lifecycle")
+        self.assertEqual(probe.status, "PASS")
         receipt = journey.result().execution
         self.assertEqual(receipt["attemptId"], "attempt-1")
-        self.assertEqual(receipt["directStepIds"], ["service-local:explore|step:setup"])
+        self.assertEqual(receipt["runId"], "run-1")
+        self.assertEqual(receipt["directStepIds"], ["service-local:explore|flow:setup",
+                                                     "service-local:explore|step:setup"])
+        self.assertEqual(receipt["requiredStates"], ["host-running"])
         rows = journey.result().steps
-        self.assertEqual([(row["plannedStepId"], row["plannedDirect"]) for row in rows], [
+        self.assertEqual([(row["plannedStepId"], row["plannedDirect"]) for row in rows if "plannedStepId" in row], [
             ("service-local:explore|step:setup", True),
             ("service-local:explore|step:prerequisite", False),
         ])
+        state_probe = next(row for row in rows if row["name"] == "state probe: host-running")
+        self.assertEqual(state_probe["details"]["selectionRole"], "lifecycle")
+        self.assertEqual(journey.result().flows[0]["plannedStepId"], "service-local:explore|flow:setup")
 
     def test_lease_rejects_foreign_runner_mode_and_incomplete_selected_inventory(self):
         with self.assertRaisesRegex(JourneySelectionError, "selector does not match"):

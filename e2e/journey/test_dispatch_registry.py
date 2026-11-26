@@ -24,7 +24,7 @@ from select_from_cases import (coverage_results, read_coverage_result, selection
                                validate_dependency_declarations,
                                lint_direct_module_global_state_handoffs,
                                validate_runner_conditions, validate_journey_environment_reads,
-                               full_runner_plans, full_runnable_selection, resolve_selection,
+                               full_runner_plans, full_runner_owner_plans, full_runnable_selection, resolve_selection,
                                journey_source_group_declaration)
 from platform_update_steps import run_platform_update_steps
 from platform_update_variant_steps import run_platform_update_variant_steps
@@ -65,8 +65,9 @@ class FullRunnableSelectionTests(unittest.TestCase):
         ]
         with patch("select_from_cases.RUNNERS", runner_registry), \
                 patch("select_from_cases.selectors_from_coverage", return_value=["route-local", "route-secured"]), \
-                patch("select_from_cases.full_runner_plans", return_value={
-                    "route-local": ["prepare", "check"], "route-secured": ["prepare", "check"]}), \
+                patch("select_from_cases.full_runner_owner_plans", return_value={
+                    "route-local": [("step", "prepare"), ("step", "check")],
+                    "route-secured": [("flow", "prepare"), ("flow", "check")]}), \
                 patch("select_from_cases._imported_journey_sources", return_value={source}), \
                 patch("select_from_cases._source_step_declarations_cached", return_value=declarations), \
                 patch("select_from_cases._case_declarations", side_effect=case_declarations):
@@ -80,6 +81,42 @@ class FullRunnableSelectionTests(unittest.TestCase):
         self.assertEqual(local_check["claimIds"], ["S-001.1"])
         self.assertEqual(local_check["area"], "platform-core")
         self.assertEqual(len(selection["mandatoryStepIds"]), 4)
+
+    def test_real_full_route_keeps_same_named_step_and_flow_as_distinct_owners(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+        coverage = [{"mode": mode, "cases": [{"id": "S-999", "status": "active", "release": True,
+            "steps": [{"stepId": "S-999.1", "claims": [{"kind": "journey", "source": source}]}]}]}
+            for mode in ("local", "secured")]
+        selection = full_runnable_selection(coverage, root, source_sha)
+        owners = {(row["kind"], row["id"]) for row in selection["steps"]
+                  if row["name"] == "produce Commit project fixture"}
+        self.assertEqual(owners, {
+            ("flow", "agent:commit|flow:produce Commit project fixture"),
+            ("step", "agent:commit|step:produce Commit project fixture"),
+            ("flow", "agent-secured:commit|flow:produce Commit project fixture"),
+            ("step", "agent-secured:commit|step:produce Commit project fixture"),
+        })
+
+    def test_real_full_route_filters_case_owners_by_registered_runner_variant(self):
+        root = Path(__file__).resolve().parents[2]
+        plans = full_runner_owner_plans(root)
+        human_owner = ("step", "human interactive install")
+        self.assertNotIn(human_owner, plans["service-local:explore"])
+        self.assertNotIn(human_owner, plans["service-secured:explore"])
+        self.assertIn(human_owner, plans["human:default"])
+        self.assertIn(human_owner, plans["human:nondefault"])
+
+    def test_real_authoritative_selection_does_not_assign_human_install_to_service_runner(self):
+        root = Path(__file__).resolve().parents[2]
+        source_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+        coverage = [{"mode": mode, "cases": [{"id": "S-999", "status": "active", "release": True,
+            "steps": [{"stepId": "S-999.1", "claims": [{"kind": "journey", "source": "e2e/journey/service_runner.py"}]}]}]}
+            for mode in ("local", "secured")]
+        selection = full_runnable_selection(coverage, root, source_sha)
+        self.assertEqual(selection["selectors"], ["service-local:explore", "service-secured:explore"])
+        self.assertFalse(any(row["name"] == "human interactive install" for row in selection["steps"]))
 
 
 def helper_read(memory, key):

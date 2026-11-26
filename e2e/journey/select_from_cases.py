@@ -765,16 +765,25 @@ def validate_journey_environment_reads(sources: set[str], root: Path) -> None:
                 check_key(node.args[0], node)
 
 
-def full_runner_plans(root: Path) -> dict[str, list[str]]:
+def full_runner_owner_plans(root: Path) -> dict[str, list[tuple[str, str]]]:
     plans = {}
     for selector, runner in RUNNERS.items():
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
         registrations = _source_step_declarations(sources, root)
+        case_runner_owners: dict[tuple[str, str], set[str]] = {}
+        for source in sources:
+            for declaration in _case_declarations(source, root).values():
+                name = declaration.get("name")
+                variants = set(declaration.get("runners", ()))
+                if isinstance(name, str) and variants:
+                    case_runner_owners.setdefault(("step", name), set()).update(variants)
         selected = [
             declaration for declaration in registrations.values()
             if declaration.get("name") is not None
             and (not declaration.get("runners") or selector in declaration["runners"])
+            and (not case_runner_owners.get((str(declaration.get("kind", "step")), declaration["name"]))
+                 or selector in case_runner_owners[(str(declaration.get("kind", "step")), declaration["name"])])
         ]
         barriers = [declaration for declaration in selected
                     if declaration.get("plan_after_phase") == "all-steps"]
@@ -795,8 +804,15 @@ def full_runner_plans(root: Path) -> dict[str, list[str]]:
         if ordered[-2] is not barrier or ordered[-1] is not teardown:
             raise ValueError(f"{selector}: lifecycle plan barrier was not placed before teardown")
         selected = ordered
-        plans[selector] = [declaration["name"] for declaration in selected]
+        plans[selector] = [(str(declaration.get("kind", "step")), declaration["name"])
+                           for declaration in selected]
     return plans
+
+
+def full_runner_plans(root: Path) -> dict[str, list[str]]:
+    """Compatibility view for the established name-only route baseline."""
+    return {selector: [name for _kind, name in owners]
+            for selector, owners in full_runner_owner_plans(root).items()}
 
 
 def write_full_runner_plan_baseline(root: Path) -> Path:
@@ -1032,7 +1048,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
     selectors = selectors_from_coverage(results)
     if not selectors:
         raise ValueError("active release coverage selects no runnable journey owners")
-    plans = full_runner_plans(root)
+    plans = full_runner_owner_plans(root)
     active_steps: dict[str, dict[str, dict]] = {"local": {}, "secured": {}}
     for coverage in results:
         mode = coverage.get("mode")
@@ -1063,13 +1079,10 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                 continue
             by_name[(str(declaration.get("kind", "step")), name)] = declaration
         owner_rows: dict[str, dict] = {}
-        for name in plans[selector]:
-            matches = [declaration for (kind, item_name), declaration in by_name.items()
-                       if item_name == name]
-            if len(matches) != 1:
-                raise ValueError(f"{selector}: full route step {name!r} resolves to {len(matches)} owner declarations")
-            declaration = matches[0]
-            kind = str(declaration.get("kind", "step"))
+        for kind, name in plans[selector]:
+            declaration = by_name.get((kind, name))
+            if declaration is None:
+                raise ValueError(f"{selector}: full route owner {kind}:{name} has no declaration")
             owner_id = f"{selector}|{kind}:{name}"
             case_ids: set[str] = set()
             capabilities: set[str] = set()

@@ -122,6 +122,7 @@ class StepResult:
     cases: list[str]
     details: dict[str, Any] | None = None
     step_id: str = ""
+    owner_kind: str = "step"
 
 
 @dataclass
@@ -135,6 +136,7 @@ class JourneyResult:
     steps: list[dict]
     case_run: dict
     execution: dict | None = None
+    flows: list[dict] | None = None
 
 
 class Journey:
@@ -172,10 +174,21 @@ class Journey:
         self.prerequisite_steps = set(self.selection_boundary.prerequisite_steps)
         self.prerequisite_flows = set(self.selection_boundary.prerequisite_flows)
         self.flows: dict[str, tuple[str, str]] = {}
+        self.flow_events: list[dict[str, Any]] = []
         self.flow_step_ids: dict[str, str] = {}
         self.selection = list(self.selection_boundary.requested)
         self.selected_step_names = set(self.selection_boundary.direct_step_names)
         self.planned_step_names = set(self.selection_boundary.selected_step_names)
+        self.planned_execution_steps = {
+            (step["kind"], step["name"]): step
+            for step in (lease.get("steps", []) if lease is not None else [])
+        }
+        self.allowed_state_probes = {
+            f"state probe: {state}"
+            for step in (lease.get("steps", []) if lease is not None else [])
+            for state in step.get("states", [])
+        }
+        self.flow_events: list[dict[str, Any]] = []
         self.runner_selector = self.selection_boundary.runner_selector
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
         self.memory = parent.memory if parent is not None else JourneyMemory({})
@@ -185,16 +198,17 @@ class Journey:
              details: Callable[[], dict[str, Any]] | None = None, *,
              requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
              runners: Iterable[str] = (), plan_after_phase: str | None = None,
-             plan_phase: str | None = None) -> StepResult:
+             plan_phase: str | None = None, owner_kind: str = "step") -> StepResult:
         return self._record_step(name, capability, check, cases, details, requires=requires,
                                  provides=provides, role=role, runners=runners,
-                                 plan_after_phase=plan_after_phase, plan_phase=plan_phase)
+                                 plan_after_phase=plan_after_phase, plan_phase=plan_phase,
+                                 owner_kind=owner_kind)
 
     def _record_step(self, name: str, capability: str, check: Callable[[], str | None],
                      cases: Iterable[str] = (), details: Callable[[], dict[str, Any]] | None = None, *,
                      requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
                      runners: Iterable[str] = (), plan_after_phase: str | None = None,
-                     plan_phase: str | None = None) -> StepResult:
+                     plan_phase: str | None = None, owner_kind: str = "step") -> StepResult:
         if role not in {"step", "lifecycle"}:
             raise ValueError(f"unsupported journey step role: {role}")
         if plan_after_phase is not None and plan_after_phase != "all-steps":
@@ -206,7 +220,11 @@ class Journey:
         step_id = "case:" + ",".join(sorted(set(case_ids))) if case_ids else f"flow:{name}"
         normalized_requirements = self._identified_requirements(required_items)
         dependency_details = {"requires": normalized_requirements} if normalized_requirements else None
-        selected = bool(self.selected_steps.intersection(case_ids) or name in self.selected_step_names)
+        planned_owner = self.planned_execution_steps.get((owner_kind, name))
+        if self.selection_boundary.execution_lease is not None:
+            selected = bool(planned_owner and planned_owner["direct"])
+        else:
+            selected = bool(self.selected_steps.intersection(case_ids) or name in self.selected_step_names)
         eligible_runners = set(runners)
         if selected and eligible_runners and self.runner_selector not in eligible_runners:
             message = (f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "
@@ -222,13 +240,13 @@ class Journey:
                                 case_ids, dependency_details, step_id)
             self.steps.append(result)
             return result
-        prerequisite = name in self.prerequisite_steps or (
-            bool(self.selection_boundary.execution_lease) and name in self.planned_step_names
-            and name not in self.selected_step_names)
+        prerequisite = (name in self.prerequisite_steps or
+                        bool(planned_owner and not planned_owner["direct"]))
         lifecycle = role == "lifecycle"
         if (self.selected_claims or self.planned_step_names) and not selected and not prerequisite \
                 and (not lifecycle or (self.selection_boundary.execution_lease is not None
-                                       and name not in self.planned_step_names)):
+                                       and name not in self.planned_step_names
+                                       and name not in self.allowed_state_probes)):
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids,
                                 dependency_details, step_id)
             self.steps.append(result)
@@ -339,6 +357,14 @@ class Journey:
 
     def record_flow(self, name: str, status: str, message: str = "") -> None:
         self.flows[name] = status, message
+        event = {"name": name, "status": status}
+        if message:
+            event["message"] = message
+        identity = self.planned_execution_steps.get(("flow", name))
+        if identity is not None:
+            event["plannedStepId"] = identity["id"]
+            event["plannedDirect"] = identity["direct"]
+        self.flow_events.append(event)
 
     def find_outcome(self, dependency: Dependency) -> tuple[str, str] | None:
         journey: Journey | None = self
@@ -437,15 +463,16 @@ class Journey:
             lease = self.selection_boundary.execution_lease
             execution = {
                 "schema": "kb.devkit-journey-runner-receipt/v1",
-                "planId": lease["planId"], "sourceSHA": lease["sourceSHA"],
+                "planId": lease["planId"], "runId": lease["runId"], "sourceSHA": lease["sourceSHA"],
                 "shardId": lease["shardId"], "attemptId": lease["attemptId"],
                 "mode": self.mode, "runner": self.runner_selector,
                 "claimIds": lease["claimIds"], "directStepIds": lease["directStepIds"],
+                "requiredStates": sorted({state for step in lease["steps"] for state in step.get("states", [])}),
             }
-            planned = {step["name"]: step for step in lease["steps"]}
             step_rows = [_step_dict(step) for step in self.steps]
             for row in step_rows:
-                identity = planned.get(row.get("name"))
+                identity = self.planned_execution_steps.get(("step", row.get("name"))) \
+                    if row.get("ownerKind", "step") == "step" else None
                 if identity is not None:
                     row["plannedStepId"] = identity["id"]
                     row["plannedDirect"] = identity["direct"]
@@ -453,7 +480,7 @@ class Journey:
             step_rows = [_step_dict(step) for step in self.steps]
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
-                             step_rows, case_run, execution)
+                             step_rows, case_run, execution, list(self.flow_events))
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
@@ -766,19 +793,25 @@ class FlowGraph:
         def record_flow_step(check, *, cases=(), role=role):
             if plan_after_phase == "all-steps":
                 return self.journey.step(name, capability, check, cases=cases, role=role,
-                                         runners=runners, plan_after_phase="all-steps")
+                                         runners=runners, plan_after_phase="all-steps", owner_kind="flow")
             if plan_phase == "teardown":
                 return self.journey.step(name, capability, check, cases=cases, role=role,
-                                         runners=runners, plan_phase="teardown")
-            return self.journey.step(name, capability, check, cases=cases, role=role, runners=runners)
+                                         runners=runners, plan_phase="teardown", owner_kind="flow")
+            return self.journey.step(name, capability, check, cases=cases, role=role,
+                                     runners=runners, owner_kind="flow")
 
         if (action is None) == (case_action is None):
             raise JourneyContractError("provide exactly one outer flow action")
         prerequisite = name in self.journey.prerequisite_flows
         lifecycle = role == "lifecycle"
-        selected_owner = (group in self.selected_groups
-                          or self._flow_owns_selected_claim(group, case_ids))
         producer = self._group_produces_needed_state(group)
+        if self.journey.selection_boundary.execution_lease is not None:
+            planned_flow = self.journey.planned_execution_steps.get(("flow", name))
+            selected_owner = bool(planned_flow and planned_flow["direct"])
+            prerequisite = bool(planned_flow and not planned_flow["direct"])
+        else:
+            selected_owner = (group in self.selected_groups
+                              or self._flow_owns_selected_claim(group, case_ids))
         selected_by_flow_rule = selected_owner or prerequisite or producer
         if (self.selection_active and not selected_by_flow_rule):
             suffix = f"; {skip_note}" if skip_note else ""
@@ -860,6 +893,7 @@ def run_selected_smoke(graph: FlowGraph, step_name: str, capability: str,
 def _step_dict(step: StepResult) -> dict[str, Any]:
     result = asdict(step)
     result["stepId"] = result.pop("step_id")
+    result["ownerKind"] = result.pop("owner_kind")
     if step.details is None:
         result.pop("details")
     return result

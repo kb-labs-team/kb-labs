@@ -15,6 +15,7 @@ import (
 )
 
 var journeyPlanFile string
+var journeyPreparedFile string
 var journeyShardsPerMode int
 var journeyEvidenceDirs []string
 var journeyShardID string
@@ -71,8 +72,8 @@ var journeyResultCmd = &cobra.Command{
 	Short: "Validate shard evidence and run current QA release coverage",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if journeyPlanFile == "" || len(journeyEvidenceDirs) == 0 {
-			return fmt.Errorf("--plan-file and at least one --evidence-dir are required")
+		if journeyPlanFile == "" || journeyPreparedFile == "" || len(journeyEvidenceDirs) == 0 {
+			return fmt.Errorf("--plan-file, --prepared-file, and at least one --evidence-dir are required")
 		}
 		data, err := os.ReadFile(journeyPlanFile)
 		if err != nil {
@@ -82,11 +83,19 @@ var journeyResultCmd = &cobra.Command{
 		if err := json.Unmarshal(data, &plan); err != nil {
 			return fmt.Errorf("parse journey plan: %w", err)
 		}
+		preparedData, err := os.ReadFile(journeyPreparedFile)
+		if err != nil {
+			return fmt.Errorf("read prepared journey run: %w", err)
+		}
+		var prepared journey.PreparedRun
+		if err := json.Unmarshal(preparedData, &prepared); err != nil {
+			return fmt.Errorf("parse prepared journey run: %w", err)
+		}
 		root, err := os.Getwd()
 		if err != nil {
 			return fmt.Errorf("resolve workspace root: %w", err)
 		}
-		result, err := journey.Finalize(plan, journeyEvidenceDirs, func(mode string, reports []string) error {
+		result, err := journey.Finalize(plan, prepared, journeyEvidenceDirs, func(mode string, reports []string) error {
 			return runJourneyCoverage(context.Background(), root, mode, reports)
 		})
 		if err != nil {
@@ -107,8 +116,8 @@ var journeyRecordCmd = &cobra.Command{
 	Short: "Write one shard result manifest into its isolated evidence directory",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if journeyPlanFile == "" || journeyLeaseFile == "" || len(journeyEvidenceDirs) != 1 || len(journeyReportPaths) == 0 {
-			return fmt.Errorf("--plan-file, --lease-file, one --evidence-dir, and at least one --report are required")
+		if journeyPlanFile == "" || journeyPreparedFile == "" || journeyLeaseFile == "" || len(journeyEvidenceDirs) != 1 || len(journeyReportPaths) == 0 {
+			return fmt.Errorf("--plan-file, --prepared-file, --lease-file, one --evidence-dir, and at least one --report are required")
 		}
 		data, err := os.ReadFile(journeyPlanFile)
 		if err != nil {
@@ -118,6 +127,14 @@ var journeyRecordCmd = &cobra.Command{
 		if err := json.Unmarshal(data, &plan); err != nil {
 			return fmt.Errorf("parse journey plan: %w", err)
 		}
+		preparedBytes, err := os.ReadFile(journeyPreparedFile)
+		if err != nil {
+			return fmt.Errorf("read prepared journey run: %w", err)
+		}
+		var prepared journey.PreparedRun
+		if err := json.Unmarshal(preparedBytes, &prepared); err != nil {
+			return fmt.Errorf("parse prepared journey run: %w", err)
+		}
 		leaseBytes, err := os.ReadFile(journeyLeaseFile)
 		if err != nil {
 			return fmt.Errorf("read shard execution lease: %w", err)
@@ -126,7 +143,7 @@ var journeyRecordCmd = &cobra.Command{
 		if err := json.Unmarshal(leaseBytes, &lease); err != nil {
 			return fmt.Errorf("parse shard execution lease: %w", err)
 		}
-		if err := journey.RecordShardResult(plan, lease, journeyEvidenceDirs[0], journeyReportPaths); err != nil {
+		if err := journey.RecordShardResult(plan, prepared, lease, journeyEvidenceDirs[0], journeyReportPaths); err != nil {
 			return err
 		}
 		clikitcommand.Printf("Recorded shard %s for plan %s\n", lease.ShardID, plan.ID)
@@ -139,8 +156,8 @@ var journeyBeginCmd = &cobra.Command{
 	Short: "Create a one-use execution lease for a planned shard",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if journeyPlanFile == "" || journeyShardID == "" || journeyLeaseFile == "" {
-			return fmt.Errorf("--plan-file, --shard-id, and --lease-file are required")
+		if journeyPlanFile == "" || journeyPreparedFile == "" || journeyShardID == "" || journeyLeaseFile == "" {
+			return fmt.Errorf("--plan-file, --prepared-file, --shard-id, and --lease-file are required")
 		}
 		data, err := os.ReadFile(journeyPlanFile)
 		if err != nil {
@@ -150,7 +167,15 @@ var journeyBeginCmd = &cobra.Command{
 		if err := json.Unmarshal(data, &plan); err != nil {
 			return fmt.Errorf("parse journey plan: %w", err)
 		}
-		lease, err := journey.BeginShard(plan, journeyShardID)
+		preparedBytes, err := os.ReadFile(journeyPreparedFile)
+		if err != nil {
+			return fmt.Errorf("read prepared journey run: %w", err)
+		}
+		var prepared journey.PreparedRun
+		if err := json.Unmarshal(preparedBytes, &prepared); err != nil {
+			return fmt.Errorf("parse prepared journey run: %w", err)
+		}
+		lease, err := journey.PreparedLease(plan, prepared, journeyShardID)
 		if err != nil {
 			return err
 		}
@@ -167,19 +192,57 @@ var journeyBeginCmd = &cobra.Command{
 	},
 }
 
+var journeyPrepareCmd = &cobra.Command{
+	Use:   "prepare",
+	Short: "Create the independent expected lease inventory for one journey run",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		if journeyPlanFile == "" || journeyPreparedFile == "" {
+			return fmt.Errorf("--plan-file and --prepared-file are required")
+		}
+		data, err := os.ReadFile(journeyPlanFile)
+		if err != nil {
+			return fmt.Errorf("read journey plan: %w", err)
+		}
+		var plan journey.Plan
+		if err := json.Unmarshal(data, &plan); err != nil {
+			return fmt.Errorf("parse journey plan: %w", err)
+		}
+		prepared, err := journey.PrepareRun(plan)
+		if err != nil {
+			return err
+		}
+		if err := writeJourneyJSON(journeyPreparedFile, prepared); err != nil {
+			return err
+		}
+		if jsonMode {
+			encoded, _ := json.Marshal(prepared)
+			clikitcommand.Printf("%s\n", encoded)
+		} else {
+			clikitcommand.Printf("Prepared journey run %s with %d shard leases\n", prepared.RunID, len(prepared.Leases))
+		}
+		return nil
+	},
+}
+
 func init() {
 	journeyPlanCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "write the immutable shard plan to this new file")
 	journeyPlanCmd.Flags().IntVar(&journeyShardsPerMode, "shards-per-mode", 4, "target shard count for each execution mode")
 	journeyResultCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
+	journeyResultCmd.Flags().StringVar(&journeyPreparedFile, "prepared-file", "", "the independent expected lease inventory created before shard execution")
 	journeyResultCmd.Flags().StringArrayVar(&journeyEvidenceDirs, "evidence-dir", nil, "one shard's isolated evidence directory; repeat once per planned shard")
 	journeyRecordCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
+	journeyRecordCmd.Flags().StringVar(&journeyPreparedFile, "prepared-file", "", "the independent expected lease inventory created before shard execution")
 	journeyRecordCmd.Flags().StringVar(&journeyLeaseFile, "lease-file", "", "runner-bound execution lease JSON")
 	journeyRecordCmd.Flags().StringArrayVar(&journeyEvidenceDirs, "evidence-dir", nil, "this shard's isolated evidence directory")
 	journeyRecordCmd.Flags().StringArrayVar(&journeyReportPaths, "report", nil, "report path relative to the evidence directory; repeat for each report")
 	journeyBeginCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
+	journeyBeginCmd.Flags().StringVar(&journeyPreparedFile, "prepared-file", "", "the independent expected lease inventory created before shard execution")
 	journeyBeginCmd.Flags().StringVar(&journeyShardID, "shard-id", "", "planned shard identity")
 	journeyBeginCmd.Flags().StringVar(&journeyLeaseFile, "lease-file", "", "write the execution lease to this new file")
-	journeyCmd.AddCommand(journeyPlanCmd, journeyBeginCmd, journeyRecordCmd, journeyResultCmd)
+	journeyPrepareCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
+	journeyPrepareCmd.Flags().StringVar(&journeyPreparedFile, "prepared-file", "", "write the fresh lease inventory to this new file")
+	journeyCmd.AddCommand(journeyPlanCmd, journeyPrepareCmd, journeyBeginCmd, journeyRecordCmd, journeyResultCmd)
 	rootCmd.AddCommand(journeyCmd)
 }
 

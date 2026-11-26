@@ -173,12 +173,12 @@ def _read_execution_lease(raw: str, environment: Mapping[str, str], default_runn
         lease = json.loads(raw)
     except json.JSONDecodeError as error:
         raise JourneySelectionError(f"KB_JOURNEY_EXECUTION_LEASE_JSON must be a JSON object: {error.msg}") from error
-    required = ("schema", "planId", "sourceSHA", "shardId", "attemptId", "mode", "runner",
+    required = ("schema", "planId", "runId", "sourceSHA", "shardId", "attemptId", "mode", "runner",
                 "claimIds", "directStepIds", "directStepNames", "selectedStepNames", "steps")
     if not isinstance(lease, dict) or any(key not in lease for key in required):
         raise JourneySelectionError("execution lease is missing required identity or selection fields")
     if lease["schema"] != "kb.devkit-journey-shard-lease/v1" or not all(
-            isinstance(lease[key], str) and lease[key] for key in ("planId", "sourceSHA", "shardId", "attemptId")):
+            isinstance(lease[key], str) and lease[key] for key in ("planId", "runId", "sourceSHA", "shardId", "attemptId")):
         raise JourneySelectionError("execution lease identity is invalid")
     if lease["mode"] not in {"local", "secured"} or not isinstance(lease["runner"], str) or not lease["runner"]:
         raise JourneySelectionError("execution lease mode or runner is invalid")
@@ -186,27 +186,37 @@ def _read_execution_lease(raw: str, environment: Mapping[str, str], default_runn
         raise JourneySelectionError("execution lease runner must be a registered selector")
     for key in ("claimIds", "directStepIds", "directStepNames", "selectedStepNames"):
         values = lease[key]
-        if not isinstance(values, list) or any(not isinstance(item, str) or not item for item in values) or len(values) != len(set(values)):
-            raise JourneySelectionError(f"execution lease {key} must be a unique array of non-empty strings")
+        if not isinstance(values, list) or any(not isinstance(item, str) or not item for item in values):
+            raise JourneySelectionError(f"execution lease {key} must be an array of non-empty strings")
+        if key in {"claimIds", "directStepIds"} and len(values) != len(set(values)):
+            raise JourneySelectionError(f"execution lease {key} contains duplicate values")
     if not isinstance(lease["steps"], list) or not lease["steps"]:
         raise JourneySelectionError("execution lease steps must be a non-empty array")
-    expected_names = set()
     expected_ids = set()
     direct_names = set(lease["directStepNames"])
     claims = set(lease["claimIds"])
     owners: dict[str, tuple[str, ...]] = {}
     prerequisites, flows = set(), set()
+    capabilities, needed_states = set(), set()
     for step in lease["steps"]:
         if not isinstance(step, dict) or not all(isinstance(step.get(key), str) and step[key] for key in ("id", "name", "kind")):
             raise JourneySelectionError("execution lease contains an invalid step identity")
-        if step["id"] in expected_ids or step["name"] in expected_names:
+        if step["id"] in expected_ids:
             raise JourneySelectionError("execution lease contains duplicate step identities")
         if step["kind"] not in {"step", "flow"} or not isinstance(step.get("direct"), bool):
             raise JourneySelectionError("execution lease contains an invalid step kind or role")
+        if step["id"] != f"{lease['runner']}|{step['kind']}:{step['name']}":
+            raise JourneySelectionError("execution lease step ID does not match its runner-qualified owner")
         step_claims = step.get("claimIds", [])
         if not isinstance(step_claims, list) or any(not isinstance(item, str) or not item for item in step_claims):
             raise JourneySelectionError("execution lease step claimIds must be non-empty strings")
-        expected_names.add(step["name"])
+        step_capabilities = step.get("capabilities", [])
+        step_states = step.get("states", [])
+        if any(not isinstance(values, list) or any(not isinstance(item, str) or not item for item in values)
+               for values in (step_capabilities, step_states)):
+            raise JourneySelectionError("execution lease capabilities and states must be arrays of non-empty strings")
+        capabilities.update(step_capabilities)
+        needed_states.update(step_states)
         expected_ids.add(step["id"])
         if step["direct"]:
             if step["name"] not in direct_names:
@@ -217,9 +227,9 @@ def _read_execution_lease(raw: str, environment: Mapping[str, str], default_runn
             prerequisites.add(step["name"])
         else:
             flows.add(step["name"])
-    if expected_names != set(lease["selectedStepNames"]):
+    if sorted(step["name"] for step in lease["steps"]) != sorted(lease["selectedStepNames"]):
         raise JourneySelectionError("execution lease selected step names do not match its step rows")
-    if set(lease["directStepNames"]) - expected_names:
+    if sorted(step["name"] for step in lease["steps"] if step["direct"]) != sorted(lease["directStepNames"]):
         raise JourneySelectionError("execution lease direct step is absent from its step rows")
     if set(claim for values in owners.values() for claim in values) != claims:
         raise JourneySelectionError("execution lease direct step claims do not match claimIds")
@@ -229,5 +239,5 @@ def _read_execution_lease(raw: str, environment: Mapping[str, str], default_runn
     if selector != lease["runner"] or environment.get("KB_JOURNEY_ONLY", lease["runner"]) != lease["runner"]:
         raise JourneySelectionError("runner selector does not match the execution lease")
     return JourneySelection(tuple(lease["claimIds"]), frozenset(claims), owners, frozenset(prerequisites),
-                            frozenset(flows), frozenset(), lease["runner"], lease["runner"],
+                            frozenset(flows), frozenset(capabilities), lease["runner"], lease["runner"],
                             tuple(lease["selectedStepNames"]), tuple(lease["directStepNames"]), lease)

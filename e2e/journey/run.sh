@@ -55,9 +55,20 @@ selected_selectors=""
 compose_profiles_json='[]'
 unset COMPOSE_PROFILES
 if [[ -n "${KB_JOURNEY_EXECUTION_LEASE_JSON:-}" ]]; then
-  lease_info="$(python3 -c 'import json,sys; x=json.load(sys.stdin); required=("schema","planId","sourceSHA","shardId","attemptId","mode","runner"); assert isinstance(x,dict) and x.get("schema")=="kb.devkit-journey-shard-lease/v1" and all(isinstance(x.get(k),str) and x[k] for k in required); print(json.dumps({"runner":x["runner"],"mode":x["mode"]},separators=(",",":")))' <<< "$KB_JOURNEY_EXECUTION_LEASE_JSON")"
+  lease_info="$(python3 -c 'import json,sys; x=json.load(sys.stdin); required=("schema","planId","runId","sourceSHA","shardId","attemptId","mode","runner"); assert isinstance(x,dict) and x.get("schema")=="kb.devkit-journey-shard-lease/v1" and all(isinstance(x.get(k),str) and x[k] for k in required); print(json.dumps({"runner":x["runner"],"mode":x["mode"],"sourceSHA":x["sourceSHA"]},separators=(",",":")))' <<< "$KB_JOURNEY_EXECUTION_LEASE_JSON")"
   lease_runner="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["runner"])' <<< "$lease_info")"
   lease_mode="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$lease_info")"
+  lease_sha="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["sourceSHA"])' <<< "$lease_info")"
+  if [[ "$lease_sha" != "$KB_JOURNEY_GIT_REVISION" ]]; then
+    echo "Journey execution lease source SHA does not match this checkout." >&2
+    exit 2
+  fi
+  runner_info="$(python3 e2e/journey/dispatch_registry.py --runner "$lease_runner")"
+  runner_mode="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$runner_info")"
+  if [[ "$lease_mode" != "$runner_mode" ]]; then
+    echo "Journey execution lease mode does not match its registered runner." >&2
+    exit 2
+  fi
   if [[ -n "${KB_JOURNEY_ONLY:-}" && "$KB_JOURNEY_ONLY" != "$lease_runner" ]]; then
     echo "Journey runner selector does not match execution lease." >&2
     exit 2
@@ -97,6 +108,9 @@ if [[ -n "$selection_json" ]]; then
 else
   unset KB_JOURNEY_SELECTED_STEPS KB_JOURNEY_PREREQUISITE_STEPS KB_JOURNEY_PREREQUISITE_FLOWS
   unset KB_JOURNEY_SELECTED_OWNING_STEPS KB_JOURNEY_SELECTED_CAPABILITIES KB_JOURNEY_NEEDED_STATES
+fi
+if [[ -n "${KB_JOURNEY_EXECUTION_LEASE_JSON:-}" ]]; then
+  export KB_JOURNEY_NEEDED_STATES="$(python3 -c 'import json,sys; x=json.load(sys.stdin); print(",".join(sorted({state for step in x["steps"] for state in step.get("states",[])})))' <<< "$KB_JOURNEY_EXECUTION_LEASE_JSON")"
 fi
 
 ACTIVE_MONITORS=()
@@ -239,7 +253,7 @@ run_journey() {
   echo "==> $front_door / $scenario / $variant"
   if ! container_id=$(KB_JOURNEY_RUNNER_SELECTOR="$runner_selector" KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
     journey_compose run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
-    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_EXECUTION_LEASE_JSON -e KB_JOURNEY_SELECTED_STEPS \
+    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_EXECUTION_LEASE_JSON -e KB_JOURNEY_NEEDED_STATES -e KB_JOURNEY_SELECTED_STEPS \
     -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
     -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null); then
     status=1
