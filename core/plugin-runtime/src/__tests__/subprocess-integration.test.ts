@@ -15,6 +15,7 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { resolve } from 'node:path';
+import { setTimeout as realDelay } from 'node:timers/promises';
 import { describe, it, expect, vi } from 'vitest';
 import { createStdioChannel, StdioChannel } from '@kb-labs/core-ipc';
 import { runInSubprocess } from '../sandbox/runner.js';
@@ -297,11 +298,15 @@ describe('Subprocess Integration Tests', () => {
       hostContext: { host: 'cli', binaryName: 'kb', argv: [], flags: {} },
     };
     let providerSignal: AbortSignal | undefined;
+    let resolveProviderStarted!: () => void;
+    const providerStarted = new Promise<void>((resolve) => { resolveProviderStarted = resolve; });
+    const channelClose = vi.spyOn(StdioChannel.prototype, 'close');
     const platform = {
       ...createPlatform(),
       llm: {
         complete: (_prompt: string, options?: { signal?: AbortSignal }) => {
           providerSignal = options?.signal;
+          resolveProviderStarted();
           return new Promise((_resolve, reject) => {
             providerSignal?.addEventListener('abort', () => reject(providerSignal?.reason ?? new DOMException('closed', 'AbortError')), { once: true });
           });
@@ -309,14 +314,42 @@ describe('Subprocess Integration Tests', () => {
       },
     } as unknown as IPlatformAdapters;
 
+    const timeoutMs = 250;
+    const startupWatchdog = new AbortController();
+    let execution: Promise<{ status: 'resolved' } | { status: 'rejected'; error: unknown }> | undefined;
+    let fakeTimersActive = false;
     try {
-      await expect(runInSubprocess({
-        descriptor, platform, handlerPath, input: {}, timeoutMs: 250, cwd: testDir,
-      })).rejects.toThrow(/timed out/);
-      expect(providerSignal).toBeDefined();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      fakeTimersActive = true;
+      execution = runInSubprocess({
+        descriptor, platform, handlerPath, input: {}, timeoutMs, cwd: testDir,
+      }).then(
+        () => ({ status: 'resolved' as const }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      );
+      await Promise.race([
+        providerStarted,
+        execution.then((outcome) => { throw outcome.status === 'rejected' ? outcome.error : new Error('Subprocess completed before starting the host RPC'); }),
+        realDelay(5_000, undefined, { signal: startupWatchdog.signal }).then(() => { throw new Error('Subprocess never reached the host RPC'); }),
+      ]);
+      await vi.runAllTimersAsync();
+      const outcome = await execution;
+      expect(outcome.status).toBe('rejected');
+      if (outcome.status === 'rejected') { expect(outcome.error).toMatchObject({ message: expect.stringMatching(/timed out/) }); }
       expect(providerSignal?.aborted).toBe(true);
+      expect(channelClose).toHaveBeenCalled();
     } finally {
-      rmSync(testDir, { recursive: true, force: true });
+      startupWatchdog.abort();
+      try {
+        if (fakeTimersActive && execution) {
+          await vi.runAllTimersAsync();
+          await execution;
+        }
+      } finally {
+        if (fakeTimersActive) { vi.useRealTimers(); }
+        channelClose.mockRestore();
+        rmSync(testDir, { recursive: true, force: true });
+      }
     }
   }, 10_000);
 
