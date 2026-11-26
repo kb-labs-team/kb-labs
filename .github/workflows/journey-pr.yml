@@ -68,6 +68,11 @@ jobs:
         with:
           go-version: '1.26.11'
           cache-dependency-path: tools/kb-devkit/go.sum
+      - name: Apply the same catalog repair to both verification lanes
+        run: |
+          git fetch --no-tags --depth=1 origin "$CANDIDATE_SHA"
+          git show "$CANDIDATE_SHA:scripts/ci/journey-proof-claim-discovery.patch" > "$RUNNER_TEMP/claim-discovery.patch"
+          git apply "$RUNNER_TEMP/claim-discovery.patch"
       - run: corepack pnpm install --frozen-lockfile
       - uses: ./.github/actions/devkit-cas
         with:
