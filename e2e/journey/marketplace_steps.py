@@ -24,7 +24,7 @@ from installed_fixture import layout_value
 from platform_snapshot import _platform_snapshot
 from journey_selection import read_journey_selection
 from hermetic_cli import run_hermetic_cli
-from service_steps import Journey
+from service_steps import Journey, journey_modes
 from gateway_sessions import gateway_session
 from invocations import (
     CompletedProcess,
@@ -403,6 +403,7 @@ def configured_marketplace_source_kinds(status: dict) -> tuple[str, ...]:
     return source_kinds
 
 
+@journey_modes("secured")
 def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[str, str],
                                      runner: CommandRunner) -> None:
     """Clear both credential stores, prove the auth refusal, then log in as admin."""
@@ -440,13 +441,11 @@ def authenticate_secured_marketplace(journey: Journey, project: Path, env: dict[
             assert_auth_required("S-041.7", scope)
 
     journey.step("secured marketplace requires a saved CLI session", "marketplace",
-                 assert_both_marketplace_scopes_require_auth, cases=["S-041.7"],
-                 runners=("service-secured:explore",))
+                 assert_both_marketplace_scopes_require_auth, cases=["S-041.7"])
 
 
     journey.step("S-010.6 secured marketplace requires the catalogued login error", "marketplace",
-                 lambda: assert_auth_required("S-010.6", ["--scope", "platform"]), cases=["S-010.6"],
-                 runners=("service-secured:explore",))
+                 lambda: assert_auth_required("S-010.6", ["--scope", "platform"]), cases=["S-010.6"])
 
     email = env.get("KB_JOURNEY_ADMIN_EMAIL", "admin@example.com")
     password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")

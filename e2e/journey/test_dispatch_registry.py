@@ -44,11 +44,11 @@ class FullRunnableSelectionTests(unittest.TestCase):
             "step:prepare": {"name": "prepare", "kind": "step", "requires": [],
                              "runners": ["route-local"], "locations": [(source, 1, [])]},
             "step:check": {"name": "check", "kind": "step", "requires": ["step:prepare"],
-                           "runners": ["route-local"], "locations": [(source, 2, [])]},
+                           "runners": ["route-local"], "locations": [(source, 2, ["step:prepare"])]},
             "flow:prepare": {"name": "prepare", "kind": "flow", "requires": [],
                              "runners": ["route-secured"], "locations": [(source, 3, [])]},
             "flow:check": {"name": "check", "kind": "flow", "requires": ["flow:prepare"],
-                           "runners": ["route-secured"], "locations": [(source, 4, [])]},
+                           "runners": ["route-secured"], "locations": [(source, 4, ["flow:prepare"])]},
         }
         def case_declarations(_source, _root):
             return {
@@ -99,6 +99,10 @@ class FullRunnableSelectionTests(unittest.TestCase):
             ("flow", "agent-secured:commit|flow:produce Commit project fixture"),
             ("step", "agent-secured:commit|step:produce Commit project fixture"),
         })
+        plans = full_runner_owner_plans(root)
+        readiness = ("step", "platform readiness (gateway + project workflow)")
+        self.assertNotIn(readiness, plans["agent:commit"])
+        self.assertNotIn(readiness, plans["agent-secured:commit"])
 
     def test_real_full_route_filters_case_owners_by_registered_runner_variant(self):
         root = Path(__file__).resolve().parents[2]
@@ -125,6 +129,25 @@ class FullRunnableSelectionTests(unittest.TestCase):
                                                "project-registered", "service-api-session"])
         self.assertEqual(local_rows["installed platform bootstrap"]["states"], [])
 
+        mode_coverage = [{"mode": mode, "cases": [{"id": "S-045", "status": "active", "release": True,
+            "steps": [{"stepId": "S-045.12", "claims": [{"kind": "journey",
+            "source": "e2e/journey/service_runner.py"}]}]}]} for mode in ("local", "secured")]
+        mode_selection = full_runnable_selection(mode_coverage, root, source_sha)
+        cron_rows = {row["runner"]: row for row in mode_selection["steps"]
+                     if row["name"] == "workflow cron CLI and MCP state parity"}
+        self.assertEqual(cron_rows["service-local:explore"]["claimIds"], ["S-045.12"])
+        self.assertEqual(cron_rows["service-secured:explore"]["claimIds"], [])
+
+        fixture_coverage = [{"mode": mode, "cases": [{"id": "S-014", "status": "active", "release": True,
+            "steps": [{"stepId": "S-014.1", "claims": [{"kind": "journey",
+            "source": "e2e/journey/service_runner.py"}]}]}]} for mode in ("local", "secured")]
+        fixture_selection = full_runnable_selection(fixture_coverage, root, source_sha)
+        plan_rows = {row["runner"]: row for row in fixture_selection["steps"]
+                     if row["name"] == "generate a real-provider Commit plan without applying it"}
+        for selector, row in plan_rows.items():
+            self.assertEqual(row["requires"], [
+                f"{selector}|step:prepare Commit and Review case fixtures"])
+
     def test_real_service_route_excludes_secured_only_registration_from_local_owner_plan(self):
         root = Path(__file__).resolve().parents[2]
         plans = full_runner_owner_plans(root)
@@ -135,6 +158,7 @@ class FullRunnableSelectionTests(unittest.TestCase):
             ("step", "member auth status identifies gateway"),
             ("step", "member reads authorized permissions"),
             ("step", "member cannot read tenant users"),
+            ("step", "secured auth precedes unregistered project resolution"),
         }
         self.assertTrue(secured_only.issubset(set(plans["service-secured:explore"])))
         self.assertTrue(secured_only.isdisjoint(set(plans["service-local:explore"])))
@@ -1876,6 +1900,18 @@ class DispatchRegistryTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(ValueError, r"fixture_steps.py:2: claim registration is conditional"):
                 validate_runner_conditions({"fixture_steps.py"}, root)
+
+    def test_mode_guard_rail_rejects_unresolved_registration_condition(self):
+        with tempfile.TemporaryDirectory(prefix="journey-mode-condition-rail-") as directory:
+            root = Path(directory)
+            (root / "fixture_steps.py").write_text(
+                'def register(mode):\n'
+                '    if mode in configured_modes:\n'
+                '        journey.step("conditional claim", "test", check, cases=["S-900.1"])\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, r"unresolved access-mode guard"):
+                _source_step_declarations({"fixture_steps.py"}, root)
 
     def test_static_dependency_rail_rejects_partial_recorder(self):
         with tempfile.TemporaryDirectory(prefix="journey-partial-recorder-rail-") as directory:

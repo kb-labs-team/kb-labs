@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 
-from service_steps import Journey
+from service_steps import Journey, journey_modes
 from kb_invocation import kb_command, kb_login_shell
 from steps.auth import assert_cli_session_absent, assert_platform_auth_required
 from invocations import (
@@ -453,6 +453,7 @@ def select_session_protection_representatives(registry_listing: dict) -> dict[st
     return representatives
 
 
+@journey_modes("secured")
 def run_secured_cli_auth_step(journey: Journey, *, env: dict[str, str], project: Path) -> None:
     """Authenticate setup, then prove registry-declared session commands are gated."""
     def verify_unregistered_project_auth() -> None:

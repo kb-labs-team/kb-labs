@@ -523,7 +523,8 @@ def expect_project_service_health(path: str, service_id: str, *, token="") -> st
     return None
 
 
-def service_check(name, capability, check, *, cases=(), requires=(), runners=()):
+def service_check(name, capability, check, *, cases=(), requires=(),
+                  runners=("service-local:explore", "service-secured:explore")):
     return name, capability, check, list(cases), tuple(requires), tuple(runners)
 
 

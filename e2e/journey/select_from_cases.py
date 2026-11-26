@@ -145,6 +145,93 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
     return declarations
 
 
+def _mode_guard_map(tree: ast.Module) -> tuple[dict[int, list[str]], set[int]]:
+    """Resolve literal mode branches around registration calls from their source control flow."""
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+
+    def branch_constraint(test: ast.AST, *, positive: bool) -> set[str] | None:
+        if isinstance(test, ast.Compare) and isinstance(test.left, ast.Name) and test.left.id == "mode" \
+                and len(test.ops) == 1 and len(test.comparators) == 1:
+            operator = test.ops[0]
+            value = test.comparators[0]
+            if isinstance(value, ast.Constant) and value.value in {"local", "secured"}:
+                if isinstance(operator, (ast.Eq, ast.Is)):
+                    matches = {value.value}
+                elif isinstance(operator, (ast.NotEq, ast.IsNot)):
+                    matches = {"local", "secured"} - {value.value}
+                else:
+                    return None
+                return matches if positive else {"local", "secured"} - matches
+            if isinstance(operator, (ast.In, ast.NotIn)) and isinstance(value, (ast.Tuple, ast.List, ast.Set)):
+                values = {item.value for item in value.elts
+                          if isinstance(item, ast.Constant) and item.value in {"local", "secured"}}
+                if len(values) != len(value.elts):
+                    return None
+                matches = values if isinstance(operator, ast.In) else {"local", "secured"} - values
+                return matches if positive else {"local", "secured"} - matches
+        return None
+
+    result: dict[int, list[str]] = {}
+    unresolved: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        allowed: set[str] | None = None
+        child: ast.AST = node
+        parent = parents.get(child)
+        while parent is not None:
+            if isinstance(parent, ast.If):
+                references_mode = any(isinstance(item, ast.Name) and item.id == "mode"
+                                      for item in ast.walk(parent.test))
+                if child in parent.body:
+                    constraint = branch_constraint(parent.test, positive=True)
+                elif child in parent.orelse:
+                    constraint = branch_constraint(parent.test, positive=False)
+                else:
+                    constraint = None
+                if references_mode and constraint is None:
+                    unresolved.add(node.lineno)
+                if constraint is not None:
+                    allowed = constraint if allowed is None else allowed & constraint
+            child = parent
+            parent = parents.get(parent)
+        if allowed is not None:
+            result[node.lineno] = sorted(allowed)
+    return result, unresolved
+
+
+def _eligible_registration_locations(declaration: dict, selector: str, mode: str,
+                                     root: Path) -> list[dict]:
+    eligible = []
+    locations = declaration.get("locations", ())
+    if not locations:
+        locations = ({"source": "", "line": 0,
+                      "requires": declaration.get("requires", ()),
+                      "runners": declaration.get("runners", ()), "modes": None},)
+    for location in locations:
+        if not isinstance(location, dict):
+            source, line, required = location[:3]
+            location = {"source": source, "line": line, "requires": required,
+                        "runners": declaration.get("runners", ()), "modes": None}
+        source, line = location["source"], location["line"]
+        declared_runners = set(location.get("runners", ()))
+        case_declaration = _case_declarations(source, root).get(line, {}) if source else {}
+        case_runners = set(case_declaration.get("runners", ()))
+        if declared_runners and case_runners:
+            allowed_runners = declared_runners & case_runners
+        else:
+            allowed_runners = declared_runners or case_runners
+        if allowed_runners and selector not in allowed_runners:
+            continue
+        mode_values = location.get("modes")
+        if mode_values is not None:
+            modes = set(mode_values)
+            if not modes or mode not in modes:
+                continue
+        eligible.append(location)
+    return eligible
+
+
 def _step_declaration(source: str, line: int, root: Path) -> dict:
     """Read a step's static declaration from its actual claim callsite."""
     if (root / source).suffix != ".py":
@@ -197,8 +284,8 @@ def fixture_group_declarations(groups, selector: str, root: Path) -> dict[str, d
             runners = declaration_runners(declaration, source)
             if (selector and selector not in runners):
                 continue
-            if any(registered_source == source and owner.lineno <= line <= owner.end_lineno
-                   for registered_source, line, _ in declaration.get("locations", ())):
+            if any(location["source"] == source and owner.lineno <= location["line"] <= owner.end_lineno
+                   for location in declaration.get("locations", ()) if isinstance(location, dict)):
                 steps.add(declaration["name"])
         claims = set()
         for line, declaration in _case_declarations(source, root).items():
@@ -320,6 +407,9 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
     declarations: dict[str, dict] = {}
     trees = {source: _source_tree(source, root) for source in sources
              if (root / source).is_file() and (root / source).suffix == ".py"}
+    mode_guard_data = {source: _mode_guard_map(tree) for source, tree in trees.items()}
+    mode_guards = {source: data[0] for source, data in mode_guard_data.items()}
+    unresolved_mode_guards = {source: data[1] for source, data in mode_guard_data.items()}
     for source, tree in trees.items():
         _validate_recorder_attribute_references(source, tree)
     forwarding: list[tuple[str, ast.FunctionDef | ast.AsyncFunctionDef,
@@ -341,6 +431,23 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
         function = call.func
         return function.id if isinstance(function, ast.Name) else (
             function.attr if isinstance(function, ast.Attribute) else "")
+
+    def registration_modes(source: str, node: ast.AST) -> list[str] | None:
+        modes = mode_guards.get(source, {}).get(getattr(node, "lineno", -1))
+        function = enclosing_function(trees[source], node)
+        decorated = None
+        if function is not None:
+            for decorator in function.decorator_list:
+                if not isinstance(decorator, ast.Call) or call_name(decorator) != "journey_modes":
+                    continue
+                values = [item.value for item in decorator.args
+                          if isinstance(item, ast.Constant) and item.value in {"local", "secured"}]
+                if len(values) != len(decorator.args) or not values:
+                    raise ValueError(f"{source}:{decorator.lineno}: journey_modes requires literal local/secured modes")
+                decorated = set(values) if decorated is None else decorated & set(values)
+        if decorated is None:
+            return modes
+        return sorted(decorated if modes is None else decorated & set(modes))
 
     def literal_references(value: ast.AST, source: str, line: int) -> list[str]:
         if not isinstance(value, ast.Tuple):
@@ -392,7 +499,14 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
 
     def add_declaration(source: str, line: int, kind: str, name: str | None,
                         required: list[str], role: str | None, runners: list[str],
-                        plan_after_phase: str | None = None, plan_phase: str | None = None) -> None:
+                        plan_after_phase: str | None = None, plan_phase: str | None = None,
+                        modes: list[str] | None = None) -> None:
+        if line in unresolved_mode_guards.get(source, set()):
+            raise ValueError(
+                f"{source}:{line}: journey registration has an unresolved access-mode guard; "
+                "use literal local/secured branches")
+        if line in mode_guards.get(source, {}) and not mode_guards[source][line]:
+            raise ValueError(f"{source}:{line}: journey registration is unreachable for local or secured mode")
         # Dynamic step names can carry checked edges, but are not selector
         # producers. Only a literal name or a statically resolved wrapper
         # call site can enter the producer graph.
@@ -401,7 +515,8 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             declarations[key] = {"name": None, "kind": kind, "requires": required,
                                  "sources": {source}, "role": role, "runners": runners,
                                  "plan_after_phase": plan_after_phase, "plan_phase": plan_phase,
-                                 "locations": [(source, line, required)],
+                                 "locations": [{"source": source, "line": line, "requires": required,
+                                                "runners": runners, "modes": modes}],
                                  "producer": False}
             return
         key = str(Dependency(kind, name))
@@ -410,7 +525,8 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                                                     "locations": []})
         declaration["requires"] = sorted(set(declaration["requires"]) | set(required))
         declaration["sources"].add(source)
-        declaration["locations"].append((source, line, required))
+        declaration["locations"].append({"source": source, "line": line, "requires": required,
+                                           "runners": runners, "modes": modes})
         for field, value in (("plan_after_phase", plan_after_phase), ("plan_phase", plan_phase)):
             if value is not None:
                 existing = declaration.get(field)
@@ -487,7 +603,8 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                     if call_name_value is None:
                         raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
                     add_declaration(call_source, call_site.lineno, kind, call_name_value,
-                                    call_required, None, [])
+                                    call_required, None, [],
+                                    modes=registration_modes(call_source, call_site))
                 continue
             else:
                 raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
@@ -506,8 +623,11 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             runners = [item.value for item in runners_node.elts
                        if isinstance(item, ast.Constant) and isinstance(item.value, str)] \
                 if isinstance(runners_node, (ast.Tuple, ast.List)) else []
+            if call_name(node) == "service_check" and runners_node is None:
+                runners = ["service-local:explore", "service-secured:explore"]
             add_declaration(source, node.lineno, kind, name, required, role, runners,
-                            plan_after_phase, plan_phase)
+                            plan_after_phase, plan_phase,
+                            registration_modes(source, node))
     return declarations
 
 
@@ -771,19 +891,10 @@ def full_runner_owner_plans(root: Path) -> dict[str, list[tuple[str, str]]]:
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
         registrations = _source_step_declarations(sources, root)
-        case_runner_owners: dict[tuple[str, str], set[str]] = {}
-        for source in sources:
-            for declaration in _case_declarations(source, root).values():
-                name = declaration.get("name")
-                variants = set(declaration.get("runners", ()))
-                if isinstance(name, str) and variants:
-                    case_runner_owners.setdefault(("step", name), set()).update(variants)
         selected = [
             declaration for declaration in registrations.values()
             if declaration.get("name") is not None
-            and (not declaration.get("runners") or selector in declaration["runners"])
-            and (not case_runner_owners.get((str(declaration.get("kind", "step")), declaration["name"]))
-                 or selector in case_runner_owners[(str(declaration.get("kind", "step")), declaration["name"])])
+            and _eligible_registration_locations(declaration, selector, getattr(runner, "mode", ""), root)
         ]
         barriers = [declaration for declaration in selected
                     if declaration.get("plan_after_phase") == "all-steps"]
@@ -828,21 +939,26 @@ def validate_runner_conditions(sources: set[str], root: Path) -> None:
             continue
         tree = _source_tree(source, root)
         parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+        mode_guards, unresolved_mode_guards = _mode_guard_map(tree)
         for call in ast.walk(tree):
-            if not isinstance(call, ast.Call):
+            if not isinstance(call, ast.Call) or _call_name(call) not in {
+                    "step", "flow", "service_check", "claim_step", "record_case"}:
                 continue
             keywords = {keyword.arg: keyword.value for keyword in call.keywords}
             cases = keywords.get("cases")
-            if not isinstance(cases, (ast.List, ast.Tuple)) or not any(
-                    isinstance(item, ast.Constant) and isinstance(item.value, str) for item in cases.elts):
-                continue
-            if keywords.get("runners") is not None:
-                continue
+            has_case = isinstance(cases, (ast.List, ast.Tuple)) and any(
+                isinstance(item, ast.Constant) and isinstance(item.value, str) for item in cases.elts)
             current = parents.get(call)
             while current is not None:
                 if isinstance(current, ast.If):
                     referenced = {node.id for node in ast.walk(current.test) if isinstance(node, ast.Name)}
-                    if referenced.intersection(RUNNER_CONTEXT_NAMES):
+                    if ("mode" in referenced and (call.lineno in unresolved_mode_guards
+                                                   or not mode_guards.get(call.lineno))):
+                        raise ValueError(
+                            f"{source}:{call.lineno}: claim registration is conditional on access mode; "
+                            "use a literal `if mode == 'local'` or `if mode == 'secured'` branch")
+                    if (has_case and keywords.get("runners") is None
+                            and referenced.intersection(RUNNER_CONTEXT_NAMES)):
                         raise ValueError(
                             f"{source}:{call.lineno}: claim registration is conditional on runner context; "
                             "declare its executable runners= variants"
@@ -855,8 +971,8 @@ def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str
     required_step_names = {
         dependency.name
         for declaration in declarations.values()
-        for _source, _line, references in declaration["locations"]
-        for reference in references
+        for location in declaration["locations"]
+        for reference in location["requires"]
         if (dependency := Dependency.parse(reference)).kind == "step"
     }
     for source in sorted(set().union(*reachable.values()) if reachable else set()):
@@ -884,7 +1000,8 @@ def validate_dependency_edges(declarations: dict[str, dict], reachable: dict[str
                     "under a runner condition; declare its executable runners= variants or depend on its state")
 
     for dependency_key, declaration in declarations.items():
-        for source, line, references in declaration["locations"]:
+        for location in declaration["locations"]:
+            source, line, references = location["source"], location["line"], location["requires"]
             owners = [entry for entry, source_set in reachable.items()
                       if source in source_set and (declaration.get("producer") is False
                                                    or dependency_key in graphs[entry])]
@@ -1079,25 +1196,27 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                 from runner import outer_selection_groups
                 group_specs_by_selector[selector] = [outer_selection_groups()]
         declarations = _source_step_declarations_cached(tuple(sorted(sources)), root)
-        by_name: dict[tuple[str, str], dict] = {}
+        by_name: dict[tuple[str, str], tuple[dict, list[dict]]] = {}
         for declaration in declarations.values():
             name = declaration.get("name")
             if not isinstance(name, str):
                 continue
-            declared_runners = declaration.get("runners", ())
-            if declared_runners and selector not in declared_runners:
+            locations = _eligible_registration_locations(declaration, selector, runner.mode, root)
+            if not locations:
                 continue
-            by_name[(str(declaration.get("kind", "step")), name)] = declaration
+            by_name[(str(declaration.get("kind", "step")), name)] = declaration, locations
         owner_rows: dict[str, dict] = {}
         for kind, name in plans[selector]:
-            declaration = by_name.get((kind, name))
-            if declaration is None:
+            selected_declaration = by_name.get((kind, name))
+            if selected_declaration is None:
                 raise ValueError(f"{selector}: full route owner {kind}:{name} has no declaration")
+            declaration, locations = selected_declaration
             owner_id = f"{selector}|{kind}:{name}"
             case_ids: set[str] = set()
             capabilities: set[str] = set()
             areas: set[str] = set()
-            for source, line, _required in declaration.get("locations", ()):
+            for location in locations:
+                source, line = location["source"], location["line"]
                 source_cases = _case_declarations(source, root).get(line, {})
                 capability = source_cases.get("capability")
                 if isinstance(capability, str):
@@ -1112,7 +1231,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                         areas.add(area)
             required_ids: list[str] = []
             required_states: list[str] = []
-            for reference in declaration.get("requires", ()):
+            for reference in (reference for location in locations for reference in location["requires"]):
                 dependency = Dependency.parse(reference)
                 if dependency.kind == "state":
                     required_states.append(dependency.name)

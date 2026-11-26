@@ -398,7 +398,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-014.1 expected a preview-only LLM plan without changing Git state")
 
     journey.step("generate a real-provider Commit plan without applying it", "commit-plugin",
-                 s014_dry_run, cases=["S-014.1", "S-203.1"], runners=("service-local:explore", "service-secured:explore"))
+                 s014_dry_run, cases=["S-014.1", "S-203.1"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     def s014_provider() -> None:
         adapter_cmd = ["adapter", "list", "--json"]
@@ -408,7 +410,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if "@kb-labs/adapters-openai" not in raw:
             raise RuntimeError("S-014.2 could not identify the configured real LLM provider")
 
-    journey.step("identify the selected real LLM provider", "commit-plugin", s014_provider, cases=["S-014.2"], runners=("service-local:explore", "service-secured:explore"))
+    journey.step("identify the selected real LLM provider", "commit-plugin", s014_provider, cases=["S-014.2"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s014-apply")
 
@@ -420,7 +422,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if result.returncode != 0 or payload.get("applied") is not True or not subject.startswith(("test(", "chore(", "feat(", "fix(")):
             raise RuntimeError(f"S-014.3 did not create a conventional generated commit: {subject!r}")
 
-    journey.step("apply a generated Commit plan", "commit-plugin", s014_apply, cases=["S-014.3"], runners=("service-local:explore", "service-secured:explore"))
+    journey.step("apply a generated Commit plan", "commit-plugin", s014_apply, cases=["S-014.3"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s015-review")
 
@@ -432,7 +434,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if "Found " not in result.stderr:
             raise RuntimeError("S-203.1 human-mode progress was not written to stderr")
 
-    journey.step("review changed files with heuristic mode", "commit-plugin", s015_heuristic, cases=["S-015.1", "S-203.1"], runners=("service-local:explore", "service-secured:explore"))
+    journey.step("review changed files with heuristic mode", "commit-plugin", s015_heuristic, cases=["S-015.1", "S-203.1"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def s015_findings() -> None:
         command = ["review", "run", "--mode=heuristic", "--json"]
@@ -446,7 +448,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                     or not isinstance(finding.get("line"), int)):
                 raise RuntimeError("S-015.2 produced a finding without file path and line reference")
 
-    journey.step("inspect heuristic review findings", "commit-plugin", s015_findings, cases=["S-015.2", "S-203.1"], runners=("service-local:explore", "service-secured:explore"))
+    journey.step("inspect heuristic review findings", "commit-plugin", s015_findings, cases=["S-015.2", "S-203.1"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def s015_json() -> None:
         command = ["review", "run", "--json"]
@@ -455,7 +457,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if result.returncode != 0 or not isinstance(payload.get("findings"), list):
             raise RuntimeError("S-015.3 did not return a valid JSON review result")
 
-    journey.step("return a JSON review result", "commit-plugin", s015_json, cases=["S-015.3"], runners=("service-local:explore", "service-secured:explore"))
+    journey.step("return a JSON review result", "commit-plugin", s015_json, cases=["S-015.3"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def missing_llm_review() -> None:
         with invocation_context():
@@ -478,7 +480,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("could not restore the platform LLM binding after S-015.4")
 
     journey.step("report missing LLM capability for deep Review", "commit-plugin",
-                 missing_llm_review, cases=["S-015.4"], runners=("service-local:explore", "service-secured:explore"))
+                 missing_llm_review, cases=["S-015.4"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s160-dry-run")
     before_s160 = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
@@ -501,7 +503,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
                 raise RuntimeError("S-160.1 secured execution did not report its host-owned project runtime receipt")
 
     journey.step("preview the deterministic fixture Commit plan", "commit-plugin",
-                 s160_dry_run, cases=["S-160.1"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_dry_run, cases=["S-160.1"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def s160_missing_llm() -> None:
         with invocation_context():
@@ -524,7 +526,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("could not restore the deterministic fixture LLM binding after S-160.2")
 
     journey.step("report missing deterministic LLM capability", "commit-plugin",
-                 s160_missing_llm, cases=["S-160.2"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_missing_llm, cases=["S-160.2"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s160-apply")
 
@@ -537,7 +539,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError(f"S-160.3 did not apply the deterministic fixture subject: {subject!r}")
 
     journey.step("apply the deterministic fixture Commit plan", "commit-plugin",
-                 s160_apply, cases=["S-160.3"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_apply, cases=["S-160.3"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     before_s160_noop = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
     before_s160_noop_status = _git(["status", "--porcelain=v1", "--untracked-files=all"], project=project, env=env)
@@ -555,7 +557,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-160.4 expected a successful empty result without changing Git state")
 
     journey.step("return a successful empty Commit result", "commit-plugin",
-                 s160_no_changes, cases=["S-160.4"], runners=("service-local:explore", "service-secured:explore"))
+                 s160_no_changes, cases=["S-160.4"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def s160_host_command() -> None:
         result = cli(["commit", "plan", "delete", "--json"], step_id="S-160.5")
@@ -572,7 +574,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-160.5 command did not report execution by its registered project runtime")
 
     journey.step("execute the installed Commit command through the secured project runtime", "commit-plugin",
-                 s160_host_command, cases=["S-160.5"], runners=("service-secured:explore",))
+                 s160_host_command, cases=["S-160.5"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-secured:explore",))
 
     _stage_case_file(project, env, "s030-progress")
 
@@ -597,14 +599,14 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         nonlocal progress_text
         progress_text = s030_progress()
     journey.step("observe Commit generation progress", "commit-plugin",
-                 claim_s030_progress, cases=["S-030.1"], runners=("service-local:explore", "service-secured:explore"))
+                 claim_s030_progress, cases=["S-030.1"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def s030_phase_update() -> None:
         if not re.search(r"Re-analyzing with diff context|fetching diff|Phase 2", progress_text, re.I):
             raise RuntimeError("S-030.2 did not observe a subsequent generation phase while the command ran")
 
     journey.step("observe a subsequent Commit generation phase", "commit-plugin",
-                 s030_phase_update, cases=["S-030.2"], runners=("service-local:explore", "service-secured:explore"))
+                 s030_phase_update, cases=["S-030.2"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     _stage_case_file(project, env, "s030-cancel")
     before_cancel = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
@@ -625,7 +627,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if not sent_interrupt or result.returncode != 130 or "EPIPE" in transcript:
             raise RuntimeError("S-030.3 did not cancel host-owned generation cleanly before apply")
 
-    journey.step("interrupt active Commit generation", "commit-plugin", s030_cancel, cases=["S-030.3"], runners=("service-local:explore", "service-secured:explore"))
+    journey.step("interrupt active Commit generation", "commit-plugin", s030_cancel, cases=["S-030.3"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def s030_history() -> None:
         after = _git(["rev-parse", "HEAD"], project=project, env=env).strip()
@@ -633,7 +635,7 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             raise RuntimeError("S-030.4 found a Git commit created after cancellation")
 
     journey.step("verify cancellation did not create a commit", "commit-plugin",
-                 s030_history, cases=["S-030.4"], runners=("service-local:explore", "service-secured:explore"))
+                 s030_history, cases=["S-030.4"], requires=("step:prepare Commit and Review case fixtures",), runners=("service-local:explore", "service-secured:explore"))
 
     def cleanup_review_plugin() -> None:
         command = ["marketplace", "uninstall", "@kb-labs/review", "--json"]
@@ -641,7 +643,8 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         if result.returncode != 0:
             raise RuntimeError("could not remove the temporary Review plugin fixture")
 
-    journey.step("remove temporary Review plugin fixture", "plugin-author", cleanup_review_plugin)
+    journey.step("remove temporary Review plugin fixture", "plugin-author", cleanup_review_plugin,
+                 requires=("step:prepare Commit and Review case fixtures",))
 
     def finalize_project_baseline() -> None:
         _git(["add", "-A"], project=project, env=env)

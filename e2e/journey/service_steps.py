@@ -5,6 +5,7 @@ import json
 import time
 import traceback
 import os
+from functools import wraps
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, dataclass
@@ -497,6 +498,25 @@ class Journey:
         result = self.result()
         write_report_json(path, asdict(result), env=os.environ)
         return result
+
+
+def journey_modes(*modes: str):
+    """Declare one helper's execution modes for runtime dispatch and route planning."""
+    allowed = frozenset(modes)
+    if not allowed or not allowed <= {"local", "secured"}:
+        raise ValueError("journey_modes requires one or more literal local/secured modes")
+
+    def decorate(function):
+        @wraps(function)
+        def guarded(journey: Journey, *args, **kwargs):
+            if journey.mode not in allowed:
+                return None
+            return function(journey, *args, **kwargs)
+
+        guarded.__journey_modes__ = tuple(sorted(allowed))
+        return guarded
+
+    return decorate
 
 
 def replay_steps(source: Journey, target: Journey) -> None:

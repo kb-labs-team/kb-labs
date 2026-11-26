@@ -15,7 +15,7 @@ from gateway_sessions import SavedGatewaySession, gateway_session
 from invocations import (decode_ux_error_result, decode_ux_success_result, invocation_context,
                          open_http, read_ux_cli_result, read_ux_http_result,
                          store_report_secret, run_command)
-from service_steps import Journey
+from service_steps import Journey, journey_modes
 from steps.accounts import _browser_call, _browser_login
 from steps.auth import _login, _request
 
@@ -198,6 +198,7 @@ def expected_root(payload: dict) -> str:
     return str(receipt.get("plan", {}).get("request", {}).get("platformRoot", ""))
 
 
+@journey_modes("secured")
 def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> None:
     """Register exact S-005, S-031, and S-042 journey claims.
 
@@ -382,17 +383,13 @@ def register_secured_connection_steps(journey: Journey, env: dict[str, str]) -> 
         return None
 
     journey.step("member signs in to secured gateway", "auth.secured", member_login, cases=["S-005.2"],
-                 requires=("step:apply isolated client platform",),
-                 runners=("service-secured:explore",))
+                 requires=("step:apply isolated client platform",))
     journey.step("member auth status identifies gateway", "auth.secured", member_status, cases=["S-005.3"],
-                 requires=("step:apply isolated client platform",),
-                 runners=("service-secured:explore",))
+                 requires=("step:apply isolated client platform",))
     journey.step("member reads authorized permissions", "auth.secured", member_permissions, cases=["S-005.4"],
-                 requires=("step:member signs in to secured gateway",),
-                 runners=("service-secured:explore",))
+                 requires=("step:member signs in to secured gateway",))
     journey.step("member cannot read tenant users", "auth.secured", member_users_denied, cases=["S-005.5"],
-                 requires=("step:member signs in to secured gateway",),
-                 runners=("service-secured:explore",))
+                 requires=("step:member signs in to secured gateway",))
 
     def expired_status():
         with invocation_context(step_id="journey.setup"):
