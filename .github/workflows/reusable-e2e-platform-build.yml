@@ -161,7 +161,7 @@ jobs:
             tools/kb-dev/kb-dev \
             e2e/packages \
             e2e/.verdaccio-storage \
-            e2e/.journey/e2e-platform-binaries \
+            .journey/e2e-platform-binaries \
             -T /tmp/dist-paths
 
       - name: Save immutable Docker images

@@ -57,7 +57,7 @@ services:
     image: python:3.12-alpine
     command: ["python3", "-m", "http.server", "8080", "--directory", "/release"]
     volumes:
-      - ./.journey/e2e-platform-binaries:/release/journey-candidate:ro
+      - ../.journey/e2e-platform-binaries:/release/journey-candidate:ro
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8080/journey-candidate/kb-create-linux-amd64', method='HEAD'), timeout=2).close()"]
       interval: 2s
