@@ -15,6 +15,10 @@ on:
         description: 'Suite name used in artifact names (auth or oauth)'
         type: string
         required: true
+      checkout-ref:
+        description: 'Optional commit SHA to test instead of the caller workflow ref'
+        type: string
+        default: ''
       compose-files:
         description: 'Colon-separated list of compose files (value of COMPOSE_FILE)'
         type: string
@@ -83,6 +87,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
 
       # ── Build toolchain ──────────────────────────────────────────────────────
 

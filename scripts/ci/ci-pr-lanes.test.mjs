@@ -8,6 +8,8 @@ import { test } from 'node:test';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ciPr = load(readFileSync(join(root, '.github/workflows/ci-pr.yml'), 'utf8'));
 const devkit = load(readFileSync(join(root, 'devkit.yaml'), 'utf8'));
+const affectedE2e = load(readFileSync(join(root, '.github/workflows/e2e-affected.yml'), 'utf8'));
+const reusableDockerE2e = load(readFileSync(join(root, '.github/workflows/reusable-e2e-docker.yml'), 'utf8'));
 
 const jobs = Object.entries(ciPr.jobs);
 const runs = (job) => (job.steps ?? []).filter((step) => typeof step.run === 'string');
@@ -63,4 +65,24 @@ test('every devkit test job uploads its task logs when it fails', () => {
     assert.equal(upload.with.path, '.kb/devkit/logs/');
     assert.match(upload.with.name, new RegExp(id));
   }
+});
+
+// case: S-262.23
+test('affected E2E is triggered once from CI(PR) and checks out the planned SHA', () => {
+  assert.ok(ciPr.on.pull_request.types.includes('synchronize'));
+  assert.equal(ciPr.on.workflow_run, undefined, 'affected E2E must not duplicate CI(PR) through workflow_run');
+  assert.equal(affectedE2e.on.pull_request, undefined, 'the reusable workflow must not add a second automatic PR trigger');
+  assert.ok(affectedE2e.on.workflow_call, 'CI(PR) calls the existing Affected E2E workflow');
+
+  const caller = ciPr.jobs['affected-e2e'];
+  assert.equal(caller.needs, 'e2e-test-plan');
+  assert.equal(caller.with['generic-suites'], '${{ needs.e2e-test-plan.outputs.generic }}');
+  assert.equal(caller.with['has-auth'], '${{ needs.e2e-test-plan.outputs.has_auth }}');
+  assert.equal(caller.with['checkout-ref'], '${{ github.sha }}');
+
+  for (const jobId of ['docker-e2e', 'auth-e2e', 'oauth-e2e']) {
+    assert.equal(affectedE2e.jobs[jobId].with['checkout-ref'], '${{ needs.discover.outputs.checkout-ref }}');
+  }
+  const checkout = reusableDockerE2e.jobs.e2e.steps.find((step) => step.name === 'Checkout');
+  assert.equal(checkout.with.ref, '${{ inputs.checkout-ref || github.sha }}');
 });

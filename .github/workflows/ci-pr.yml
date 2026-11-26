@@ -69,6 +69,8 @@ jobs:
     needs: preflight
     outputs:
       launcher_changed: ${{ steps.resolve-zones.outputs.launcher_changed }}
+      generic: ${{ steps.resolve-zones.outputs.generic }}
+      has_auth: ${{ steps.resolve-zones.outputs.has_auth }}
     permissions:
       contents: read
       pull-requests: write
@@ -90,6 +92,21 @@ jobs:
           else
             echo "launcher_changed=false" >> "$GITHUB_OUTPUT"
           fi
+          generic=$(node -e '
+            const plan = require("./.ci/e2e-test-plan.json");
+            const suites = [...new Set(plan.selected
+              .filter((zone) => zone.runner === "docker")
+              .flatMap((zone) => zone.suites)
+              .filter((suite) => !["e2e-auth", "e2e-oauth"].includes(suite))
+              .map((suite) => suite.replace(/^e2e-/, "")))];
+            process.stdout.write(JSON.stringify(suites));
+          ')
+          auth=$(node -e '
+            const plan = require("./.ci/e2e-test-plan.json");
+            process.stdout.write(String(plan.selected.some((zone) => zone.suites.includes("e2e-auth"))));
+          ')
+          echo "generic=$generic" >> "$GITHUB_OUTPUT"
+          echo "has_auth=$auth" >> "$GITHUB_OUTPUT"
       - name: Update PR test-plan comment
         # Fork PR tokens cannot write comments; their plan remains available in
         # the job summary and artifact.
@@ -116,6 +133,20 @@ jobs:
           name: e2e-test-plan
           path: .ci/e2e-test-plan.json
           retention-days: 14
+
+  # ── 0aa. Affected E2E — starts as soon as the complete plan is ready ─────
+  affected-e2e:
+    name: Affected E2E
+    needs: e2e-test-plan
+    uses: ./.github/workflows/e2e-affected.yml
+    with:
+      generic-suites: ${{ needs.e2e-test-plan.outputs.generic }}
+      has-auth: ${{ needs.e2e-test-plan.outputs.has_auth }}
+      checkout-ref: ${{ github.sha }}
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
 
   # ── 0b. kb-create V2 contract matrix — no registry, Docker or shared HOME ─
   # These are the public launcher contract shards. Each shard

@@ -1,13 +1,22 @@
 name: Affected E2E
 
-# The fast PR gate completes first. This workflow then runs only the E2E zones
-# selected from the same complete PR diff. `workflow_run` is deliberately used
-# instead of a `pull_request` dependency so Docker/browser work cannot extend
-# the author feedback loop.
+# CI(PR) calls this workflow with its affected plan. Manual dispatch remains
+# available to maintainers for reruns and CI evidence replay.
 on:
-  workflow_run:
-    workflows: [CI (PR)]
-    types: [completed]
+  workflow_call:
+    inputs:
+      generic-suites:
+        description: JSON array of Docker suite names selected by CI(PR)
+        required: true
+        type: string
+      has-auth:
+        description: Whether the plan selected auth and OAuth suites
+        required: true
+        type: string
+      checkout-ref:
+        description: Exact source commit to test
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       pr-number:
@@ -18,11 +27,6 @@ on:
         description: Completed Actions run to replay into CI evidence (no E2E is started)
         required: false
         type: string
-  # Allows validating a newly introduced selector before this workflow reaches
-  # the default branch. It is also a useful maintainer escape hatch later.
-  pull_request:
-    types: [labeled]
-
 permissions:
   contents: read
   pull-requests: read
@@ -30,25 +34,24 @@ permissions:
 jobs:
   discover:
     if: >-
-      (github.event_name == 'workflow_dispatch' && inputs.replay-run-id == '') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.pull_requests[0].number != '') ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-test'))
+      github.event_name == 'workflow_call' ||
+      (github.event_name == 'workflow_dispatch' && inputs.replay-run-id == '')
     runs-on: ubuntu-latest
     outputs:
-      generic: ${{ steps.matrix.outputs.generic }}
-      has-auth: ${{ steps.matrix.outputs.has-auth }}
+      generic: ${{ github.event_name == 'workflow_call' && inputs.generic-suites || steps.matrix.outputs.generic }}
+      has-auth: ${{ github.event_name == 'workflow_call' && inputs.has-auth || steps.matrix.outputs.has-auth }}
       pr-number: ${{ steps.pr.outputs.number }}
+      checkout-ref: ${{ github.event_name == 'workflow_call' && inputs.checkout-ref || steps.pr.outputs.head }}
     steps:
       - name: Resolve pull request refs
+        if: github.event_name != 'workflow_call'
         id: pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           INPUT_PR: ${{ inputs.pr-number }}
-          WORKFLOW_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
-          EVENT_PR: ${{ github.event.pull_request.number }}
         with:
           script: |
-            const number = process.env.INPUT_PR || process.env.WORKFLOW_PR || process.env.EVENT_PR;
+            const number = process.env.INPUT_PR;
             if (!number) core.setFailed('Affected E2E requires a pull request run.');
             const { data: pr } = await github.rest.pulls.get({
               ...context.repo, pull_number: Number(number),
@@ -57,10 +60,12 @@ jobs:
             core.setOutput('base', pr.base.ref);
             core.setOutput('head', pr.head.sha);
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        if: github.event_name != 'workflow_call'
         with:
           ref: ${{ steps.pr.outputs.head }}
           fetch-depth: 0
       - name: Resolve affected E2E zones
+        if: github.event_name != 'workflow_call'
         env:
           KB_DEVKIT_BASE_REF: origin/${{ steps.pr.outputs.base }}...HEAD
         run: |
@@ -71,6 +76,7 @@ jobs:
             --markdown .ci/e2e-test-plan.md
           cat .ci/e2e-test-plan.md >> "$GITHUB_STEP_SUMMARY"
       - name: Create runner matrix
+        if: github.event_name != 'workflow_call'
         id: matrix
         run: |
           generic=$(node -e '
@@ -99,12 +105,14 @@ jobs:
     uses: ./.github/workflows/reusable-e2e-docker.yml
     with:
       suite: ${{ matrix.suite }}
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
       e2e-package: "@kb-labs/e2e-${{ matrix.suite }}"
       health-url: http://localhost:4000/ready
       health-steps: 60
       playwright-dir: e2e/plugins
       compose-project: kb-e2e-affected-${{ matrix.suite }}
       artifact-prefix: affected
+      cache-mode: read-only
     permissions:
       contents: read
 
@@ -126,11 +134,13 @@ jobs:
     uses: ./.github/workflows/reusable-e2e-playwright.yml
     with:
       suite: auth
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
       compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml
       compose-project: kb-e2e-affected-auth
       run-command: cd e2e/auth && pnpm e2e
       report-dir: e2e/auth/report
       artifact-prefix: affected-auth
+      cache-mode: read-only
       studio: true
       studio-https: false
       idp: false
@@ -143,11 +153,13 @@ jobs:
     uses: ./.github/workflows/reusable-e2e-playwright.yml
     with:
       suite: oauth
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
       compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml:e2e/docker-compose.oauth-ci.yml
       compose-project: kb-e2e-affected-oauth
       run-command: cd e2e/auth && pnpm e2e:oauth
       report-dir: e2e/auth/report-oauth
       artifact-prefix: affected-oauth
+      cache-mode: read-only
       studio: true
       studio-https: true
       idp: true
