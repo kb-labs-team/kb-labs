@@ -12,6 +12,7 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertEqual(plan_claims(["docs/plans/changes.md", "e2e/journey/test_pr_delta.py"]), [])
         self.assertEqual(plan_claims(["e2e/journey/marketplace_steps.py", "docs/guide.md"]),
                          ["S-010.1", "S-010.8", "S-012.1"])
+        self.assertIn("S-160.5", plan_claims(["e2e/journey/plugin_author_steps.py"]))
         self.assertIn("PC-001.2", plan_claims(["core/runtime/src/main.ts"]))
         self.assertTrue(plan_claims(["services/new-service/src/main.ts"]))
 
@@ -33,7 +34,29 @@ class PullRequestDeltaTests(unittest.TestCase):
             self.assertFalse(passed)
             self.assertIn("commit", summary)
 
-    def write_mode(self, root, sha, local_status, secured_status):
+    # case: S-262.21
+    def test_passing_added_prerequisite_does_not_count_as_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            base, candidate = root / "base", root / "candidate"
+            for base_status, prerequisite_status, expected in (
+                ("FAIL", "PASS", True), ("PASS", "PASS", False),
+                ("FAIL", "FAIL", False), ("FAIL", None, False),
+            ):
+                with self.subTest(base_status=base_status, prerequisite_status=prerequisite_status):
+                    self.write_mode(base, "a" * 40, "PASS", base_status)
+                    self.write_mode(candidate, "b" * 40, "PASS", "PASS",
+                                    added_prerequisite=("prepare fixture", prerequisite_status))
+                    summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, ["S-010.1"])
+                    self.assertEqual(passed, expected, summary)
+                    if prerequisite_status == "FAIL":
+                        self.assertIn("MISSING → FAIL", summary)
+                    if prerequisite_status is None:
+                        self.assertIn("missing evidence", summary)
+                    if base_status == "PASS":
+                        self.assertIn("No demonstrated improvement.", summary)
+
+    def write_mode(self, root, sha, local_status, secured_status, *, added_prerequisite=None):
         for mode, status in (("local", local_status), ("secured", secured_status)):
             directory = root / mode
             directory.mkdir(parents=True, exist_ok=True)
@@ -52,5 +75,12 @@ class PullRequestDeltaTests(unittest.TestCase):
                                                          "cases": ["S-010.1"]}],
                 },
             }
+            if mode == "secured" and added_prerequisite:
+                name, prerequisite_status = added_prerequisite
+                values["selection-plan.json"]["prerequisiteSteps"].append(name)
+                if prerequisite_status is not None:
+                    values[f"service-{mode}.json"]["steps"].append({
+                        "name": name, "status": prerequisite_status, "message": "prerequisite result",
+                    })
             for name, value in values.items():
                 (directory / name).write_text(json.dumps(value), encoding="utf-8")
