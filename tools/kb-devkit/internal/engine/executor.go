@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -303,7 +304,14 @@ finished:
 	if completed.err != nil {
 		var commandFailure *toolchain.CommandError
 		if errors.As(completed.err, &commandFailure) {
-			return outBuf.String(), errBuf.String(), completed.result.ExitCode, nil
+			var processExit *exec.ExitError
+			if errors.As(completed.err, &processExit) {
+				return outBuf.String(), errBuf.String(), processExit.ExitCode(), nil
+			}
+			if errors.Is(completed.err, exec.ErrNotFound) || errors.Is(completed.err, fs.ErrNotExist) {
+				return outBuf.String(), errBuf.String(), 127, fmt.Errorf("command not found: %s", parts[0])
+			}
+			return outBuf.String(), errBuf.String(), 1, fmt.Errorf("command failed to start: %w", completed.err)
 		}
 	}
 	return outBuf.String(), errBuf.String(), completed.result.ExitCode, completed.err
