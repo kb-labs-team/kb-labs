@@ -257,6 +257,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
             captured = []
 
             def invoke(command, **options):
+                if command[2:5] == ["qa", "cases", "list"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                    }), "")
                 captured.append(options["env"])
                 mode = command[command.index("--mode") + 1]
                 return subprocess.CompletedProcess(command, 0, json.dumps({
@@ -302,6 +306,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
     # case: S-262.8
     def test_selector_main_limits_case_owners_to_the_requested_batch_mode(self):
         def invoke(command, **_options):
+            if command[2:5] == ["qa", "cases", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                }), "")
             mode = command[command.index("--mode") + 1]
             payload = {"ok": True, "data": coverage(
                 mode, source="e2e/journey/secured_connection_steps.py")}
@@ -312,7 +320,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "KB_JOURNEY_CASES": "S-042.1",
                 "KB_JOURNEY_SELECTION_MODE": "local",
                 "KB_JOURNEY_ONLY": "",
-        }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
+        }, clear=False), patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), redirect_stdout(output):
             self.assertEqual(select_from_cases.main(), 0)
 
         self.assertEqual(json.loads(output.getvalue())["runners"], ["agent:commit"])
@@ -325,9 +333,13 @@ class CaseJourneySelectionTests(unittest.TestCase):
         }}
 
         def invoke(command, **_options):
+            if command[2:5] == ["qa", "cases", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                }), "")
             return subprocess.CompletedProcess(command, 1, json.dumps(failure), "")
 
-        with patch("hermetic_cli.run_command", side_effect=invoke), patch.dict(
+        with patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), patch.dict(
             os.environ, {"KB_JOURNEY_CASES": "S-042"}, clear=False,
         ):
             with self.assertRaisesRegex(ValueError, "KB_CONFIG_INVALID; Saved authentication file") as raised:
