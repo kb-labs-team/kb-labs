@@ -7,6 +7,10 @@ on:
         description: 'Artifact name consumed by the E2E matrix shards'
         type: string
         required: true
+      checkout-ref:
+        description: 'Optional exact source commit to build instead of the caller workflow ref'
+        type: string
+        default: ''
       cache-mode:
         description: 'read-write for fast PR lanes; off for authoritative main, nightly, and release lanes'
         type: string
@@ -27,6 +31,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
+
+      - name: Resolve source revision
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Start prepare metrics
         run: date +%s > /tmp/e2e-prepare-start
@@ -113,7 +123,7 @@ jobs:
           fi
           docker buildx build \
             "${cache_args[@]}" \
-            --load -t kb-e2e-ci-platform:latest --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
+            --load -t kb-e2e-ci-platform:latest --build-arg "SOURCE_REVISION=${{ steps.source.outputs.sha }}" -f e2e/platform/Dockerfile .
 
       - name: Build publisher image
         uses: ./.github/actions/build-publisher
@@ -175,7 +185,7 @@ jobs:
           tarball_digest=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' -exec sha256sum {} \; | LC_ALL=C sort | sha256sum | awk '{print $1}')
           cas_size_bytes=$(node scripts/ci/devkit-cas-size.mjs "${{ steps.devkit-cas.outputs.store-path }}")
           jq -n \
-            --arg source_sha "$GITHUB_SHA" \
+            --arg source_sha "${{ steps.source.outputs.sha }}" \
             --arg cache_mode "${{ inputs.cache-mode }}" \
             --arg tarball_digest "$tarball_digest" \
             --argjson elapsed_seconds "$elapsed" \

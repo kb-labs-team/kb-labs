@@ -95,8 +95,20 @@ jobs:
           echo "generic=$generic" >> "$GITHUB_OUTPUT"
           echo "has-auth=$auth" >> "$GITHUB_OUTPUT"
 
-  docker-e2e:
+  prepare:
+    name: Prepare affected E2E bundle
     needs: discover
+    if: needs.discover.outputs.generic != '[]' || needs.discover.outputs.has-auth == 'true'
+    uses: ./.github/workflows/reusable-e2e-platform-build.yml
+    with:
+      artifact-name: e2e-affected-prebuilt-${{ github.run_id }}
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
+      cache-mode: off
+    permissions:
+      contents: read
+
+  docker-e2e:
+    needs: [discover, prepare]
     if: needs.discover.outputs.generic != '[]'
     strategy:
       fail-fast: false
@@ -111,6 +123,7 @@ jobs:
       health-steps: 60
       playwright-dir: e2e/plugins
       compose-project: kb-e2e-affected-${{ matrix.suite }}
+      prebuilt-artifact: e2e-affected-prebuilt-${{ github.run_id }}
       artifact-prefix: affected
       cache-mode: read-only
     permissions:
@@ -129,7 +142,7 @@ jobs:
       contents: read
 
   auth-e2e:
-    needs: discover
+    needs: [discover, prepare]
     if: needs.discover.outputs.has-auth == 'true'
     uses: ./.github/workflows/reusable-e2e-playwright.yml
     with:
@@ -137,6 +150,7 @@ jobs:
       checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
       compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml
       compose-project: kb-e2e-affected-auth
+      prebuilt-artifact: e2e-affected-prebuilt-${{ github.run_id }}
       run-command: cd e2e/auth && pnpm e2e
       report-dir: e2e/auth/report
       artifact-prefix: affected-auth
@@ -148,7 +162,7 @@ jobs:
       contents: read
 
   oauth-e2e:
-    needs: discover
+    needs: [discover, prepare]
     if: needs.discover.outputs.has-auth == 'true'
     uses: ./.github/workflows/reusable-e2e-playwright.yml
     with:
@@ -156,6 +170,7 @@ jobs:
       checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
       compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml:e2e/docker-compose.oauth-ci.yml
       compose-project: kb-e2e-affected-oauth
+      prebuilt-artifact: e2e-affected-prebuilt-${{ github.run_id }}
       run-command: cd e2e/auth && pnpm e2e:oauth
       report-dir: e2e/auth/report-oauth
       artifact-prefix: affected-oauth
@@ -169,7 +184,7 @@ jobs:
 
   evidence:
     name: CI evidence
-    needs: [discover, docker-e2e, auth-e2e, oauth-e2e]
+    needs: [discover, prepare, docker-e2e, auth-e2e, oauth-e2e]
     if: always() && github.event_name == 'workflow_dispatch' && inputs.replay-run-id == ''
     uses: ./.github/workflows/reusable-ci-evidence.yml
     with:

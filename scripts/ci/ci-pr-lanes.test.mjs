@@ -11,6 +11,7 @@ const devkit = load(readFileSync(join(root, 'devkit.yaml'), 'utf8'));
 const affectedE2e = load(readFileSync(join(root, '.github/workflows/e2e-affected.yml'), 'utf8'));
 const reusableDockerE2e = load(readFileSync(join(root, '.github/workflows/reusable-e2e-docker.yml'), 'utf8'));
 const reusablePlaywrightE2e = load(readFileSync(join(root, '.github/workflows/reusable-e2e-playwright.yml'), 'utf8'));
+const reusableE2eBuild = load(readFileSync(join(root, '.github/workflows/reusable-e2e-platform-build.yml'), 'utf8'));
 const installerJourney = load(readFileSync(join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
 
 const jobs = Object.entries(ciPr.jobs);
@@ -168,11 +169,25 @@ test('affected E2E is triggered once from CI(PR) and checks out the planned SHA'
   assert.equal(resolveManualPr.if, "inputs.checkout-ref == ''");
   assert.match(resolveManualPr.with.script, /pr\.base\.sha/);
 
+  const prepare = affectedE2e.jobs.prepare;
+  assert.equal(prepare.if, "needs.discover.outputs.generic != '[]' || needs.discover.outputs.has-auth == 'true'");
+  assert.equal(prepare.uses, './.github/workflows/reusable-e2e-platform-build.yml');
+  assert.equal(prepare.with['checkout-ref'], '${{ needs.discover.outputs.checkout-ref }}');
+  assert.equal(prepare.with['artifact-name'], 'e2e-affected-prebuilt-${{ github.run_id }}');
+  assert.equal(prepare.with['cache-mode'], 'off', 'affected E2E uses no mutable cross-run build cache');
+  assert.equal(reusableE2eBuild.on.workflow_call.inputs['checkout-ref'].default, '');
+  const buildCheckout = reusableE2eBuild.jobs.build.steps.find((step) => step.name === 'Checkout');
+  assert.equal(buildCheckout.with.ref, '${{ inputs.checkout-ref || github.sha }}');
+  assert.match(reusableE2eBuild.jobs.build.steps.find((step) => step.name === 'Resolve source revision').run, /git rev-parse HEAD/);
+  assert.match(reusableE2eBuild.jobs.build.steps.find((step) => step.name === 'Emit bundle metrics').run, /--arg source_sha "\$\{\{ steps\.source\.outputs\.sha \}\}"/);
+
   const planStep = ciPr.jobs['e2e-test-plan'].steps.find((step) => step.name === 'Resolve zones from the complete PR diff');
   assert.equal(planStep.env.KB_DEVKIT_BASE_REF, '${{ github.event.pull_request.base.sha }}...HEAD');
 
   for (const jobId of ['docker-e2e', 'auth-e2e', 'oauth-e2e']) {
     assert.equal(affectedE2e.jobs[jobId].with['checkout-ref'], '${{ needs.discover.outputs.checkout-ref }}');
+    assert.ok(affectedE2e.jobs[jobId].needs.includes('prepare'));
+    assert.equal(affectedE2e.jobs[jobId].with['prebuilt-artifact'], 'e2e-affected-prebuilt-${{ github.run_id }}');
   }
   const checkout = reusableDockerE2e.jobs.e2e.steps.find((step) => step.name === 'Checkout');
   assert.equal(checkout.with.ref, '${{ inputs.checkout-ref || github.sha }}');
