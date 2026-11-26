@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -89,7 +90,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		// Only successful runs are replayed. A failure can come from state the
 		// input hash does not see (a dependency rebuilt mid-run, a flaky
 		// process), and replaying it reports a stale red result.
-		if m, ok := e.manifests.Get(pkg.Name, def.Name, inputHash); ok && m.ExitCode == 0 {
+		if m, ok := e.manifests.Get(pkg.Name, def.Name, inputHash); ok && m.ExitCode == 0 && (def.Name != "build" || len(def.Outputs) == 0 || len(m.Outputs) > 0) {
 			// Restore output files.
 			if err := e.restoreOutputs(m, pkg.Dir); err == nil {
 				return TaskResult{
@@ -114,6 +115,26 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 	stdout, stderr, exitCode, runErr := e.runCommand(def.Command, pkg.Dir, pkg.Name, def.Name, taskHeartbeatInterval)
 	if e.gate != nil {
 		e.gate.release(slot)
+	}
+	var outputRefs []cache.OutputRef
+	if def.Name == "build" && exitCode == 0 && runErr == nil && len(def.Outputs) > 0 {
+		files, outputErr := expandOutputFiles(pkg.Dir, def.Outputs)
+		if outputErr != nil {
+			runErr = fmt.Errorf("validate declared build outputs: %w", outputErr)
+			exitCode = 1
+		} else if len(files) == 0 {
+			runErr = fmt.Errorf("declared build outputs %s matched no file in %s", strings.Join(def.Outputs, ", "), pkg.Dir)
+			exitCode = 1
+		}
+	}
+	if def.Cache && exitCode == 0 && runErr == nil && len(def.Outputs) > 0 {
+		refs, storeErr := e.storeOutputs(pkg.Dir, def.Outputs)
+		if storeErr != nil && def.Name == "build" {
+			runErr = fmt.Errorf("cache declared task outputs: %w", storeErr)
+			exitCode = 1
+		} else if storeErr == nil {
+			outputRefs = refs
+		}
 	}
 	elapsed := time.Since(start)
 
@@ -162,13 +183,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		if len(stderr) <= 8*1024 {
 			m.Stderr = stderr
 		}
-
-		if len(def.Outputs) > 0 {
-			refs, storeErr := e.storeOutputs(pkg.Dir, def.Outputs)
-			if storeErr == nil {
-				m.Outputs = refs
-			}
-		}
+		m.Outputs = outputRefs
 
 		_ = e.manifests.Put(pkg.Name, def.Name, m)
 	}
@@ -303,7 +318,14 @@ finished:
 	if completed.err != nil {
 		var commandFailure *toolchain.CommandError
 		if errors.As(completed.err, &commandFailure) {
-			return outBuf.String(), errBuf.String(), completed.result.ExitCode, nil
+			var processExit *exec.ExitError
+			if errors.As(completed.err, &processExit) {
+				return outBuf.String(), errBuf.String(), processExit.ExitCode(), nil
+			}
+			if errors.Is(completed.err, exec.ErrNotFound) || errors.Is(completed.err, fs.ErrNotExist) {
+				return outBuf.String(), errBuf.String(), 127, fmt.Errorf("command not found: %s", parts[0])
+			}
+			return outBuf.String(), errBuf.String(), 1, fmt.Errorf("command failed to start: %w", completed.err)
 		}
 	}
 	return outBuf.String(), errBuf.String(), completed.result.ExitCode, completed.err
@@ -316,7 +338,6 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 	if err != nil {
 		return nil, err
 	}
-
 	var refs []cache.OutputRef
 	for _, rel := range fileList {
 		absPath := filepath.Join(pkgDir, rel)
