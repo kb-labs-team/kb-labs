@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "test": "node ../scripts/build-pack-extras.mjs ../.. && node --test *.test.mjs",
+    "test": "node ../scripts/build-pack-extras.mjs ../.. && node --test *.test.mjs ../journey/native-macos-install.test.mjs ../journey/prepare-versioned-binaries.test.mjs",
     "e2e": "kb-labs-e2e-runner"
   },
   "devDependencies": {
