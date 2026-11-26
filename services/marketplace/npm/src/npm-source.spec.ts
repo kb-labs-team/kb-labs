@@ -183,13 +183,13 @@ describe('NpmPackageSource', () => {
       '#!/bin/sh',
       'if [ "$1" = "add" ]; then',
       '  printf "%08189d%s\\n" 0 "registry-password-marker" >&2',
-      '  printf "%s\\n" "{\\\"_authToken\\\":\\\"json-token-marker\\\"}" >&2',
+      '  printf "%s\\n" \'{"password":"prefix SECRET_SUFFIX"}\' \'password=prefix,SECRET_SUFFIX\' \'https://:SECRET_SUFFIX@registry.invalid/download\' \'https://registry.invalid/download?X-Amz-Signature=SECRET_SUFFIX\' \'client_secret=SECRET_SUFFIX\' \'ERR_PNPM_SECRET_VALUE\' \'ERR_PNPM_NO_OFFLINE_META\' >&2',
       'fi',
       'exit 1',
       '',
     ].join('\n'), { mode: 0o700 });
     vi.stubEnv('PATH', `${binDirectory}:${process.env.PATH ?? ''}`);
-    const source = new NpmPackageSource({ registryUrl: 'https://registry.test/?token=registry-password-marker' });
+    const source = new NpmPackageSource({ registryUrl: 'https://registry.test/?token=registry-password-marker&api_key=SECRET_SUFFIX&secret=ERR_PNPM_SECRET_VALUE' });
 
     let failure: unknown;
     try {
@@ -199,9 +199,9 @@ describe('NpmPackageSource', () => {
     } catch (error) { failure = error; }
 
     const diagnostic = (failure as { packageManagerDiagnostics?: Array<{ output: string }> }).packageManagerDiagnostics?.[0]?.output ?? '';
-    expect(diagnostic).not.toContain('registry-password-marker');
-    expect(diagnostic).not.toContain('json-token-marker');
-    expect(diagnostic).toContain('"_authToken":"[REDACTED]"');
+    expect(diagnostic).toBe('ERR_PNPM_NO_OFFLINE_META');
+    expect(diagnostic).not.toContain('SECRET_SUFFIX');
+    expect(diagnostic).not.toContain('ERR_PNPM_SECRET_VALUE');
   });
 
   it('captures and redacts stdout when the package-manager repair fails during rollback', async () => {

@@ -319,13 +319,10 @@ function redactPackageManagerOutput(
     .filter(Boolean)
     .sort((left, right) => right.length - left.length)
     .reduce((value, secret) => value.split(secret).join('[REDACTED]'), plain);
-  const structurallyRedacted = configuredRedacted
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 [REDACTED]')
-    .replace(/(https?:\/\/)[^/\s:@]+(?::[^/\s@]*)?@/gi, '$1[REDACTED]@')
-    .replace(/([?&][^=&#\s]*(?:auth|token|password|secret|credential|api[_-]?key)[^=&#\s]*=)[^&#\s]*/gi, '$1[REDACTED]')
-    .replace(/(["']?(?:_authToken|_auth|authorization|password|passwd|token|api[_-]?key)["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^"'\s,;}]+(["']?)/gi, '$1[REDACTED]$2');
-  const platformRedacted = redactSensitiveValues?.(structurallyRedacted) ?? structurallyRedacted;
-  return platformRedacted.slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
+  const platformRedacted = redactSensitiveValues?.(configuredRedacted) ?? configuredRedacted;
+  const safeCodes = [...new Set(platformRedacted.match(/\bERR_PNPM_[A-Z0-9_]+\b/g) ?? [])];
+  const safeSummary = safeCodes.length > 0 ? safeCodes.join('\n') : 'No ERR_PNPM code in captured output';
+  return safeSummary.slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
 }
 
 function safePackageManagerError(error: unknown): Error {
