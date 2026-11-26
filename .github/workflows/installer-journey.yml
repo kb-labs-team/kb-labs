@@ -1,49 +1,14 @@
 name: Installer journey gate
 
 on:
-  pull_request:
-    paths:
-      - 'tools/kb-create/**'
-      - 'tools/kb-create/install.sh'
-      - 'core/**'
-      - 'sdk/**'
-      - 'shared/**'
-      - 'cli/**'
-      - 'services/**'
-      - 'adapters/**'
-      - 'plugins/**'
-      - 'tools/kb-create/scripts/**'
-      - 'e2e/platform/**'
-      - 'e2e/journey/**'
-      - 'e2e/scripts/pack-all.sh'
-      - '.github/workflows/reusable-installer-journey.yml'
-      - '.github/workflows/installer-journey.yml'
-  push:
-    branches: [master]
-    paths:
-      - 'tools/kb-create/**'
-      - 'tools/kb-create/install.sh'
-      - 'core/**'
-      - 'sdk/**'
-      - 'shared/**'
-      - 'cli/**'
-      - 'services/**'
-      - 'adapters/**'
-      - 'plugins/**'
-      - 'tools/kb-create/scripts/**'
-      - 'e2e/platform/**'
-      - 'e2e/journey/**'
-      - 'e2e/scripts/pack-all.sh'
-      - '.github/workflows/reusable-installer-journey.yml'
-      - '.github/workflows/installer-journey.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  # PR updates replace stale runs; push and manual runs stay tied to their SHA.
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && 'latest' || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: installer-journey-${{ github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   journey:
