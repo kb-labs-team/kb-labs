@@ -1,0 +1,101 @@
+name: Stabilization baseline snapshot
+
+# Diagnostic-only evidence for exact master; the canonical full batch is red in shared unit checks.
+
+on:
+  push:
+    branches:
+      - verify/stabilization-baseline-snapshot-20261126
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  local-baseline:
+    name: Exact-master local journey snapshot
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      SOURCE_SHA: 0b4a3c4e0d229290c32ddd82366533981b9b0d27
+      SOURCE_RUN_ID: '45748402085'
+    steps:
+      - name: Checkout exact master snapshot
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ env.SOURCE_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify candidate artifact source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          source=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID" \
+            --jq '[.head_branch, .head_sha] | join(":")')
+          if [[ "$(git rev-parse HEAD)" != "$SOURCE_SHA" || "$source" != "master:$SOURCE_SHA" ]]; then
+            echo 'Candidate source and checkout must match the pinned master SHA.' >&2
+            exit 1
+          fi
+
+      - name: Download exact-master installer candidate
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: installer-journey-candidate
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          repository: ${{ github.repository }}
+          github-token: ${{ github.token }}
+          path: .
+
+      - name: Run unfiltered local journey batch
+        run: |
+          set -euo pipefail
+          snapshot_dir=stabilization-baseline-snapshot
+          local_dir="$snapshot_dir/local"
+          mkdir -p "$local_dir"
+          selectors_json="$(python3 e2e/journey/dispatch_registry.py --batch-mode local)"
+          selectors="$(python3 -c 'import json,sys; print(",".join(json.load(sys.stdin)))' <<< "$selectors_json")"
+          if [[ -z "$selectors" ]]; then
+            echo "local journey selector set is empty" >&2
+            exit 2
+          fi
+
+          set +e
+          KB_JOURNEY_CASES='' KB_JOURNEY_SELECTION_MODE=local KB_JOURNEY_ONLY="$selectors" \
+            e2e/journey/run.sh --no-build > "$local_dir/journey.log" 2>&1
+          journey_status=$?
+          set -e
+
+          if [[ -d .journey/reports ]]; then
+            cp -R .journey/reports/. "$local_dir/"
+          fi
+          report_status=0
+          if [[ ! -s "$local_dir/service-local.json" ]]; then
+            report_status=1
+            echo "required local report missing: service-local.json" | tee -a "$local_dir/summary.md" >&2
+          fi
+          python3 e2e/journey/batch_summary.py run \
+            "$local_dir/run.json" "$SOURCE_SHA" master "$SOURCE_SHA"
+          {
+            echo "## Exact-master local journey snapshot"
+            echo
+            echo "- Checkout: $SOURCE_SHA"
+            echo "- Candidate: installer-journey-candidate from verified master run $SOURCE_RUN_ID"
+            echo "- Local journey exit: $journey_status"
+            echo "- Required service-local.json present: $((1 - report_status))"
+            echo "- Scope: diagnostic evidence only; the canonical full batch remains red in shared unit checks. This snapshot does not alter gating workflows or qualify the full batch."
+          } | tee -a "$local_dir/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          printf 'journey_exit=%s\nreport_present=%s\n' "$journey_status" "$((1 - report_status))" >> "$local_dir/summary.md"
+          if [[ "$journey_status" -ne 0 ]]; then
+            exit "$journey_status"
+          fi
+          exit "$report_status"
+
+      - name: Upload local journey reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: journey-local
+          path: stabilization-baseline-snapshot/
+          if-no-files-found: warn
+          retention-days: 90
