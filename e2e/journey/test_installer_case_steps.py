@@ -2438,7 +2438,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
             claims = {claim: status for step in journey.steps for claim in step.cases
                       for status in [step.status]}
             owners = {claim: step.name for step in journey.steps for claim in step.cases}
-            expected = {"PC-001.2", "PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
+            expected = {"PC-001.2", "PC-001.4", "PC-001.5", "PC-001.8", "PC-001.9", "PC-001.10", "PC-001.11", "PC-001.12", "PC-001.16", "PC-001.17", "PC-001.18", "PC-001.19", "PC-001.20", "S-050.8", "S-023.16", "S-023.17", "S-223.3", "S-223.4", "S-025.9", "S-025.10", "S-181.1", "S-181.2",
                         "S-181.3", "S-181.4", "S-181.5", "S-181.6", "S-181.7", "S-025.1", "S-025.2", "S-054.23",
                         "S-025.3", "S-025.4", "S-025.5", "S-025.6", "S-191.7",
                         "S-053.2", "S-053.3", "S-053.4", "S-053.5", "S-053.6", "S-053.7", "S-053.8",
