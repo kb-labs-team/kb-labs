@@ -222,6 +222,15 @@ test('registry discovery fails when it is empty or a registered pattern has no m
 test('candidate Go module suite excludes internal-tool modules from the devkit category declaration', () => {
   const devkit = load(readFileSync(path.join(root, 'devkit.yaml'), 'utf8'));
   assert.equal(devkit.workspace.categories['internal-tool'].releaseLane, 'internal-tool');
+  assert.ok(devkit.workspace.categories['go-binary'].match.includes('tools/clikit'));
+  const libraryBuild = devkit.tasks.build.find((variant) => variant.packages?.includes('github.com/kb-labs/clikit'));
+  assert.deepEqual(libraryBuild.outputs, [], 'Go libraries compile packages without executable artifacts');
+  const binaryBuild = devkit.tasks.build.find((variant) => variant.categories.includes('go-binary') && !variant.packages?.length);
+  assert.ok(binaryBuild.outputs.includes('kb-env'), 'all declared Go tool binaries are validated as build outputs');
+  for (const taskName of ['lint', 'test', 'test:coverage', 'e2e']) {
+    assert.ok(devkit.tasks[taskName].some((variant) => variant.categories.includes('go-binary')),
+      `clikit remains included in the existing Go category for ${taskName}`);
+  }
   const modules = discoverModules(root, path.join(root, 'devkit.yaml'));
   assert.ok(!modules.includes('tools/kb-runner'));
   assert.ok(modules.includes('tools/kb-create'));

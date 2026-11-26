@@ -630,6 +630,18 @@ tasks:
       deps:
         - "^build"
 
+    - categories: [go-binary]
+      packages: [github.com/kb-labs/clikit]
+      command: make build
+      inputs:
+        - "**/*.go"
+        - "go.mod"
+        - "go.sum"
+        - "Makefile"
+      outputs: []
+      deps:
+        - "^build"
+
     - categories: [go-binary, internal-tool]
       command: make build
       inputs:
@@ -644,6 +656,7 @@ tasks:
         - "kb-create"
         - "kb-deploy"
         - "kb-monitor"
+        - "kb-env"
         - "kb-runner"
       deps:
         - "^build"
