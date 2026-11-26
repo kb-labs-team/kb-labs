@@ -170,7 +170,7 @@ jobs:
   evidence:
     name: CI evidence
     needs: [discover, docker-e2e, auth-e2e, oauth-e2e]
-    if: always() && !(github.event_name == 'workflow_dispatch' && inputs.replay-run-id != '')
+    if: always() && github.event_name == 'workflow_dispatch' && inputs.replay-run-id == ''
     uses: ./.github/workflows/reusable-ci-evidence.yml
     with:
       artifact-pattern: '*platform-logs-${{ github.run_id }}*'

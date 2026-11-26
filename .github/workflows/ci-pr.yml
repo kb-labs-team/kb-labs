@@ -482,9 +482,11 @@ jobs:
 
   ci-evidence:
     name: CI evidence
-    needs: [preflight, e2e-test-plan, launcher-v2-contracts, build-tools, build, checks, full-dist-for-devkit-build, full-unit-tests, internal-tool-tests, devkit-checks, launcher-e2e]
+    needs: [preflight, e2e-test-plan, affected-e2e, launcher-v2-contracts, build-tools, build, checks, full-dist-for-devkit-build, full-unit-tests, internal-tool-tests, devkit-checks, launcher-e2e]
     if: always()
     uses: ./.github/workflows/reusable-ci-evidence.yml
+    with:
+      artifact-pattern: '*platform-logs-${{ github.run_id }}*'
     permissions:
       actions: read
       contents: read
