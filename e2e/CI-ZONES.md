@@ -11,10 +11,10 @@ one question: which source paths require this suite to run?
 }
 ```
 
-`scripts/ci/resolve-e2e-zones.mjs` evaluates the complete PR range
-`origin/<base>...HEAD`, not only the last commit. It uses Git rename detection
-and matches both the old and new path of a move. A rename from an owned path to
-an unowned path therefore selects the old zone and produces a PR warning.
+`scripts/ci/resolve-e2e-zones.mjs` evaluates the complete diff from the PR's
+base SHA to the merge commit tested by CI. It uses Git rename detection and
+matches both the old and new path of a move. A rename from an owned path to an
+unowned path selects the old zone and produces a PR warning.
 
 `e2e/_global/ci.zone.json` owns shared infrastructure. Its matches select every
 zone. Add a path there only when it can affect every platform E2E suite.
