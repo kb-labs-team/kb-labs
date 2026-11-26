@@ -389,7 +389,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: e2e-${{ inputs.suite }}-platform-logs-${{ github.run_id }}
+          name: e2e-${{ inputs.artifact-prefix || inputs.suite }}-platform-logs-${{ github.run_id }}
           path: /tmp/e2e-${{ inputs.suite }}-logs/
           retention-days: 14
 
