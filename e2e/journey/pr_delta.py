@@ -26,6 +26,8 @@ def plan_claims(paths: list[str]) -> list[str]:
     for path in paths:
         if path.endswith((".md", ".mdx")) or path in {"e2e/journey/scoreboard.py", "e2e/journey/pr_delta.py"}:
             continue
+        if path.startswith("tools/kb-devkit/"):
+            continue
         if fnmatchcase(path, "e2e/journey/test_*.py"):
             continue
         scoped = {claim for scope in policy["scopes"] for claim in scope["claims"]
