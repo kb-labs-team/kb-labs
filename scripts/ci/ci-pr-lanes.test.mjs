@@ -82,3 +82,19 @@ test('every devkit test job uploads its task logs when it fails', () => {
     assert.match(upload.with.name, new RegExp(id));
   }
 });
+
+// case: S-262.22
+test('master checks its own snapshot and release candidate keeps strict workspace checks', () => {
+  const ci = load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  const profile = JSON.parse(readFileSync(join(root, 'scripts/ci/verification-profile.json'), 'utf8'));
+  const steps = runs(ci.jobs['devkit-checks']);
+  const compare = steps.find((step) => step.run.includes('scripts/ci/devkit-baseline.mjs'));
+
+  assert.equal(compare.if, "github.ref == 'refs/heads/master'");
+  assert.equal(compare.shell, 'bash');
+  assert.match(compare.run, /devkit-baseline\.mjs "\$report" "\$GITHUB_SHA"/);
+  assert.ok(steps.some((step) => step.if === "github.ref != 'refs/heads/master'" &&
+    step.run === './tools/kb-devkit/kb-devkit check'));
+  assert.deepEqual(profile.stages['kb-devkit-check'].args, ['check']);
+  assert.ok(profile.buildDependentTestStages.candidate.includes('kb-devkit-check'));
+});
