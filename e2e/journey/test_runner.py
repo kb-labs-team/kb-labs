@@ -1161,7 +1161,7 @@ thread.join()
             "events": events,
         }
 
-    # case: S-262.17
+    # case: S-262.8
     def test_main_smoke_selection_completes_in_both_modes(self):
         runner = importlib.import_module("runner")
         isolated_groups = [group.__name__ for group in runner.ISOLATED_FIXTURE_GROUPS]
