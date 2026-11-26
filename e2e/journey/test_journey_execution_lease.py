@@ -99,6 +99,31 @@ class JourneyExecutionLeaseTests(unittest.TestCase):
         self.assertTrue(any(row.get("plannedStepId") == "service-local:explore|step:setup"
                             for row in journey.result().steps))
 
+    def test_unowned_enclosing_flow_failures_cannot_be_filtered_by_lease(self):
+        for failure in ("raised", "returned"):
+            with self.subTest(failure=failure):
+                payload = lease()
+                payload["steps"][0]["capabilities"] = ["gateway"]
+                selection = read_journey_selection({
+                    "KB_JOURNEY_EXECUTION_LEASE_JSON": json.dumps(payload),
+                    "KB_JOURNEY_ONLY": "service-local:explore",
+                    "KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore",
+                }, strict=True)
+                journey = Journey("local", "lease-run", selection=selection)
+                graph = FlowGraph(journey, {}, groups={"gateway": {
+                    "capabilities": {"gateway"}, "depends_on": (), "steps": ()}})
+
+                def failing_child():
+                    journey.step("setup", "install", lambda: None, cases=["S-001.1"])
+                    if failure == "raised":
+                        raise RuntimeError("setup finalization failed")
+                    return "setup finalization failed"
+
+                self.assertEqual(graph.flow("container", "gateway", "gateway", failing_child), "FAIL")
+                report = journey.result()
+                self.assertEqual(report.status, "FAIL")
+                self.assertEqual(report.first_failure["message"], "setup finalization failed")
+
     def test_lease_rejects_foreign_runner_mode_and_incomplete_selected_inventory(self):
         with self.assertRaisesRegex(JourneySelectionError, "selector does not match"):
             read_journey_selection({"KB_JOURNEY_EXECUTION_LEASE_JSON": json.dumps(lease()),

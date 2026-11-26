@@ -121,7 +121,8 @@ class FullRunnableSelectionTests(unittest.TestCase):
         local_rows = {row["name"]: row for row in selection["steps"]
                       if row["runner"] == "service-local:explore"}
         readiness = local_rows["platform readiness (gateway + project workflow)"]
-        self.assertEqual(readiness["states"], ["host-running", "project-registered", "service-api-session"])
+        self.assertEqual(readiness["states"], ["host-running", "platform-installed", "platform-version-known",
+                                               "project-registered", "service-api-session"])
         self.assertEqual(local_rows["installed platform bootstrap"]["states"], [])
 
     def test_real_service_route_excludes_secured_only_registration_from_local_owner_plan(self):

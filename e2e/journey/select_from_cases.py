@@ -1062,7 +1062,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                         active_steps[mode][step_id] = {**case, "stepId": step_id}
 
     rows: list[dict] = []
-    group_specs_by_selector: dict[str, dict] = {}
+    group_specs_by_selector: dict[str, list[dict]] = {}
     for selector in selectors:
         runner = RUNNERS[selector]
         if selector not in plans:
@@ -1072,10 +1072,12 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
         if selector not in group_specs_by_selector:
             if selector.startswith("service-"):
                 from service_runner import service_selection_groups
-                group_specs_by_selector[selector] = service_selection_groups(root, selector)
+                from runner import outer_selection_groups
+                group_specs_by_selector[selector] = [service_selection_groups(root, selector),
+                                                       outer_selection_groups()]
             else:
                 from runner import outer_selection_groups
-                group_specs_by_selector[selector] = outer_selection_groups()
+                group_specs_by_selector[selector] = [outer_selection_groups()]
         declarations = _source_step_declarations_cached(tuple(sorted(sources)), root)
         by_name: dict[tuple[str, str], dict] = {}
         for declaration in declarations.values():
@@ -1117,8 +1119,9 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                     continue
                 required_id = f"{selector}|{dependency.kind}:{dependency.name}"
                 required_ids.append(required_id)
-            states = owner_state_prerequisites(
-                name, case_ids, capabilities, group_specs_by_selector[selector], required_states)
+            states = set(required_states)
+            for group_specs in group_specs_by_selector[selector]:
+                states.update(owner_state_prerequisites(name, case_ids, capabilities, group_specs))
             rows.append({
                 "id": owner_id,
                 "name": name,

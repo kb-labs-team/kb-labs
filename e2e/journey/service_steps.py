@@ -357,6 +357,15 @@ class Journey:
         self.steps.append(result)
         return result
 
+    def record_flow_outcome(self, name: str, capability: str, message: str, *, status: str) -> StepResult:
+        """Record a selected flow's failure even when its container is not a lease owner."""
+        if status not in {"FAIL", "BLOCKED"}:
+            raise ValueError(f"unsupported unowned flow outcome: {status}")
+        result = StepResult(name, capability, self.mode, status, 0.0, message or status.lower(), [],
+                            {"selectionRole": "prerequisite"}, step_id=f"flow:{name}", owner_kind="flow")
+        self.steps.append(result)
+        return result
+
     def record_flow(self, name: str, status: str, message: str = "") -> None:
         self.flows[name] = status, message
         event = {"name": name, "status": status}
@@ -839,17 +848,34 @@ class FlowGraph:
             else:
                 raise JourneyContractError("outer flow action was not selected")
         except MissingJourneyState as error:
-            record_flow_step(lambda: f"BLOCKED: {error}", cases=case_ids,
-                             role="lifecycle" if selected_by_flow_rule else role)
+            if (self.journey.selection_boundary.execution_lease is not None
+                    and self.journey.planned_execution_steps.get(("flow", name)) is None):
+                self.journey.record_flow_outcome(name, capability, str(error), status="BLOCKED")
+            else:
+                record_flow_step(lambda: f"BLOCKED: {error}", cases=case_ids,
+                                 role="lifecycle" if selected_by_flow_rule else role)
             outcome = None
         except Exception as error:
             self._write_traceback(group, name)
-            record_flow_step(lambda: str(error) or error.__class__.__name__,
-                             role="lifecycle" if selected_by_flow_rule else role)
+            if (self.journey.selection_boundary.execution_lease is not None
+                    and self.journey.planned_execution_steps.get(("flow", name)) is None):
+                self.journey.record_flow_outcome(name, capability,
+                                                 str(error) or error.__class__.__name__, status="FAIL")
+            else:
+                record_flow_step(lambda: str(error) or error.__class__.__name__,
+                                 role="lifecycle" if selected_by_flow_rule else role)
             outcome = None
         emitted = self.journey.steps[start:]
         if isinstance(outcome, str):
-            record_flow_step(lambda: outcome, cases=case_ids, role=role)
+            if (self.journey.selection_boundary.execution_lease is not None
+                    and self.journey.planned_execution_steps.get(("flow", name)) is None):
+                message = outcome.removeprefix("BLOCKED:").strip()
+                self.journey.record_flow_outcome(
+                    name, capability, message,
+                    status="BLOCKED" if outcome.startswith("BLOCKED:") else "FAIL")
+            else:
+                record_flow_step(lambda: outcome, cases=case_ids,
+                                 role="lifecycle" if selected_by_flow_rule else role)
         elif not emitted and record_empty_success:
             record_flow_step(lambda: None, cases=case_ids, role=role)
 
