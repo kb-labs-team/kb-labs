@@ -48,7 +48,7 @@ export interface NpmPackageSourceOptions {
 }
 
 export interface PackageManagerDiagnostic {
-  operation: 'pnpm.add' | 'pnpm.install-repair' | 'pnpm.remove';
+  operation: 'pnpm.add' | 'pnpm.install-repair' | 'pnpm.remove' | 'unknown';
   stream: 'stdout' | 'stderr' | 'none';
   exitCode?: number;
   output: string;
@@ -84,13 +84,19 @@ const SAFE_PNPM_CODES = new Set([
   'ERR_PNPM_TARBALL_INTEGRITY',
   'ERR_PNPM_TARBALL_INTEGRITY_FAILED',
 ]);
+const SAFE_PNPM_OPERATIONS = new Set(['pnpm.add', 'pnpm.install-repair', 'pnpm.remove', 'unknown']);
+const SAFE_PNPM_STREAMS = new Set(['stdout', 'stderr', 'none']);
 
 export function projectPackageManagerDiagnostics(
   diagnostics: readonly PackageManagerDiagnostic[],
 ): PackageManagerDiagnostic[] {
   return diagnostics.map(diagnostic => ({
-    ...diagnostic,
-    output: safePackageManagerOutput(diagnostic.output),
+    operation: SAFE_PNPM_OPERATIONS.has(diagnostic.operation) ? diagnostic.operation : 'unknown',
+    stream: SAFE_PNPM_STREAMS.has(diagnostic.stream) ? diagnostic.stream : 'none',
+    ...(typeof diagnostic.exitCode === 'number' && Number.isInteger(diagnostic.exitCode) && Math.abs(diagnostic.exitCode) <= 255
+      ? { exitCode: diagnostic.exitCode }
+      : {}),
+    output: safePackageManagerOutput(typeof diagnostic.output === 'string' ? diagnostic.output : ''),
   }));
 }
 

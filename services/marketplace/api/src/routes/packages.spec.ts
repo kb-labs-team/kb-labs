@@ -257,14 +257,14 @@ describe('Marketplace API error boundary', () => {
         hint: expect.stringContaining('kb marketplace install @kb-labs/test-adapter@1.0.0 --scope platform'),
       },
     });
-    expect(result.error?.cause).toBe('pnpm add @kb-labs/test-adapter@1.0.0 failed (RELEASE_TOO_FRESH).');
+    expect(result.error?.cause).toBe('Package manager operation failed (INSTALL_FAILED).');
     expect(response.body).not.toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
     expect(errors).toHaveLength(1);
     expect(errors[0]?.error?.message).toBe('pnpm add @kb-labs/test-adapter@1.0.0 failed (RELEASE_TOO_FRESH).');
     expect(errors[0]?.fields).toMatchObject({
       requestId: correlationId,
       errorCode: 'KB_MARKETPLACE_INSTALL_FAILED',
-      cause: expect.stringContaining('failed (RELEASE_TOO_FRESH)'),
+      cause: expect.stringContaining('failed (INSTALL_FAILED)'),
     });
   });
 
@@ -283,6 +283,7 @@ describe('Marketplace API error boundary', () => {
         stream: 'stderr',
         exitCode: 1,
         output: 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: token=npm-repair-secret https://registry-password:registry-password@registry.test/?_authToken=url-secret ERR_PNPM_FAKE_CANARY_123',
+        sensitiveMetadata: 'ERR_PNPM_FAKE_CANARY_123',
       }],
     });
     const service = makeMarketplaceService({
@@ -305,7 +306,7 @@ describe('Marketplace API error boundary', () => {
       ok: false,
       error: {
         code: 'KB_MARKETPLACE_INSTALL_FAILED',
-        cause: packageManagerError.message,
+        cause: 'Package manager operation failed (INSTALL_FAILED).',
         details: { package: '@kb-labs/test-adapter@1.0.0', scope: 'platform', source: 'npm' },
       },
     });
@@ -317,6 +318,9 @@ describe('Marketplace API error boundary', () => {
     const diagnostics = errors[0]?.fields?.packageManagerDiagnostics as Array<{ output: string }> | undefined;
     expect(diagnostics?.[0]?.output).toBe('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
     expect(JSON.stringify(diagnostics)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
+    expect(errors[0]?.error?.message).toBe('Marketplace package-manager operation failed.');
+    expect(JSON.stringify(errors[0]?.error)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
+    expect(JSON.stringify(errors[0]?.error)).not.toContain('npm-repair-secret');
     expect(JSON.stringify(errors[0])).not.toContain('npm-repair-secret');
     expect(JSON.stringify(errors[0])).not.toContain('url-secret');
     expect(JSON.stringify(errors[0])).not.toContain('registry-password');
@@ -354,6 +358,8 @@ describe('Marketplace API error boundary', () => {
     expect(errors[0]?.fields?.packageManagerDiagnostics).toMatchObject([{
       operation: 'pnpm.install-repair', stream: 'stdout', output: 'ERR_PNPM_NO_OFFLINE_META',
     }]);
+    expect(errors[0]?.error?.message).toBe('Marketplace package-manager operation failed.');
+    expect(JSON.stringify(errors[0]?.error)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
   });
 
   // case: S-220.1

@@ -87,9 +87,12 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         const packageManagerDiagnostics = capturedPackageManagerDiagnostics.length > 0
           ? logger.redactSensitiveValues(projectPackageManagerDiagnostics(capturedPackageManagerDiagnostics))
           : undefined;
+        const logError = capturedPackageManagerDiagnostics.length > 0
+          ? new Error('Marketplace package-manager operation failed.')
+          : err;
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
-          err,
+          logError,
           {
             correlationId,
             requestId: correlationId,
@@ -191,7 +194,7 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     } else if (err.code === 'INTEGRITY_MISMATCH') {
       diagnostic = { code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH', details: { package: err.spec, scope } };
     } else {
-      diagnostic = { code: 'KB_MARKETPLACE_INSTALL_FAILED', details: { package: err.spec, scope, source: 'npm' }, cause: err.message, templateValues: { sourceName: 'npm' } };
+      diagnostic = { code: 'KB_MARKETPLACE_INSTALL_FAILED', details: { package: err.spec, scope, source: 'npm' }, cause: `Package manager operation failed (${err.code}).`, templateValues: { sourceName: 'npm' } };
     }
   } else if (err instanceof MarketplaceVersionError) {
     if (err.code === 'INTEGRITY_MISMATCH') {
