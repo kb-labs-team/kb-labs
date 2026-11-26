@@ -1398,20 +1398,13 @@ class DispatchRegistryTests(unittest.TestCase):
                         expected_routes.update(selector for selector in routes
                                                if selector in RUNNERS and
                                                RUNNERS[selector].mode == mode)
-                    # A Python declaration with an explicit runner list owns the
-                    # case's mode. Other evidence sources for the same case do
-                    # not imply a second executable owner in another mode.
-                    declared_routes = {
-                        selector
-                        for source, line in claims if source.endswith(".py")
-                        for selector in _step_declaration(source, line, root).get("runners", [])
-                        if selector in RUNNERS and RUNNERS[selector].mode == mode
-                    }
-                    if any(_step_declaration(source, line, root).get("runners")
-                           for source, line in claims if source.endswith(".py")):
-                        expected_routes = declared_routes
+                    # Browser evidence cannot add a runner to explicit Journey declarations.
+                    if declarations and all(declaration["runners"] for declaration in declarations):
+                        expected_routes.intersection_update(
+                            runner for declaration in declarations for runner in declaration["runners"]
+                        )
                     try:
-                        resolved = selection_from_coverage([coverage], step_id, mode=mode)
+                        resolved = selection_from_coverage([coverage], step_id)
                     except ValueError as error:
                         self.assertFalse(expected_routes, f"{step_id} has executable routes but was refused: {error}")
                         self.assertIn("no executable registration", str(error),
