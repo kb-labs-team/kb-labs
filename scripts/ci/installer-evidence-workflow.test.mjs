@@ -34,6 +34,7 @@ test('hosted PC-001 diagnostic runs independently of the legacy release gate', (
   const preparePlan = diagnosticJob.steps.find(step => step.name === 'Prepare an independent diagnostic plan');
   const diagnostic = diagnosticJob.steps.find(step => step.name === 'Evaluate hosted PC-001.2 evidence diagnostically');
   const upload = diagnosticJob.steps.find(step => step.name === 'Upload diagnostic evidence evaluation');
+  const compute = coverage.steps.find(step => step.name === 'Compute and validate full local and secured case coverage');
   const legacyGate = coverage.steps.find(step => step.name === 'Enforce local and secured release case coverage');
   assert.deepEqual(diagnosticJob.needs, ['prepare', 'journey']);
   assert.match(diagnosticJob.if, /always\(\)/);
@@ -47,6 +48,7 @@ test('hosted PC-001 diagnostic runs independently of the legacy release gate', (
   assert.equal(diagnostic['continue-on-error'], true);
   assert.match(upload.if, /always\(\)/);
   assert.ok(!coverage.steps.some(step => step.name === 'Restore sealed candidate for independent evidence plan'));
-  assert.match(legacyGate.run, /qa coverage show --level release --mode/);
-  assert.doesNotMatch(legacyGate.run, /--evidence/);
+  assert.match(compute.run, /qa coverage show --level all --mode/);
+  assert.doesNotMatch(compute.run, /--evidence/);
+  assert.match(legacyGate.run, /jq -e '\.releasePassed == true'/);
 });
