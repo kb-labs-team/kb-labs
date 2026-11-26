@@ -134,6 +134,7 @@ class JourneyResult:
     first_failure: dict | None
     steps: list[dict]
     case_run: dict
+    execution: dict | None = None
 
 
 class Journey:
@@ -156,6 +157,10 @@ class Journey:
         self.parent = parent
         inherited_selection = parent.selection_boundary if parent is not None else active_journey_selection()
         self.selection_boundary = selection or inherited_selection or read_journey_selection(os.environ)
+        lease = self.selection_boundary.execution_lease
+        if lease is not None and lease["mode"] != mode:
+            raise JourneyContractError(
+                f"execution lease mode {lease['mode']!r} does not match runner mode {mode!r}")
         self.state_graph: FlowGraph | None = None
         self.started_at = datetime.now(timezone.utc).isoformat()
         self.started = time.monotonic()
@@ -169,6 +174,8 @@ class Journey:
         self.flows: dict[str, tuple[str, str]] = {}
         self.flow_step_ids: dict[str, str] = {}
         self.selection = list(self.selection_boundary.requested)
+        self.selected_step_names = set(self.selection_boundary.direct_step_names)
+        self.planned_step_names = set(self.selection_boundary.selected_step_names)
         self.runner_selector = self.selection_boundary.runner_selector
         self.step_guard: Callable[[str, Callable[[], str | None]], str | None] | None = None
         self.memory = parent.memory if parent is not None else JourneyMemory({})
@@ -199,7 +206,7 @@ class Journey:
         step_id = "case:" + ",".join(sorted(set(case_ids))) if case_ids else f"flow:{name}"
         normalized_requirements = self._identified_requirements(required_items)
         dependency_details = {"requires": normalized_requirements} if normalized_requirements else None
-        selected = bool(self.selected_steps.intersection(case_ids))
+        selected = bool(self.selected_steps.intersection(case_ids) or name in self.selected_step_names)
         eligible_runners = set(runners)
         if selected and eligible_runners and self.runner_selector not in eligible_runners:
             message = (f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "
@@ -215,9 +222,13 @@ class Journey:
                                 case_ids, dependency_details, step_id)
             self.steps.append(result)
             return result
-        prerequisite = name in self.prerequisite_steps
+        prerequisite = name in self.prerequisite_steps or (
+            bool(self.selection_boundary.execution_lease) and name in self.planned_step_names
+            and name not in self.selected_step_names)
         lifecycle = role == "lifecycle"
-        if self.selected_claims and not selected and not prerequisite and not lifecycle:
+        if (self.selected_claims or self.planned_step_names) and not selected and not prerequisite \
+                and (not lifecycle or (self.selection_boundary.execution_lease is not None
+                                       and name not in self.planned_step_names)):
             result = StepResult(name, capability, self.mode, "SKIPPED", 0.0, "not selected", case_ids,
                                 dependency_details, step_id)
             self.steps.append(result)
@@ -421,9 +432,28 @@ class Journey:
         }
         if self.selection:
             case_run.update({"selection": self.selection})
+        execution = None
+        if self.selection_boundary.execution_lease is not None:
+            lease = self.selection_boundary.execution_lease
+            execution = {
+                "schema": "kb.devkit-journey-runner-receipt/v1",
+                "planId": lease["planId"], "sourceSHA": lease["sourceSHA"],
+                "shardId": lease["shardId"], "attemptId": lease["attemptId"],
+                "mode": self.mode, "runner": self.runner_selector,
+                "claimIds": lease["claimIds"], "directStepIds": lease["directStepIds"],
+            }
+            planned = {step["name"]: step for step in lease["steps"]}
+            step_rows = [_step_dict(step) for step in self.steps]
+            for row in step_rows:
+                identity = planned.get(row.get("name"))
+                if identity is not None:
+                    row["plannedStepId"] = identity["id"]
+                    row["plannedDirect"] = identity["direct"]
+        else:
+            step_rows = [_step_dict(step) for step in self.steps]
         return JourneyResult("kb.service-journey/v1", self.run_id, self.started_at,
                              round(time.monotonic() - self.started, 3), status, first,
-                             [_step_dict(step) for step in self.steps], case_run)
+                             step_rows, case_run, execution)
 
     def write_json(self, path: str | Path) -> JourneyResult:
         result = self.result()
@@ -493,7 +523,8 @@ class FlowGraph:
             group for group, spec in self.groups.items()
             if (self.journey.selected_capabilities.intersection(spec.get("capabilities", ()))
                 or self.journey.selected_claims.intersection(spec.get("cases", ()))
-                or self.journey.prerequisite_steps.intersection(self.unique_group_steps[group]))
+                or (self.journey.prerequisite_steps | self.journey.planned_step_names).intersection(
+                    self.unique_group_steps[group]))
         }
         self.needed_states = set(filter(None, journey_value("KB_JOURNEY_NEEDED_STATES", "").split(",")))
         for group in self.selected_groups:
@@ -512,7 +543,7 @@ class FlowGraph:
 
     @property
     def selection_active(self) -> bool:
-        return bool(self.journey.selected_claims)
+        return bool(self.journey.selected_claims or self.journey.planned_step_names)
 
     def group_selected(self, group: str) -> bool:
         """Return whether selection or its declared prerequisites include a graph group."""
@@ -521,7 +552,8 @@ class FlowGraph:
     def selects_steps(self, *names: str) -> bool:
         """Whether the resolver selected one of these owning or prerequisite steps."""
         return not self.selection_active or bool(set(names).intersection(
-            set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps))
+            set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps
+            | self.journey.planned_step_names))
 
     def skip_unselected(self, name: str, capability: str) -> None:
         """Record an orchestration journey omitted by claim selection."""
@@ -566,7 +598,8 @@ class FlowGraph:
     def _flow_owns_selected_claim(self, group: str, cases: Iterable[str]) -> bool:
         if self.journey.selected_claims.intersection(cases):
             return True
-        selected_names = set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps
+        selected_names = (set(self.journey.selected_owning_steps) | self.journey.prerequisite_steps
+                          | self.journey.planned_step_names)
         declared_steps = self.unique_group_steps.get(group, set())
         return bool(selected_names.intersection(declared_steps))
 

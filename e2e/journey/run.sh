@@ -54,7 +54,22 @@ selection_json=""
 selected_selectors=""
 compose_profiles_json='[]'
 unset COMPOSE_PROFILES
-if [[ -z "$compose_action" && -z "${KB_JOURNEY_ONLY:-}" ]]; then
+if [[ -n "${KB_JOURNEY_EXECUTION_LEASE_JSON:-}" ]]; then
+  lease_info="$(python3 -c 'import json,sys; x=json.load(sys.stdin); required=("schema","planId","sourceSHA","shardId","attemptId","mode","runner"); assert isinstance(x,dict) and x.get("schema")=="kb.devkit-journey-shard-lease/v1" and all(isinstance(x.get(k),str) and x[k] for k in required); print(json.dumps({"runner":x["runner"],"mode":x["mode"]},separators=(",",":")))' <<< "$KB_JOURNEY_EXECUTION_LEASE_JSON")"
+  lease_runner="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["runner"])' <<< "$lease_info")"
+  lease_mode="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["mode"])' <<< "$lease_info")"
+  if [[ -n "${KB_JOURNEY_ONLY:-}" && "$KB_JOURNEY_ONLY" != "$lease_runner" ]]; then
+    echo "Journey runner selector does not match execution lease." >&2
+    exit 2
+  fi
+  if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
+    echo "KB_JOURNEY_CASES cannot be combined with an execution lease." >&2
+    exit 2
+  fi
+  export KB_JOURNEY_ONLY="$lease_runner"
+  selected_selectors="$lease_runner"
+  compose_profiles_json="$(python3 e2e/journey/dispatch_registry.py --lanes "$lease_runner")"
+elif [[ -z "$compose_action" && -z "${KB_JOURNEY_ONLY:-}" ]]; then
   python3 e2e/journey/hermetic_cli.py -- node ./cli/bin/dist/bin.js qa cases validate
 fi
 if [[ -n "${KB_JOURNEY_CASES:-}" ]]; then
@@ -206,7 +221,7 @@ start_project_container_monitors() {
 }
 
 mkdir -p .journey/reports
-rm -f .journey/reports/journey-summary.md
+rm -f .journey/reports/journey-summary.md .journey/reports/service-*.json .journey/reports/container-outcomes.json
 find .journey/reports -maxdepth 1 -type d -name 'platform-state-*' -exec rm -rf {} +
 journey_toolchain_ensure "$ROOT"
 journey_compose build publisher runner idp-stub
@@ -224,7 +239,7 @@ run_journey() {
   echo "==> $front_door / $scenario / $variant"
   if ! container_id=$(KB_JOURNEY_RUNNER_SELECTOR="$runner_selector" KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
     journey_compose run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
-    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
+    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_EXECUTION_LEASE_JSON -e KB_JOURNEY_SELECTED_STEPS \
     -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
     -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null); then
     status=1

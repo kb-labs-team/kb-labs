@@ -206,8 +206,10 @@ func validateLeaseAgainstPlan(plan Plan, lease ShardLease) error {
 
 func validateRunnerReports(lease ShardLease, reports [][]byte) error {
 	type reportStep struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		Name          string `json:"name"`
+		Status        string `json:"status"`
+		PlannedStepID string `json:"plannedStepId"`
+		PlannedDirect *bool  `json:"plannedDirect"`
 	}
 	type receipt struct {
 		Schema        string   `json:"schema"`
@@ -232,13 +234,14 @@ func validateRunnerReports(lease ShardLease, reports [][]byte) error {
 		if r.Schema != RunnerReceiptSchema || r.PlanID != lease.PlanID || r.SourceSHA != lease.SourceSHA || r.ShardID != lease.ShardID || r.AttemptID != lease.AttemptID || r.Mode != lease.Mode || r.Runner != lease.Runner || !equalStrings(uniqueSorted(r.ClaimIDs), lease.ClaimIDs) || !equalStrings(uniqueSorted(r.DirectStepIDs), lease.DirectStepIDs) {
 			return fmt.Errorf("runner report receipt does not match the execution lease")
 		}
-		statuses := map[string][]string{}
+		statuses := map[string][]reportStep{}
 		for _, step := range document.Steps {
-			statuses[step.Name] = append(statuses[step.Name], step.Status)
+			statuses[step.Name] = append(statuses[step.Name], step)
 		}
-		for _, name := range lease.SelectedStepNames {
-			if values := statuses[name]; len(values) != 1 || values[0] != "PASS" {
-				return fmt.Errorf("runner report is missing exactly one PASS row for selected step %q", name)
+		for _, planned := range lease.Steps {
+			values := statuses[planned.Name]
+			if len(values) != 1 || values[0].Status != "PASS" || values[0].PlannedStepID != planned.ID || values[0].PlannedDirect == nil || *values[0].PlannedDirect != planned.Direct {
+				return fmt.Errorf("runner report is missing exactly one matching PASS row for selected step %q", planned.Name)
 			}
 		}
 	}

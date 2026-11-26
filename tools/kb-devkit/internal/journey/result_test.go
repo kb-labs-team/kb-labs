@@ -116,9 +116,10 @@ func writeRunnerReport(t *testing.T, directory string, lease ShardLease) {
 	receipt := map[string]any{"schema": RunnerReceiptSchema, "planId": lease.PlanID, "sourceSHA": lease.SourceSHA,
 		"shardId": lease.ShardID, "attemptId": lease.AttemptID, "mode": lease.Mode, "runner": lease.Runner,
 		"claimIds": lease.ClaimIDs, "directStepIds": lease.DirectStepIDs}
-	steps := make([]map[string]string, 0, len(lease.SelectedStepNames))
-	for _, name := range lease.SelectedStepNames {
-		steps = append(steps, map[string]string{"name": name, "status": "PASS"})
+	steps := make([]map[string]any, 0, len(lease.SelectedStepNames))
+	for _, planned := range lease.Steps {
+		steps = append(steps, map[string]any{"name": planned.Name, "status": "PASS",
+			"plannedStepId": planned.ID, "plannedDirect": planned.Direct})
 	}
 	payload, err := json.Marshal(map[string]any{"execution": receipt, "steps": steps})
 	if err != nil {
