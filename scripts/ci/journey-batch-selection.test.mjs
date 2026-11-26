@@ -57,6 +57,19 @@ test('full journey runs use independent concurrency groups without a PR trigger'
   assert.equal(workflow.on.pull_request, undefined);
 });
 
+// case: S-262.21
+test('ordinary PRs run only affected Journey and release keeps the installer matrix', () => {
+  const pullRequest = load(readFileSync(resolve(root, '.github/workflows/journey-pr.yml'), 'utf8'));
+  const installer = load(readFileSync(resolve(root, '.github/workflows/installer-journey.yml'), 'utf8'));
+  const release = load(readFileSync(resolve(root, '.github/workflows/release-build-candidate.yml'), 'utf8'));
+  assert.deepEqual(pullRequest.on.pull_request, { branches: ['master'] });
+  assert.equal(pullRequest.defaults.run.shell, 'bash');
+  assert.equal(pullRequest.jobs['baseline-delta'].name, 'Journey baseline delta');
+  assert.equal(pullRequest.jobs['baseline-delta'].if, 'always()');
+  assert.deepEqual(Object.keys(installer.on), ['workflow_dispatch']);
+  assert.equal(release.jobs['journey-gate'].uses, './.github/workflows/reusable-installer-journey.yml');
+});
+
 // case: S-262.8
 test('only an explicit case selection skips the shared generic unit suite', () => {
   const targeted = resolveSelection('push', `batch/t1/cases/${encode('S-268.1')}`);
