@@ -311,6 +311,7 @@ jobs:
   full-unit-tests:
     name: test (full)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: [build, full-dist-for-devkit-build]
     permissions:
       contents: read
