@@ -108,6 +108,8 @@ def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, cla
                 continue
             old_statuses = {status for _, status, _ in old}
             new_statuses = {status for _, status, _ in new}
+            if not claim and not old and new_statuses == {"PASS"}:
+                continue
             if ({source for source, _, _ in old} == {source for source, _, _ in new}
                     and new_statuses == {"PASS"} and old_statuses & {"FAIL", "BLOCKED"}):
                 improved.append(label)
