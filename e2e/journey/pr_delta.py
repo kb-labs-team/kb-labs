@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from collections import defaultdict
 from fnmatch import fnmatchcase
 from pathlib import Path
 
 from batch_summary import requested_selection, verify_run_commit
-from invocations import print_report_text
+from invocations import print_report_text, run_harness_command
 from scoreboard import MODES, _service_message_for_comparison
 
 # These smoke claims cover the corresponding installed product surfaces.
@@ -140,10 +139,12 @@ def main() -> int:
     check.add_argument("claims")
     args = parser.parse_args()
     if args.command == "plan":
-        paths = subprocess.check_output(
+        result = run_harness_command(
             ["git", "diff", "--no-renames", "--name-only", "-z", args.base, args.candidate, "--"]
-        ).decode(encoding="utf-8")
-        print(",".join(plan_claims(paths.split("\0"))))
+        )
+        if result.returncode != 0:
+            raise ValueError(f"Could not select changed paths: {result.stderr.strip()}")
+        print(",".join(plan_claims(result.stdout.split("\0"))))
         return 0
     summary, passed = check_pr(args.base, args.candidate, args.base_sha, args.candidate_sha,
                                requested_selection(args.claims))
