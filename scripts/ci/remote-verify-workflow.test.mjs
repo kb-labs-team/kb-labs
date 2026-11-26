@@ -161,7 +161,7 @@ test('journey batch and candidate route builds through the same runner entry', (
   const batchSteps = batch.jobs.producer.steps;
   const batchCas = batchSteps.find((step) => step.id === 'devkit-cas');
   const candidateBuild = candidate.jobs.build.steps.find((step) => step.name === 'Build selected workspace packages once');
-  assert.equal(batch.jobs.producer.env.KB_DEVKIT_BASE_REF, "${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}");
+  assert.equal(batch.jobs.producer.env.KB_DEVKIT_BASE_REF, "${{ format('origin/{0}', github.event.repository.default_branch) }}");
   assert.equal(batchBuild.run, 'node scripts/ci/run-remote-stage.mjs --journey-batch-prepare "$BATCH_PRODUCER_OUTPUT" "$BATCH_BASELINE"');
   assert.ok(batchSteps.indexOf(batchCas) < batchSteps.indexOf(batchBuild), 'restore the shared DevKit CAS before the batch build');
   assert.equal(batchCas.uses, './.github/actions/devkit-cas');
