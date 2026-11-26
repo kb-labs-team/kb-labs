@@ -1128,6 +1128,14 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
                             if declaration not in declarations:
                                 declarations.append(declaration)
 
+    # Browser evidence can help locate a runner, but cannot extend explicit Journey registrations.
+    for step_id, declarations in declarations_by_step.items():
+        if all(declaration["runners"] for declaration in declarations):
+            registered = {runner for declaration in declarations for runner in declaration["runners"]}
+            owners = owners_by_step.get(step_id, {})
+            for runner in owners.keys() - registered:
+                del owners[runner]
+
     if mode is not None:
         for step_id, owners in owners_by_step.items():
             ineligible_by_step.setdefault(step_id, set()).update(
