@@ -117,21 +117,31 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 		e.gate.release(slot)
 	}
 	var outputRefs []cache.OutputRef
+	skipManifest := false
+	var buildOutputFiles []string
 	if def.Name == "build" && exitCode == 0 && runErr == nil && len(def.Outputs) > 0 {
-		files, outputErr := expandOutputFiles(pkg.Dir, def.Outputs)
+		var outputErr error
+		buildOutputFiles, outputErr = expandOutputFiles(pkg.Dir, def.Outputs)
 		if outputErr != nil {
 			runErr = fmt.Errorf("validate declared build outputs: %w", outputErr)
 			exitCode = 1
-		} else if len(files) == 0 {
+		} else if len(buildOutputFiles) == 0 {
 			runErr = fmt.Errorf("declared build outputs %s matched no file in %s", strings.Join(def.Outputs, ", "), pkg.Dir)
 			exitCode = 1
 		}
 	}
 	if def.Cache && exitCode == 0 && runErr == nil && len(def.Outputs) > 0 {
-		refs, storeErr := e.storeOutputs(pkg.Dir, def.Outputs)
-		if storeErr != nil && def.Name == "build" {
-			runErr = fmt.Errorf("cache declared task outputs: %w", storeErr)
-			exitCode = 1
+		var refs []cache.OutputRef
+		var storeErr error
+		if def.Name == "build" {
+			refs, storeErr = e.storeOutputFiles(pkg.Dir, buildOutputFiles)
+		} else {
+			refs, storeErr = e.storeOutputs(pkg.Dir, def.Outputs)
+		}
+		if def.Name == "build" && storeErr != nil {
+			// The output exists and the build succeeded; cache storage is optional.
+			// Do not write an empty manifest that could turn this into a cache hit.
+			skipManifest = true
 		} else if storeErr == nil {
 			outputRefs = refs
 		}
@@ -171,7 +181,7 @@ func (e *Executor) Run(pkg workspace.Package, def TaskDef, noCache bool, depDirs
 
 	// 4. Cache successful results only. Failed tasks depend on execution state
 	//     outside the input hash and must be retried on the next run.
-	if def.Cache && result.OK {
+	if def.Cache && result.OK && !skipManifest {
 		m := &cache.Manifest{
 			InputHash: inputHash,
 			ExitCode:  exitCode,
@@ -338,6 +348,10 @@ func (e *Executor) storeOutputs(pkgDir string, patterns []string) ([]cache.Outpu
 	if err != nil {
 		return nil, err
 	}
+	return e.storeOutputFiles(pkgDir, fileList)
+}
+
+func (e *Executor) storeOutputFiles(pkgDir string, fileList []string) ([]cache.OutputRef, error) {
 	var refs []cache.OutputRef
 	for _, rel := range fileList {
 		absPath := filepath.Join(pkgDir, rel)
