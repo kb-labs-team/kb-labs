@@ -37,6 +37,33 @@ class PullRequestDeltaTests(unittest.TestCase):
             self.assertIn("commit", summary)
 
     # case: S-262.21
+    def test_explicit_block_for_a_single_owner_can_recover(self):
+        with tempfile.TemporaryDirectory() as directory:
+            base, candidate = Path(directory) / "base", Path(directory) / "candidate"
+            self.write_mode(candidate, "b" * 40, "PASS", "PASS")
+            for status, mode, owner_count, row_count, expected in (
+                ("BLOCKED", "secured", 1, 1, True), ("PASS", "secured", 1, 1, False),
+                ("BLOCKED", "local", 1, 1, False), ("BLOCKED", "secured", 2, 1, False),
+                ("BLOCKED", "secured", 1, 0, False), ("BLOCKED", "secured", 1, 2, False),
+            ):
+                with self.subTest(status=status, mode=mode, owners=owner_count, rows=row_count):
+                    self.write_mode(base, "a" * 40, "PASS", "BLOCKED")
+                    plan_path = base / "secured" / "selection-plan.json"
+                    plan = json.loads(plan_path.read_text())
+                    if owner_count == 2:
+                        plan["selectedClaimOwners"]["second owner"] = ["S-010.1"]
+                    plan_path.write_text(json.dumps(plan))
+                    report_path = base / "secured" / "service-secured.json"
+                    report = json.loads(report_path.read_text())
+                    report["steps"] = [{"name": f"fixture block {i}", "mode": mode, "status": status,
+                                        "cases": ["S-010.1"], "message": "required fixture was not ready"}
+                                       for i in range(row_count)]
+                    report_path.write_text(json.dumps(report))
+                    summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, ["S-010.1"])
+                    self.assertEqual(passed, expected, summary)
+                    self.assertIn("secured / S-010.1 / install" if expected else "missing evidence", summary)
+
+    # case: S-262.21
     def test_passing_added_prerequisite_does_not_count_as_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
