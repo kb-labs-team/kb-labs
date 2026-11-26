@@ -44,7 +44,7 @@ test('test (full) gates the shipped lane only', () => {
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
-// case: S-262.22
+// case: S-262.7
 test('master unit tests use the shipped lane while lint and type-check stay workspace-wide', () => {
   const ci = load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
   const steps = ci.jobs.checks.steps;
