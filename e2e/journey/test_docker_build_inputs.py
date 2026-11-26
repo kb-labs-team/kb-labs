@@ -127,6 +127,16 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertIn("--asset-base-url http://origin:8080/journey-candidate", preparation)
         self.assertIn("copyFileSync(artifact.path, join(outputDirectory, artifact.name))", staging)
 
+    def test_oauth_gateway_override_is_written_after_install_and_before_start(self):
+        entrypoint = (ROOT / "e2e" / "platform" / "entrypoint.sh").read_text()
+        apply_index = entrypoint.index("kb-create apply \\")
+        override_index = entrypoint.index('cat > "$PLATFORM_ROOT/.kb/kb.config.override.json"')
+        start_index = entrypoint.index("\nkb-create start --platform-root")
+
+        self.assertLess(apply_index, override_index)
+        self.assertLess(override_index, start_index)
+        self.assertIn('"clientSecretEnv": "OIDC_CORP_CLIENT_SECRET"', entrypoint)
+
 
 if __name__ == "__main__":
     unittest.main()
