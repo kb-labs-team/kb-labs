@@ -65,25 +65,43 @@ bash "$ROOT/scripts/prepare-candidate-binaries.sh" build "$BINARY_VERSION" \
 journey_phase_end
 journey_phase_start "stage-candidate-binaries"
 node "$ROOT/e2e/platform/stage-release-binaries.mjs" "$ROOT/dist/artifacts.json" "$TARGET"
-BINARY_FILES=()
-while IFS= read -r filename; do BINARY_FILES+=("$filename"); done < <(node -e 'const fs=require("fs"); for (const b of JSON.parse(fs.readFileSync(process.argv[1])).binaries) console.log(b.filename)' "$TARGET/binary-manifest.json")
 journey_phase_end
 
-journey_phase_start "prepare-and-seal-release-indexes"
-node "$ROOT/e2e/platform/prepare-release-index.mjs" \
-  --packages-dir "$PACKAGES" \
-  --registry-manifest "$ROOT/e2e/platform/registry-manifest.json" \
-  --sealer "$OUT/kb-create-release-index" \
-  --binary-dir "$TARGET" \
-  --binary-manifest "$TARGET/binary-manifest.json" \
-  --binary-manifest-tool "$ROOT/scripts/prepare-candidate-binaries.sh" \
-  --binary-artifacts "$ROOT/dist/artifacts.json" \
-  --binary-checksums "$ROOT/dist/checksums.txt" \
-  --release-config "$ROOT/tools/kb-create/config/platform-release.jsonc" \
-  --binary-version "$BINARY_VERSION" \
-  --source-revision "$COMMIT" \
-  --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \
-  --output "$TARGET/release-index.json"
+prepare_candidate_indexes() {
+  local map_args=()
+  if [[ -s "$TARGET/binary-manifest-map.json" ]]; then
+    map_args=(--binary-manifest-map "$TARGET/binary-manifest-map.json")
+  fi
+  node "$ROOT/e2e/platform/prepare-release-index.mjs" \
+    --packages-dir "$PACKAGES" \
+    --registry-manifest "$ROOT/e2e/platform/registry-manifest.json" \
+    --sealer "$OUT/kb-create-release-index" \
+    --binary-dir "$TARGET" \
+    --binary-manifest "$TARGET/binary-manifest.json" \
+    --release-config "$ROOT/tools/kb-create/config/platform-release.jsonc" \
+    --binary-version "$BINARY_VERSION" \
+    --source-revision "$COMMIT" \
+    --prepare-script "$ROOT/tools/kb-create/scripts/prepare-release-index.mjs" \
+    --output "$TARGET/release-index.json" \
+    "${map_args[@]}"
+}
+
+journey_phase_start "prepare-provisional-release-indexes"
+prepare_candidate_indexes
+journey_phase_end
+
+journey_phase_start "build-versioned-journey-binaries"
+node "$ROOT/e2e/journey/prepare-versioned-binaries.mjs" \
+  --versions "$TARGET/journey-binary-target-versions.json" \
+  --output "$TARGET" \
+  --asset-base-url "${KB_JOURNEY_BINARY_BASE_URL:-http://origin:8080/journey-candidate}" \
+  --commit "$COMMIT"
+BINARY_FILES=()
+while IFS= read -r filename; do BINARY_FILES+=("$filename"); done < <(node -e 'const fs=require("fs"); const map=JSON.parse(fs.readFileSync(process.argv[1])); for (const [version,file] of Object.entries(map)) { const manifest=JSON.parse(fs.readFileSync(file)); for (const binary of manifest.binaries) console.log(`binaries/${version}/${binary.filename}`); }' "$TARGET/binary-manifest-map.json")
+journey_phase_end
+
+journey_phase_start "seal-versioned-release-indexes"
+prepare_candidate_indexes
 journey_phase_end
 
 # Install the real candidate graph through kb-create's staging and package

@@ -4,10 +4,11 @@
 // copied into the image. The registry manifest remains the E2E composition
 // source, while the sealed index is the only input consumed by kb-create.
 
-import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { clearGeneratedReleasePackages, readPackedPackageManifests } from './release-index-package-stage.mjs';
+import { binaryManifestForVersion } from './binary-manifest-map.mjs';
 import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-update-packages.mjs';
 import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
@@ -34,17 +35,15 @@ clearGeneratedReleasePackages(packagesDir, resolve(output, '..'));
 const sealer = resolve(required('--sealer'));
 const binaryDirectory = resolve(required('--binary-dir'));
 const binaryManifest = resolve(required('--binary-manifest'));
-const binaryManifestTool = resolve(required('--binary-manifest-tool'));
-const binaryChecksums = resolve(required('--binary-checksums'));
-const binaryArtifacts = resolve(required('--binary-artifacts'));
+const binaryManifestMap = value('--binary-manifest-map') ? resolve(value('--binary-manifest-map')) : undefined;
 const binaryVersion = required('--binary-version');
 const sourceRevision = required('--source-revision');
-const binaryRepository = value('--binary-repository') ?? 'kb-labs-team/kb-labs';
-const binaryReleaseTag = value('--binary-release-tag') ?? 'journey-candidate';
 const binaryBaseUrl = value('--binary-base-url') ?? process.env.KB_JOURNEY_BINARY_BASE_URL ?? 'http://origin:8080/journey-candidate';
 const packageRegistry = value('--package-registry') ?? process.env.KB_JOURNEY_REGISTRY_URL ?? 'http://verdaccio:4873';
 const prepareScript = resolve(value('--prepare-script') ?? '/src/kb-create/scripts/prepare-release-index.mjs');
 const stage = resolve(process.env.KB_JOURNEY_RELEASE_STAGE ?? '/tmp/kb-e2e-release-stage');
+
+const binaryManifestFor = version => binaryManifestForVersion(version, binaryManifest, binaryManifestMap);
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(stage, { recursive: true });
 
@@ -100,7 +99,7 @@ const result = spawnSync(process.execPath, [
   '--channel', 'stable',
   '--artifacts-dir', stage,
   '--provenance-manifest', provenanceManifest,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', binaryManifestFor(binaryVersion),
   // The platform composition under test needs a log store: workflow run logs
   // (GET /runs/:id/logs, the logs WS channel) are served by platform.logs,
   // which has no backend unless logRingBuffer or logPersistence is bound.
@@ -143,7 +142,7 @@ const update = spawnSync(process.execPath, [
   '--channel', 'stable',
   '--artifacts-dir', updatePackagesDir,
   '--provenance-manifest', updateProvenance,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', binaryManifestFor(updateVersion),
   '--platform-version', updateVersion,
   '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
@@ -170,7 +169,7 @@ const jump = spawnSync(process.execPath, [
   '--channel', 'stable',
   '--artifacts-dir', jumpPackagesDir,
   '--provenance-manifest', jumpProvenance,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', binaryManifestFor(jumpVersion),
   '--platform-version', jumpVersion,
   '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
@@ -191,7 +190,7 @@ const minorProvenance = writeProvenanceManifest(minorPackagesDir, sourceRevision
 const minorOutput = join(resolve(output, '..'), 'release-index-update-minor.json');
 const minor = spawnSync(process.execPath, [
   prepareScript, '--flow', 'platform', '--channel', 'stable',
-  '--artifacts-dir', minorPackagesDir, '--provenance-manifest', minorProvenance, '--binary-manifest', binaryManifest,
+  '--artifacts-dir', minorPackagesDir, '--provenance-manifest', minorProvenance, '--binary-manifest', binaryManifestFor(minorVersion),
   '--platform-version', minorVersion, '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig, '--platform-adapter-options', adapterOptions,
   '--platform-member-packages', platformMembers, '--adapter-overrides', adapterOverrides,
@@ -217,7 +216,7 @@ const failedHost = spawnSync(process.execPath, [
   '--channel', 'stable',
   '--artifacts-dir', failedHostPackagesDir,
   '--provenance-manifest', failedHostProvenance,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', binaryManifestFor(failedHostVersion),
   '--platform-version', failedHostVersion,
   '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
@@ -244,7 +243,7 @@ const healthyHost = spawnSync(process.execPath, [
   '--channel', 'stable',
   '--artifacts-dir', healthyHostPackagesDir,
   '--provenance-manifest', healthyHostProvenance,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', binaryManifestFor(healthyHostVersion),
   '--platform-version', healthyHostVersion,
   '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
@@ -258,28 +257,26 @@ const healthyHost = spawnSync(process.execPath, [
 ], { stdio: 'inherit' });
 if (healthyHost.status !== 0) process.exit(healthyHost.status ?? 1);
 
-// Keep the checksum valid inside the sealed index, then the candidate
-// publisher corrupts the served copy at this isolated URL so download-time
-// verification sees a real artifact mismatch.
-execFileSync('bash', [
-  binaryManifestTool,
-  'manifest',
-  '--artifacts', binaryArtifacts,
-  '--checksums', binaryChecksums,
-  '--repository', binaryRepository,
-  '--release-tag', binaryReleaseTag,
-  '--version', binaryVersion,
-  '--asset-base-url', `${binaryBaseUrl}/checksum-corrupt`,
-  '--output', binaryManifest,
-]);
+// Keep the target-version binary hash valid in the sealed index, then stage a
+// corrupted copy at an isolated URL so download verification sees a real
+// artifact mismatch.
 const badChecksumOutput = join(resolve(output, '..'), 'release-index-update-bad-checksum.json');
+const updateBinaryManifest = JSON.parse(readFileSync(binaryManifestFor(updateVersion), 'utf8'));
+const badChecksumManifestPath = join(resolve(output, '..'), 'binary-manifests', 'update-bad-checksum.json');
+const badChecksumManifest = {
+  binaries: updateBinaryManifest.binaries.map(binary => ({
+    ...binary,
+    url: `${binaryBaseUrl}/checksum-corrupt/binaries/${encodeURIComponent(updateVersion)}/${binary.filename}`,
+  })),
+};
+writeFileSync(badChecksumManifestPath, `${JSON.stringify(badChecksumManifest, null, 2)}\n`);
 const badChecksum = spawnSync(process.execPath, [
   prepareScript,
   '--flow', 'platform',
   '--channel', 'stable',
   '--artifacts-dir', updatePackagesDir,
   '--provenance-manifest', updateProvenance,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', badChecksumManifestPath,
   '--platform-version', updateVersion,
   '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
@@ -292,24 +289,15 @@ const badChecksum = spawnSync(process.execPath, [
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (badChecksum.status !== 0) process.exit(badChecksum.status ?? 1);
-const corruptDirectory = join(resolve(output, '..'), 'checksum-corrupt');
-mkdirSync(corruptDirectory, { recursive: true });
-for (const filename of ['kb-create-linux-amd64', 'kb-create-linux-arm64']) {
-  const corrupted = readFileSync(join(binaryDirectory, filename));
-  writeFileSync(join(corruptDirectory, filename), Buffer.concat([corrupted, Buffer.from('checksum-corruption')]));
+for (const binary of updateBinaryManifest.binaries) {
+  const versionedPath = join(binaryDirectory, 'binaries', updateVersion, binary.filename);
+  const basePath = join(binaryDirectory, binary.filename);
+  const sourcePath = existsSync(versionedPath) ? versionedPath : basePath;
+  const corruptPath = join(resolve(output, '..'), 'checksum-corrupt', 'binaries', updateVersion, binary.filename);
+  mkdirSync(dirname(corruptPath), { recursive: true });
+  const corrupted = readFileSync(sourcePath);
+  writeFileSync(corruptPath, Buffer.concat([corrupted, Buffer.from('checksum-corruption')]));
 }
-
-execFileSync('bash', [
-  binaryManifestTool,
-  'manifest',
-  '--artifacts', binaryArtifacts,
-  '--checksums', binaryChecksums,
-  '--repository', binaryRepository,
-  '--release-tag', binaryReleaseTag,
-  '--version', binaryVersion,
-  '--asset-base-url', binaryBaseUrl,
-  '--output', binaryManifest,
-]);
 
 const stagedFailureCandidates = [
   {
@@ -339,7 +327,7 @@ for (const candidate of stagedFailureCandidates) {
   const candidateOutput = join(resolve(output, '..'), `release-index-update-${candidate.key}-failure.json`);
   const sealed = spawnSync(process.execPath, [
     prepareScript, '--flow', 'platform', '--channel', 'stable', '--artifacts-dir', candidatePackages,
-    '--provenance-manifest', candidateProvenance, '--binary-manifest', binaryManifest, '--platform-version', candidate.version,
+    '--provenance-manifest', candidateProvenance, '--binary-manifest', binaryManifestFor(candidate.version), '--platform-version', candidate.version,
     '--platform-requires', platformRequires, '--platform-adapter-config', adapterConfig,
     '--platform-adapter-options', adapterOptions, '--platform-member-packages', platformMembers,
     '--adapter-overrides', adapterOverrides, '--registry', packageRegistry,
@@ -362,7 +350,7 @@ const canary = spawnSync(process.execPath, [
   '--channel', 'canary',
   '--artifacts-dir', canaryPackagesDir,
   '--provenance-manifest', canaryProvenance,
-  '--binary-manifest', binaryManifest,
+  '--binary-manifest', binaryManifestFor(canaryVersion),
   '--platform-version', canaryVersion,
   '--platform-requires', platformRequires,
   '--platform-adapter-config', adapterConfig,
@@ -375,6 +363,18 @@ const canary = spawnSync(process.execPath, [
   '--sealer-bin', sealer,
 ], { stdio: 'inherit' });
 if (canary.status !== 0) process.exit(canary.status ?? 1);
+
+const binaryTargetVersions = [...new Set([
+  binaryVersion,
+  updateVersion,
+  jumpVersion,
+  minorVersion,
+  failedHostVersion,
+  healthyHostVersion,
+  ...stagedFailureCandidates.map(candidate => candidate.version),
+  canaryVersion,
+])];
+writeFileSync(join(resolve(output, '..'), 'journey-binary-target-versions.json'), `${JSON.stringify(binaryTargetVersions, null, 2)}\n`);
 
 function writeProvenanceManifest(directory, revision) {
   const provenance = prepareReleaseProvenance(directory, revision, sealer);
