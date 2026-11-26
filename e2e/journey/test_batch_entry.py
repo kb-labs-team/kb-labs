@@ -1534,7 +1534,7 @@ exec "$REAL_TAR" "$@"
         spec = json.loads(parsed.stdout)
         self.assertIn("workflow_dispatch", spec["on"])
         self.assertEqual(spec["on"]["push"]["branches"], ["batch/**"])
-        self.assertIn("pull_request", spec["on"])
+        self.assertNotIn("pull_request", spec["on"])
         self.assertIn("baseline", spec["on"]["workflow_dispatch"]["inputs"])
         self.assertIn("recorded in batch metadata", spec["on"]["workflow_dispatch"]["inputs"]["baseline"]["description"])
         self.assertNotIn("cases", spec["on"]["workflow_dispatch"]["inputs"])
@@ -1545,10 +1545,9 @@ exec "$REAL_TAR" "$@"
             command = next(step["run"] for step in spec["jobs"][mode]["steps"]
                            if step.get("name") == f"Run {mode} journey stage")
             self.assertIn('journey-batch-selection.mjs run "$BATCH_SELECTION" --', command)
-        self.assertNotIn("docs/**", spec["on"]["pull_request"]["paths"])
         self.assertEqual(
             spec["concurrency"]["group"],
-            "journey-batch-${{ github.event.pull_request.number || github.run_id }}",
+            "journey-batch-${{ github.run_id }}",
         )
         self.assertFalse(spec["concurrency"]["cancel-in-progress"])
         jobs = spec["jobs"]
@@ -1625,6 +1624,7 @@ exec "$REAL_TAR" "$@"
         shutil.copy2(REPO / "e2e/journey/prepare-candidate.sh", self.root / "e2e/journey/prepare-candidate.sh")
         shutil.copy2(REPO / "e2e/compose-owner.sh", self.root / "e2e/compose-owner.sh")
         shutil.copy2(REPO / "e2e/journey/candidate-services.sh", self.root / "e2e/journey/candidate-services.sh")
+        shutil.copy2(REPO / "e2e/journey/phase-timing.sh", self.root / "e2e/journey/phase-timing.sh")
         compose_source = self.root / "compose-workspace-source.txt"
         self._script(self.bin / "docker", '''#!/bin/sh
 if [ "$1 $2" = "compose version" ]; then
@@ -1640,7 +1640,7 @@ exit 1
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("preflight fixture failed", result.stdout)
-        self.assertEqual(compose_source.read_text(), str(self.root))
+        self.assertEqual(Path(compose_source.read_text()), self.root.resolve())
         self.assertFalse((self.root / "e2e/packages").exists())
 
 

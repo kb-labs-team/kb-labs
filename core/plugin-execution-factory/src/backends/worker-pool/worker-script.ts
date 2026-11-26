@@ -284,8 +284,7 @@ async function handleExecute(message: ExecuteMessage): Promise<void> {
 
     const stdoutCapture = createWorkerOutputCapture('stdout', sendRawLine, sensitiveValues);
     const stderrCapture = createWorkerOutputCapture('stderr', sendRawLine, sensitiveValues);
-    let result!: Awaited<ReturnType<typeof runInProcess>>;
-    result = await withWorkerRequestOutputScope(stdoutCapture, stderrCapture, () => withProcessSensitiveValues(sensitiveValues, () => runInProcess({
+    const result = await withWorkerRequestOutputScope(stdoutCapture, stderrCapture, () => withProcessSensitiveValues(sensitiveValues, () => runInProcess({
         descriptor: request.descriptor,
         platform,
         ui,

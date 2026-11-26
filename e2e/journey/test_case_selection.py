@@ -257,6 +257,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
             captured = []
 
             def invoke(command, **options):
+                if command[2:5] == ["qa", "cases", "list"]:
+                    return subprocess.CompletedProcess(command, 0, json.dumps({
+                        "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                    }), "")
                 captured.append(options["env"])
                 mode = command[command.index("--mode") + 1]
                 return subprocess.CompletedProcess(command, 0, json.dumps({
@@ -302,6 +306,10 @@ class CaseJourneySelectionTests(unittest.TestCase):
     # case: S-262.8
     def test_selector_main_limits_case_owners_to_the_requested_batch_mode(self):
         def invoke(command, **_options):
+            if command[2:5] == ["qa", "cases", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                }), "")
             mode = command[command.index("--mode") + 1]
             payload = {"ok": True, "data": coverage(
                 mode, source="e2e/journey/secured_connection_steps.py")}
@@ -312,7 +320,7 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "KB_JOURNEY_CASES": "S-042.1",
                 "KB_JOURNEY_SELECTION_MODE": "local",
                 "KB_JOURNEY_ONLY": "",
-        }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
+        }, clear=False), patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), redirect_stdout(output):
             self.assertEqual(select_from_cases.main(), 0)
 
         self.assertEqual(json.loads(output.getvalue())["runners"], ["agent:commit"])
@@ -325,9 +333,13 @@ class CaseJourneySelectionTests(unittest.TestCase):
         }}
 
         def invoke(command, **_options):
+            if command[2:5] == ["qa", "cases", "list"]:
+                return subprocess.CompletedProcess(command, 0, json.dumps({
+                    "ok": True, "data": {"cases": [{"id": "S-042", "area": "quality"}]},
+                }), "")
             return subprocess.CompletedProcess(command, 1, json.dumps(failure), "")
 
-        with patch("hermetic_cli.run_command", side_effect=invoke), patch.dict(
+        with patch.object(select_from_cases, "run_hermetic_cli", side_effect=invoke), patch.dict(
             os.environ, {"KB_JOURNEY_CASES": "S-042"}, clear=False,
         ):
             with self.assertRaisesRegex(ValueError, "KB_CONFIG_INVALID; Saved authentication file") as raised:
@@ -398,6 +410,25 @@ class CaseJourneySelectionTests(unittest.TestCase):
     def test_partial_batch_mode_without_selected_owners_returns_empty(self):
         self.assertEqual(runners_for_case_selection(
             [coverage("local", source="e2e/journey/secured_connection_steps.py")], "S-042.1", "secured"), [])
+
+    # case: S-262.8
+    def test_empty_project_studio_claim_keeps_its_local_runner_and_owning_step(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        line = next(line for line, declaration in _case_declarations(source, root).items()
+                    if "S-120.1" in (declaration.get("cases") or ()))
+        case = {"id": "S-120", "status": "active", "steps": [{
+            "stepId": "S-120.1", "claims": [
+                {"kind": "journey", "source": source, "line": line},
+                {"kind": "e2e", "source": "e2e/studio/scenarios/default/cases/studio-first-tier.spec.ts"},
+            ],
+        }]}
+        results = [{"mode": mode, "cases": [case]} for mode in ("local", "secured")]
+
+        local = selection_from_coverage(results, "S-120.1", mode="local", requested_runners="")
+        self.assertEqual(local["runners"], ["service-local:explore"])
+        self.assertEqual(local["selectedClaimOwners"], {"Studio dashboard with empty project registry": ["S-120.1"]})
+        self.assertEqual(runners_for_case_selection(results, "S-120.1", "secured"), [])
 
     # case: S-262.8
     def test_partial_batch_keeps_all_same_mode_claim_owners(self):

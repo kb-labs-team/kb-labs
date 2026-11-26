@@ -509,12 +509,20 @@ describe('UnixSocketServer', () => {
       const controller = new AbortController();
       const completion = new LLMProxy(transport).complete('wait for cancellation', { signal: controller.signal });
       const deadline = Date.now() + 1000;
-      while (!providerSignal && Date.now() < deadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      while (!providerSignal && Date.now() < deadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 5);
+        });
+      }
       expect(providerSignal).toBeDefined();
       controller.abort(new DOMException('cancelled by caller', 'AbortError'));
       await expect(completion).rejects.toMatchObject({ name: 'AbortError' });
       const abortDeadline = Date.now() + 1000;
-      while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+      while (!providerSignal?.aborted && Date.now() < abortDeadline) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, 5);
+        });
+      }
       expect(providerSignal?.aborted).toBe(true);
       await transport.close();
     });
@@ -537,7 +545,11 @@ describe('UnixSocketServer', () => {
       try {
         await expect(new LLMProxy(transport).complete('Unix timeout test')).rejects.toMatchObject({ name: 'TimeoutError' });
         const abortDeadline = Date.now() + 1000;
-        while (!providerSignal?.aborted && Date.now() < abortDeadline) { await new Promise((resolve) => setTimeout(resolve, 5)); }
+        while (!providerSignal?.aborted && Date.now() < abortDeadline) {
+          await new Promise((resolve) => {
+            setTimeout(resolve, 5);
+          });
+        }
         expect(providerSignal?.aborted).toBe(true);
       } finally {
         await transport.close();
@@ -600,7 +612,9 @@ describe('UnixSocketServer', () => {
 
       // The first connect receives ECONNREFUSED; start the server before the
       // transport's bounded retry so the same connect promise can recover.
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 100);
+      });
       server = new UnixSocketServer(mockPlatform, { socketPath: testSocketPath });
       await server.start();
       try {

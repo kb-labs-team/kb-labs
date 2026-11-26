@@ -103,7 +103,12 @@ describe('RegistryPackageSource', () => {
       code: 'TRANSPORT_FAILED', message: 'Registry redirects are not followed for authenticated requests',
     });
     expect(request).toHaveBeenCalledTimes(1);
-    expect(request.mock.calls[0][1]).toMatchObject({
+    const firstRequest = request.mock.calls[0];
+    expect(firstRequest).toBeDefined();
+    if (!firstRequest) {
+      throw new Error('Expected authenticated registry request to be captured');
+    }
+    expect(firstRequest[1]).toMatchObject({
       redirect: 'manual', headers: { 'X-Share-Token': 'share-sentinel' },
     });
     expect(JSON.stringify(request.mock.calls)).not.toContain('attacker.test');

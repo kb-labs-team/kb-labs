@@ -111,7 +111,11 @@ export async function executeViaGateway(
         executionId = event.executionId;
       }
 
-      if (process.env.KB_OUTPUT_MODE !== 'json' || event.type !== 'execution:output') {
+      if (process.env.KB_OUTPUT_MODE === 'json' && event.type === 'execution:output') {
+        // Gateway stdout/stderr are command diagnostics at the CLI boundary.
+        // Keep the single machine result on stdout, but do not discard these events.
+        process.stderr.write(event.data);
+      } else {
         renderer.render(event);
       }
 

@@ -117,9 +117,11 @@ func maxInt(values []int) int {
 // fakeClock drives the gate's clock and poll timer from the test: a waiter
 // re-evaluates only when the test ticks, never because wall-clock time passed.
 type fakeClock struct {
-	mu   sync.Mutex
-	now  time.Time
-	tick chan time.Time
+	mu         sync.Mutex
+	now        time.Time
+	tick       chan time.Time
+	generation uint64
+	scheduled  bool
 }
 
 func newFakeClock() *fakeClock {
@@ -135,7 +137,23 @@ func (c *fakeClock) Now() time.Time {
 func (c *fakeClock) After(time.Duration) <-chan time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// acquire evaluates After before entering select. Record that it has
+	// captured this generation's channel so tests can advance without racing
+	// the gap between the visible waiting count and timer registration.
+	c.scheduled = true
 	return c.tick
+}
+
+func (c *fakeClock) timerScheduled(generation uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.generation == generation && c.scheduled
+}
+
+func (c *fakeClock) currentGeneration() uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.generation
 }
 
 // Advance moves the clock and wakes every waiter once.
@@ -144,6 +162,8 @@ func (c *fakeClock) Advance(d time.Duration) {
 	c.now = c.now.Add(d)
 	old := c.tick
 	c.tick = make(chan time.Time)
+	c.generation++
+	c.scheduled = false
 	c.mu.Unlock()
 	close(old)
 }
@@ -197,13 +217,28 @@ func (r *gateRig) waitUntil(what string, cond func() bool) {
 
 func (r *gateRig) waiting() int { return r.gate.sample(r.clock.Now()).Waiting }
 
+// advanceWaiter closes the poll channel only after acquire has captured it.
+// Waiting is incremented before acquire calls After, so observing Waiting
+// alone is not a sufficient synchronization point.
+func (r *gateRig) advanceWaiter(d time.Duration) {
+	r.t.Helper()
+	generation := r.clock.currentGeneration()
+	r.waitUntil("waiter to register its poll timer", func() bool {
+		return r.clock.timerScheduled(generation)
+	})
+	r.clock.Advance(d)
+}
+
 // stillBlocked ticks the waiters once and proves they re-read the probe and
 // stayed blocked.
 func (r *gateRig) stillBlocked(ch <-chan int) {
 	r.t.Helper()
 	before := r.probes.Load()
-	r.clock.Advance(time.Second)
-	r.waitUntil("a re-evaluation after the tick", func() bool { return r.probes.Load() > before })
+	generation := r.clock.currentGeneration()
+	r.advanceWaiter(time.Second)
+	r.waitUntil("a re-evaluation after the tick", func() bool {
+		return r.probes.Load() > before && r.clock.timerScheduled(generation+1)
+	})
 	select {
 	case id := <-ch:
 		r.t.Fatalf("task was admitted (slot %d) although memory does not allow it", id)
@@ -218,7 +253,7 @@ func TestAdmissionHoldsTaskUntilMemoryFrees(t *testing.T) {
 	r.waitUntil("second task to wait", func() bool { return r.waiting() == 1 })
 	r.stillBlocked(second)
 	r.avail.Store(12 * gib)
-	r.clock.Advance(time.Second)
+	r.advanceWaiter(time.Second)
 	if id := <-second; id == first {
 		t.Fatalf("slots collide: %d", id)
 	}
@@ -232,7 +267,7 @@ func TestAdmissionReservesMemoryOfTasksThatHaveNotRampedUp(t *testing.T) {
 	second := r.acquireAsync()
 	r.waitUntil("second task to wait", func() bool { return r.waiting() == 1 })
 	r.stillBlocked(second)
-	r.clock.Advance(r.gate.settle)
+	r.advanceWaiter(r.gate.settle)
 	<-second
 }
 
@@ -295,7 +330,7 @@ func TestAdmissionSampleDescribesWaitingTasks(t *testing.T) {
 		t.Fatalf("sample misses admission inputs: %+v", s)
 	}
 	r.avail.Store(12 * gib)
-	r.clock.Advance(time.Second)
+	r.advanceWaiter(time.Second)
 	<-second
 }
 

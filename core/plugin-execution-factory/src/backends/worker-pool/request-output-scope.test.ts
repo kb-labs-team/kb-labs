@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWorkerOutputCapture } from './output-capture.js';
 import { withWorkerRequestOutputScope } from './request-output-scope.js';
 
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const delay = (ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); });
 
 describe('worker request output ownership', () => {
   it('drops late writes from a completed request instead of assigning them to the next request', async () => {

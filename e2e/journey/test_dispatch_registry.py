@@ -1398,6 +1398,11 @@ class DispatchRegistryTests(unittest.TestCase):
                         expected_routes.update(selector for selector in routes
                                                if selector in RUNNERS and
                                                RUNNERS[selector].mode == mode)
+                    # Browser evidence cannot add a runner to explicit Journey declarations.
+                    if declarations and all(declaration["runners"] for declaration in declarations):
+                        expected_routes.intersection_update(
+                            runner for declaration in declarations for runner in declaration["runners"]
+                        )
                     try:
                         resolved = selection_from_coverage([coverage], step_id)
                     except ValueError as error:

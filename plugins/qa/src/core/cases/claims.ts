@@ -7,6 +7,11 @@ const CLAIM_ID = /^(?:S|PC)-\d{3}\.\d+$/;
 const CLAIM_ID_LITERAL = /["']((?:S|PC)-\d{3}\.\d+)["']/g;
 const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.next', '.kb', '.venv', '.tox', '.pytest_cache', 'vendor', 'coverage']);
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.go', '.py']);
+const JOURNEY_CLAIM_DECLARATION_CALLS = new Set([
+  'step', 'flow', 'claim_step', 'record_case', 'record', 'record_flow_step',
+  'dispatch_step', 'service_check', '_record_step',
+]);
+const JOURNEY_CASE_EVIDENCE_CALLS = new Set(['run_studio_browser_step', 'blocked']);
 
 function maskPythonCommentsAndDocstrings(source: string): string {
   const characters = source.split('');
@@ -68,6 +73,40 @@ function pythonCallEnd(source: string, openParen: number): number {
     }
   }
   return source.length;
+}
+
+function pythonCallNameBefore(source: string, position: number): string | undefined {
+  let nestedCalls = 0;
+  let quote: string | undefined;
+  for (let index = position - 1; index >= 0; index -= 1) {
+    const character = source[index] ?? '';
+    if (quote) {
+      if (character === quote) {
+        let backslashes = 0;
+        for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {backslashes += 1;}
+        if (backslashes % 2 === 0) {quote = undefined;}
+      }
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      continue;
+    }
+    if (character === ')') {
+      nestedCalls += 1;
+      continue;
+    }
+    if (character === '(') {
+      if (nestedCalls > 0) {
+        nestedCalls -= 1;
+        continue;
+      }
+      const prefix = source.slice(0, index);
+      if (/\b(?:async\s+)?def\s+[A-Za-z_]\w*\s*$/.test(prefix)) {return undefined;}
+      return prefix.match(/([A-Za-z_]\w*)\s*$/)?.[1];
+    }
+  }
+  return undefined;
 }
 
 function filesUnder(root: string, diagnostics: QACatalogDiagnostic[]): string[] {
@@ -152,12 +191,37 @@ export function scanQACaseClaims(root: string, cases: QACase[]): { claims: QACas
       const journeySource = isPythonJourneySource ? maskPythonCommentsAndDocstrings(source) : source;
       const claimSpans: Array<{ start: number; end: number }> = [];
       const declaredStepIds = new Set<string>();
-      for (const match of journeySource.matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
+      for (const match of (isPythonJourneySource ? journeySource : '').matchAll(/\bcases\s*=\s*\[([^\]]*)\]/g)) {
         const claimLine = journeySource.slice(0, match.index).split(/\r?\n/).length;
         claimSpans.push({ start: match.index!, end: match.index! + match[0].length });
+        const callName = pythonCallNameBefore(journeySource, match.index!);
+        if (JOURNEY_CASE_EVIDENCE_CALLS.has(callName ?? '')) {continue;}
+        if (callName && !JOURNEY_CLAIM_DECLARATION_CALLS.has(callName)) {
+          diagnostics.push({ file, line: claimLine,
+            message: `case claim must be attached to a registered journey declaration; ${callName} is not a case recorder` });
+          continue;
+        }
+        if (!callName) {
+          const ids = [...(match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)];
+          if (ids.length > 0) {
+            diagnostics.push({ file, line: claimLine,
+              message: 'case claim must be attached to a registered journey declaration; cases list is not a declaration call' });
+          }
+          continue;
+        }
         for (const step of (match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) {
           declaredStepIds.add(step[1]!);
           add(step[1]!, 'journey', claimLine);
+        }
+      }
+      if (isNativeMacOSJourneySource) {
+        for (const match of journeySource.matchAll(/\bexport\s+const\s+cases\s*=\s*\[([^\]]*)\]/g)) {
+          const claimLine = journeySource.slice(0, match.index).split(/\r?\n/).length;
+          claimSpans.push({ start: match.index!, end: match.index! + match[0].length });
+          for (const step of (match[1] ?? '').matchAll(/["']((?:S|PC)-\d{3}\.\d+)["']/g)) {
+            declaredStepIds.add(step[1]!);
+            add(step[1]!, 'journey', claimLine);
+          }
         }
       }
       // Installer fixture steps use a helper that turns a positional step ID

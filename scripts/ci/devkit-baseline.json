@@ -1,0 +1,78 @@
+{
+  "sourceSha": "0b4a3c4e0d229290c32ddd82366533981b9b0d27",
+  "sourceArtifactRun": 45391056040,
+  "findings": [
+    [
+      "@kb-labs/cli-bin",
+      "tsup",
+      "cli/bin/tsup.config.ts",
+      "dts: false detected — type declarations must be generated"
+    ],
+    [
+      "@kb-labs/devkit",
+      "manifest-command-naming",
+      "plugins/qa/dist/manifest.js",
+      "plugins/qa: \"qa cases inventory\" — verb \"inventory\" is not in the closed vocabulary (list, show, add, remove, create, delete, install, uninstall, enable, disable, get, set, update, run, validate, status, doctor, start, stop, commit, search, diff, plan, apply, rollback, publish, send, ask)"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../core/config/dist/index.js\" resolves into workspace package \"@kb-labs/core-config\"; import the package by name"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../core/extension-store/dist/index.js\" resolves into workspace package \"@kb-labs/core-extension-store\"; import the package by name"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../core/platform/dist/index.js\" resolves into workspace package \"@kb-labs/core-platform\"; import the package by name"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../core/registry/dist/index.js\" resolves into workspace package \"@kb-labs/core-registry\"; import the package by name"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../core/runtime/dist/index.js\" resolves into workspace package \"@kb-labs/core-runtime\"; import the package by name"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../services/marketplace/core/dist/index.js\" resolves into workspace package \"@kb-labs/marketplace-core\"; import the package by name"
+    ],
+    [
+      "@kb-labs/e2e-marketplace",
+      "deps",
+      "e2e/marketplace/scenarios/default/cases/adapter-seam.spec.mjs",
+      "relative import \"../../../../../services/marketplace/npm/dist/index.js\" resolves into workspace package \"@kb-labs/marketplace-npm\"; import the package by name"
+    ],
+    [
+      "@kb-labs/mcp-app",
+      "deps",
+      "services/mcp/app/scripts/generate-project-mcp-journey-names.mjs",
+      "relative import \"../../../../plugins/commit/dist/manifest.js\" resolves into workspace package \"@kb-labs/commit\"; import the package by name"
+    ],
+    [
+      "@kb-labs/mcp-app",
+      "deps",
+      "services/mcp/app/scripts/generate-project-mcp-journey-names.mjs",
+      "relative import \"../../../project-runtime/app/dist/index.js\" resolves into workspace package \"@kb-labs/project-runtime-app\"; import the package by name"
+    ],
+    [
+      "workspace",
+      "catalog-package-roles",
+      "",
+      "@kb-labs/host-agent-app imports core-discovery outside the catalog-owner and catalog-writer roles; depend on plugin-contracts and open the catalog through the reader role."
+    ]
+  ]
+}

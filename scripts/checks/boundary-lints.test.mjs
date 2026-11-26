@@ -192,14 +192,15 @@ after(() => {
 
 function runScript(script, args) {
   const input = arguments[2];
+  const env = { ...process.env, KB_DEVKIT_BASE_REF: '' };
   if (input) {
     const result = runExternalCheck(join(HERE, script), args, {
       encoding: 'utf-8', input: JSON.stringify(input),
-      env: { KB_DEVKIT_MODE: '1', KB_DEVKIT_PACKAGE_NAME: '@kb-labs/devkit' },
+      env: { ...env, KB_DEVKIT_MODE: '1', KB_DEVKIT_PACKAGE_NAME: '@kb-labs/devkit' },
     });
     return { code: result.exitCode, out: result.stdout, err: result.stderr, result: result.result };
   }
-  const r = spawnSync(process.execPath, [join(HERE, script), ...args], { encoding: 'utf-8' });
+  const r = spawnSync(process.execPath, [join(HERE, script), ...args], { encoding: 'utf-8', env });
   return { code: r.status, out: r.stdout, err: r.stderr };
 }
 
@@ -303,7 +304,7 @@ describe('manifest-command-naming (0.5)', () => {
       ]),
     });
     const expectedPackages = ['plugins/commit', 'plugins/nested'];
-    const violations = collectManifests(root, pluginRegistry(expectedPackages)).filter((item) => item.rule === 'manifest-example-command-path');
+    const violations = collectManifests(root, pluginRegistry(expectedPackages), {}).filter((item) => item.rule === 'manifest-example-command-path');
     assert.deepEqual(violations.map((item) => item.package).sort(), expectedPackages);
 
     const withComment = validateManifest(manifest([
@@ -374,7 +375,7 @@ describe('manifest-command-naming (0.5)', () => {
       ...pluginEntry('plugins/q', '@kb-labs/q'),
       'plugins/r/package.json': { name: '@kb-labs/r-core' }, // no kb.manifest: ignored
     });
-    const v = collectManifests(root, pluginRegistry(['plugins/p', 'plugins/v3', 'plugins/q']));
+    const v = collectManifests(root, pluginRegistry(['plugins/p', 'plugins/v3', 'plugins/q']), {});
     assert.deepEqual(
       v.map((x) => `${x.package} ${x.rule}`).sort(),
       [
@@ -436,7 +437,7 @@ describe('manifest-command-naming (0.5)', () => {
       'plugins/p/dist/manifest.json': manifest([{ path: 'p list' }]),
       ...pluginEntry('plugins/q', '@kb-labs/q'),
     });
-    const { stale } = applyExceptions(collectManifests(root, pluginRegistry(['plugins/p', 'plugins/q'])), [exFor('plugins/p'), exFor('plugins/q')], RULES);
+    const { stale } = applyExceptions(collectManifests(root, pluginRegistry(['plugins/p', 'plugins/q']), {}), [exFor('plugins/p'), exFor('plugins/q')], RULES);
     assert.deepEqual(stale.map((e) => e.package), ['plugins/p']);
   });
 
