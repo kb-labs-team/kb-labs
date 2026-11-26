@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from marketplace_steps import (_output, _platform_snapshot, authenticate_secured_marketplace,
+                               _register_commit_update_fixture_step,
                                marketplace_platform_config_path,
                                configured_marketplace_source_kinds,
                                commit_publish_command,
@@ -195,12 +196,8 @@ class MarketplaceStepTests(unittest.TestCase):
         )
         journey = Journey("local", "s0108-unselected-update-fixture", selection=selection)
 
-        result = journey.step(
-            "publish next-major Commit update fixture",
-            "marketplace-fixtures",
-            lambda: self.fail("must be skipped"),
-            requires=("step:install Commit into the project for the route lifecycle",),
-        )
+        result = _register_commit_update_fixture_step(
+            journey, lambda: self.fail("must be skipped"))
         self.assertEqual(result.status, "SKIPPED")
         self.assertEqual(result.message, "not selected")
 
@@ -228,12 +225,7 @@ class MarketplaceStepTests(unittest.TestCase):
             cases=["S-192.2"],
         )
 
-        result = journey.step(
-            "publish next-major Commit update fixture",
-            "marketplace-fixtures",
-            lambda: None,
-            requires=("step:install Commit into the project for the route lifecycle",),
-        )
+        result = _register_commit_update_fixture_step(journey, lambda: None)
 
         self.assertEqual(prerequisite.status, "PASS")
         self.assertEqual(result.status, "PASS")

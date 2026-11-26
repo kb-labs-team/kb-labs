@@ -291,12 +291,20 @@ def preflight_installed_plugin_command(
     resolved_module = _resolve_installed_extension_store_module(
         active_root, env, command_runner)
 
+    inspection_env = dict(env)
+    if not inspection_env.get("KB_HOME", "").strip():
+        inspection_env["KB_HOME"] = str(
+            Path(platform_root_value).resolve()
+            / layout_value("sharedStateDirectory")
+            / layout_value("kbHomeDirectory")
+        )
+
     result = run_with_runner(
         command_runner,
         ["node", "--input-type=module", "-e", _READ_INSTALLED_PLUGIN_COMMAND_ROUTES_SCRIPT,
          str(lock_path), str(resolved_module)],
         cwd=active_root,
-        env=env,
+        env=inspection_env,
         timeout=60,
     )
     if result.returncode != 0:

@@ -37,6 +37,7 @@ def _layout_path_values() -> dict[str, str]:
         "currentLink": contract["currentLink"],
         "versionRoots.path": contract["versionRoots"]["path"],
         "sharedStateDirectory": contract["sharedStateDirectory"],
+        "kbHomeDirectory": contract["kbHomeDirectory"],
         "installerStateDirectory": contract["installerStateDirectory"],
         "hostStateDirectory": contract["hostStateDirectory"],
         "hostLogFiles.residue": contract["hostLogFiles"]["residue"],

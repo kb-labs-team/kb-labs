@@ -1077,6 +1077,16 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
                  runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
 
+def _register_commit_update_fixture_step(journey: Journey, publish_fixture: Callable[[], object]):
+    """Register the S-012 fixture only when selected or in its prerequisite closure."""
+    return journey.step(
+        "publish next-major Commit update fixture",
+        "marketplace-fixtures",
+        publish_fixture,
+        requires=("step:install Commit into the project for the route lifecycle",),
+    )
+
+
 def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path, registry: str,
                           project_id: str,
                           env: dict[str, str] | None = None,
@@ -1606,8 +1616,7 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
         workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
         update_fixture["version"] = publish_commit_update_fixture(
             registry, commit_fixture_source_version(workspace), base_env, runner)
-    journey.step("publish next-major Commit update fixture", "marketplace-fixtures", publish_update_fixture,
-                 requires=("step:install Commit into the project for the route lifecycle",))
+    _register_commit_update_fixture_step(journey, publish_update_fixture)
 
     def update_commit() -> None:
         command = ["marketplace", "update", "@kb-labs/commit", "--scope", "project", "--json"]
