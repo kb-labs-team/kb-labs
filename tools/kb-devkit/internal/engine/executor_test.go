@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/cache"
@@ -68,6 +69,99 @@ func TestExecutorStoresAndRestoresOutputsThroughCache(t *testing.T) {
 	}
 	if string(data) != "artifact" {
 		t.Fatalf("restored output = %q, want artifact", data)
+	}
+}
+
+// case: S-321.1
+func TestExecutorReportsCommandThatNeverStartedAsFailure(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writePkg(t, pkgDir, `{"name":"@kb/app"}`)
+	initTrackedFixture(t, root)
+
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+	pkg := workspace.Package{Name: "@kb/app", Dir: pkgDir, Language: "typescript"}
+	def := TaskDef{Name: "build", Command: filepath.Join(pkgDir, "missing-build-tool"), Cache: true}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		result := executor.Run(pkg, def, false, nil)
+		if result.OK || result.Cached || result.ExitCode == 0 {
+			t.Fatalf("attempt %d result = %+v, want a fresh non-zero failure", attempt, result)
+		}
+		if !strings.Contains(result.Error, "command not found") {
+			t.Fatalf("attempt %d error = %q, want unavailable command diagnostic", attempt, result.Error)
+		}
+	}
+}
+
+// case: S-321.2
+func TestExecutorFailsWhenDeclaredOutputPatternMatchesNoFiles(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writePkg(t, pkgDir, `{"name":"@kb/app"}`)
+	initTrackedFixture(t, root)
+
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests := cache.NewManifestStore(cacheRoot)
+	executor := NewExecutor(store, manifests, cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+	pkg := workspace.Package{Name: "@kb/app", Dir: pkgDir, Language: "typescript"}
+	def := TaskDef{Name: "build", Command: `sh -c "true"`, Outputs: []string{"dist/*.js"}, Cache: true}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		result := executor.Run(pkg, def, false, nil)
+		if result.OK || result.Cached {
+			t.Fatalf("attempt %d result = %+v, want a fresh failure", attempt, result)
+		}
+		if !strings.Contains(result.Error, "dist/*.js") {
+			t.Fatalf("attempt %d error = %q, want unmatched declared output pattern", attempt, result.Error)
+		}
+		if attempt == 1 {
+			inputHash, err := hashTaskInputs(pkg, def, nil, executor.runtimeFingerprint, executor.globalInputDigest, executor.ownedInputDigests[pkg.Name], executor.dependencyDigests[pkg.Name])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := manifests.Put(pkg.Name, def.Name, &cache.Manifest{InputHash: inputHash, ExitCode: 0}); err != nil {
+				t.Fatalf("seed prior false-success manifest: %v", err)
+			}
+		}
+	}
+}
+
+// case: S-321.3
+func TestExecutorAllowsTestTaskWithoutOptionalCoverageOutput(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writePkg(t, pkgDir, `{"name":"@kb/app"}`)
+	initTrackedFixture(t, root)
+
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+	pkg := workspace.Package{Name: "@kb/app", Dir: pkgDir, Language: "typescript"}
+	def := TaskDef{Name: "test", Command: `sh -c "true"`, Outputs: []string{"coverage/**"}, Cache: true}
+
+	first := executor.Run(pkg, def, false, nil)
+	if !first.OK || first.Cached {
+		t.Fatalf("first test run = %+v, want successful execution", first)
+	}
+	second := executor.Run(pkg, def, false, nil)
+	if !second.OK || !second.Cached {
+		t.Fatalf("second test run = %+v, want successful cache hit", second)
 	}
 }
 

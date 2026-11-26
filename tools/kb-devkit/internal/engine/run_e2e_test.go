@@ -679,7 +679,7 @@ func TestRunE2EDoesNotReplayCachedFailure(t *testing.T) {
 	})
 	cfg.Tasks = map[string]config.TaskConfig{
 		"build": {{
-			Command: `sh -c "test -f ../dependency.ready"`,
+			Command: `sh -c "test -f ../dependency.ready && mkdir -p dist && touch dist/app.js"`,
 			Outputs: []string{"dist/**"},
 		}},
 	}
