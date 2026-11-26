@@ -187,6 +187,7 @@ jobs:
   coverage:
     name: Release case coverage
     needs: [prepare, journey, native_macos]
+    if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -205,6 +206,7 @@ jobs:
           cache-dependency-path: tools/kb-devkit/go.sum
       - name: Restore journey results
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        continue-on-error: true
         with:
           pattern: service-journey-results-*
           path: .journey/reports
@@ -214,16 +216,46 @@ jobs:
           make build -C tools/kb-devkit
           e2e/journey/install-workspace-dependencies.sh
           ./tools/kb-devkit/kb-devkit run build --packages "$(node tools/kb-create/scripts/release-flow-roots.mjs platform),@kb-labs/qa"
-      - name: Enforce local and secured release case coverage
+      - name: Compute and validate full local and secured case coverage
+        shell: bash
         run: |
+          mkdir -p .journey/reports/case-coverage
           run_files=$(find .journey/reports -type f -name 'service-*.json' -print | sort | paste -sd, -)
           coverage_status=0
           for mode in local secured; do
-            args=(qa coverage show --level release --mode "$mode")
+            args=(qa coverage show --level all --mode "$mode" --json)
             if [ -n "$run_files" ]; then args+=(--run "$run_files"); fi
-            node ./cli/bin/dist/bin.js "${args[@]}" || coverage_status=1
+            file=".journey/reports/case-coverage/case-coverage-${mode}.json"
+            if node ./cli/bin/dist/bin.js "${args[@]}" | jq -e --arg mode "$mode" '
+              select(.ok == true) | .data | select(.schema == "kb.qa-case-coverage/v1"
+                and .mode == $mode and (.releasePassed | type) == "boolean" and (.cases | type) == "array")
+            ' > "$file.tmp"; then
+              mv "$file.tmp" "$file"
+            else
+              echo "Case coverage could not be collected for $mode."
+              coverage_status=1
+            fi
           done
           exit "$coverage_status"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: installer-case-coverage
+          path: .journey/reports/case-coverage/case-coverage-*.json
+          if-no-files-found: ignore
+          retention-days: 90
+      - name: Enforce local and secured release case coverage
+        if: always()
+        run: |
+          status=0
+          for mode in local secured; do
+            file=".journey/reports/case-coverage/case-coverage-${mode}.json"
+            if [ ! -f "$file" ] || ! jq -e '.releasePassed == true' "$file" >/dev/null; then
+              echo "required release case coverage failed or missing for $mode"
+              status=1
+            fi
+          done
+          exit "$status"
 
   evidence_diagnostic:
     name: Hosted installer evidence diagnostic
