@@ -159,6 +159,9 @@ test('affected E2E is triggered once from CI(PR) and checks out the planned SHA'
   assert.doesNotMatch(discover.if, /github\.event_name == 'workflow_call'/);
   assert.match(discover.if, /workflow_dispatch.*replay-run-id == ''/);
   assert.match(affectedE2e.jobs['replay-evidence'].if, /workflow_dispatch.*replay-run-id != ''/);
+  assert.match(affectedE2e.jobs.evidence.if, /always\(\) && github\.event_name == 'workflow_dispatch'/);
+  assert.ok(ciPr.jobs['ci-evidence'].needs.includes('affected-e2e'));
+  assert.equal(ciPr.jobs['ci-evidence'].with['artifact-pattern'], '*platform-logs-${{ github.run_id }}*');
   const resolveManualPr = discover.steps.find((step) => step.name === 'Resolve pull request refs');
   assert.equal(resolveManualPr.if, "inputs.checkout-ref == ''");
   assert.match(resolveManualPr.with.script, /pr\.base\.sha/);
