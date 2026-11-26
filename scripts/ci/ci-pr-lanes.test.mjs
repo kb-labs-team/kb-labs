@@ -73,12 +73,26 @@ test('affected E2E is triggered once from CI(PR) and checks out the planned SHA'
   assert.equal(ciPr.on.workflow_run, undefined, 'affected E2E must not duplicate CI(PR) through workflow_run');
   assert.equal(affectedE2e.on.pull_request, undefined, 'the reusable workflow must not add a second automatic PR trigger');
   assert.ok(affectedE2e.on.workflow_call, 'CI(PR) calls the existing Affected E2E workflow');
+  assert.ok(affectedE2e.on.workflow_dispatch.inputs['pr-number']);
+  assert.ok(affectedE2e.on.workflow_dispatch.inputs['replay-run-id']);
 
   const caller = ciPr.jobs['affected-e2e'];
   assert.equal(caller.needs, 'e2e-test-plan');
   assert.equal(caller.with['generic-suites'], '${{ needs.e2e-test-plan.outputs.generic }}');
   assert.equal(caller.with['has-auth'], '${{ needs.e2e-test-plan.outputs.has_auth }}');
   assert.equal(caller.with['checkout-ref'], '${{ github.sha }}');
+
+  const discover = affectedE2e.jobs.discover;
+  assert.match(discover.if, /inputs\.checkout-ref != ''/);
+  assert.doesNotMatch(discover.if, /github\.event_name == 'workflow_call'/);
+  assert.match(discover.if, /workflow_dispatch.*replay-run-id == ''/);
+  assert.match(affectedE2e.jobs['replay-evidence'].if, /workflow_dispatch.*replay-run-id != ''/);
+  const resolveManualPr = discover.steps.find((step) => step.name === 'Resolve pull request refs');
+  assert.equal(resolveManualPr.if, "inputs.checkout-ref == ''");
+  assert.match(resolveManualPr.with.script, /pr\.base\.sha/);
+
+  const planStep = ciPr.jobs['e2e-test-plan'].steps.find((step) => step.name === 'Resolve zones from the complete PR diff');
+  assert.equal(planStep.env.KB_DEVKIT_BASE_REF, '${{ github.event.pull_request.base.sha }}...HEAD');
 
   for (const jobId of ['docker-e2e', 'auth-e2e', 'oauth-e2e']) {
     assert.equal(affectedE2e.jobs[jobId].with['checkout-ref'], '${{ needs.discover.outputs.checkout-ref }}');

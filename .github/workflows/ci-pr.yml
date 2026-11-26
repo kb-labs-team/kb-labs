@@ -80,6 +80,8 @@ jobs:
           fetch-depth: 0
       - name: Resolve zones from the complete PR diff
         id: resolve-zones
+        env:
+          KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha }}...HEAD
         run: |
           mkdir -p .ci
           node scripts/ci/resolve-e2e-zones.mjs \

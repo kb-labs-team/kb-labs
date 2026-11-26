@@ -34,17 +34,17 @@ permissions:
 jobs:
   discover:
     if: >-
-      github.event_name == 'workflow_call' ||
+      inputs.checkout-ref != '' ||
       (github.event_name == 'workflow_dispatch' && inputs.replay-run-id == '')
     runs-on: ubuntu-latest
     outputs:
-      generic: ${{ github.event_name == 'workflow_call' && inputs.generic-suites || steps.matrix.outputs.generic }}
-      has-auth: ${{ github.event_name == 'workflow_call' && inputs.has-auth || steps.matrix.outputs.has-auth }}
+      generic: ${{ inputs.checkout-ref != '' && inputs.generic-suites || steps.matrix.outputs.generic }}
+      has-auth: ${{ inputs.checkout-ref != '' && inputs.has-auth || steps.matrix.outputs.has-auth }}
       pr-number: ${{ steps.pr.outputs.number }}
-      checkout-ref: ${{ github.event_name == 'workflow_call' && inputs.checkout-ref || steps.pr.outputs.head }}
+      checkout-ref: ${{ inputs.checkout-ref || steps.pr.outputs.head }}
     steps:
       - name: Resolve pull request refs
-        if: github.event_name != 'workflow_call'
+        if: inputs.checkout-ref == ''
         id: pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
@@ -57,17 +57,17 @@ jobs:
               ...context.repo, pull_number: Number(number),
             });
             core.setOutput('number', String(pr.number));
-            core.setOutput('base', pr.base.ref);
+            core.setOutput('base', pr.base.sha);
             core.setOutput('head', pr.head.sha);
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        if: github.event_name != 'workflow_call'
+        if: inputs.checkout-ref == ''
         with:
           ref: ${{ steps.pr.outputs.head }}
           fetch-depth: 0
       - name: Resolve affected E2E zones
-        if: github.event_name != 'workflow_call'
+        if: inputs.checkout-ref == ''
         env:
-          KB_DEVKIT_BASE_REF: origin/${{ steps.pr.outputs.base }}...HEAD
+          KB_DEVKIT_BASE_REF: ${{ steps.pr.outputs.base }}...HEAD
         run: |
           mkdir -p .ci
           node scripts/ci/resolve-e2e-zones.mjs \
@@ -76,7 +76,7 @@ jobs:
             --markdown .ci/e2e-test-plan.md
           cat .ci/e2e-test-plan.md >> "$GITHUB_STEP_SUMMARY"
       - name: Create runner matrix
-        if: github.event_name != 'workflow_call'
+        if: inputs.checkout-ref == ''
         id: matrix
         run: |
           generic=$(node -e '
