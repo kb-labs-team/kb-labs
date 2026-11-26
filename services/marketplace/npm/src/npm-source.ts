@@ -49,8 +49,9 @@ export interface NpmPackageSourceOptions {
 
 export interface PackageManagerDiagnostic {
   operation: 'pnpm.add' | 'pnpm.install-repair';
+  stream: 'stdout' | 'stderr';
   exitCode?: number;
-  stderr: string;
+  output: string;
 }
 
 export class PackageInstallError extends Error {
@@ -185,7 +186,7 @@ export class NpmPackageSource implements MarketplaceSource {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         const diagnostic = this.packageManagerDiagnostic('pnpm.add', err);
-        const failureText = `${msg}\n${diagnostic.stderr}`;
+        const failureText = `${msg}\n${diagnostic.output}`;
         const code = failureText.includes('ERR_PNPM_FETCH_404') || failureText.includes('Not Found - 404')
           ? 'NOT_FOUND'
           : failureText.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || failureText.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
@@ -193,12 +194,11 @@ export class NpmPackageSource implements MarketplaceSource {
             : failureText.includes('ERR_PNPM_TARBALL_INTEGRITY') || failureText.includes('ERR_PNPM_TARBALL_INTEGRITY_FAILED')
               ? 'INTEGRITY_MISMATCH'
               : 'INSTALL_FAILED';
-        const safeMessage = redactPackageManagerOutput(msg, this.registrySecrets, this.redactSensitiveValues);
         throw new PackageInstallError(
           code,
           spec,
-          `pnpm add ${spec} failed: ${safeMessage}`,
-          { cause: safePackageManagerError(err, this.registrySecrets, this.redactSensitiveValues) },
+          `pnpm add ${spec} failed (${code}).`,
+          { cause: safePackageManagerError(err) },
           [diagnostic],
         );
       }
@@ -231,8 +231,8 @@ export class NpmPackageSource implements MarketplaceSource {
           ...(error instanceof PackageInstallError ? error.packageManagerDiagnostics : []),
           this.packageManagerDiagnostic('pnpm.install-repair', rollbackError),
         ];
-        const safeInstallError = safePackageManagerError(error, this.registrySecrets, this.redactSensitiveValues);
-        const safeRepairError = safePackageManagerError(rollbackError, this.registrySecrets, this.redactSensitiveValues);
+        const safeInstallError = safePackageManagerError(error);
+        const safeRepairError = safePackageManagerError(rollbackError);
         throw new PackageInstallError(
           'INSTALL_FAILED',
           spec,
@@ -253,8 +253,18 @@ export class NpmPackageSource implements MarketplaceSource {
     const key = installKey(root, packageId);
     const snapshot = this.pendingInstalls.get(key);
     if (!snapshot) {return;}
-    await reconcileRestoredPackageGraph(root, snapshot);
-    this.pendingInstalls.delete(key);
+    try {
+      await reconcileRestoredPackageGraph(root, snapshot);
+      this.pendingInstalls.delete(key);
+    } catch (error) {
+      throw new PackageInstallError(
+        'INSTALL_FAILED',
+        packageId,
+        `pnpm install repair failed for ${packageId}.`,
+        { cause: safePackageManagerError(error) },
+        [this.packageManagerDiagnostic('pnpm.install-repair', error)],
+      );
+    }
   }
 
   async remove(packageId: string, root: string): Promise<void> {
@@ -263,14 +273,17 @@ export class NpmPackageSource implements MarketplaceSource {
 
   private packageManagerDiagnostic(operation: PackageManagerDiagnostic['operation'], error: unknown): PackageManagerDiagnostic {
     const result = error !== null && typeof error === 'object'
-      ? error as { exitCode?: unknown; stderr?: unknown }
+      ? error as { exitCode?: unknown; stderr?: unknown; stdout?: unknown }
       : {};
     const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const stdout = typeof result.stdout === 'string' ? result.stdout : '';
     const exitCode = typeof result.exitCode === 'number' ? result.exitCode : undefined;
+    const stream = stderr ? 'stderr' : 'stdout';
     return {
       operation,
+      stream,
       ...(exitCode === undefined ? {} : { exitCode }),
-      stderr: redactPackageManagerOutput(stderr, this.registrySecrets, this.redactSensitiveValues),
+      output: redactPackageManagerOutput(stderr || stdout, this.registrySecrets, this.redactSensitiveValues),
     };
   }
 }
@@ -301,30 +314,24 @@ function redactPackageManagerOutput(
   registrySecrets: readonly string[],
   redactSensitiveValues?: (value: string) => string,
 ): string {
-  const limited = output
-    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
-    .slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
+  const plain = output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
   const configuredRedacted = registrySecrets
     .filter(Boolean)
     .sort((left, right) => right.length - left.length)
-    .reduce((value, secret) => value.split(secret).join('[REDACTED]'), limited);
+    .reduce((value, secret) => value.split(secret).join('[REDACTED]'), plain);
   const structurallyRedacted = configuredRedacted
     .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 [REDACTED]')
     .replace(/(https?:\/\/)[^/\s:@]+(?::[^/\s@]*)?@/gi, '$1[REDACTED]@')
     .replace(/([?&][^=&#\s]*(?:auth|token|password|secret|credential|api[_-]?key)[^=&#\s]*=)[^&#\s]*/gi, '$1[REDACTED]')
-    .replace(/((?:_authToken|_auth|authorization|password|passwd|token|api[_-]?key)\s*[:=]\s*)(?:Bearer\s+)?[^\s,;]+/gi, '$1[REDACTED]');
-  return redactSensitiveValues?.(structurallyRedacted) ?? structurallyRedacted;
+    .replace(/(["']?(?:_authToken|_auth|authorization|password|passwd|token|api[_-]?key)["']?\s*[:=]\s*["']?)(?:Bearer\s+)?[^"'\s,;}]+(["']?)/gi, '$1[REDACTED]$2');
+  const platformRedacted = redactSensitiveValues?.(structurallyRedacted) ?? structurallyRedacted;
+  return platformRedacted.slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
 }
 
-function safePackageManagerError(
-  error: unknown,
-  registrySecrets: readonly string[],
-  redactSensitiveValues?: (value: string) => string,
-): Error {
-  const raw = error instanceof Error ? error : new Error(String(error));
-  const safe = new Error(redactPackageManagerOutput(raw.message, registrySecrets, redactSensitiveValues));
-  safe.name = redactPackageManagerOutput(raw.name, registrySecrets, redactSensitiveValues);
-  return safe;
+function safePackageManagerError(error: unknown): Error {
+  const result = error !== null && typeof error === 'object' ? error as { exitCode?: unknown } : {};
+  const exitCode = typeof result.exitCode === 'number' ? ` (exit ${result.exitCode})` : '';
+  return new Error(`Package-manager command failed${exitCode}.`);
 }
 
 function installKey(root: string, packageId: string): string {

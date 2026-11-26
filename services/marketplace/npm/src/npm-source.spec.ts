@@ -156,8 +156,8 @@ describe('NpmPackageSource', () => {
     expect(failure).toMatchObject({
       code: 'INSTALL_FAILED',
       packageManagerDiagnostics: [
-        { operation: 'pnpm.add', stderr: expect.stringContaining('ERR_PNPM_NO_MATURE_MATCHING_VERSION') },
-        { operation: 'pnpm.install-repair', stderr: expect.stringContaining('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH') },
+        { operation: 'pnpm.add', stream: 'stderr', output: expect.stringContaining('ERR_PNPM_NO_MATURE_MATCHING_VERSION') },
+        { operation: 'pnpm.install-repair', stream: 'stderr', output: expect.stringContaining('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH') },
       ],
     });
     const serialized = JSON.stringify(failure);
@@ -172,6 +172,71 @@ describe('NpmPackageSource', () => {
     expect(causeMessages).not.toContain('query-secret');
     expect(causeMessages).not.toContain('environment-token');
     expect((failure as Error).message).toContain('could not restore package-manager state');
+  });
+
+  it('redacts secrets before truncating output and handles quoted JSON credentials', async () => {
+    const { root } = await createInstallRoot();
+    const binDirectory = path.join(root, 'bin');
+    await fs.mkdir(binDirectory, { recursive: true });
+    const pnpmShim = path.join(binDirectory, 'pnpm');
+    await fs.writeFile(pnpmShim, [
+      '#!/bin/sh',
+      'if [ "$1" = "add" ]; then',
+      '  printf "%08189d%s\\n" 0 "registry-password-marker" >&2',
+      '  printf "%s\\n" "{\\\"_authToken\\\":\\\"json-token-marker\\\"}" >&2',
+      'fi',
+      'exit 1',
+      '',
+    ].join('\n'), { mode: 0o700 });
+    vi.stubEnv('PATH', `${binDirectory}:${process.env.PATH ?? ''}`);
+    const source = new NpmPackageSource({ registryUrl: 'https://registry.test/?token=registry-password-marker' });
+
+    let failure: unknown;
+    try {
+      await source.install({
+        id: '@kb-labs/test-adapter', version: '1.0.0', integrity: '', source: 'marketplace', primaryKind: 'adapter',
+      }, root);
+    } catch (error) { failure = error; }
+
+    const diagnostic = (failure as { packageManagerDiagnostics?: Array<{ output: string }> }).packageManagerDiagnostics?.[0]?.output ?? '';
+    expect(diagnostic).not.toContain('registry-password-marker');
+    expect(diagnostic).not.toContain('json-token-marker');
+    expect(diagnostic).toContain('"_authToken":"[REDACTED]"');
+  });
+
+  it('captures and redacts stdout when the package-manager repair fails during rollback', async () => {
+    const { root } = await createInstallRoot();
+    const binDirectory = path.join(root, 'bin');
+    await fs.mkdir(binDirectory, { recursive: true });
+    const pnpmShim = path.join(binDirectory, 'pnpm');
+    await fs.writeFile(pnpmShim, [
+      '#!/bin/sh',
+      'if [ "$1" = "add" ]; then',
+      '  mkdir -p node_modules/@kb-labs/test-adapter',
+      '  printf "%s\\n" \'{"name":"@kb-labs/test-adapter","version":"1.0.0"}\' > node_modules/@kb-labs/test-adapter/package.json',
+      '  exit 0',
+      'fi',
+      'printf "%s\\n" "ERR_PNPM_NO_OFFLINE_META: token=rollback-secret"',
+      'exit 1',
+      '',
+    ].join('\n'), { mode: 0o700 });
+    vi.stubEnv('PATH', `${binDirectory}:${process.env.PATH ?? ''}`);
+    const source = new NpmPackageSource({ registryUrl: 'https://registry.test/' });
+    const pkg = { id: '@kb-labs/test-adapter', version: '1.0.0', integrity: '', source: 'marketplace' as const, primaryKind: 'adapter' as const };
+    await source.install(pkg, root);
+
+    let failure: unknown;
+    try { await source.rollbackInstall(pkg.id, root); } catch (error) { failure = error; }
+
+    expect(failure).toMatchObject({
+      code: 'INSTALL_FAILED',
+      packageManagerDiagnostics: [{
+        operation: 'pnpm.install-repair', stream: 'stdout', output: expect.stringContaining('ERR_PNPM_NO_OFFLINE_META'),
+      }],
+    });
+    expect(JSON.stringify(failure)).not.toContain('rollback-secret');
+    expect((failure as Error).message).not.toContain('ERR_PNPM_NO_OFFLINE_META');
+    expect((failure as Error & { cause?: Error }).cause?.message).not.toContain('ERR_PNPM_NO_OFFLINE_META');
   });
 
   async function createInstallRoot(): Promise<{ root: string; home: string }> {

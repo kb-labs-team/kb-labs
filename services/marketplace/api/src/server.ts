@@ -83,8 +83,9 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         const body = request.body as { scope?: string } | undefined;
         const scope = typeof body?.scope === 'string' ? body.scope : 'platform';
         const mapped = mapMarketplaceError(err, correlationId, scope);
-        const packageManagerDiagnostics = err instanceof PackageInstallError && err.packageManagerDiagnostics.length > 0
-          ? logger.redactSensitiveValues(err.packageManagerDiagnostics)
+        const capturedPackageManagerDiagnostics = collectPackageManagerDiagnostics(err);
+        const packageManagerDiagnostics = capturedPackageManagerDiagnostics.length > 0
+          ? logger.redactSensitiveValues(capturedPackageManagerDiagnostics)
           : undefined;
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
@@ -109,6 +110,22 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
       await collector.observeOperation('marketplace.bootstrap', () => registerRoutes(app));
     },
   });
+}
+
+function collectPackageManagerDiagnostics(error: unknown): PackageInstallError['packageManagerDiagnostics'][number][] {
+  const diagnostics: PackageInstallError['packageManagerDiagnostics'][number][] = [];
+  const visited = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || visited.has(value)) { return; }
+    visited.add(value);
+    if (value instanceof PackageInstallError) { diagnostics.push(...value.packageManagerDiagnostics); }
+    if (value instanceof AggregateError) {
+      for (const nested of value.errors) { visit(nested); }
+    }
+    if ('cause' in value) { visit((value as { cause?: unknown }).cause); }
+  };
+  visit(error);
+  return diagnostics;
 }
 
 function asError(value: unknown): Error {
