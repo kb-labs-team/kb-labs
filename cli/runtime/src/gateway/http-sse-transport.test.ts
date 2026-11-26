@@ -3,6 +3,7 @@ import { HttpSseGatewayTransport } from './http-sse-transport.js';
 import { AuthSessionOwner } from '@kb-labs/sdk/gateway';
 import { authRequiredForGateway } from '@kb-labs/sdk/gateway';
 import { ErrorEnvelopeError, createErrorEnvelope } from '@kb-labs/core-platform';
+import type { ExecutionEvent } from '@kb-labs/core-contracts';
 
 describe('HttpSseGatewayTransport credential origin', () => {
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -50,7 +51,7 @@ describe('HttpSseGatewayTransport credential origin', () => {
     let aborted = false;
     vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
       started = true;
-      return await new Promise<Response>((_resolve, reject) => {
+      return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => {
           aborted = true;
           reject(new DOMException('aborted', 'AbortError'));
@@ -117,14 +118,12 @@ describe('HttpSseGatewayTransport project runtime execution', () => {
       kind: 'session', gatewayUrl: 'https://gateway.test', accessToken: 'session-token',
       refresh: vi.fn(), save: vi.fn(),
     });
-    let source: ReadableStreamDefaultController<Uint8Array> | undefined;
     let requestSignal: AbortSignal | undefined;
     const event = { type: 'execution:output', requestId: 'req-2', executionId: 'project-exec-2', stream: 'stderr', data: 'Analyzing changes...', timestamp: Date.now() };
     const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
       requestSignal = init?.signal as AbortSignal;
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
-          source = controller;
           controller.enqueue(new TextEncoder().encode(`${JSON.stringify(event)}\n`));
           requestSignal?.addEventListener('abort', () => controller.close(), { once: true });
         },
@@ -141,7 +140,6 @@ describe('HttpSseGatewayTransport project runtime execution', () => {
     await transport.cancel(event.executionId, 'user');
     expect(requestSignal?.aborted).toBe(true);
     await iterator.return?.();
-    source?.desiredSize;
   });
 
 });

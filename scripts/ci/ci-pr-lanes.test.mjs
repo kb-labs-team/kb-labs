@@ -44,6 +44,24 @@ test('test (full) gates the shipped lane only', () => {
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
+test('full workspace dist is built once and shared by full tests and Devkit checks', () => {
+  const producerId = 'full-dist-for-devkit-build';
+  const producer = ciPr.jobs[producerId];
+  const consumers = [ciPr.jobs['full-unit-tests'], ciPr.jobs['devkit-checks']];
+
+  assert.ok(producer, 'the shared full-dist producer must exist');
+  assert.equal(producer.steps.filter((step) => /kb-devkit run build\b/.test(step.run ?? '')).length, 1);
+  assert.equal(producer.steps.find((step) => /kb-devkit run build\b/.test(step.run ?? '')).run, './tools/kb-devkit/kb-devkit run build');
+  assert.ok(producer.steps.some((step) => step.with?.name === 'full-dist-for-devkit-checks'));
+  for (const consumer of consumers) {
+    assert.ok(consumer.needs.includes(producerId), 'both consumers must depend on the producer');
+    assert.ok(consumer.steps.some((step) => step.with?.name === 'full-dist-for-devkit-checks'));
+  }
+  assert.ok(!ciPr.jobs['devkit-checks'].needs.includes('full-unit-tests'), 'Devkit checks can run alongside full tests');
+  assert.equal(ciPr.jobs['full-unit-tests'].name, 'test (full)');
+  assert.ok(ciPr.jobs['ci-evidence'].needs.includes(producerId));
+});
+
 test('internal tools run in their own visible job on their own affected inputs', () => {
   const lane = jobs.filter(([, job]) => devkitTestRuns(job).some((step) => step.run.includes(`--lane ${internalLane[0]}`)));
   assert.equal(lane.length, 1, 'exactly one job runs the internal-tool lane');
@@ -65,6 +83,22 @@ test('every devkit test job uploads its task logs when it fails', () => {
     assert.equal(upload.with.path, '.kb/devkit/logs/');
     assert.match(upload.with.name, new RegExp(id));
   }
+});
+
+// case: S-262.22
+test('master checks its own snapshot and release candidate keeps strict workspace checks', () => {
+  const ci = load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  const profile = JSON.parse(readFileSync(join(root, 'scripts/ci/verification-profile.json'), 'utf8'));
+  const steps = runs(ci.jobs['devkit-checks']);
+  const compare = steps.find((step) => step.run.includes('scripts/ci/devkit-baseline.mjs'));
+
+  assert.equal(compare.if, "github.ref == 'refs/heads/master'");
+  assert.equal(compare.shell, 'bash');
+  assert.match(compare.run, /devkit-baseline\.mjs "\$report" "\$GITHUB_SHA"/);
+  assert.ok(steps.some((step) => step.if === "github.ref != 'refs/heads/master'" &&
+    step.run === './tools/kb-devkit/kb-devkit check'));
+  assert.deepEqual(profile.stages['kb-devkit-check'].args, ['check']);
+  assert.ok(profile.buildDependentTestStages.candidate.includes('kb-devkit-check'));
 });
 
 // case: S-262.23

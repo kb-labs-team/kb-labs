@@ -5090,6 +5090,9 @@ importers:
 
   services/workflow/entry:
     dependencies:
+      '@kb-labs/plugin-contracts':
+        specifier: workspace:*
+        version: link:../../../core/plugin-contracts
       '@kb-labs/workflow-contracts':
         specifier: workspace:*
         version: link:../contracts

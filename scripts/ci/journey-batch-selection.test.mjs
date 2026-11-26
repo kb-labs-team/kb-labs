@@ -45,19 +45,32 @@ test('a pushed area ref selects that QA catalog area as a partial run', () => {
 });
 
 // case: S-262.8
-test('PR and dispatch run the full gating batch, never an empty --cases', () => {
-  for (const event of ['pull_request', 'workflow_dispatch']) {
-    assert.equal(resolveSelection(event, 'any'), 'full');
-    assert.deepEqual(batchArguments('full'), []);
-  }
+test('manual dispatch uses the full batch and a PR cannot start it', () => {
+  assert.equal(resolveSelection('workflow_dispatch', 'any'), 'full');
+  assert.deepEqual(batchArguments('full'), []);
+  assert.throws(() => resolveSelection('pull_request', 'any'), /no declared case selection/);
 });
 
-test('journey runs use independent concurrency groups for each PR and dispatch', () => {
-  assert.equal(
-    workflow.concurrency.group,
-    'journey-batch-${{ github.event.pull_request.number || github.run_id }}',
-  );
+test('full journey runs use independent concurrency groups without a PR trigger', () => {
+  assert.equal(workflow.concurrency.group, 'journey-batch-${{ github.run_id }}');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
+  assert.equal(workflow.on.pull_request, undefined);
+});
+
+// case: S-262.21
+test('ordinary PRs run only affected Journey and release keeps the installer matrix', () => {
+  const pullRequest = load(readFileSync(resolve(root, '.github/workflows/journey-pr.yml'), 'utf8'));
+  const installer = load(readFileSync(resolve(root, '.github/workflows/installer-journey.yml'), 'utf8'));
+  const release = load(readFileSync(resolve(root, '.github/workflows/release-build-candidate.yml'), 'utf8'));
+  assert.deepEqual(pullRequest.on.pull_request, { branches: ['master'] });
+  assert.equal(pullRequest.defaults.run.shell, 'bash');
+  assert.equal(pullRequest.jobs['baseline-delta'].name, 'Journey baseline delta');
+  assert.equal(pullRequest.jobs['baseline-delta'].if, 'always()');
+  const runModes = pullRequest.jobs.journey.steps.find((step) => step.name === 'Run selected Journey cases');
+  assert.ok(runModes.run.includes('COMPOSE_PROJECT_NAME="kb-journey-pr-${mode}"'));
+  assert.ok(runModes.run.includes('KB_JOURNEY_NETWORK="kb-journey-pr-${mode}"'));
+  assert.deepEqual(Object.keys(installer.on), ['workflow_dispatch']);
+  assert.equal(release.jobs['journey-gate'].uses, './.github/workflows/reusable-installer-journey.yml');
 });
 
 // case: S-262.8
@@ -66,7 +79,6 @@ test('only an explicit case selection skips the shared generic unit suite', () =
   assert.equal(sharedUnitSuiteMode(targeted), 'skip');
   for (const selection of [
     resolveSelection('push', 'batch/plain'),
-    resolveSelection('pull_request', 'refs/pull/1/merge'),
     resolveSelection('workflow_dispatch', 'main'),
   ]) {
     assert.equal(sharedUnitSuiteMode(selection), 'run');

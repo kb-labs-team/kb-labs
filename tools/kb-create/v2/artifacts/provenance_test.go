@@ -385,38 +385,14 @@ func TestVerifyInstalledProvenanceRejectsDistSymlink(t *testing.T) {
 
 func TestRestoreRejectsChangedDistBeforeAcceptingRestoredPackages(t *testing.T) {
 	root := t.TempDir()
-	packageRoot := filepath.Join(root, "node_modules", "@kb-labs", "sample")
-	dist := filepath.Join(packageRoot, "dist")
-	if err := os.MkdirAll(dist, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dist, "index.js"), []byte("changed restored bytes"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(packageRoot, "package.json"), []byte(`{"name":"@kb-labs/sample","version":"1.0.0"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	wanted := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(wanted, "dist"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(wanted, "dist", "index.js"), []byte("sealed restored bytes"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	expected, err := DistDigest(filepath.Join(wanted, "dist"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	item := contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0", Provenance: contracts.ArtifactProvenance{
-		SourceRevision: "revision-1", Integrity: "sha512-expected", DistSHA256: expected, ContentScope: contracts.ProvenanceScopeDist,
-	}}
-	if err := os.WriteFile(filepath.Join(root, "pnpm-lock.yaml"), []byte("lockfileVersion: '9.0'\npackages:\n  '@kb-labs/sample@1.0.0':\n    resolution:\n      integrity: sha512-expected\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	err = (mustPnpm(t, PnpmConfig{Root: root, Runner: &fakeRunner{}, ReleaseCatalog: testReleaseCatalog(t, item)})).Restore([]contracts.Artifact{item})
+	items := sealedTestArtifacts(t, contracts.Artifact{ID: "sample", Package: "@kb-labs/sample", Version: "1.0.0"})
+	delegate := &fakeRunner{packages: items}
+	runner := changedDistRunner{delegate: delegate}
+	err := (mustPnpm(t, PnpmConfig{Root: root, Runner: runner, ReleaseCatalog: testReleaseCatalog(t, items...)})).Restore(items)
 	var failure *diag.Diag
+	expected := items[0].Provenance.DistSHA256
 	if !errors.As(err, &failure) || failure.Code != contracts.CodeProvenanceMismatch ||
-		!strings.Contains(failure.Reason, expected) {
+		failure.Meta["field"] != contracts.ProvenanceDigestField || !strings.Contains(failure.Reason, expected) {
 		t.Fatalf("restore accepted a package whose dist differed from sealed provenance: %#v, %v", failure, err)
 	}
 }

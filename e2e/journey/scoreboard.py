@@ -624,15 +624,165 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
     return "\n".join(lines)
 
 
+_VOLATILE_JOURNEY_HOME = re.compile(r"/tmp/kb-journey-home-[a-z0-9]{8}/")
+_VOLATILE_CLI_CORRELATION_ID = re.compile(r"Correlation ID: cli-\d+-[a-z0-9]+")
+
+
+def _service_message_for_comparison(message: str) -> str:
+    """Normalize only confirmed per-run home and CLI correlation values for comparison."""
+    normalized = _VOLATILE_JOURNEY_HOME.sub("/tmp/kb-journey-home-<run>/", message)
+    return _VOLATILE_CLI_CORRELATION_ID.sub("Correlation ID: cli-<timestamp>-<id>", normalized)
+
+
+
+def _service_snapshot(directory: Path, mode: str) -> dict[tuple[str, str, str], tuple[str, str]]:
+    path = directory / f"service-{mode}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if (data["schema"] != "kb.service-journey/v1" or data["case_run"]["mode"] != mode
+            or data["case_run"].get("selection", []) != [] or not data["steps"]):
+        raise ValueError(f"{path} has invalid or partial {mode} service evidence")
+    rows = {}
+    statuses = set()
+    for row in data["steps"]:
+        identity = row["stepId"], row["capability"], row["name"]
+        status, message = row["status"], row["message"]
+        if (identity in rows or not all(isinstance(part, str) and part for part in identity)
+                or status not in {"PASS", "FAIL", "BLOCKED", "SKIPPED"}
+                or not isinstance(message, str) or status != "PASS" and not message):
+            raise ValueError(f"{path} has an invalid or duplicate service step: {identity}")
+        rows[identity] = status, _service_message_for_comparison(message)
+        statuses.add(status)
+    expected = "FAIL" if "FAIL" in statuses else "BLOCKED" if "BLOCKED" in statuses else "PASS"
+    if data["status"] != expected or statuses == {"SKIPPED"}:
+        raise ValueError(f"{path} has no consistent service verdict")
+    return rows
+
+
+def _service_delta(previous_dir: Path, current_dir: Path, mode: str) -> tuple[list[str], bool, bool]:
+    before, after = _service_snapshot(previous_dir, mode), _service_snapshot(current_dir, mode)
+    restored, known, regressions, unverified = [], [], [], []
+    for identity in sorted(before.keys() | after.keys()):
+        label = " / ".join(identity)
+        if identity not in before or identity not in after:
+            state = "added" if identity not in before else "disappeared"
+            unverified.append(f"{label} ({state})")
+            continue
+        old_status, old_reason = before[identity]
+        status, reason = after[identity]
+        if status == "PASS" and old_status in {"FAIL", "BLOCKED"}:
+            restored.append(label)
+        elif status == old_status == "PASS":
+            continue
+        elif status == old_status and reason == old_reason and status in {"FAIL", "BLOCKED"}:
+            known.append(f"{label} ({status})")
+        elif (status == old_status == "SKIPPED" and reason == old_reason
+              and reason.startswith("registered for runner(s) ")
+              and reason.endswith(f"; this execution used service-{mode}:explore")):
+            continue
+        else:
+            regressions.append(f"{label} ({old_status} → {status}): {reason}")
+    lines = [f"Service comparison / {mode}"]
+    for title, items in (("Passed on candidate", restored), ("Known failures", known),
+                         ("New failures or changed outcomes", regressions), ("Unverified steps", unverified)):
+        lines.append(f"{title}: " + ("\n  ".join(items) or "none"))
+    return lines, bool(restored), bool(regressions or unverified)
+
+
+def _read_full_case_results(directory: Path, mode: str) -> dict[str, dict]:
+    path = directory / f"case-scoreboard-{mode}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if (not isinstance(data, dict) or data.get("schema") != "kb.journey-case-scoreboard/v2"
+            or data.get("modes") != [mode] or mode not in data.get("observedModes", [])
+            or not isinstance(data.get("cases"), list) or not data["cases"]):
+        raise ValueError(f"{path} has no valid {mode} case evidence")
+    if data.get("selection") != []:
+        raise ValueError(f"{path} has a partial or undeclared case selection")
+    cases = {case["id"]: case for case in data["cases"]
+             if case.get("caseStatus") == "active" and mode in case.get("modes", [])}
+    if len(cases) != len(data["cases"]):
+        raise ValueError(f"{path} has duplicated or invalid case entries")
+    for case in cases.values():
+        claims = set(case["claims"])
+        if not set(case["passingClaims"]) <= claims:
+            raise ValueError(f"{path} reports a passing claim outside {case['id']}")
+    return cases
+
+
+def _claim_outcomes(directory: Path, mode: str) -> dict[tuple[str, str], set[str]]:
+    outcomes = defaultdict(set)
+    for claim, rows in load_evidence(directory, [mode])[mode].items():
+        for row in rows:
+            outcomes[claim, row["source"]].add(row["status"])
+    return outcomes
+
+
+def _check_mode(previous_dir: Path, current_dir: Path, mode: str) -> tuple[list[str], bool, bool]:
+    service_summary, restored_service, service_regressed = _service_delta(previous_dir, current_dir, mode)
+    before = _read_full_case_results(previous_dir, mode)
+    after = _read_full_case_results(current_dir, mode)
+    missing_cases = before.keys() - after.keys()
+    lost_claims, lost_scope, regained_cases, regressed_cases = set(), set(), set(), set()
+    for case_id in before.keys() & after.keys():
+        old, new = before[case_id], after[case_id]
+        old_claims, new_claims = set(old["claims"]), set(new["claims"])
+        lost_scope.update(old_claims - new_claims)
+        if old.get("release") is True and new.get("release") is not True:
+            lost_scope.add(case_id)
+        lost_claims.update(set(old["passingClaims"]) - set(new["passingClaims"]))
+        if old["status"] == "Fully green" and new["status"] != "Fully green":
+            regressed_cases.add(case_id)
+        if old["status"] in {"Red", "Blocked", "Partial"} and new["status"] == "Fully green" and old_claims == new_claims:
+            regained_cases.add(case_id)
+    previous_outcomes, current_outcomes = (_claim_outcomes(directory, mode)
+                                          for directory in (previous_dir, current_dir))
+    restored_evidence, regressed_evidence = [], []
+    for key in sorted(previous_outcomes.keys() | current_outcomes.keys()):
+        old, new = previous_outcomes.get(key, set()), current_outcomes.get(key, set())
+        if not new or ("PASS" in old and "PASS" not in new) or (new - old) & {"FAIL", "BLOCKED"}:
+            regressed_evidence.append(" / ".join(key))
+        elif new == {"PASS"} and old & {"FAIL", "BLOCKED"}:
+            restored_evidence.append(" / ".join(key))
+    summary = [f"Case comparison / {mode}"]
+    if mode in RELEASE_GATING_MODES:
+        counts = []
+        for cases in (before, after):
+            release = [case for case in cases.values() if case["release"]]
+            counts.append(f"{sum(case['status'] == 'Fully green' for case in release)}/{len(release)}")
+        summary.append(f"Release cases passing in full: {' → '.join(counts)}")
+    for title, items in (("Cases now passing in full", regained_cases), ("Cases no longer passing in full", regressed_cases),
+                         ("Restored claim evidence", restored_evidence), ("Regressed claim evidence", regressed_evidence),
+                         ("Lost passing claims", lost_claims), ("Removed cases", missing_cases),
+                         ("Removed claims or release scope", lost_scope)):
+        summary.append(f"{title}: {', '.join(sorted(items)) or 'none'}")
+    return (summary + service_summary, restored_service or bool(restored_evidence or regained_cases),
+            service_regressed or bool(regressed_evidence or lost_claims or missing_cases or lost_scope or regressed_cases))
+
+
+def check_delta(previous_dir: Path, current_dir: Path, mode: str) -> tuple[str, int]:
+    comparisons = ([_check_mode(previous_dir / profile, current_dir / profile, profile) for profile in MODES]
+                   if mode == "all" else [_check_mode(previous_dir, current_dir, mode)])
+    lines = [line for summary, _, _ in comparisons for line in summary]
+    if any(regressed for _, _, regressed in comparisons):
+        return "\n".join(lines + ["\nRejected: regression or unverified evidence"]), 1
+    if not any(improved for _, improved, _ in comparisons):
+        return "\n".join(lines + ["\nRejected: No demonstrated improvement"]), 1
+    return "\n".join(lines + ["\nAccepted: Demonstrated improvement without regressions"]), 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
+    if len(args) == 4 and args[0] == "--check" and args[1] in (*MODES, "all"):
+        report, verdict = check_delta(Path(args[2]), Path(args[3]), args[1])
+        print_report_text(report, flush=True)
+        return verdict
     if len(args) == 2:
         print_report_text(render_delta(Path(args[0]), Path(args[1])), flush=True)
         return 0
     if len(args) == 3 and args[0] == "--write":
         write_scoreboards(Path(args[1]), Path(args[2]))
         return 0
-    print_report_text("usage: scoreboard.py <runA-dir> <runB-dir> | --write <reports-dir> <catalog-dir>",
+    print_report_text("usage: scoreboard.py <runA-dir> <runB-dir> | "
+                      "--check local|secured|all <baseline-dir> <candidate-dir> | --write <reports-dir> <catalog-dir>",
                       stream=sys.stderr, flush=True)
     return 2
 

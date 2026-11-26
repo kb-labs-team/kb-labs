@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { writeCheckResult } from './lib/check-result.mjs';
-import { access, readFile, readdir } from 'node:fs/promises';
+import { access, readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -46,8 +46,8 @@ async function main() {
 
   const workspaceRoot = path.resolve(input.workspaceRoot);
   const producerPath = path.join(workspaceRoot, 'studio/plugin-tools/dist/index.js');
-  const consumerPath = path.join(workspaceRoot, 'services/rest-api/core/dist/index.js');
-  const [{ STUDIO_WIDGET_OUTPUT_DIR }, { manifestToRegistryEntry }] = await Promise.all([
+  const consumerPath = path.join(workspaceRoot, 'shared/http/dist/index.js');
+  const [{ STUDIO_WIDGET_OUTPUT_DIR }, { manifestToStudioRegistryEntry }] = await Promise.all([
     import(pathToFileURL(producerPath).href),
     import(pathToFileURL(consumerPath).href),
   ]);
@@ -91,18 +91,28 @@ async function main() {
     }
     if (!manifest.studio) continue;
 
-    const registryEntry = manifestToRegistryEntry(manifest, packageRoot);
+    const registryEntry = manifestToStudioRegistryEntry(manifest, packageRoot);
     if (!registryEntry) {
       addIssue(pkg.name, manifestPath, 'Studio manifest did not produce a registry entry');
       continue;
     }
     comparedManifest = true;
 
-    const expectedBundleDir = path.resolve(packageRoot, STUDIO_WIDGET_OUTPUT_DIR);
-    if (path.resolve(registryEntry.widgetBundleDir) !== expectedBundleDir) {
-      addIssue(pkg.name, manifestPath, `registry resolves widgets to ${registryEntry.widgetBundleDir}; Studio preset declares ${expectedBundleDir}`);
+    const expectedRemoteEntryUrl = `/plugins/${manifest.id}/widgets/remoteEntry.js`;
+    let registryRemoteEntryUrl;
+    let registryRemoteEntryPath;
+    try {
+      registryRemoteEntryUrl = new URL(registryEntry.remoteEntryUrl, 'http://studio.invalid');
+      registryRemoteEntryPath = registryRemoteEntryUrl.pathname;
+    } catch (error) {
+      addIssue(pkg.name, manifestPath, `registry returned an invalid widget entry URL: ${error instanceof Error ? error.message : String(error)}`);
+      continue;
+    }
+    if (registryRemoteEntryPath !== expectedRemoteEntryUrl) {
+      addIssue(pkg.name, manifestPath, `registry resolves widgets to ${registryRemoteEntryPath}; expected ${expectedRemoteEntryUrl}`);
     }
 
+    const expectedBundleDir = path.resolve(packageRoot, STUDIO_WIDGET_OUTPUT_DIR);
     const studioConfigPath = path.join(packageRoot, 'rspack.studio.config.mjs');
     let studioConfig;
     const previousCwd = process.cwd();
@@ -133,12 +143,20 @@ async function main() {
       continue;
     }
     const expectedRemoteEntry = path.join(expectedBundleDir, 'remoteEntry.js');
+    const expectedRemoteEntryIsBuilt = remoteEntries.some(remoteEntry => path.resolve(remoteEntry) === expectedRemoteEntry);
+    if (expectedRemoteEntryIsBuilt) {
+      const expectedVersion = String(Math.floor((await stat(expectedRemoteEntry)).mtimeMs));
+      const registryVersion = registryRemoteEntryUrl.searchParams.get('v');
+      if (registryVersion !== expectedVersion) {
+        addIssue(pkg.name, manifestPath, `registry widget URL version is ${registryVersion ?? 'missing'}; expected ${expectedVersion} from ${expectedRemoteEntry}`);
+      }
+    }
     for (const remoteEntry of remoteEntries) {
       if (path.resolve(remoteEntry) !== expectedRemoteEntry) {
         addIssue(pkg.name, remoteEntry, `Studio bundle is outside the declared output directory ${expectedBundleDir}`);
       }
     }
-    if (!remoteEntries.some(remoteEntry => path.resolve(remoteEntry) === expectedRemoteEntry)) {
+    if (!expectedRemoteEntryIsBuilt) {
       addIssue(pkg.name, expectedRemoteEntry, `built Studio bundle is missing from the declared output directory ${expectedBundleDir}`);
     }
   }

@@ -112,7 +112,7 @@ describe('InProcessBackend — loggerOverride platform handoff', () => {
     vi.mocked(runInProcess).mockImplementation(async () => {
       const loader = useLoader('In-process phase');
       loader.start();
-      await new Promise((resolve) => setTimeout(resolve, 220));
+      await new Promise((resolve) => { setTimeout(resolve, 220); });
       loader.stop();
       return { data: 'ok', executionMeta: {} } as never;
     });

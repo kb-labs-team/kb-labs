@@ -9,27 +9,10 @@ on:
         description: Optional baseline label recorded in batch metadata; the build compares against the default branch
         required: false
         type: string
-  pull_request:
-    paths:
-      - '.github/workflows/journey-batch.yml'
-      - 'core/**'
-      - 'adapters/**'
-      - 'cli/**'
-      - 'plugins/**'
-      - 'sdk/**'
-      - 'shared/**'
-      - 'studio/**'
-      - 'tools/**'
-      - 'e2e/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
 
-# GitHub keeps one pending run per group, so isolate each PR and each dispatch.
+# Keep independent manual and batch runs from replacing one another.
 concurrency:
-  # A newer run for the same PR can replace its pending predecessor, but PRs,
-  # manual dispatches, and batch pushes cannot replace one another.
-  group: journey-batch-${{ github.event.pull_request.number || github.run_id }}
+  group: journey-batch-${{ github.run_id }}
   cancel-in-progress: false
 
 permissions:
@@ -47,7 +30,7 @@ jobs:
       JOURNEY_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       BATCH_PRODUCER_OUTPUT: .journey/batch/${{ github.run_id }}/producer
       BATCH_BASELINE: ${{ inputs.baseline || github.event.repository.default_branch }}
-      KB_DEVKIT_BASE_REF: ${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
+      KB_DEVKIT_BASE_REF: ${{ format('origin/{0}', github.event.repository.default_branch) }}
     steps:
       - id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
