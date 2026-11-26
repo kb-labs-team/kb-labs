@@ -129,6 +129,24 @@ class FullRunnableSelectionTests(unittest.TestCase):
                                                "project-registered", "service-api-session"])
         self.assertEqual(local_rows["installed platform bootstrap"]["states"], [])
 
+        domain_coverage = [{"mode": mode, "cases": [{"id": "S-002", "status": "active", "release": True,
+            "steps": [{"stepId": "S-002.1", "claims": [{"kind": "journey",
+            "source": "e2e/journey/service_runner.py"}]}]}]}
+            for mode in ("local", "secured")]
+        domain_selection = full_runnable_selection(domain_coverage, root, source_sha)
+        domain_rows = {row["runner"]: row for row in domain_selection["steps"]
+                       if row["name"] == "workflow execution journey"}
+        self.assertEqual(domain_rows["service-local:explore"]["kind"], "flow")
+        self.assertEqual(domain_rows["service-local:explore"]["claimIds"], ["S-002.1"])
+        self.assertEqual(domain_rows["service-local:explore"]["requires"], [
+            "service-local:explore|flow:workflow fixture lint"])
+        claim_owners = [row for row in domain_selection["steps"]
+                        if row["runner"] == "service-local:explore" and "S-002.1" in row["claimIds"]]
+        self.assertEqual([(row["kind"], row["name"]) for row in claim_owners],
+                         [("flow", "workflow execution journey")])
+        self.assertFalse(any(row["name"] == "initialize solo project workflow"
+                             for row in domain_selection["steps"]))
+
         mode_coverage = [{"mode": mode, "cases": [{"id": "S-045", "status": "active", "release": True,
             "steps": [{"stepId": "S-045.12", "claims": [{"kind": "journey",
             "source": "e2e/journey/service_runner.py"}]}]}]} for mode in ("local", "secured")]

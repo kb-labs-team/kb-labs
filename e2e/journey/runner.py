@@ -54,7 +54,7 @@ from release_index import channel_platform_version, stable_platform_version
 from service_steps import (FlowGraph, Journey, JourneyContractError, record_candidate_provenance, record_runner_failure,
                            run_selected_smoke,
                            record_runner_exception, replay_steps)
-from journey_domains import JourneyDomain, JourneyDomainRegistry
+from journey_domains import service_journey_domain_registry
 from redaction import redact_text
 from journey_dependencies import FLOW_GRAPH_STATE_PRODUCERS
 from journey_selection import (JourneySelectionError, active_journey_selection,
@@ -66,7 +66,7 @@ from steps.auth import (run_bootstrap_recovery_steps, run_cli_auth_forbidden, ru
 from steps.accounts import (run_api_token_lifecycle_steps, run_cli_logout_steps, run_invite_lifecycle_steps,
                             run_last_admin_guard_steps, run_password_and_session_steps)
 from platform_state_dump import PlatformStateDumpOnce, failure_dump_environment
-from scoreboard import release_claims_for_case, write_scoreboards
+from scoreboard import load_cases, release_claims_for_case, write_scoreboards
 from gateway_sessions import SavedGatewaySession
 from invocations import (
     CompletedProcess,
@@ -111,16 +111,6 @@ SELECTED_CLAIM_COMPLETION_CHECKED = False
 ACTIVE_OUTER_GRAPH: FlowGraph | None = None
 
 
-def workflow_journey_domain(claims: list[str]) -> JourneyDomain:
-    """Return the existing workflow route as one atomic runner callback."""
-    return JourneyDomain(
-        id="workflow-execution",
-        owner_name="workflow execution journey",
-        group="workflow",
-        capability="workflow",
-        cases=tuple([*claims, "S-007.5"]),
-        runners=("service-local:explore", "service-secured:explore"),
-    )
 ACTIVE_MAIN_ENV: dict[str, str] | None = None
 ACTIVE_LAUNCHER: str | None = None
 LAST_COMMAND_ENV: dict[str, str] = BASE_ENV.copy()
@@ -2464,28 +2454,37 @@ def _main(*, update_variant_runner=None):
                 fail(handoff_diagnostic)
                 invalidate_project_b_handoff(outer_graph, project_b_handoff)
                 export_graph_state_to_child_environment(outer_graph, service_env)
-        workflow_journey = Journey(mode, f"workflow-{mode}")
+        workflow_domains = service_journey_domain_registry()
+        workflow_domain = workflow_domains.get("workflow-execution")
+        if workflow_domain is None:
+            raise JourneyContractError("service journey registry omitted the workflow domain")
+        workflow_journey = Journey(
+            mode, f"workflow-{mode}",
+            selection=workflow_domain.child_selection(outer_graph.journey.selection_boundary))
         def restart_for_workflow_history() -> None:
             restart_shared_host(outer_graph, launcher, env, "workflow history checkpoint")
 
-        workflow_claims = ([f"S-002.{step}" for step in range(1, 7)]
-                           + [f"S-008.{step}" for step in range(1, 5)]
-                           + [f"S-027.{step}" for step in range(1, 4)]
-                           + [f"S-028.{step}" for step in range(1, 4)]
-                           + [f"S-143.{step}" for step in range(1, 5)])
-        workflow_domains = JourneyDomainRegistry()
-        workflow_domains.register(workflow_journey_domain(workflow_claims))
+        def execute_workflow_domain() -> Journey:
+            run_workflow_journey(
+                workflow_journey, env=service_env, project=PROJECT,
+                restart_host=restart_for_workflow_history)
+            return workflow_journey
+
+        workflow_release_claims = tuple(sorted({
+            claim
+            for case in load_cases(case_catalog_root())
+            if case.get("status") == "active" and case.get("release")
+            and (not case.get("modes") or mode in case.get("modes", []))
+            for claim in case.get("claims", [])
+            if claim in workflow_domain.cases
+        }))
         workflow_domains.run(
             outer_graph, "workflow-execution",
             lambda: run_workflow_with_host_boundary(
                 outer_graph, env=env, launcher=launcher,
-                action=lambda: run_workflow_journey(
-                    workflow_journey,
-                    env=service_env,
-                    project=PROJECT,
-                    restart_host=restart_for_workflow_history,
-                ),
+                action=execute_workflow_domain,
             ),
+            expected_claims=workflow_release_claims,
         )
         if isinstance(project_b_handoff, ProjectBRootValid):
             project_b_fixture_root = project_b_handoff.root

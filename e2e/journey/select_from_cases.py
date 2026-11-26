@@ -31,6 +31,7 @@ from journey_dependencies import Dependency, FLOW_GRAPH_STATE_PRODUCERS, owner_s
 from journey_selection import read_journey_selection, read_requested_cases
 from journey_resources import resource_root
 from journey_values import journey_value
+from journey_domains import service_journey_domain_registry
 
 
 RUNNER_CONTEXT_NAMES = {"FRONT", "FRONT_DOOR", "SCENARIO", "VARIANT", "mode",
@@ -887,15 +888,41 @@ def validate_journey_environment_reads(sources: set[str], root: Path) -> None:
 
 def full_runner_owner_plans(root: Path) -> dict[str, list[tuple[str, str]]]:
     plans = {}
+    domain_registry = service_journey_domain_registry()
     for selector, runner in RUNNERS.items():
         sources = set().union(*(_imported_journey_sources({source}, root)
                                 for source in runner.journey_sources))
         registrations = _source_step_declarations(sources, root)
-        selected = [
-            declaration for declaration in registrations.values()
-            if declaration.get("name") is not None
-            and _eligible_registration_locations(declaration, selector, getattr(runner, "mode", ""), root)
-        ]
+        domains = domain_registry.domains_for_runner(selector)
+        domain_sources = {source for domain in domains for source in domain.implementation_sources}
+        selected = []
+        for declaration in registrations.values():
+            if declaration.get("name") is None:
+                continue
+            locations = _eligible_registration_locations(
+                declaration, selector, getattr(runner, "mode", ""), root)
+            if not locations or all(location.get("source") in domain_sources for location in locations):
+                continue
+            selected.append(declaration)
+        existing = {(str(item.get("kind", "step")), item.get("name")) for item in selected}
+        for domain in domains:
+            key = ("flow", domain.owner_name)
+            if key in existing:
+                raise ValueError(f"{selector}: domain owner {domain.owner_name!r} duplicates a step declaration")
+            declaration = {"name": domain.owner_name, "kind": "flow", "requires": list(domain.requires),
+                           "role": "step", "runners": list(domain.runners),
+                           "domainId": domain.id, "domainCases": list(domain.cases),
+                           "capability": domain.capability, "locations": []}
+            if domain.position_after:
+                insertion = next((index + 1 for index, item in enumerate(selected)
+                                  if item.get("name") == domain.position_after), None)
+                if insertion is None:
+                    raise ValueError(
+                        f"{selector}: domain {domain.id!r} position anchor "
+                        f"{domain.position_after!r} is absent from the route")
+                selected.insert(insertion, declaration)
+            else:
+                selected.append(declaration)
         barriers = [declaration for declaration in selected
                     if declaration.get("plan_after_phase") == "all-steps"]
         teardowns = [declaration for declaration in selected
@@ -1180,6 +1207,7 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
 
     rows: list[dict] = []
     group_specs_by_selector: dict[str, list[dict]] = {}
+    domain_registry = service_journey_domain_registry()
     for selector in selectors:
         runner = RUNNERS[selector]
         if selector not in plans:
@@ -1205,16 +1233,34 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
             if not locations:
                 continue
             by_name[(str(declaration.get("kind", "step")), name)] = declaration, locations
+        domains_by_owner = {}
+        for domain in domain_registry.domains_for_runner(selector):
+            pseudo = {"name": domain.owner_name, "kind": "flow", "requires": list(domain.requires),
+                      "domainId": domain.id, "domainCases": list(domain.cases),
+                      "capability": domain.capability, "locations": []}
+            by_name[("flow", domain.owner_name)] = pseudo, []
+            domains_by_owner[("flow", domain.owner_name)] = domain
         owner_rows: dict[str, dict] = {}
         for kind, name in plans[selector]:
             selected_declaration = by_name.get((kind, name))
             if selected_declaration is None:
                 raise ValueError(f"{selector}: full route owner {kind}:{name} has no declaration")
             declaration, locations = selected_declaration
+            domain = domains_by_owner.get((kind, name))
             owner_id = f"{selector}|{kind}:{name}"
             case_ids: set[str] = set()
             capabilities: set[str] = set()
             areas: set[str] = set()
+            if domain is not None:
+                capabilities.add(domain.capability)
+                for case_id in domain.cases:
+                    active_case = active_steps[runner.mode].get(case_id)
+                    if active_case is None:
+                        continue
+                    case_ids.add(case_id)
+                    area = active_case.get("area")
+                    if isinstance(area, str) and area:
+                        areas.add(area)
             for location in locations:
                 source, line = location["source"], location["line"]
                 source_cases = _case_declarations(source, root).get(line, {})
@@ -1229,9 +1275,15 @@ def full_runnable_selection(results: list[dict], root: Path, source_sha: str) ->
                     area = active_case.get("area")
                     if isinstance(area, str) and area:
                         areas.add(area)
+            if domain is None:
+                domain_claims = {claim for registered in domain_registry.domains_for_runner(selector)
+                                 for claim in registered.cases}
+                case_ids.difference_update(domain_claims)
             required_ids: list[str] = []
             required_states: list[str] = []
-            for reference in (reference for location in locations for reference in location["requires"]):
+            references = list(domain.requires) if domain is not None else []
+            references.extend(reference for location in locations for reference in location["requires"])
+            for reference in references:
                 dependency = Dependency.parse(reference)
                 if dependency.kind == "state":
                     required_states.append(dependency.name)

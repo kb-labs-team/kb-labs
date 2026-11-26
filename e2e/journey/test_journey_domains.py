@@ -1,39 +1,74 @@
 from __future__ import annotations
 
 import unittest
+import json
 
-from journey_domains import JourneyDomain, JourneyDomainRegistry
-from journey_selection import JourneySelection
-from runner import workflow_journey_domain
+from journey_domains import (JourneyDomain, JourneyDomainRegistry,
+                             service_journey_domain_registry)
+from journey_selection import JourneySelection, read_journey_selection
 from service_steps import FlowGraph, Journey, JourneyContractError
 
 
 def selection_with_lease(steps: list[dict]) -> JourneySelection:
+    claim_ids = sorted({claim for step in steps if step["direct"]
+                        for claim in step.get("claimIds", [])})
     return JourneySelection(
-        requested=(), claims=frozenset(), owning_steps={}, prerequisite_steps=frozenset(),
+        requested=tuple(claim_ids), claims=frozenset(claim_ids),
+        owning_steps={step["name"]: tuple(step.get("claimIds", [])) for step in steps
+                      if step["direct"] and step.get("claimIds")}, prerequisite_steps=frozenset(),
         prerequisite_flows=frozenset(), capabilities=frozenset(),
         runner_selector="service-local:explore", requested_runners="",
-        execution_lease={"mode": "local", "steps": steps,
+        execution_lease={"mode": "local", "claimIds": claim_ids, "steps": steps,
                          "directStepIds": [step["id"] for step in steps if step["direct"]]},
     )
+
+
+def strict_workflow_selection(selector: str = "service-local:explore",
+                              claim: str = "S-002.1") -> JourneySelection:
+    owner_name = "workflow execution journey"
+    owner_id = f"{selector}|flow:{owner_name}"
+    lease = {
+        "schema": "kb.devkit-journey-shard-lease/v1", "planId": "plan", "runId": "run",
+        "sourceSHA": "a" * 40, "shardId": "local-01", "attemptId": "attempt-1",
+        "mode": "local", "runner": selector, "claimIds": [claim],
+        "directStepIds": [owner_id], "directStepNames": [owner_name],
+        "selectedStepNames": ["workflow fixture lint", owner_name],
+        "steps": [
+            {"id": f"{selector}|flow:workflow fixture lint", "name": "workflow fixture lint",
+             "kind": "flow", "claimIds": [], "capabilities": ["workflow"], "states": [],
+             "direct": False},
+            {"id": owner_id, "name": owner_name, "kind": "flow",
+             "claimIds": [claim], "capabilities": ["workflow"], "states": [],
+             "direct": True},
+        ],
+    }
+    return read_journey_selection({
+        "KB_JOURNEY_EXECUTION_LEASE_JSON": json.dumps(lease),
+        "KB_JOURNEY_ONLY": selector,
+        "KB_JOURNEY_RUNNER_SELECTOR": selector,
+    }, strict=True)
+
+
+def outer_with_workflow_prerequisite(selection: JourneySelection, run_id: str) -> Journey:
+    journey = Journey("local", run_id, selection=selection)
+    journey.record_flow("workflow fixture lint", "PASS")
+    return journey
 
 
 class JourneyDomainRegistryTests(unittest.TestCase):
     # case: S-262.20
     def test_workflow_domain_matches_the_existing_full_route_identity(self):
-        workflow_claims = ([f"S-002.{step}" for step in range(1, 7)]
-                           + [f"S-008.{step}" for step in range(1, 5)]
-                           + [f"S-027.{step}" for step in range(1, 4)]
-                           + [f"S-028.{step}" for step in range(1, 4)]
-                           + [f"S-143.{step}" for step in range(1, 5)])
-
-        domain = workflow_journey_domain(workflow_claims)
+        registry = service_journey_domain_registry()
+        domain = registry.get("workflow-execution")
+        self.assertIsNotNone(domain)
 
         self.assertEqual(domain.id, "workflow-execution")
         self.assertEqual(domain.owner_name, "workflow execution journey")
         self.assertEqual(domain.group, "workflow")
         self.assertEqual(domain.capability, "workflow")
-        self.assertEqual(domain.cases, tuple([*workflow_claims, "S-007.5"]))
+        self.assertIn("S-006.3", domain.cases)
+        self.assertIn("S-044.9", domain.cases)
+        self.assertNotIn("S-041.17", domain.cases)
         self.assertEqual(domain.runners, ("service-local:explore", "service-secured:explore"))
 
     # case: S-262.20
@@ -59,7 +94,8 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         domain = JourneyDomain("workflow-execution", "workflow execution journey", "workflow",
                                "workflow", ("S-002.1",), ("service-local:explore",))
         registry.register(domain)
-        lease_step = {"id": "flow:other", "kind": "flow", "name": "other flow", "direct": True}
+        lease_step = {"id": "service-local:explore|flow:other", "kind": "flow",
+                      "name": "other flow", "claimIds": ["S-002.1"], "direct": True}
         graph = FlowGraph(Journey("local", "domain-lease-missing",
                                   selection=selection_with_lease([lease_step])), {})
         events: list[str] = []
@@ -71,19 +107,18 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         self.assertEqual(events, [])
 
     # case: S-262.20
-    def test_lease_with_an_unrelated_direct_owner_is_rejected_before_callback(self):
+    def test_lease_with_foreign_claim_on_domain_owner_is_rejected_before_callback(self):
         registry = JourneyDomainRegistry()
         domain = JourneyDomain("workflow-execution", "workflow execution journey", "workflow",
                                "workflow", ("S-002.1",), ("service-local:explore",))
         registry.register(domain)
-        direct_flow = {"id": "flow:workflow execution journey", "kind": "flow",
-                       "name": domain.owner_name, "direct": True}
-        foreign = {"id": "step:foreign", "kind": "step", "name": "foreign", "direct": True}
+        direct_flow = {"id": "service-local:explore|flow:workflow execution journey", "kind": "flow",
+                       "name": domain.owner_name, "claimIds": ["S-002.1", "S-999.1"], "direct": True}
         graph = FlowGraph(Journey("local", "domain-lease-foreign",
-                                  selection=selection_with_lease([direct_flow, foreign])), {})
+                                  selection=selection_with_lease([direct_flow])), {})
         calls: list[str] = []
 
-        with self.assertRaisesRegex(JourneyContractError, "only the atomic direct owner"):
+        with self.assertRaisesRegex(JourneyContractError, "claims do not match"):
             registry.run(graph, domain.id, lambda: calls.append("callback"))
 
         self.assertEqual(calls, [])
@@ -94,15 +129,15 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         domain = JourneyDomain("workflow-execution", "workflow execution journey", "workflow",
                                "workflow", ("S-002.1",), ("service-local:explore",))
         registry.register(domain)
-        direct = {"id": "flow:workflow execution journey", "kind": "flow",
-                  "name": domain.owner_name, "direct": True}
+        direct = {"id": "service-local:explore|flow:workflow execution journey", "kind": "flow",
+                  "name": domain.owner_name, "claimIds": ["S-002.1"], "direct": True}
         graph = FlowGraph(Journey("local", "domain-lease-valid",
                                   selection=selection_with_lease([direct])), {})
         events: list[str] = []
 
         status = registry.run(
             graph, domain.id,
-            lambda: (events.append("callback"), (_ for _ in ()).throw(RuntimeError("case failed")))[1],
+            lambda: self._raise_after_callback(events),
             setup=lambda: events.append("setup"), cleanup=lambda: events.append("cleanup"),
         )
 
@@ -110,6 +145,63 @@ class JourneyDomainRegistryTests(unittest.TestCase):
         self.assertEqual(events, ["setup", "callback", "cleanup"])
         self.assertEqual([row.name for row in graph.journey.steps], [domain.owner_name])
         self.assertEqual(graph.journey.steps[0].status, "FAIL")
+
+    @staticmethod
+    def _raise_after_callback(events: list[str]):
+        events.append("callback")
+        raise RuntimeError("case failed")
+
+    # case: S-262.20
+    def test_strict_lease_runs_real_child_assertion_without_step_filtering(self):
+        registry = service_journey_domain_registry()
+        domain = registry.get("workflow-execution")
+        selection = strict_workflow_selection()
+        outer = outer_with_workflow_prerequisite(selection, "domain-strict-lease")
+        graph = FlowGraph(outer, {})
+        executed: list[str] = []
+
+        def run_child():
+            child = Journey("local", "workflow-child", selection=domain.child_selection(selection))
+            result = child.step("real workflow assertion", "workflow",
+                                lambda: executed.append("assertion"), cases=["S-002.1"])
+            self.assertEqual(result.status, "PASS")
+            self.assertFalse(child.selection_boundary.active)
+            return child
+
+        status = registry.run(graph, domain.id, run_child)
+
+        self.assertEqual(status, "PASS")
+        self.assertEqual(executed, ["assertion"])
+        self.assertEqual(graph.journey.flow_events[-1]["status"], "PASS")
+
+    # case: S-262.20
+    def test_domain_rejects_pass_child_with_missing_claim_evidence(self):
+        registry = service_journey_domain_registry()
+        domain = registry.get("workflow-execution")
+        selection = strict_workflow_selection()
+        graph = FlowGraph(outer_with_workflow_prerequisite(selection, "domain-missing-child-evidence"), {})
+
+        status = registry.run(
+            graph, domain.id,
+            lambda: Journey("local", "workflow-child-empty",
+                            selection=domain.child_selection(selection)),
+        )
+
+        self.assertEqual(status, "FAIL")
+        self.assertIn("lacks PASS child evidence", graph.journey.steps[-1].message)
+
+    # case: S-262.20
+    def test_domain_rejects_foreign_runner_before_callback(self):
+        registry = service_journey_domain_registry()
+        domain = registry.get("workflow-execution")
+        selection = strict_workflow_selection("agent:commit")
+        graph = FlowGraph(outer_with_workflow_prerequisite(selection, "domain-foreign-runner"), {})
+        calls: list[str] = []
+
+        with self.assertRaisesRegex(JourneyContractError, "not authorized"):
+            registry.run(graph, domain.id, lambda: calls.append("callback"))
+
+        self.assertEqual(calls, [])
 
     # case: S-262.20
     def test_registry_rejects_duplicate_and_unknown_domains(self):
