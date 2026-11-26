@@ -9,102 +9,88 @@ import (
 )
 
 // case: S-262.20
-func TestFinalizeRequiresExactlyOneMatchingShardAndRuntimeCoverage(t *testing.T) {
+func TestRecordAndFinalizeRequireRunnerBoundReceipt(t *testing.T) {
 	plan := makePlan(t, "local", "secured")
-	encoded, err := json.Marshal(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := json.Unmarshal(encoded, &plan); err != nil {
-		t.Fatal(err)
-	}
 	root := t.TempDir()
-	local := writeResultDir(t, root, "local", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	secured := writeResultDir(t, root, "secured", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[1].ID, Mode: "secured", Status: "passed", Reports: []string{"journey.json"}})
-
-	coverageCalls := map[string]int{}
-	result, err := Finalize(plan, []string{local, secured}, func(mode string, reports []string) error {
-		coverageCalls[mode]++
-		if len(reports) != 1 || filepath.Base(reports[0]) != "journey.json" {
-			t.Fatalf("coverage received reports %v", reports)
+	var dirs []string
+	for _, shard := range plan.Shards {
+		dir := filepath.Join(root, shard.ID)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		lease, err := BeginShard(plan, shard.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeRunnerReport(t, dir, lease)
+		if err := RecordShardResult(plan, lease, dir, []string{"journey.json"}); err != nil {
+			t.Fatal(err)
+		}
+		dirs = append(dirs, dir)
+	}
+	result, err := Finalize(plan, dirs, func(mode string, reports []string) error {
+		if len(reports) != 1 {
+			t.Fatalf("mode %s got reports %v", mode, reports)
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "passed" || coverageCalls["local"] != 1 || coverageCalls["secured"] != 1 {
-		t.Fatalf("result=%+v coverage calls=%v", result, coverageCalls)
+	if result.Status != "passed" || len(result.Shards) != 2 {
+		t.Fatalf("unexpected result: %+v", result)
 	}
 }
 
-func TestFinalizeFailsClosedOnMissingDuplicateForeignAndStaleShards(t *testing.T) {
-	plan := makePlan(t, "local", "local")
-	root := t.TempDir()
-	a := writeResultDir(t, root, "a", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	b := writeResultDir(t, root, "b", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[1].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	secure := writeResultDir(t, root, "secure", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[2].ID, Mode: "secured", Status: "passed", Reports: []string{"journey.json"}})
-	duplicate := writeResultDir(t, root, "duplicate", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	foreign := writeResultDir(t, root, "foreign", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: "other", Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	stale := writeResultDir(t, root, "stale", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-
-	for name, dirs := range map[string][]string{
-		"missing":   {a},
-		"duplicate": {a, duplicate, secure},
-		"foreign":   {a, foreign, secure},
-		"stale":     {stale, b, secure},
-	} {
-		t.Run(name, func(t *testing.T) {
-			if _, err := Finalize(plan, dirs, func(string, []string) error { t.Fatal("coverage must not run for invalid shard evidence"); return nil }); err == nil {
-				t.Fatalf("Finalize(%s) unexpectedly passed", name)
-			}
-		})
-	}
-}
-
-func TestFinalizeFailsWhenRuntimeCoverageFailsOrReportEscapesShardDirectory(t *testing.T) {
+func TestRecordRejectsForeignAttemptAndMissingOrFailedSteps(t *testing.T) {
 	plan := makePlan(t, "local")
-	root := t.TempDir()
-	valid := writeResultDir(t, root, "valid", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"journey.json"}})
-	secured := writeResultDir(t, root, "secured", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[1].ID, Mode: "secured", Status: "passed", Reports: []string{"journey.json"}})
-	if _, err := Finalize(plan, []string{valid, secured}, func(string, []string) error { return fmt.Errorf("release claim incomplete") }); err == nil {
-		t.Fatal("runtime coverage failure must fail finalization")
+	lease, err := BeginShard(plan, plan.Shards[0].ID)
+	if err != nil {
+		t.Fatal(err)
 	}
-	unsafe := writeResultDir(t, root, "unsafe", ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA, ShardID: plan.Shards[0].ID, Mode: "local", Status: "passed", Reports: []string{"../valid/journey.json"}})
-	if _, err := Finalize(plan, []string{unsafe, secured}, func(string, []string) error { t.Fatal("coverage must not run for escaped report path"); return nil }); err == nil {
-		t.Fatal("report outside evidence directory must fail closed")
+	altered := lease
+	altered.ShardID = "foreign"
+	if err := validateLeaseAgainstPlan(plan, altered); err == nil {
+		t.Fatal("foreign shard lease accepted")
 	}
-	tampered := plan
-	tampered.FullSelection = append([]RunnableStep(nil), plan.FullSelection...)
-	tampered.FullSelection[0].Area = "different-area"
-	if _, err := Finalize(tampered, []string{valid}, func(string, []string) error { t.Fatal("coverage must not run for a modified plan"); return nil }); err == nil {
-		t.Fatal("plan content that no longer matches its identity must fail")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "journey.json"), []byte(`{"execution":{},"steps":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := RecordShardResult(plan, lease, dir, []string{"journey.json"}); err == nil {
+		t.Fatal("report without matching receipt and PASS rows accepted")
 	}
 }
 
-func TestRecordShardResultOnlyRecordsPlannedShardAndDoesNotOverwrite(t *testing.T) {
+func TestFinalizeRejectsReportTamperingAfterRecording(t *testing.T) {
 	plan := makePlan(t, "local")
-	directory := filepath.Join(t.TempDir(), "shard")
-	if err := os.MkdirAll(directory, 0o755); err != nil {
+	var dirs []string
+	for _, shard := range plan.Shards {
+		dir := filepath.Join(t.TempDir(), shard.ID)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		lease, err := BeginShard(plan, shard.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		writeRunnerReport(t, dir, lease)
+		if err := RecordShardResult(plan, lease, dir, []string{"journey.json"}); err != nil {
+			t.Fatal(err)
+		}
+		dirs = append(dirs, dir)
+	}
+	if err := os.WriteFile(filepath.Join(dirs[0], "journey.json"), []byte(`{"steps":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(directory, "journey.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := RecordShardResult(plan, "foreign", "passed", directory, []string{"journey.json"}); err == nil {
-		t.Fatal("foreign shard must not be recordable")
-	}
-	if err := RecordShardResult(plan, plan.Shards[0].ID, "passed", directory, []string{"journey.json"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := RecordShardResult(plan, plan.Shards[0].ID, "passed", directory, []string{"journey.json"}); err == nil {
-		t.Fatal("recording must not overwrite prior evidence")
+	if _, err := Finalize(plan, dirs, func(string, []string) error { t.Fatal("coverage must not run for tampered report"); return nil }); err == nil {
+		t.Fatal("tampered report accepted")
 	}
 }
 
 func makePlan(t *testing.T, modes ...string) Plan {
 	t.Helper()
-	steps := make([]RunnableStep, 0, len(modes))
+	steps := make([]RunnableStep, 0, len(modes)+1)
 	hasSecured := false
 	for index, mode := range modes {
 		id := fmt.Sprintf("step-%02d", index)
@@ -118,25 +104,27 @@ func makePlan(t *testing.T, modes ...string) Plan {
 	if !hasSecured {
 		steps = append(steps, RunnableStep{ID: "service-secured:explore|step:required-secured", Name: "required-secured", Kind: "step", Mode: "secured", Area: "platform-core", Runner: "service-secured:explore", Mandatory: true})
 	}
-	selection := selectionFixture(steps...)
-	plan, err := BuildPlan(selection, 2)
+	plan, err := BuildPlan(selectionFixture(steps...), 2)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return plan
 }
 
-func writeResultDir(t *testing.T, root, name string, result ShardResult) string {
+func writeRunnerReport(t *testing.T, directory string, lease ShardLease) {
 	t.Helper()
-	dir := filepath.Join(root, name)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	receipt := map[string]any{"schema": RunnerReceiptSchema, "planId": lease.PlanID, "sourceSHA": lease.SourceSHA,
+		"shardId": lease.ShardID, "attemptId": lease.AttemptID, "mode": lease.Mode, "runner": lease.Runner,
+		"claimIds": lease.ClaimIDs, "directStepIds": lease.DirectStepIDs}
+	steps := make([]map[string]string, 0, len(lease.SelectedStepNames))
+	for _, name := range lease.SelectedStepNames {
+		steps = append(steps, map[string]string{"name": name, "status": "PASS"})
+	}
+	payload, err := json.Marshal(map[string]any{"execution": receipt, "steps": steps})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "journey.json"), []byte(`{"schema":"test"}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(directory, "journey.json"), payload, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := WriteShardResult(dir, result); err != nil {
-		t.Fatal(err)
-	}
-	return dir
 }

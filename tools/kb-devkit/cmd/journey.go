@@ -18,7 +18,7 @@ var journeyPlanFile string
 var journeyShardsPerMode int
 var journeyEvidenceDirs []string
 var journeyShardID string
-var journeyShardStatus string
+var journeyLeaseFile string
 var journeyReportPaths []string
 
 var journeyCmd = &cobra.Command{
@@ -107,8 +107,8 @@ var journeyRecordCmd = &cobra.Command{
 	Short: "Write one shard result manifest into its isolated evidence directory",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, _ []string) error {
-		if journeyPlanFile == "" || journeyShardID == "" || len(journeyEvidenceDirs) != 1 || len(journeyReportPaths) == 0 {
-			return fmt.Errorf("--plan-file, --shard-id, one --evidence-dir, and at least one --report are required")
+		if journeyPlanFile == "" || journeyLeaseFile == "" || len(journeyEvidenceDirs) != 1 || len(journeyReportPaths) == 0 {
+			return fmt.Errorf("--plan-file, --lease-file, one --evidence-dir, and at least one --report are required")
 		}
 		data, err := os.ReadFile(journeyPlanFile)
 		if err != nil {
@@ -118,10 +118,51 @@ var journeyRecordCmd = &cobra.Command{
 		if err := json.Unmarshal(data, &plan); err != nil {
 			return fmt.Errorf("parse journey plan: %w", err)
 		}
-		if err := journey.RecordShardResult(plan, journeyShardID, journeyShardStatus, journeyEvidenceDirs[0], journeyReportPaths); err != nil {
+		leaseBytes, err := os.ReadFile(journeyLeaseFile)
+		if err != nil {
+			return fmt.Errorf("read shard execution lease: %w", err)
+		}
+		var lease journey.ShardLease
+		if err := json.Unmarshal(leaseBytes, &lease); err != nil {
+			return fmt.Errorf("parse shard execution lease: %w", err)
+		}
+		if err := journey.RecordShardResult(plan, lease, journeyEvidenceDirs[0], journeyReportPaths); err != nil {
 			return err
 		}
-		clikitcommand.Printf("Recorded shard %s for plan %s\n", journeyShardID, plan.ID)
+		clikitcommand.Printf("Recorded shard %s for plan %s\n", lease.ShardID, plan.ID)
+		return nil
+	},
+}
+
+var journeyBeginCmd = &cobra.Command{
+	Use:   "begin",
+	Short: "Create a one-use execution lease for a planned shard",
+	Args:  cobra.NoArgs,
+	RunE: func(cmd *cobra.Command, _ []string) error {
+		if journeyPlanFile == "" || journeyShardID == "" || journeyLeaseFile == "" {
+			return fmt.Errorf("--plan-file, --shard-id, and --lease-file are required")
+		}
+		data, err := os.ReadFile(journeyPlanFile)
+		if err != nil {
+			return fmt.Errorf("read journey plan: %w", err)
+		}
+		var plan journey.Plan
+		if err := json.Unmarshal(data, &plan); err != nil {
+			return fmt.Errorf("parse journey plan: %w", err)
+		}
+		lease, err := journey.BeginShard(plan, journeyShardID)
+		if err != nil {
+			return err
+		}
+		if err := writeJourneyJSON(journeyLeaseFile, lease); err != nil {
+			return err
+		}
+		if jsonMode {
+			encoded, _ := json.Marshal(lease)
+			clikitcommand.Printf("%s\n", encoded)
+		} else {
+			clikitcommand.Printf("Execution lease %s for shard %s\n", lease.AttemptID, lease.ShardID)
+		}
 		return nil
 	},
 }
@@ -132,11 +173,13 @@ func init() {
 	journeyResultCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
 	journeyResultCmd.Flags().StringArrayVar(&journeyEvidenceDirs, "evidence-dir", nil, "one shard's isolated evidence directory; repeat once per planned shard")
 	journeyRecordCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
-	journeyRecordCmd.Flags().StringVar(&journeyShardID, "shard-id", "", "planned shard identity")
-	journeyRecordCmd.Flags().StringVar(&journeyShardStatus, "status", "passed", "shard execution status: passed or failed")
+	journeyRecordCmd.Flags().StringVar(&journeyLeaseFile, "lease-file", "", "runner-bound execution lease JSON")
 	journeyRecordCmd.Flags().StringArrayVar(&journeyEvidenceDirs, "evidence-dir", nil, "this shard's isolated evidence directory")
 	journeyRecordCmd.Flags().StringArrayVar(&journeyReportPaths, "report", nil, "report path relative to the evidence directory; repeat for each report")
-	journeyCmd.AddCommand(journeyPlanCmd, journeyRecordCmd, journeyResultCmd)
+	journeyBeginCmd.Flags().StringVar(&journeyPlanFile, "plan-file", "", "the immutable journey plan JSON")
+	journeyBeginCmd.Flags().StringVar(&journeyShardID, "shard-id", "", "planned shard identity")
+	journeyBeginCmd.Flags().StringVar(&journeyLeaseFile, "lease-file", "", "write the execution lease to this new file")
+	journeyCmd.AddCommand(journeyPlanCmd, journeyBeginCmd, journeyRecordCmd, journeyResultCmd)
 	rootCmd.AddCommand(journeyCmd)
 }
 

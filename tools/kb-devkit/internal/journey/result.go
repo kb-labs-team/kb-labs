@@ -2,6 +2,9 @@ package journey
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,15 +14,46 @@ import (
 )
 
 const shardResultFilename = "shard-result.json"
+const (
+	ShardLeaseSchema    = "kb.devkit-journey-shard-lease/v1"
+	RunnerReceiptSchema = "kb.devkit-journey-runner-receipt/v1"
+)
+
+type ExecutionStep struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Kind     string   `json:"kind"`
+	ClaimIDs []string `json:"claimIds"`
+	Direct   bool     `json:"direct"`
+}
+
+type ShardLease struct {
+	Schema            string          `json:"schema"`
+	PlanID            string          `json:"planId"`
+	SourceSHA         string          `json:"sourceSHA"`
+	ShardID           string          `json:"shardId"`
+	AttemptID         string          `json:"attemptId"`
+	Mode              string          `json:"mode"`
+	Runner            string          `json:"runner"`
+	ClaimIDs          []string        `json:"claimIds"`
+	DirectStepIDs     []string        `json:"directStepIds"`
+	DirectStepNames   []string        `json:"directStepNames"`
+	SelectedStepNames []string        `json:"selectedStepNames"`
+	Steps             []ExecutionStep `json:"steps"`
+}
 
 type ShardResult struct {
-	Schema    string   `json:"schema"`
-	PlanID    string   `json:"planId"`
-	SourceSHA string   `json:"sourceSHA"`
-	ShardID   string   `json:"shardId"`
-	Mode      string   `json:"mode"`
-	Status    string   `json:"status"`
-	Reports   []string `json:"reports"`
+	Schema        string            `json:"schema"`
+	PlanID        string            `json:"planId"`
+	SourceSHA     string            `json:"sourceSHA"`
+	ShardID       string            `json:"shardId"`
+	Mode          string            `json:"mode"`
+	Status        string            `json:"status"`
+	Reports       []string          `json:"reports"`
+	ReportDigests map[string]string `json:"reportDigests"`
+	AttemptID     string            `json:"attemptId"`
+	Runner        string            `json:"runner"`
+	DirectStepIDs []string          `json:"directStepIds"`
 }
 
 type Result struct {
@@ -63,19 +97,152 @@ func WriteShardResult(directory string, result ShardResult) error {
 	return nil
 }
 
-// RecordShardResult creates evidence for a shard only when that shard belongs
-// to the supplied immutable plan. The manifest identity is copied from plan.
-func RecordShardResult(plan Plan, shardID, status, directory string, reports []string) error {
+// BeginShard creates a unique lease before execution. The runner echoes this
+// lease into its report, binding result evidence to this execution attempt.
+func BeginShard(plan Plan, shardID string) (ShardLease, error) {
 	if err := validatePlan(plan); err != nil {
-		return err
+		return ShardLease{}, err
 	}
-	for _, shard := range plan.Shards {
-		if shard.ID == shardID {
-			return WriteShardResult(directory, ShardResult{Schema: ShardResultSchema, PlanID: plan.ID,
-				SourceSHA: plan.SourceSHA, ShardID: shard.ID, Mode: shard.Mode, Status: status, Reports: reports})
+	var shard *Shard
+	for index := range plan.Shards {
+		if plan.Shards[index].ID == shardID {
+			shard = &plan.Shards[index]
+			break
 		}
 	}
-	return fmt.Errorf("shard %q is not part of plan %s", shardID, plan.ID)
+	if shard == nil {
+		return ShardLease{}, fmt.Errorf("shard %q is not part of plan %s", shardID, plan.ID)
+	}
+	if len(shard.Runners) != 1 {
+		return ShardLease{}, fmt.Errorf("shard %q must have exactly one runner owner", shardID)
+	}
+	nonce := make([]byte, 24)
+	if _, err := rand.Read(nonce); err != nil {
+		return ShardLease{}, fmt.Errorf("create shard attempt identity: %w", err)
+	}
+	return leaseForShard(plan, *shard, hex.EncodeToString(nonce)), nil
+}
+
+// RecordShardResult verifies the runner-generated execution receipt and PASS
+// rows before creating a digest-bound manifest. A caller cannot supply status.
+func RecordShardResult(plan Plan, lease ShardLease, directory string, reports []string) error {
+	if err := validateLeaseAgainstPlan(plan, lease); err != nil {
+		return err
+	}
+	if len(reports) == 0 {
+		return fmt.Errorf("at least one runner report is required")
+	}
+	if len(uniqueSorted(reports)) != len(reports) {
+		return fmt.Errorf("runner report list contains an empty or duplicate path")
+	}
+	result := ShardResult{Schema: ShardResultSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA,
+		ShardID: lease.ShardID, Mode: lease.Mode, Status: "passed", Reports: uniqueSorted(reports),
+		ReportDigests: map[string]string{}, AttemptID: lease.AttemptID, Runner: lease.Runner,
+		DirectStepIDs: lease.DirectStepIDs}
+	reportPayloads := make([][]byte, 0, len(result.Reports))
+	for _, relative := range result.Reports {
+		path, err := safeReportPath(directory, relative)
+		if err != nil {
+			return fmt.Errorf("runner report: %w", err)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("read runner report: %w", err)
+		}
+		digest := sha256.Sum256(data)
+		result.ReportDigests[relative] = hex.EncodeToString(digest[:])
+		reportPayloads = append(reportPayloads, data)
+	}
+	if err := validateRunnerReports(lease, reportPayloads); err != nil {
+		return err
+	}
+	return WriteShardResult(directory, result)
+}
+
+func leaseForShard(plan Plan, shard Shard, attemptID string) ShardLease {
+	lease := ShardLease{Schema: ShardLeaseSchema, PlanID: plan.ID, SourceSHA: plan.SourceSHA,
+		ShardID: shard.ID, AttemptID: attemptID, Mode: shard.Mode, Runner: shard.Runners[0]}
+	direct := map[string]bool{}
+	for _, id := range shard.DirectStepIDs {
+		direct[id] = true
+	}
+	for _, planned := range shard.Steps {
+		step := planned.RunnableStep
+		lease.Steps = append(lease.Steps, ExecutionStep{ID: step.ID, Name: step.Name, Kind: step.Kind,
+			ClaimIDs: step.ClaimIDs, Direct: direct[step.ID]})
+		if direct[step.ID] {
+			lease.DirectStepIDs = append(lease.DirectStepIDs, step.ID)
+			lease.DirectStepNames = append(lease.DirectStepNames, step.Name)
+			lease.ClaimIDs = append(lease.ClaimIDs, step.ClaimIDs...)
+		}
+		lease.SelectedStepNames = append(lease.SelectedStepNames, step.Name)
+	}
+	lease.DirectStepIDs = uniqueSorted(lease.DirectStepIDs)
+	lease.DirectStepNames = uniqueSorted(lease.DirectStepNames)
+	lease.SelectedStepNames = uniqueSorted(lease.SelectedStepNames)
+	lease.ClaimIDs = uniqueSorted(lease.ClaimIDs)
+	sort.Slice(lease.Steps, func(i, j int) bool { return lease.Steps[i].ID < lease.Steps[j].ID })
+	return lease
+}
+
+func validateLeaseAgainstPlan(plan Plan, lease ShardLease) error {
+	if lease.Schema != ShardLeaseSchema || lease.PlanID != plan.ID || lease.SourceSHA != plan.SourceSHA || lease.AttemptID == "" {
+		return fmt.Errorf("execution lease identity does not match the immutable plan")
+	}
+	for _, shard := range plan.Shards {
+		if shard.ID != lease.ShardID {
+			continue
+		}
+		expected := leaseForShard(plan, shard, lease.AttemptID)
+		a, _ := json.Marshal(expected)
+		b, _ := json.Marshal(lease)
+		if !bytes.Equal(a, b) {
+			return fmt.Errorf("execution lease contents do not match planned shard %q", shard.ID)
+		}
+		return nil
+	}
+	return fmt.Errorf("execution lease refers to unplanned shard %q", lease.ShardID)
+}
+
+func validateRunnerReports(lease ShardLease, reports [][]byte) error {
+	type reportStep struct {
+		Name   string `json:"name"`
+		Status string `json:"status"`
+	}
+	type receipt struct {
+		Schema        string   `json:"schema"`
+		PlanID        string   `json:"planId"`
+		SourceSHA     string   `json:"sourceSHA"`
+		ShardID       string   `json:"shardId"`
+		AttemptID     string   `json:"attemptId"`
+		Mode          string   `json:"mode"`
+		Runner        string   `json:"runner"`
+		ClaimIDs      []string `json:"claimIds"`
+		DirectStepIDs []string `json:"directStepIds"`
+	}
+	for _, payload := range reports {
+		var document struct {
+			Execution receipt      `json:"execution"`
+			Steps     []reportStep `json:"steps"`
+		}
+		if err := json.Unmarshal(payload, &document); err != nil {
+			return fmt.Errorf("parse runner report: %w", err)
+		}
+		r := document.Execution
+		if r.Schema != RunnerReceiptSchema || r.PlanID != lease.PlanID || r.SourceSHA != lease.SourceSHA || r.ShardID != lease.ShardID || r.AttemptID != lease.AttemptID || r.Mode != lease.Mode || r.Runner != lease.Runner || !equalStrings(uniqueSorted(r.ClaimIDs), lease.ClaimIDs) || !equalStrings(uniqueSorted(r.DirectStepIDs), lease.DirectStepIDs) {
+			return fmt.Errorf("runner report receipt does not match the execution lease")
+		}
+		statuses := map[string][]string{}
+		for _, step := range document.Steps {
+			statuses[step.Name] = append(statuses[step.Name], step.Status)
+		}
+		for _, name := range lease.SelectedStepNames {
+			if values := statuses[name]; len(values) != 1 || values[0] != "PASS" {
+				return fmt.Errorf("runner report is missing exactly one PASS row for selected step %q", name)
+			}
+		}
+	}
+	return nil
 }
 
 // Finalize validates one manifest per planned shard and invokes the supplied
@@ -150,6 +317,9 @@ func Finalize(plan Plan, evidenceDirectories []string, evaluateCoverage func(mod
 		if shardResult.Status != "passed" {
 			return Result{}, fmt.Errorf("shard %q did not pass: status %q", shardResult.ShardID, shardResult.Status)
 		}
+		if len(planned.Runners) != 1 || shardResult.Runner != planned.Runners[0] || shardResult.AttemptID == "" || !equalStrings(uniqueSorted(shardResult.DirectStepIDs), planned.DirectStepIDs) {
+			return Result{}, fmt.Errorf("shard %q execution identity does not match its planned runner and steps", shardResult.ShardID)
+		}
 		seenShards[shardResult.ShardID] = true
 		for _, relative := range shardResult.Reports {
 			path, err := safeReportPath(absolute, relative)
@@ -158,6 +328,18 @@ func Finalize(plan Plan, evidenceDirectories []string, evaluateCoverage func(mod
 			}
 			if seenReports[path] {
 				return Result{}, fmt.Errorf("report file is referenced by multiple shards: %s", path)
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return Result{}, fmt.Errorf("read shard %q report: %w", shardResult.ShardID, err)
+			}
+			digest := sha256.Sum256(data)
+			if shardResult.ReportDigests[relative] != hex.EncodeToString(digest[:]) {
+				return Result{}, fmt.Errorf("shard %q report digest changed after recording", shardResult.ShardID)
+			}
+			lease := leaseForShard(plan, planned, shardResult.AttemptID)
+			if err := validateRunnerReports(lease, [][]byte{data}); err != nil {
+				return Result{}, fmt.Errorf("shard %q report: %w", shardResult.ShardID, err)
 			}
 			seenReports[path] = true
 			result.Coverage[shardResult.Mode] = append(result.Coverage[shardResult.Mode], path)
@@ -213,6 +395,14 @@ func validateShardResultShape(result ShardResult) error {
 	}
 	if len(result.Reports) == 0 {
 		return fmt.Errorf("at least one runtime report is required")
+	}
+	if result.Status != "passed" || result.AttemptID == "" || result.Runner == "" || len(result.DirectStepIDs) == 0 || len(result.ReportDigests) != len(result.Reports) {
+		return fmt.Errorf("manifest requires passing runner identity, direct steps, attempt, and report digests")
+	}
+	for _, report := range result.Reports {
+		if result.ReportDigests[report] == "" {
+			return fmt.Errorf("manifest is missing digest for report %q", report)
+		}
 	}
 	return nil
 }
