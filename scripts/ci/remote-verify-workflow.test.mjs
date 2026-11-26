@@ -255,7 +255,7 @@ test('trusted master cache seed is manual, master-only, and builds through the s
   assert.doesNotMatch(JSON.stringify(workflow), /\$\{\{\s*secrets\./);
 
   const devkitConfig = load(readFileSync(path.join(root, 'devkit.yaml'), 'utf8'));
-  const goBuildTask = devkitConfig.tasks.build.find((definition) => definition.categories.includes('go-binary'));
+  const goBuildTask = devkitConfig.tasks.build.find((definition) => definition.categories.includes('go-binary') && !definition.packages?.length);
   assert.equal(goBuildTask.cache, false, 'make build embeds VCS version, commit, and date not present in the input fingerprint');
 
   const authoritativeE2E = readYaml('.github/workflows/e2e-platform.yml');
