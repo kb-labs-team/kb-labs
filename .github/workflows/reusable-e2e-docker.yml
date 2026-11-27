@@ -13,6 +13,10 @@ name: Reusable — Docker E2E suite
 on:
   workflow_call:
     inputs:
+      checkout-ref:
+        description: Immutable source revision for an asynchronous caller
+        type: string
+        default: ''
       suite:
         description: 'E2E suite name, e.g. "marketplace" or "rest-api"'
         type: string
@@ -82,6 +86,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout revision
+        env:
+          EXPECTED_SHA: ${{ inputs.checkout-ref }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [ -n "$EXPECTED_SHA" ]; then test "$actual" = "$EXPECTED_SHA"; fi
+          echo "SOURCE_REVISION=$actual" >> "$GITHUB_ENV"
 
       # ── Build toolchain ──────────────────────────────────────────────────
 
@@ -94,6 +108,7 @@ jobs:
           # kb-create — go-version-file only pins to one module's directive
           # and silently under-provisions the toolchain for the rest.
           go-version: '1.26.11'
+          cache: ${{ inputs.cache-mode != 'off' }}
           cache-dependency-path: |
             tools/kb-create/go.sum
             tools/kb-dev/go.sum
@@ -124,6 +139,15 @@ jobs:
         with:
           name: ${{ inputs.prebuilt-artifact != '' && inputs.prebuilt-artifact || inputs.prebuilt-files-artifact }}
           path: /tmp/e2e-prebuilt
+
+      - name: Verify immutable E2E bundle source
+        if: ${{ (inputs.prebuilt-artifact != '' || inputs.prebuilt-files-artifact != '') && inputs.checkout-ref != '' }}
+        env:
+          EXPECTED_SHA: ${{ inputs.checkout-ref }}
+        run: |
+          jq -e --arg sha "$EXPECTED_SHA" '.source_sha == $sha' /tmp/e2e-prebuilt/e2e-bundle-metadata.json > /dev/null
+          (cd /tmp/e2e-prebuilt && sha256sum -c e2e-bundle.sha256)
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
 
       - name: Extract immutable prebuilt E2E bundle
         if: inputs.prebuilt-artifact != '' || inputs.prebuilt-files-artifact != ''
@@ -201,7 +225,7 @@ jobs:
         if: inputs.prebuilt-artifact == ''
         run: |
           if [ "${{ inputs.fast-build }}" = "true" ]; then
-            docker build --build-arg "SOURCE_REVISION=$GITHUB_SHA" -t kb-e2e-ci-platform:latest -f e2e/platform/Dockerfile .
+            docker build --build-arg "SOURCE_REVISION=$SOURCE_REVISION" -t kb-e2e-ci-platform:latest -f e2e/platform/Dockerfile .
           else
             cache_args=()
             if [ "${{ inputs.cache-mode }}" = "read-write" ]; then
@@ -211,7 +235,7 @@ jobs:
               "${cache_args[@]}" \
               --load \
               -t kb-e2e-ci-platform:latest \
-              --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
+              --build-arg "SOURCE_REVISION=$SOURCE_REVISION" -f e2e/platform/Dockerfile .
           fi
 
       - name: Build publisher image
@@ -254,11 +278,13 @@ jobs:
         run: |
           echo "Waiting for platform (up to ${{ inputs.health-steps }} × 5s)..."
           for i in $(seq 1 ${{ inputs.health-steps }}); do
-            if curl -sf "${{ inputs.health-url }}" > /dev/null 2>&1; then
+            if docker compose exec -T platform test -f /tmp/kb-e2e-ready && \
+              curl -sf "${{ inputs.health-url }}" > /dev/null 2>&1; then
               echo "Platform ready after $((i * 5))s"
               break
             fi
-            if [ "$i" = "${{ inputs.health-steps }}" ]; then
+            if [ "$i" = "${{ inputs.health-steps }}" ] ||
+              [ -n "$(docker compose ps --all --status exited --quiet platform)" ]; then
               echo "Platform failed to start — dumping logs"
               docker compose logs platform | tail -100
               exit 1
@@ -407,7 +433,7 @@ jobs:
       # ── Per-step timings (Phase 0 of ADR-0017) ───────────────────────────
 
       - name: Emit timings
-        if: always()
+        if: always() && inputs.checkout-ref == ''
         continue-on-error: true   # non-critical telemetry — gh api may return empty JSON mid-run
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

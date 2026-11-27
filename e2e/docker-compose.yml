@@ -7,7 +7,8 @@
 # Service startup order:
 #   1. verdaccio  — local npm registry (always up)
 #   2. publisher  — one-shot: publishes @kb-labs/*.tgz to Verdaccio, exits 0
-#   3. platform   — installs KB Labs from Verdaccio, starts all services
+#   3. origin     — serves the prepared, real kb-create candidate binaries
+#   4. platform   — installs KB Labs from Verdaccio, starts all services
 #
 # Usage:
 #   # Phase 1: start registry + publish packages
@@ -49,6 +50,20 @@ services:
     environment:
       VERDACCIO_URL: http://verdaccio:4873
 
+  # ── Candidate binary origin ──────────────────────────────────────────────
+  # Prepared by e2e/platform/prepare-container-binaries.sh and included in the
+  # immutable E2E bundle so platform can download the exact sealed artifact.
+  origin:
+    image: python:3.12-alpine
+    command: ["python3", "-m", "http.server", "8080", "--directory", "/release"]
+    volumes:
+      - ../.journey/e2e-platform-binaries:/release/journey-candidate:ro
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8080/journey-candidate/kb-create-linux-amd64', method='HEAD'), timeout=2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
   # ── Full KB Labs platform (installed from Verdaccio) ──────────────────────
   platform:
     image: kb-e2e-ci-platform:latest
@@ -59,6 +74,8 @@ services:
         SOURCE_REVISION: ${KB_JOURNEY_GIT_REVISION:-}
     depends_on:
       verdaccio:
+        condition: service_healthy
+      origin:
         condition: service_healthy
     ports:
       - "4000:4000"   # gateway
@@ -91,7 +108,7 @@ services:
     volumes:
       - ../e2e:/workspace/e2e-host:ro
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:4000/ready"]
+      test: ["CMD-SHELL", "test -f /tmp/kb-e2e-ready && curl -sf http://localhost:4000/ready"]
       # A cold declarative install may compile native dependencies after the
       # package plan is printed. Keep health aligned with the E2E startup
       # budget instead of failing at the old three-minute ceiling.

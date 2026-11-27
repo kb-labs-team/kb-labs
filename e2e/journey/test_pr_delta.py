@@ -12,6 +12,10 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertEqual(plan_claims(["docs/plans/changes.md", "e2e/journey/test_pr_delta.py"]), [])
         self.assertEqual(plan_claims(["e2e/journey/marketplace_steps.py", "docs/guide.md"]),
                          ["S-010.1", "S-010.8", "S-012.1"])
+        self.assertEqual(plan_claims(["e2e/docker-compose.yml", "e2e/docker-compose.oauth-ci.yml",
+                                     "e2e/platform/entrypoint.sh"]), [])
+        self.assertIn("PC-001.2", plan_claims(["e2e/docker-compose.yml", "e2e/journey/docker-compose.yml"]))
+        self.assertIn("PC-001.2", plan_claims(["e2e/platform/prepare-release-index.mjs"]))
         self.assertIn("PC-001.2", plan_claims(["core/runtime/src/main.ts"]))
         self.assertTrue(plan_claims(["services/new-service/src/main.ts"]))
 

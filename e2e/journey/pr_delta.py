@@ -17,6 +17,11 @@ from scoreboard import MODES, _service_message_for_comparison
 CLAIM_MAP = Path(__file__).resolve().parents[2] / "scripts/ci/journey-pr-claims.json"
 PRODUCT_PREFIXES = ("adapters/", "cli/", "core/", "plugins/", "sdk/", "services/", "shared/",
                     "studio/", "tools/", "e2e/", ".kb/")
+DOCKER_E2E_BOOTSTRAP = {
+    "e2e/docker-compose.yml",
+    "e2e/docker-compose.oauth-ci.yml",
+    "e2e/platform/entrypoint.sh",
+}
 REPORT_PREFIXES = ("service-", "installer-case-", "platform-")
 
 
@@ -26,7 +31,7 @@ def plan_claims(paths: list[str]) -> list[str]:
     for path in paths:
         if path.endswith((".md", ".mdx")) or path in {"e2e/journey/scoreboard.py", "e2e/journey/pr_delta.py"}:
             continue
-        if fnmatchcase(path, "e2e/journey/test_*.py"):
+        if path in DOCKER_E2E_BOOTSTRAP or fnmatchcase(path, "e2e/journey/test_*.py"):
             continue
         scoped = {claim for scope in policy["scopes"] for claim in scope["claims"]
                   if any(fnmatchcase(path, pattern) for pattern in scope["paths"])}

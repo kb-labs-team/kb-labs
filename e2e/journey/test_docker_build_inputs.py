@@ -1,6 +1,7 @@
 import fnmatch
 import glob
 import json
+import re
 import shlex
 import unittest
 from pathlib import Path
@@ -77,6 +78,16 @@ def copy_sources(dockerfile):
 
 
 class DockerBuildInputsTest(unittest.TestCase):
+    @staticmethod
+    def _compose_service(compose, service):
+        match = re.search(
+            rf"(?ms)^  {re.escape(service)}:\n(.*?)(?=^  [A-Za-z0-9_-]+:\n|^volumes:\n|\Z)",
+            compose,
+        )
+        if not match:
+            return ""
+        return match.group(1)
+
     def test_copy_sources_are_available_in_the_root_docker_context(self):
         rules = dockerignore_rules(ROOT / ".dockerignore")
         dockerfile = ROOT / "e2e/journey/Dockerfile.runner"
@@ -96,6 +107,48 @@ class DockerBuildInputsTest(unittest.TestCase):
 
         self.assertEqual([], excluded,
                          f"Dockerfile COPY sources are excluded by .dockerignore: {sorted(set(excluded))}")
+
+    def test_e2e_platform_serves_the_prepared_candidate_binary_from_origin(self):
+        compose_path = ROOT / "e2e" / "docker-compose.yml"
+        compose = compose_path.read_text()
+        workflow = (ROOT / ".github" / "workflows" / "reusable-e2e-platform-build.yml").read_text()
+        preparation = (ROOT / "e2e" / "platform" / "prepare-container-binaries.sh").read_text()
+        staging = (ROOT / "e2e" / "platform" / "stage-release-binaries.mjs").read_text()
+
+        self.assertIn("  origin:\n", compose)
+        origin = self._compose_service(compose, "origin")
+        self.assertIn("python:3.12-alpine", origin)
+        staged_path = re.search(r'^output="\$root/([^"\n]+)"$', preparation, re.MULTILINE).group(1)
+        mount_source = re.search(r"^\s*- ([^:\n]+):/release/journey-candidate:ro$", origin, re.MULTILINE).group(1)
+        self.assertEqual((ROOT / staged_path).resolve(), (compose_path.parent / mount_source).resolve())
+        self.assertIn("http.server", origin)
+        self.assertIn("/journey-candidate/kb-create-linux-amd64", origin)
+
+        platform = self._compose_service(compose, "platform")
+        self.assertRegex(platform, r"(?s)depends_on:.*?origin:\s*\n\s+condition: service_healthy")
+        self.assertRegex(workflow, rf"(?m)^\s+{re.escape(staged_path)}\s+\\$")
+        self.assertIn("--asset-base-url http://origin:8080/journey-candidate", preparation)
+        self.assertIn("copyFileSync(artifact.path, join(outputDirectory, artifact.name))", staging)
+
+
+    # case: S-262.23
+    def test_e2e_readiness_waits_for_registered_project_after_install(self):
+        entrypoint = (ROOT / "e2e" / "platform" / "entrypoint.sh").read_text()
+        apply = entrypoint.index("kb-create apply \\")
+        fixtures = entrypoint.index("mkdir -p .kb/workflows")
+        login = entrypoint.index("| kb auth login")
+        register = entrypoint.index('kb project add "$PLATFORM_ROOT"')
+        ready = entrypoint.index('touch "$READY_FILE"')
+        self.assertLess(apply, fixtures)
+        self.assertLess(fixtures, login)
+        self.assertLess(login, register)
+        self.assertLess(register, ready)
+        self.assertLess(entrypoint.index('kb-create restart --platform-root'), ready)
+        self.assertIn('test -f /tmp/kb-e2e-ready', (ROOT / "e2e" / "docker-compose.yml").read_text())
+        for workflow in ("reusable-e2e-docker.yml", "reusable-e2e-playwright.yml"):
+            content = (ROOT / ".github" / "workflows" / workflow).read_text()
+            self.assertIn("docker compose exec -T platform test -f /tmp/kb-e2e-ready", content)
+            self.assertIn("docker compose ps --all --status exited --quiet platform", content)
 
 
 if __name__ == "__main__":

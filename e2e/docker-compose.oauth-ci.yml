@@ -20,7 +20,7 @@
 #                     reach the studio under that exact host over real TLS. The
 #                     plain-http :4001 origin (auth-ci) can't carry an OAuth
 #                     round-trip, hence a dedicated TLS origin here.
-#   - platform env  : OIDC_E2E_ENABLED (entrypoint writes the provider overlay),
+#   - platform env  : OIDC_E2E_ENABLED (entrypoint writes a config override),
 #                     OIDC_CORP_CLIENT_SECRET (clientSecretEnv target), and
 #                     NODE_EXTRA_CA_CERTS so the gateway trusts the test CA when
 #                     it does server-side discovery / token / JWKS to idp-stub.
@@ -32,7 +32,7 @@
 services:
   platform:
     environment:
-      # Turn on the oidc provider overlay (see e2e/platform/entrypoint.sh).
+      # Turn on the OIDC config override (see e2e/platform/entrypoint.sh).
       OIDC_E2E_ENABLED: "true"
       OIDC_CORP_ISSUER: "https://idp-stub:9443"
       OIDC_CORP_CLIENT_ID: "kb-gateway"

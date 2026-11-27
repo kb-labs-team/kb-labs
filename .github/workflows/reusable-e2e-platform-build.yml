@@ -3,6 +3,10 @@ name: Reusable — Prepare E2E platform bundle
 on:
   workflow_call:
     inputs:
+      checkout-ref:
+        description: Immutable source revision for an asynchronous caller
+        type: string
+        default: ''
       artifact-name:
         description: 'Artifact name consumed by the E2E matrix shards'
         type: string
@@ -27,6 +31,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.checkout-ref || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout revision
+        env:
+          EXPECTED_SHA: ${{ inputs.checkout-ref }}
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [ -n "$EXPECTED_SHA" ]; then test "$actual" = "$EXPECTED_SHA"; fi
+          echo "SOURCE_REVISION=$actual" >> "$GITHUB_ENV"
 
       - name: Start prepare metrics
         run: date +%s > /tmp/e2e-prepare-start
@@ -113,7 +127,7 @@ jobs:
           fi
           docker buildx build \
             "${cache_args[@]}" \
-            --load -t kb-e2e-ci-platform:latest --build-arg "SOURCE_REVISION=$GITHUB_SHA" -f e2e/platform/Dockerfile .
+            --load -t kb-e2e-ci-platform:latest --build-arg "SOURCE_REVISION=$SOURCE_REVISION" -f e2e/platform/Dockerfile .
 
       - name: Build publisher image
         uses: ./.github/actions/build-publisher
@@ -161,10 +175,16 @@ jobs:
             tools/kb-dev/kb-dev \
             e2e/packages \
             e2e/.verdaccio-storage \
+            .journey/e2e-platform-binaries \
             -T /tmp/dist-paths
 
       - name: Save immutable Docker images
         run: docker save kb-e2e-ci-platform:latest kb-e2e-ci-publisher:latest > /tmp/e2e-images.tar
+
+      - name: Seal E2E bundle checksums
+        run: |
+          cd /tmp
+          sha256sum e2e-files.tar.gz e2e-images.tar > e2e-bundle.sha256
 
       - name: Emit bundle metrics
         run: |
@@ -174,7 +194,7 @@ jobs:
           tarball_digest=$(find e2e/packages -maxdepth 1 -type f -name '*.tgz' -exec sha256sum {} \; | LC_ALL=C sort | sha256sum | awk '{print $1}')
           cas_size_bytes=$(node scripts/ci/devkit-cas-size.mjs "${{ steps.devkit-cas.outputs.store-path }}")
           jq -n \
-            --arg source_sha "$GITHUB_SHA" \
+            --arg source_sha "$SOURCE_REVISION" \
             --arg cache_mode "${{ inputs.cache-mode }}" \
             --arg tarball_digest "$tarball_digest" \
             --argjson elapsed_seconds "$elapsed" \
@@ -202,5 +222,6 @@ jobs:
             /tmp/e2e-files.tar.gz
             /tmp/e2e-images.tar
             /tmp/e2e-bundle-metadata.json
+            /tmp/e2e-bundle.sha256
           retention-days: 1
           compression-level: 0
