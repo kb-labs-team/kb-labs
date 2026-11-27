@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from kb_invocation import kb_command
-from installed_fixture import layout_relative, layout_value
+from installed_fixture import installed_path, layout_relative, layout_value
 
 import json
 import os
@@ -124,9 +124,26 @@ def write_config(root: Path, value: dict) -> None:
     config_path.write_text(json.dumps(value, indent=2) + "\n")
 
 
+def _project_registry_path(env: dict[str, str]) -> Path:
+    kb_home = env.get("KB_HOME", "").strip()
+    if kb_home:
+        home = Path(kb_home).expanduser().resolve()
+    else:
+        install_root = env.get("KB_JOURNEY_PLATFORM_ROOT", "").strip()
+        if install_root:
+            home = installed_path(
+                Path(install_root).expanduser().resolve(),
+                "sharedStateDirectory",
+                layout_value("kbHomeDirectory"),
+            )
+        else:
+            home = Path(env["HOME"]).expanduser().resolve() / ".kb"
+    return home / "projects.json"
+
+
 def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
-    kb_home = Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))).resolve()
-    registry_path = kb_home / "projects.json"
+    registry_path = _project_registry_path(env)
+    kb_home = registry_path.parent
     try:
         projects = json.loads(registry_path.read_text()).get("projects", [])
     except (OSError, json.JSONDecodeError) as error:
@@ -135,7 +152,7 @@ def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
     project = next((row for row in projects if isinstance(row, dict) and Path(row.get("path", "")).resolve() == canonical), None)
     if not project or not isinstance(project.get("id"), str):
         raise RuntimeError(f"project is not registered in {registry_path}: {canonical}")
-    return kb_home / layout_value('sharedStateDirectory') / project["id"]
+    return kb_home / layout_value("sharedStateDirectory") / project["id"]
 
 
 def _repository_tree(root: Path) -> dict[str, bytes | str]:
@@ -927,7 +944,7 @@ def run_adapter_default_steps(journey: Journey, project_root: str | Path,
                      unbind_platform_storage_and_restore_default, cases=["S-048.6"])
 
         def platform_scope_works_without_project_registration() -> None:
-            registry_file = Path(base_env["HOME"]) / ".kb" / "projects.json"
+            registry_file = _project_registry_path(base_env)
             registry_before = registry_file.read_bytes()
             commands = (
                 ["adapter", "list", "--json"],
