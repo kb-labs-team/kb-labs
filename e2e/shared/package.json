@@ -7,7 +7,6 @@
     ".": "./src/index.ts",
     "./urls.js": "./src/urls.ts",
     "./auth.js": "./src/auth.ts",
-    "./project-rest.js": "./src/project-rest.ts",
     "./reporter.js": "./src/reporter.ts",
     "./flaky-reporter.js": "./src/flaky-reporter.ts"
   },

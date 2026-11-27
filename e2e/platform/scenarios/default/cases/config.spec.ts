@@ -1,12 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { projectRest } from '@kb-labs/e2e-shared/project-rest.js'
+import { REST } from '@kb-labs/e2e-shared/urls.js'
 
 // Verifies platform config is loaded and adapters are configured
 // Response shape: { ok: true, data: { adapters, adapterOptions, execution: { mode }, ... } }
 
 test('CFG-01: platform config endpoint responds', async ({ request }) => {
-  const rest = await projectRest(request)
-  const res = await rest.get(`/platform/config`)
+  const res = await request.get(`${REST}/api/v1/platform/config`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.ok).toBe(true)
@@ -14,8 +13,7 @@ test('CFG-01: platform config endpoint responds', async ({ request }) => {
 })
 
 test('CFG-02: platform config has adapters section (no empty config)', async ({ request }) => {
-  const rest = await projectRest(request)
-  const res = await rest.get(`/platform/config`)
+  const res = await request.get(`${REST}/api/v1/platform/config`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   // At minimum adapters key must exist — secrets are redacted, that's fine

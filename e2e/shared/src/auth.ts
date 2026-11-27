@@ -16,17 +16,6 @@ export interface AuthTokens {
   refreshToken?: string
 }
 
-/** Establish the seeded admin session; Playwright retains the session cookies. */
-export async function loginAdmin(request: APIRequestContext): Promise<void> {
-  // Login as bootstrap admin — pass tenantId explicitly (no subdomain in E2E).
-  const loginRes = await request.post(`${GATEWAY}/auth/login`, {
-    data: { email: E2E_ADMIN_EMAIL, password: E2E_ADMIN_PASSWORD, tenantId: E2E_ADMIN_TENANT },
-  })
-  if (!loginRes.ok()) {
-    throw new Error(`admin login failed: ${loginRes.status()} ${await loginRes.text()}`)
-  }
-}
-
 /**
  * Register a new machine agent via the admin user session.
  * Flow: login as bootstrap admin → POST /auth/register with admin cookies.
@@ -37,7 +26,13 @@ export async function registerAgent(
   name = 'e2e-test-agent',
   namespaceId = 'e2e',
 ): Promise<AuthCredentials> {
-  await loginAdmin(request)
+  // Login as bootstrap admin — pass tenantId explicitly (no subdomain in E2E).
+  const loginRes = await request.post(`${GATEWAY}/auth/login`, {
+    data: { email: E2E_ADMIN_EMAIL, password: E2E_ADMIN_PASSWORD, tenantId: E2E_ADMIN_TENANT },
+  })
+  if (!loginRes.ok()) {
+    throw new Error(`admin login failed: ${loginRes.status()} ${await loginRes.text()}`)
+  }
 
   // Register the machine agent using the admin session cookies (sent automatically).
   const regRes = await request.post(`${GATEWAY}/auth/register`, {

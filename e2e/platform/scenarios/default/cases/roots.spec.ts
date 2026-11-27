@@ -1,9 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { projectRest } from '@kb-labs/e2e-shared/project-rest.js'
+import { REST } from '@kb-labs/e2e-shared/urls.js'
 
 test('ROOT-01: platform config endpoint is reachable and schema is valid', async ({ request }) => {
-  const rest = await projectRest(request)
-  const res = await rest.get(`/platform/config`)
+  const res = await request.get(`${REST}/api/v1/platform/config`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   expect(body.ok).toBe(true)
@@ -11,8 +10,7 @@ test('ROOT-01: platform config endpoint is reachable and schema is valid', async
 })
 
 test('ROOT-03: plugin registry uses projectRoot for local plugin discovery', async ({ request }) => {
-  const rest = await projectRest(request)
-  const res = await rest.get(`/plugins/registry`)
+  const res = await request.get(`${REST}/api/v1/plugins/registry`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Envelope: { ok: true, data: { manifests: [...] } }
