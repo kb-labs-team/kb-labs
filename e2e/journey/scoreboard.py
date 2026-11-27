@@ -624,7 +624,7 @@ def render_delta(previous_dir: Path, current_dir: Path) -> str:
     return "\n".join(lines)
 
 
-_VOLATILE_JOURNEY_HOME = re.compile(r"/tmp/kb-journey-home-[a-z0-9]{8}/")
+_VOLATILE_JOURNEY_HOME = re.compile(r"/tmp/kb-journey-home-[a-z0-9_]{8}/")
 _VOLATILE_CLI_CORRELATION_ID = re.compile(r"Correlation ID: cli-\d+-[a-z0-9]+")
 
 

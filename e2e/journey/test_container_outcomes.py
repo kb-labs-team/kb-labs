@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from container_outcomes import DockerCLI, collect_container_outcomes, decode_engine_log_stream
+from container_outcomes import DockerCLI, collect_container_outcomes, decode_engine_log_stream, monitor_container
 import jsonl
 
 
@@ -33,6 +33,32 @@ class DockerModel:
 
 
 class ContainerOutcomeTests(unittest.TestCase):
+    def test_monitor_treats_metrics_exec_race_as_normal_only_after_container_exits(self):
+        class ExitingPublisher:
+            def __init__(self):
+                self.inspections = iter((True, False))
+
+            def inspect(self, _container_id):
+                return {"State": {"Running": next(self.inspections)}}
+
+            def metrics(self, _container_id):
+                raise RuntimeError("docker exec lost the container namespace")
+
+        with tempfile.TemporaryDirectory(prefix="journey-container-monitor-") as directory:
+            monitor_container(ExitingPublisher(), "publisher-id", directory)
+            self.assertFalse((Path(directory) / "container-metrics.jsonl").exists())
+
+        class StillRunningPublisher:
+            def inspect(self, _container_id):
+                return {"State": {"Running": True}}
+
+            def metrics(self, _container_id):
+                raise RuntimeError("docker exec failed while container is running")
+
+        with tempfile.TemporaryDirectory(prefix="journey-container-monitor-") as directory:
+            with self.assertRaisesRegex(RuntimeError, "container is running"):
+                monitor_container(StillRunningPublisher(), "publisher-id", directory)
+
     def test_docker_events_use_lf_jsonl_framing_for_unicode_separators(self):
         unusual = "NEL\x85 LS\u2028 FS\x1c"
         output = jsonl.encode_jsonl_records(({

@@ -10,12 +10,14 @@ checks, shipped unit and CLI handler tests, and workspace standards checks. The
 `kb-create` checks run when the launcher or its selected E2E zones change.
 
 The E2E test plan in that run selects [zones](../e2e/CI-ZONES.md) from the full pull
-request diff. [Affected E2E](../.github/workflows/e2e-affected.yml) starts after successful PR CI and checks out the current PR head when the follow-on
-workflow discovers the PR. Its run lists the plan and the outcome of each job.
+request diff. [Affected E2E](../.github/workflows/e2e-affected.yml) starts after
+successful PR CI and uses the saved plan and tested merge SHA from that run.
+Its run lists the source and the outcome of each job.
 
 [Journey baseline delta](../.github/workflows/journey-pr.yml) compares the selected
-installed Journey cases on the base SHA and tested merge SHA. The check lists
-recoveries, regressions, and missing evidence for the selected cases. A change
+installed Journey cases on the base SHA and tested merge SHA. Each SHA has one
+build, shared by independent local and secured jobs. The check lists recoveries,
+regressions, and missing evidence for the selected cases. A change
 outside the product scope gets a no-cases result. The workspace standards check
 uses the committed DevKit baseline for inherited findings.
 
