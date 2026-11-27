@@ -1,0 +1,27 @@
+name: Verify installed Platform E2E
+
+on:
+  push:
+    branches: [verify/m0-platform-gateway-20261127]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    uses: ./.github/workflows/reusable-e2e-platform-build.yml
+    with:
+      checkout-ref: ${{ github.sha }}
+      artifact-name: e2e-platform-prebuilt-${{ github.run_id }}
+
+  platform:
+    needs: prepare
+    uses: ./.github/workflows/reusable-e2e-docker.yml
+    with:
+      checkout-ref: ${{ github.sha }}
+      suite: platform
+      e2e-package: '@kb-labs/e2e-platform'
+      health-url: http://localhost:4000/ready
+      health-steps: 120
+      compose-project: kb-verify-platform-gateway
+      prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
