@@ -633,7 +633,7 @@ class InstallerHostLifecycle:
                                [self.launcher, "status", "--platform-root", str(root), "--json"],
                                f"host lifecycle status for {root}")
         host = status.get("host", {})
-        return isinstance(host, dict) and host.get(layout_value('sharedStateDirectory')) == "running", status
+        return isinstance(host, dict) and host.get("state") == "running", status
 
     def set_running(self, root: Path, running: bool) -> None:
         operation = "start" if running else "stop"
@@ -688,7 +688,7 @@ def _assert_repeat_install_applied(result: CompletedProcess, *, launcher: str, r
     status = _json_command(run_command, [launcher, "status", "--platform-root", str(root), "--json"],
                            f"host status after {label}")
     host = status.get("host", {})
-    if (not isinstance(host, dict) or host.get(layout_value('sharedStateDirectory')) != "running"
+    if (not isinstance(host, dict) or host.get("state") != "running"
             or status.get("running") is not True or status.get("reachable") is not True):
         raise RuntimeError(f"{label}: host is not running and reachable after apply")
 
@@ -749,7 +749,7 @@ def add_installed_host_stop_case_step(journey: Journey, platform_root: Path,
                               text=True, check=False, timeout=120), "status after kb-create stop")
         host = status.get("host")
         if (status.get("running") is not False or not isinstance(host, dict)
-                or host.get(layout_value("sharedStateDirectory")) != "stopped"):
+                or host.get("state") != "stopped"):
             raise RuntimeError("kb-create status did not report host.state stopped and running false after stop")
 
     journey.step("stop the installed host after start and service checks", "platform.host",
@@ -1020,7 +1020,7 @@ def installer_primary_host_guard(root: Path, launcher: str,
 
     def signature(payload: dict) -> tuple[bool, str, str, tuple[tuple[str, str, str], ...]]:
         host = payload.get("host", {})
-        running = isinstance(host, dict) and host.get(layout_value('sharedStateDirectory')) == "running"
+        running = isinstance(host, dict) and host.get("state") == "running"
         pid = str(host.get("pid", "unknown")) if isinstance(host, dict) else "unknown"
         try:
             receipt = json.loads((active_platform_root(root) / ".kb/v2/receipt.json").read_text())
@@ -1046,7 +1046,7 @@ def installer_primary_host_guard(root: Path, launcher: str,
             action_error = error
         _, after = lifecycle.state(root)
         after_signature = signature(after)
-        after_running = isinstance(after.get("host"), dict) and after["host"].get(layout_value('sharedStateDirectory')) == "running"
+        after_running = isinstance(after.get("host"), dict) and after["host"].get("state") == "running"
         violation = None
         if after_signature != before_signature:
             violation = (f"installer step {name!r} changed primary host run-state "
@@ -2009,7 +2009,7 @@ def run_repeat_plan_readonly_step(*, mode: str, launcher: str, stable_index: Pat
             status = _json_command(run_command, [launcher, "status", "--platform-root", root, "--json"],
                                    "status after repeat plan")
             host = status.get("host", {})
-            if (not isinstance(host, dict) or host.get(layout_value('sharedStateDirectory')) != "running"
+            if (not isinstance(host, dict) or host.get("state") != "running"
                     or status.get("running") is not True or status.get("reachable") is not True):
                 raise RuntimeError("host health check failed after PC-001.8: expected running and reachable")
 
@@ -2228,7 +2228,7 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
                        "PC-001 apply status")
         host = status.get("host", {})
         if (status.get("installed") is not True or status.get("running") is not True
-                or status.get("reachable") is not True or host.get(layout_value('sharedStateDirectory')) != "running"):
+                or status.get("reachable") is not True or host.get("state") != "running"):
             raise RuntimeError(f"successful apply did not leave a running, reachable host: {status}")
 
     journey.step("apply the resolved default service profile", "platform.install", apply_and_check,
@@ -3003,7 +3003,7 @@ def run_installer_fixture_steps(*, mode: str, launcher: str, platform_root: Path
                 raise RuntimeError("doctor --fix restarted the host while required input remains unresolved")
             host_status = _data(run_command([launcher, "status", "--platform-root", str(root), "--json"]),
                                 "status after unresolved-input doctor repair")
-            if host_status.get("host", {}).get(layout_value("sharedStateDirectory")) != "stopped":
+            if host_status.get("host", {}).get("state") != "stopped":
                 raise RuntimeError("doctor --fix did not keep the host stopped while required input remains unresolved")
             if "fixture-secret-value" in result.stdout:
                 raise RuntimeError("doctor --fix serialized a secret value")
@@ -3101,16 +3101,16 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
                     raise RuntimeError("doctor --fix treated another platform root's host as the fixture host")
                 fixture_status = _data(run_command([launcher, "status", "--platform-root", str(root), "--json"]),
                                        "isolated platform status")
-                if fixture_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "stopped":
+                if fixture_status.get("host", {}).get("state") != "stopped":
                     raise RuntimeError("status for platform B did not report its stopped host")
                 main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
                                     "main platform status after isolated-root repair")
-                if main_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running":
+                if main_status.get("host", {}).get("state") != "running":
                     raise RuntimeError("repairing an isolated root stopped or replaced the main platform host")
                 for spelling in (platform_root, platform_root / layout_value('currentLink'), (platform_root / layout_value('currentLink')).resolve()):
                     spelling_status = _data(run_command([launcher, "status", "--platform-root", str(spelling), "--json"]),
                                             f"main platform status through {spelling}")
-                    if (spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "running"
+                    if (spelling_status.get("host", {}).get("state") != "running"
                             or spelling_status.get("installation", {}).get("receiptId") != main_receipt_id):
                         raise RuntimeError(f"status through {spelling} did not identify platform A's original running host")
             except Exception as error:
@@ -3160,7 +3160,7 @@ def run_doctor_root_isolation_step(*, mode: str, launcher: str, stable_index: Pa
                 _data(stopped, "execute printed cross-root stop command")
                 main_status = _data(run_command([launcher, "status", "--platform-root", str(platform_root), "--json"]),
                                     "main status after suggested stop command")
-                if main_status.get("host", {}).get(layout_value('sharedStateDirectory')) != "stopped":
+                if main_status.get("host", {}).get("state") != "stopped":
                     raise RuntimeError("executing the printed stop command did not stop platform A")
         finally:
             action_error = sys.exc_info()[1]

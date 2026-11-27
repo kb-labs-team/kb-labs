@@ -86,7 +86,7 @@ class InstalledHostStopJourneyTests(unittest.TestCase):
                 if command[1] == "stop":
                     data = {"operation": "stop"}
                 else:
-                    data = {"running": False, "host": {layout_value("sharedStateDirectory"): "stopped"}}
+                    data = {"running": False, "host": {"state": "stopped"}}
                 return subprocess.CompletedProcess(command, 0,
                                                    json.dumps({"ok": True, "data": data}), "")
 
@@ -108,7 +108,7 @@ class InstalledHostStopJourneyTests(unittest.TestCase):
 
             def runner(command, **kwargs):
                 data = {"operation": "stop"} if command[1] == "stop" else {
-                    "running": True, "host": {layout_value("sharedStateDirectory"): "running"}}
+                    "running": True, "host": {"state": "running"}}
                 return subprocess.CompletedProcess(command, 0,
                                                    json.dumps({"ok": True, "data": data}), "")
 
@@ -1375,7 +1375,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return {"plan": {"artifacts": artifacts}}
                 result = _runner(args)
                 if args[1] == "status":
-                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                    return {"host": {"state": "running" if running else "stopped"}}
                 return {"operation": args[1]}
 
             def data(result, _label):
@@ -1477,7 +1477,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return {"plan": {"artifacts": [artifact]}}
                 _runner(args)
                 if args[1] == "status":
-                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                    return {"host": {"state": "running" if running else "stopped"}}
                 return {"operation": args[1]}
 
             def data(result, _label):
@@ -1544,7 +1544,7 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return {"plan": {"artifacts": [artifact]}}
                 result = _runner(args)
                 if args[1] == "status":
-                    return {"host": {layout_value("sharedStateDirectory"): "running" if running else "stopped"}}
+                    return {"host": {"state": "running" if running else "stopped"}}
                 if result.returncode != 0:
                     raise RuntimeError("stop command failed")
                 return {"operation": args[1]}
