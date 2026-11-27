@@ -1,5 +1,16 @@
 # Product decisions log
 
+## 2026-11-24
+
+### Marketplace Registry ingress publishes only the loopback Gateway
+
+The single-node Registry deployment attaches Gateway to both the private
+internal network and a dedicated edge bridge. Its host-published API port is
+bound to `127.0.0.1` for the host TLS proxy. Registry and State have no host
+ports and remain only on the private internal network. The public TLS route is
+read-only; author operations continue through authenticated Gateway routes on
+a trusted/private path. Case: S-324.1.
+
 ## 2026-11-23
 
 ### Higher config layers replace arrays consistently

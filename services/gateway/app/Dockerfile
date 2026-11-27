@@ -10,6 +10,9 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --chown=kb:nodejs .kb/deploy/gateway-app/node_modules ./node_modules
 COPY --chown=kb:nodejs .kb/deploy/gateway-app/dist ./dist
 COPY --chown=kb:nodejs .kb/deploy/image-default/kb.config.json /app/.kb/kb.config.json
+# The runtime's platformData adapters resolve paths through the canonical
+# kb-create layout contract generated alongside the image default config.
+COPY --chown=kb:nodejs .kb/deploy/image-default/platform-layout.json /app/.kb/v2/platform-layout.json
 
 # The release composition declares cloud topology. Helm and kb-create provide
 # their own topology through their mounted configuration.

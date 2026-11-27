@@ -3637,6 +3637,15 @@ importers:
 
   services/gateway/app:
     dependencies:
+      '@kb-labs/adapters-sqlite':
+        specifier: workspace:*
+        version: link:../../../adapters/sqlite
+      '@kb-labs/adapters-service-transport-http':
+        specifier: workspace:*
+        version: link:../../../adapters/service-transport-http
+      '@kb-labs/adapters-state-broker':
+        specifier: workspace:*
+        version: link:../../../adapters/state-broker
       '@fastify/cookie':
         specifier: ^11.0.1
         version: 11.0.2
@@ -3719,9 +3728,6 @@ importers:
         specifier: '>=8.21.0'
         version: 8.21.0
     devDependencies:
-      '@kb-labs/adapters-service-transport-http':
-        specifier: workspace:*
-        version: link:../../../adapters/service-transport-http
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit
@@ -4130,6 +4136,15 @@ importers:
 
   services/marketplace-registry/app:
     dependencies:
+      '@kb-labs/adapters-fs':
+        specifier: workspace:*
+        version: link:../../../adapters/fs
+      '@kb-labs/adapters-s3':
+        specifier: workspace:*
+        version: link:../../../adapters/s3
+      '@kb-labs/adapters-state-broker':
+        specifier: workspace:*
+        version: link:../../../adapters/state-broker
       '@kb-labs/marketplace-registry-api':
         specifier: workspace:*
         version: link:../api
@@ -4142,6 +4157,9 @@ importers:
       '@kb-labs/plugin-runtime':
         specifier: workspace:*
         version: link:../../../core/plugin-runtime
+      '@kb-labs/sdk':
+        specifier: workspace:*
+        version: link:../../../sdk/sdk
       '@kb-labs/shared-daemon':
         specifier: workspace:*
         version: link:../../../shared/daemon
@@ -4202,6 +4220,9 @@ importers:
         specifier: ^7.8.5
         version: 7.8.5
     devDependencies:
+      '@kb-labs/adapters-fs':
+        specifier: workspace:*
+        version: link:../../../adapters/fs
       '@kb-labs/devkit':
         specifier: workspace:*
         version: link:../../../infra/devkit

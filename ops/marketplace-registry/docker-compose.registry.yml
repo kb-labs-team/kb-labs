@@ -1,0 +1,100 @@
+name: kb-marketplace-registry
+
+# Independent, single-replica Registry stack. It deliberately does not attach
+# to the existing web compose project or publish State/Registry ports.
+services:
+  kb-state-daemon:
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-state-daemon:${STATE_DAEMON_IMAGE_TAG:?set STATE_DAEMON_IMAGE_TAG to its verified image tag}
+    environment:
+      NODE_ENV: production
+      KB_STATE_DAEMON_PORT: "7777"
+      KB_STATE_DAEMON_HOST: 0.0.0.0
+      KB_STATE_DAEMON_DATA_ROOT: /app/.kb/data/state
+    volumes:
+      - registry_state_data:/app/.kb/data/state
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:7777/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    logging: &registry-json-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    networks:
+      - registry_private
+
+  kb-marketplace-registry:
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-marketplace-registry:${MARKETPLACE_REGISTRY_IMAGE_TAG:?set MARKETPLACE_REGISTRY_IMAGE_TAG to its verified image tag}
+    environment:
+      NODE_ENV: production
+      KB_REGISTRY_HOST: 0.0.0.0
+      KB_REGISTRY_PORT: "5071"
+      KB_REGISTRY_URL: ${KB_REGISTRY_URL:-https://api.kblabs.ru/api/v1/marketplace-registry}
+      KB_SITE_URL: ${KB_SITE_URL:-https://kblabs.ru}
+      KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
+      KB_REGISTRY_SIGNING_KEY: ${KB_REGISTRY_SIGNING_KEY:?set KB_REGISTRY_SIGNING_KEY in the registry env file}
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
+    volumes:
+      - ./registry.override.json:/app/.kb/kb.config.override.json:ro
+      - registry_storage_data:/app/.kb/data/registry-storage
+    depends_on:
+      kb-state-daemon:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:5071/health', { headers: { 'x-internal-secret': process.env.GATEWAY_INTERNAL_SECRET } }).then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+    logging: *registry-json-logging
+    networks:
+      - registry_private
+
+  kb-gateway:
+    image: ${KB_IMAGE_REGISTRY:-ghcr.io/kb-labs-team}/kb-gateway:${GATEWAY_IMAGE_TAG:?set GATEWAY_IMAGE_TAG to its verified image tag}
+    ports:
+      - 127.0.0.1:4000:4000
+    environment:
+      NODE_ENV: production
+      GATEWAY_JWT_SECRET: ${GATEWAY_JWT_SECRET:?set GATEWAY_JWT_SECRET in the registry env file}
+      GATEWAY_INTERNAL_SECRET: ${GATEWAY_INTERNAL_SECRET:?set GATEWAY_INTERNAL_SECRET in the registry env file}
+      GATEWAY_BOOTSTRAP_ADMIN_PASSWORD: ${GATEWAY_BOOTSTRAP_ADMIN_PASSWORD:?set GATEWAY_BOOTSTRAP_ADMIN_PASSWORD in the registry env file}
+      GATEWAY_PROJECT_SCOPE: platform
+      KB_STATE_DAEMON_URL: http://kb-state-daemon:7777
+    volumes:
+      - registry_gateway_data:/app/.kb/data
+      - ./gateway.override.json:/app/.kb/kb.config.override.json:ro
+    depends_on:
+      kb-marketplace-registry:
+        condition: service_healthy
+      kb-state-daemon:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4000/ready').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    logging: *registry-json-logging
+    # Host Nginx reaches this API over the loopback-only published port.
+    # Registry and State stay isolated on the internal network below.
+    networks:
+      - registry_private
+      - gateway_edge
+
+networks:
+  registry_private:
+    internal: true
+  gateway_edge:
+    driver: bridge
+
+volumes:
+  registry_storage_data:
+  registry_state_data:
+  registry_gateway_data:

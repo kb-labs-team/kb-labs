@@ -1,6 +1,7 @@
 import { makeAssemblyHook } from "@kb-labs/plugin-runtime";
 import { runService, type ServiceContext } from "@kb-labs/shared-daemon";
 import { createDurableStateDaemon, StateDaemonServer } from "./server.js";
+import { resolveStateDaemonDataRoot } from "./persistence-root.js";
 
 /**
  * State daemon service body. Importable and side-effect-free: it only starts
@@ -16,8 +17,9 @@ export async function setup({
     host,
     logger,
   };
-  const server = platformDataRoot
-    ? createDurableStateDaemon(config, platformDataRoot)
+  const dataRoot = resolveStateDaemonDataRoot(platformDataRoot);
+  const server = dataRoot
+    ? createDurableStateDaemon(config, dataRoot)
     : new StateDaemonServer(config);
   await server.start();
   return () => server.stop();

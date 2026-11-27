@@ -11,6 +11,7 @@ import type {
   ServiceObservabilityHealth,
 } from "@kb-labs/core-contracts";
 import { createHttpLogger } from "./log-context.js";
+import { redactHttpUrl } from "./redact-http-url.js";
 import { logRequestCompleted } from "./request-completion-log.js";
 import { registerOpenAPI, type OpenAPIOptions } from "./register-openapi.js";
 import type { ServiceReadyResponse } from "./service-observability.js";
@@ -90,7 +91,7 @@ export async function createDaemonServer(
         requestId,
         traceId,
         method: request.method,
-        url: request.url,
+        url: redactHttpUrl(request.url),
         operation: "http.request",
       });
 

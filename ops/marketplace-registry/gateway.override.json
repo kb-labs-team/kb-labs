@@ -1,0 +1,37 @@
+{
+  "platform": {
+    "adapters": {
+      "documentDatabase": "@kb-labs/adapters-sqlite",
+      "cache": "@kb-labs/adapters-state-broker",
+      "serviceTransport": "@kb-labs/adapters-service-transport-http"
+    },
+    "adapterOptions": {
+      "documentDatabase": {
+        "filename": "gateway.sqlite"
+      },
+      "serviceTransport": {
+        "services": {
+          "marketplace-registry": {
+            "url": "http://kb-marketplace-registry:5071"
+          }
+        }
+      }
+    }
+  },
+  "gateway": {
+    "upstreams": {
+      "registry": {
+        "serviceId": "marketplace-registry",
+        "prefix": "/api/v1/registry",
+        "rewritePrefix": "/api/v1",
+        "description": "Authenticated Registry author API"
+      },
+      "marketplaceRegistry": {
+        "serviceId": "marketplace-registry",
+        "prefix": "/api/v1/marketplace-registry/api/v1",
+        "rewritePrefix": "/api/v1",
+        "description": "Public read-only Marketplace Registry API"
+      }
+    }
+  }
+}

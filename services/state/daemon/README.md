@@ -78,6 +78,33 @@ Host-managed startup supplies the data root resolved from the platform layout
 contract. Standalone examples above omit that host-owned value and therefore
 keep state in memory.
 
+### Persistent Linux containers
+
+The Linux container image uses `flock` on
+`<KB_STATE_DAEMON_DATA_ROOT>/state-broker/journal.jsonl.flock` for the full
+daemon lifetime. This kernel lock is released automatically if the container
+process is killed or recreated. Keep the lock sidecar on the same local mounted
+volume as the journal; do not remove or replace it while a daemon is running.
+The container must be started through the image entrypoint, which acquires the
+lock before Node reads the journal.
+
+```bash
+docker run --rm \
+  -e KB_STATE_DAEMON_PORT=7777 \
+  -e KB_STATE_DAEMON_DATA_ROOT=/state \
+  -v kb-state:/state \
+  ghcr.io/kb-labs-team/kb-state-daemon:2.120.1
+```
+
+When upgrading from an image that used PID lock markers, stop every old
+StateDaemon before starting the flock-based image. The new image refuses to
+start if `state-broker/journal.jsonl.lock` or
+`state-broker/journal.jsonl.lock.reclaim` remains. Resolve those markers only
+while all legacy writers are stopped. The Helm chart replaces the StateDaemon
+with a stop-before-start rollout; with Docker Compose, run
+`docker compose stop kb-state-daemon` before replacing the image and starting
+the service again.
+
 ## HTTP API
 
 ### Health Check

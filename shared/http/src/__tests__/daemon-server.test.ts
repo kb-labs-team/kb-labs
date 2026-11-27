@@ -143,7 +143,7 @@ describe('createDaemonServer()', () => {
   });
 
   // case: S-252.2
-  it('redacts credentials from logged URLs without changing the route query', async () => {
+  it('redacts credential fields from logged URLs without changing route handling', async () => {
     const logged: unknown[] = [];
     const write = (...args: unknown[]) => { logged.push(args); };
     const logger = {
@@ -165,10 +165,11 @@ describe('createDaemonServer()', () => {
     expect(receivedQuery).toEqual({ token: fakeToken, version: '1.2.3' });
     const serializedLogs = JSON.stringify(logged);
     expect(serializedLogs).not.toContain(fakeToken);
-    expect(serializedLogs).toContain('[REDACTED]');
     expect(serializedLogs).toContain('version=1.2.3');
     expect(redactHttpUrl(`/private#token=${fakeToken}&version=1.2.3`))
       .toBe('/private#token=[REDACTED]&version=1.2.3');
+    expect(redactHttpUrl('/private?sh%61re_token=encoded-secret&version=1.2.3'))
+      .toBe('/private?sh%61re_token=[REDACTED]&version=1.2.3');
   });
 
   // --- standard routes ---

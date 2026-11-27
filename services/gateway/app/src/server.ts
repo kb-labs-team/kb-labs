@@ -9,6 +9,7 @@ import {
   logRequestCompleted,
   createServiceReadyResponse,
   registerOpenAPI,
+  redactHttpUrl,
 } from "@kb-labs/shared-http";
 import {
   logDiagnosticEvent,
@@ -144,6 +145,7 @@ export async function createServer(
   projectServices?: readonly ProjectServiceDeclaration[],
   projectServiceTransport?: Pick<IServiceTransport, "resolveProjectService">,
   readinessControlAddress?: string,
+  readinessMode?: "configured" | "rest",
 ) {
   const gatewayLogger = createHttpLogger(logger, {
     serviceId: "gateway",
@@ -269,7 +271,7 @@ export async function createServer(
       requestId,
       traceId,
       method: request.method,
-      url: request.url,
+      url: redactHttpUrl(request.url),
       operation: "http.request",
     });
     request.kbLogger.debug("HTTP request started");
@@ -643,12 +645,13 @@ export async function createServer(
           (health.upstreams as
             | Record<string, { status?: string }>
             | undefined) ?? {};
-        // A gateway that serves project runtimes has no project-scoped
-        // upstream to wait for: runtimes start lazily on first request. The
-        // machine-level upstreams it does route to are all required.
-        const requiredUpstreams = projectRouting
-          ? Object.keys(config.upstreams)
-          : ["rest"];
+        // Project runtimes are lazy. Platform Gateway can explicitly opt into
+        // readiness over its static upstream graph; retain the legacy REST
+        // requirement for standalone project mode.
+        const requiredUpstreams =
+          readinessMode === "configured" || projectRouting
+            ? Object.keys(config.upstreams)
+            : ["rest"];
         const missingRequiredUpstreams = requiredUpstreams.filter(
           (id) => (upstreams[id]?.status ?? "down") !== "up",
         );

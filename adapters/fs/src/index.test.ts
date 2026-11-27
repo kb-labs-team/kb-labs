@@ -3,11 +3,12 @@
  * Unit tests for FilesystemStorageAdapter
  */
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import fs from "fs-extra";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm } from "node:fs/promises";
 import { createAdapter } from "./index.js";
 import { manifest } from "./manifest.js";
 import { resolveRuntimeStatePath } from "@kb-labs/sdk/adapters";
@@ -29,6 +30,7 @@ describe("FilesystemStorageAdapter", () => {
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
+    await rm(`${tmpDir}-sibling`, { recursive: true, force: true });
   });
 
   it("stores default data under the platform state directory for an unregistered project", async () => {
@@ -61,6 +63,27 @@ describe("FilesystemStorageAdapter", () => {
 
       expect(result).toEqual(content);
       expect(result?.toString()).toBe("Hello, World!");
+    });
+
+    it("keeps the previous complete file when atomic replacement fails", async () => {
+      await storage.write("registry/meta.json", Buffer.from('{"version":1}'));
+      const rename = vi.spyOn(fs, "rename").mockRejectedValueOnce(new Error("simulated commit failure"));
+
+      await expect(storage.write("registry/meta.json", Buffer.from('{"version":2}')))
+        .rejects.toThrow("simulated commit failure");
+      rename.mockRestore();
+
+      expect(await storage.read("registry/meta.json")).toEqual(Buffer.from('{"version":1}'));
+      expect(await fs.readdir(join(tmpDir, "registry"))).toEqual(["meta.json"]);
+    });
+
+    it("writes valid long filenames using a bounded temporary name", async () => {
+      const filepath = `${"f".repeat(240)}.json`;
+      const content = Buffer.from("complete");
+
+      await storage.write(filepath, content);
+
+      expect(await storage.read(filepath)).toEqual(content);
     });
 
     it("should return null when reading nonexistent file", async () => {
@@ -130,6 +153,15 @@ describe("FilesystemStorageAdapter", () => {
       await expect(
         storage.write("/etc/passwd", Buffer.from("bad")),
       ).rejects.toThrow("Path traversal detected");
+    });
+
+    it("should prevent absolute sibling paths that only share the baseDir prefix", async () => {
+      const siblingFile = join(`${tmpDir}-sibling`, "outside.txt");
+
+      await expect(
+        storage.write(siblingFile, Buffer.from("bad")),
+      ).rejects.toThrow("Path traversal detected");
+      await expect(access(siblingFile)).rejects.toMatchObject({ code: "ENOENT" });
     });
   });
 

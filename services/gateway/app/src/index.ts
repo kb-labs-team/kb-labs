@@ -9,6 +9,7 @@ export {
   setup,
   startGateway,
   resolveGatewayConfigRoot,
+  resolveGatewayStandaloneScope,
   isLoopbackHost,
   type GatewayEmbedOptions,
 } from "./bootstrap.js";

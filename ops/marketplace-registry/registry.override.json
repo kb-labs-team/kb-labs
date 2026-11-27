@@ -1,0 +1,16 @@
+{
+  "platform": {
+    "adapters": {
+      "storage": "@kb-labs/adapters-fs",
+      "cache": "@kb-labs/adapters-state-broker"
+    },
+    "adapterOptions": {
+      "storage": {
+        "baseDir": "/app/.kb/data/registry-storage"
+      },
+      "cache": {
+        "namespace": "marketplace-registry:"
+      }
+    }
+  }
+}

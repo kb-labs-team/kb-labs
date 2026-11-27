@@ -18,6 +18,8 @@
  */
 
 import fs from "fs-extra";
+import { open } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import fg from "fast-glob";
 import {
@@ -47,21 +49,20 @@ export class FilesystemStorageAdapter implements IStorage {
   private baseDir: string;
 
   constructor(config: FilesystemStorageConfig = {}) {
-    this.baseDir = config.baseDir ?? resolveRuntimeStatePath(config.workspace?.cwd ?? process.cwd(), ["storage"]);
+    this.baseDir = path.resolve(
+      config.baseDir ?? resolveRuntimeStatePath(config.workspace?.cwd ?? process.cwd(), ["storage"]),
+    );
   }
 
   /**
    * Resolve relative path to absolute path within baseDir.
    */
   private resolvePath(relativePath: string): string {
-    // Normalize path and ensure it's within baseDir (security)
-    const normalized = path.normalize(relativePath);
-    const absolute = path.isAbsolute(normalized)
-      ? normalized
-      : path.join(this.baseDir, normalized);
-
-    // Ensure path is within baseDir (prevent directory traversal)
-    if (!absolute.startsWith(this.baseDir)) {
+    // Resolve and check path components, not string prefixes: `/data/store-evil`
+    // starts with `/data/store` but is a sibling outside the configured root.
+    const absolute = path.resolve(this.baseDir, relativePath);
+    const relative = path.relative(this.baseDir, absolute);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
       throw new Error(`Path traversal detected: ${relativePath}`);
     }
 
@@ -83,11 +84,41 @@ export class FilesystemStorageAdapter implements IStorage {
 
   async write(filepath: string, data: Buffer): Promise<void> {
     const absolutePath = this.resolvePath(filepath);
+    const directory = path.dirname(absolutePath);
+    // Keep the temporary basename independent of the target length so valid
+    // filenames near the filesystem's NAME_MAX remain writable.
+    const temporaryPath = path.join(directory, `.kb-${randomUUID()}.tmp`);
 
-    // Ensure directory exists
-    await fs.ensureDir(path.dirname(absolutePath));
+    await fs.ensureDir(directory);
+    let fileHandle: Awaited<ReturnType<typeof open>> | undefined;
+    try {
+      // Publish via a same-directory rename so readers see either the previous
+      // complete value or the new one, never a partially overwritten file.
+      fileHandle = await open(temporaryPath, "wx", 0o666);
+      await fileHandle.writeFile(data);
+      await fileHandle.sync();
+      await fileHandle.close();
+      fileHandle = undefined;
 
-    await fs.writeFile(absolutePath, data);
+      await fs.rename(temporaryPath, absolutePath);
+
+      // Persist each directory entry up to the storage root as well as file
+      // contents, including newly-created nested directories.
+      let currentDirectory = directory;
+      while (true) {
+        const directoryHandle = await open(currentDirectory, "r");
+        try {
+          await directoryHandle.sync();
+        } finally {
+          await directoryHandle.close();
+        }
+        if (currentDirectory === this.baseDir) { break; }
+        currentDirectory = path.dirname(currentDirectory);
+      }
+    } finally {
+      await fileHandle?.close();
+      await fs.remove(temporaryPath);
+    }
   }
 
   async delete(filepath: string): Promise<void> {

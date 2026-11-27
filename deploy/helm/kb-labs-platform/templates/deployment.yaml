@@ -17,6 +17,10 @@ metadata:
     {{- include "kb-labs-platform.labels" (dict "Release" $.Release "name" $name) | nindent 4 }}
 spec:
   replicas: {{ $svc.replicas }}
+  {{ if eq $name "state-daemon" }}
+  strategy:
+    type: Recreate
+  {{ end }}
   selector:
     matchLabels:
       {{- include "kb-labs-platform.selectorLabels" (dict "Release" $.Release "name" $name) | nindent 6 }}
