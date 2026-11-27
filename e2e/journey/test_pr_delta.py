@@ -67,7 +67,41 @@ class PullRequestDeltaTests(unittest.TestCase):
                     }))
                     summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, ["S-010.1"])
                     self.assertEqual(passed, expected, summary)
-                    self.assertIn("secured / S-010.1 / install" if expected else "missing evidence", summary)
+                    fragment = "secured / S-010.1 / install" if expected or row_count == 2 else "missing evidence"
+                    self.assertIn(fragment, summary)
+
+    # case: S-262.21
+    def test_multiple_explicit_blocks_must_stay_identical(self):
+        def replace_owner_with_blockers(root, blockers):
+            path = root / "local" / "service-local.json"
+            report = json.loads(path.read_text())
+            report["steps"] = [
+                {"name": name, "status": status, "message": reason, "cases": ["S-010.1"]}
+                for name, status, reason in blockers
+            ]
+            path.write_text(json.dumps(report))
+
+        expected_blocks = [
+            ("fixture lint", "BLOCKED", "fixture is not installed"),
+            ("workflow run", "BLOCKED", "fixture is not installed"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            base, candidate = Path(directory) / "base", Path(directory) / "candidate"
+            self.write_mode(base, "a" * 40, "BLOCKED", "FAIL")
+            replace_owner_with_blockers(base, expected_blocks)
+            for blocks, expected in (
+                (expected_blocks, True),
+                (expected_blocks[1:], False),
+                ([*expected_blocks[:1], ("another step", "BLOCKED", "fixture is not installed")], False),
+                ([*expected_blocks[:1], ("workflow run", "BLOCKED", "registry is not ready")], False),
+                ([*expected_blocks[:1], ("workflow run", "PASS", "passed")], False),
+                ([], False),
+            ):
+                with self.subTest(blocks=blocks):
+                    self.write_mode(candidate, "b" * 40, "BLOCKED", "PASS")
+                    replace_owner_with_blockers(candidate, blocks)
+                    summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, ["S-010.1"])
+                    self.assertEqual(passed, expected, summary)
 
     # case: S-262.21
     def test_passing_added_prerequisite_does_not_count_as_recovery(self):

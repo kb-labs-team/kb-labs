@@ -7,6 +7,7 @@ import json
 from collections import defaultdict
 from fnmatch import fnmatchcase
 from pathlib import Path
+from typing import NamedTuple
 
 from batch_summary import requested_selection, verify_run_commit
 from invocations import print_report_text, run_harness_command
@@ -18,6 +19,13 @@ CLAIM_MAP = Path(__file__).resolve().parents[2] / "scripts/ci/journey-pr-claims.
 PRODUCT_PREFIXES = ("adapters/", "cli/", "core/", "plugins/", "sdk/", "services/", "shared/",
                     "studio/", "tools/", "e2e/", ".kb/")
 REPORT_PREFIXES = ("service-", "installer-case-", "platform-")
+
+
+class Evidence(NamedTuple):
+    report: str
+    step: str
+    status: str
+    reason: str
 
 
 def plan_claims(paths: list[str]) -> list[str]:
@@ -46,7 +54,8 @@ def read_json(path: Path) -> dict:
     return data
 
 
-def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -> dict:
+def selected_outcomes(directory: Path, sha: str, mode: str,
+                      claims: list[str]) -> dict[tuple[str, str], set[Evidence]]:
     verify_run_commit(directory / "run.json", sha)
     metadata = read_json(directory / "batch-metadata.json")
     plan = read_json(directory / "selection-plan.json")
@@ -74,12 +83,12 @@ def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -
             continue
         for row in report.get("steps", []):
             status, name = row.get("status"), row.get("name")
-            if status not in {"PASS", "FAIL", "BLOCKED"} or row.get("mode", mode) != mode:
+            if not name or status not in {"PASS", "FAIL", "BLOCKED"} or row.get("mode", mode) != mode:
                 continue
             reason = "" if status == "PASS" else _service_message_for_comparison(row["message"])
             for claim in (*row.get("cases", []), ""):
                 key = name, claim
-                evidence = path.name, status, reason
+                evidence = Evidence(path.name, name, status, reason)
                 if key in obligations:
                     measured[key].add(evidence)
                 elif claim in selected and row.get("capability") != "journey.selection":
@@ -87,15 +96,15 @@ def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -
     for key in obligations - measured.keys():
         _, claim = key
         results = unnamed_claim_results.get(claim, [])
-        if (len(results) == 1 and results[0][1] == "BLOCKED" and results[0][2]
+        if (results and all(row.status == "BLOCKED" and row.reason for row in results)
                 and sum(claim in ids for ids in owners.values()) == 1):
             measured[key].update(results)
     missing = obligations - measured.keys()
     if missing:
         label = ", ".join(f"{claim or 'prerequisite'} / {name}" for name, claim in sorted(missing))
         raise ValueError(f"{mode}: missing evidence for commit {sha}: {label}")
-    if metadata["result"] == "FAIL" and all(status == "PASS" for results in measured.values()
-                                            for _, status, _ in results):
+    if metadata["result"] == "FAIL" and all(row.status == "PASS" for results in measured.values()
+                                            for row in results):
         raise ValueError(f"{mode}: runner failed outside the available results for commit {sha}")
     return dict(measured)
 
@@ -118,11 +127,13 @@ def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, cla
             old, new = before.get(key, set()), after.get(key, set())
             if old == new:
                 continue
-            old_statuses = {status for _, status, _ in old}
-            new_statuses = {status for _, status, _ in new}
+            old_statuses = {row.status for row in old}
+            new_statuses = {row.status for row in new}
             if not claim and not old and new_statuses == {"PASS"}:
                 continue
-            if ({source for source, _, _ in old} == {source for source, _, _ in new}
+            # Multiple indirect blockers can demonstrate unchanged debt, not owner recovery.
+            multiple_blockers = sum(row.step != name for row in old) > 1
+            if (not multiple_blockers and {row.report for row in old} == {row.report for row in new}
                     and new_statuses == {"PASS"} and old_statuses & {"FAIL", "BLOCKED"}):
                 improved.append(label)
             else:
