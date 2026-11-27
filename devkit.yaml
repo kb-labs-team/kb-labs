@@ -821,6 +821,7 @@ tasks:
       deps:
         - "build"
 
+  test:coverage:go:
     - categories: [go-binary, internal-tool]
       command: go test -short -coverprofile=coverage.out -covermode=atomic ./...
       inputs:
