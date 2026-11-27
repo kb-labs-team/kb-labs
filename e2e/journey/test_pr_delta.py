@@ -92,7 +92,7 @@ class PullRequestDeltaTests(unittest.TestCase):
 
         expected_blocks = [
             ("fixture lint", "BLOCKED", "fixture is not installed"),
-            ("workflow run", "BLOCKED", "fixture is not installed"),
+            ("workflow run", "BLOCKED", "could not read /tmp/kb-journey-home-1_fwdorq/.kb/projects.json"),
         ]
         with tempfile.TemporaryDirectory() as directory:
             base, candidate = Path(directory) / "base", Path(directory) / "candidate"
@@ -100,6 +100,8 @@ class PullRequestDeltaTests(unittest.TestCase):
             replace_owner_with_blockers(base, expected_blocks)
             for blocks, expected in (
                 (expected_blocks, True),
+                ([*expected_blocks[:1], ("workflow run", "BLOCKED",
+                                         "could not read /tmp/kb-journey-home-0nt645hm/.kb/projects.json")], True),
                 (expected_blocks[1:], False),
                 ([*expected_blocks[:1], ("another step", "BLOCKED", "fixture is not installed")], False),
                 ([*expected_blocks[:1], ("workflow run", "BLOCKED", "registry is not ready")], False),

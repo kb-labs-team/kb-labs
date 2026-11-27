@@ -37,12 +37,12 @@ jobs:
           echo "claims=$claims" >> "$GITHUB_OUTPUT"
           printf 'Affected claims: %s\n' "${claims:-none}" >> "$GITHUB_STEP_SUMMARY"
 
-  journey:
-    name: Affected Journey (${{ matrix.side }})
+  prepare:
+    name: Prepare Journey candidate (${{ matrix.side }})
     needs: plan
     if: needs.plan.outputs.claims != ''
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -82,31 +82,76 @@ jobs:
             export KB_DEVKIT_BASE_REF="$BASE_SHA^"
           fi
           e2e/journey/batch.sh prepare "$RUNNER_TEMP/journey-producer" "$BASE_SHA"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: journey-pr-candidate-${{ matrix.side }}
+          path: ${{ runner.temp }}/journey-producer
+          if-no-files-found: error
+          retention-days: 1
+
+  journey:
+    name: Affected Journey (${{ matrix.side }}, ${{ matrix.mode }})
+    needs: [plan, prepare]
+    if: needs.plan.outputs.claims != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        side: [base, candidate]
+        mode: [local, secured]
+    env:
+      GOTOOLCHAIN: local
+      CLAIMS: ${{ needs.plan.outputs.claims }}
+      JOURNEY_MODE: ${{ matrix.mode }}
+      COMPOSE_PROJECT_NAME: kb-journey-pr-${{ matrix.mode }}
+      KB_JOURNEY_NETWORK: kb-journey-pr-${{ matrix.mode }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ matrix.side == 'base' && github.event.pull_request.base.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          run_install: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version-file: package.json
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: '1.26.11'
+          cache-dependency-path: tools/kb-devkit/go.sum
+      - run: corepack pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: journey-pr-candidate-${{ matrix.side }}
+          path: ${{ runner.temp }}/journey-producer
       - name: Run selected Journey cases
         run: |
-          for mode in local secured; do
-            if ! COMPOSE_PROJECT_NAME="kb-journey-pr-${mode}" KB_JOURNEY_NETWORK="kb-journey-pr-${mode}" \
-              e2e/journey/batch.sh mode "$mode" "$RUNNER_TEMP/journey-producer" "$RUNNER_TEMP/journey-evidence" --cases "$CLAIMS"; then
-              echo "$mode did not pass. The delta check will inspect the recorded evidence."
-            fi
-          done
+          if ! e2e/journey/batch.sh mode "$JOURNEY_MODE" "$RUNNER_TEMP/journey-producer" \
+            "$RUNNER_TEMP/journey-evidence" --cases "$CLAIMS"; then
+            echo "$JOURNEY_MODE did not pass. The delta check will inspect the recorded evidence."
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
-          name: journey-pr-${{ matrix.side }}
+          name: journey-pr-report-${{ matrix.side }}-${{ matrix.mode }}
           path: ${{ runner.temp }}/journey-evidence
           if-no-files-found: warn
           retention-days: 14
 
   baseline-delta:
     name: Journey baseline delta
-    needs: [plan, journey]
+    needs: [plan, prepare, journey]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
       CLAIMS: ${{ needs.plan.outputs.claims }}
       PLAN_RESULT: ${{ needs.plan.result }}
+      PREPARE_RESULT: ${{ needs.prepare.result }}
       JOURNEY_RESULT: ${{ needs.journey.result }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -123,6 +168,9 @@ jobs:
           fi
           if [ -z "$CLAIMS" ]; then
             echo "This PR has no affected product claims." >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$PREPARE_RESULT" != success ]; then
+            echo "Affected Journey candidate preparation did not finish." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
           elif [ "$JOURNEY_RESULT" != success ]; then
             echo "Affected Journey evidence jobs did not finish." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 1
@@ -130,11 +178,18 @@ jobs:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         if: env.CLAIMS != ''
         with:
-          pattern: journey-pr-*
+          pattern: journey-pr-report-*
           path: ${{ runner.temp }}/journey-evidence
       - name: Compare exact base and proposed merge
         if: env.CLAIMS != ''
         run: |
           evidence="$RUNNER_TEMP/journey-evidence"
-          python3 e2e/journey/pr_delta.py check "$evidence/journey-pr-base" "$evidence/journey-pr-candidate" \
+          for side in base candidate; do
+            mkdir -p "$evidence/$side"
+            for mode in local secured; do
+              report="$evidence/journey-pr-report-$side-$mode/$mode"
+              ln -s "$report" "$evidence/$side/$mode"
+            done
+          done
+          python3 e2e/journey/pr_delta.py check "$evidence/base" "$evidence/candidate" \
             "$BASE_SHA" "$CANDIDATE_SHA" "$CLAIMS" | tee -a "$GITHUB_STEP_SUMMARY"
