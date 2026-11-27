@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 import { buildPlan, matchesGlob, parseNameStatus } from './resolve-e2e-zones.mjs';
@@ -10,14 +11,7 @@ const zones = [
   {
     zone: '_global',
     mode: 'global',
-    watch: [
-      'core/**',
-      'pnpm-lock.yaml',
-      'e2e/scripts/**',
-      'e2e/tests/**',
-      'package.json',
-      'pnpm-workspace.yaml',
-    ],
+    watch: ['core/**', 'pnpm-lock.yaml', 'e2e/scripts/**', 'package.json', 'pnpm-workspace.yaml'],
     ignore: ['docs/**', '**/*.md'],
   },
 ];
@@ -51,10 +45,23 @@ test('global changes select every zone and docs are ignored', () => {
 test('shared install and packaging infrastructure is covered globally', () => {
   const plan = buildPlan(parseNameStatus([
     'M\te2e/scripts/pack-all.sh',
-    'M\te2e/tests/Dockerfile',
     'M\tpackage.json',
     'M\tpnpm-workspace.yaml',
   ].join('\n')), zones);
   assert.deepEqual(plan.selected.map((zone) => zone.zone), ['mind', 'launcher', 'auth']);
   assert.deepEqual(plan.warnings, []);
+});
+
+// case: S-262.24
+test('legacy-only changes leave active suites out of the plan', () => {
+  const globalZone = JSON.parse(readFileSync(new URL('../../e2e/_global/ci.zone.json', import.meta.url), 'utf8'));
+  const activeZones = zones.map(zone => zone.mode === 'global' ? globalZone : zone);
+  const legacy = 'D\te2e/tests/specs/platform/plugins.spec.ts';
+  const active = 'M\te2e/shared/src/auth.ts';
+  const plan = buildPlan(parseNameStatus(legacy), activeZones);
+  assert.deepEqual(plan.selected, []);
+  assert.deepEqual(plan.warnings, []);
+  const activePlan = buildPlan(parseNameStatus(active), activeZones);
+  assert.deepEqual(activePlan.selected.map(({ zone }) => zone), ['mind', 'launcher', 'auth']);
+  assert.deepEqual(buildPlan(parseNameStatus(`${legacy}\n${active}`), activeZones).selected, activePlan.selected);
 });
