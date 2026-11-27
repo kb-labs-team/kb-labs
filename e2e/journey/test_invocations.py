@@ -4,6 +4,7 @@ import json
 import io
 import ast
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import invocations
 import redaction
 import jsonl
+import journey_resources
 
 
 class HarnessProbeTest(unittest.TestCase):
@@ -33,6 +35,51 @@ class HarnessProbeTest(unittest.TestCase):
             with self.subTest(error=type(error).__name__), \
                  patch.object(invocations.subprocess, "run", side_effect=error):
                 self.assertIsNone(invocations.probe_harness_command(["node", "--version"], timeout=5))
+
+
+class PlatformRegistryPlanStageTests(unittest.TestCase):
+    def test_staged_plan_script_runs_go_cli_boundary_with_runner_resource_layout(self):
+        source_root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(prefix="platform-registry-plan-stage-") as temporary:
+            install_root = Path(temporary) / "opt" / "kb-journey"
+            journey_dir = install_root / "e2e" / "journey"
+            journey_dir.mkdir(parents=True)
+            for module in ("invocations.py", "journey_values.py", "redaction.py", "jsonl.py",
+                           "journey_resources.py", "platform_registry_plan.py"):
+                shutil.copyfile(source_root / "e2e" / "journey" / module, journey_dir / module)
+
+            tool_entrypoints = [resource.source for resource in journey_resources.RUNNER_IMAGE_RESOURCES
+                                if resource.source.startswith("tools/") and resource.source.endswith("/main.go")]
+            resources = (*tool_entrypoints, "core/platform/src/error-envelope/errors.catalog.json")
+            for source in resources:
+                destination = install_root / source
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source_root / source, destination)
+
+            fake_bin = Path(temporary) / "bin"
+            fake_bin.mkdir()
+            kb_create = fake_bin / "kb-create"
+            kb_create.write_text(
+                "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":{\"plan\":{}}}'\n",
+                encoding="utf-8",
+            )
+            kb_create.chmod(0o755)
+            output = Path(temporary) / "plan.json"
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+            env["PYTHONPATH"] = str(journey_dir)
+            result = subprocess.run(
+                [sys.executable, str(journey_dir / "platform_registry_plan.py"), str(output), "--json"],
+                cwd=temporary, env=env, capture_output=True, text=True, check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {
+                "ok": True, "data": {"plan": {}},
+            })
+            dockerfile = (source_root / "e2e" / "platform" / "Dockerfile").read_text(encoding="utf-8")
+            for source in resources:
+                self.assertIn(f"COPY {source} /opt/kb-journey/{source}", dockerfile)
 
 
 def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
