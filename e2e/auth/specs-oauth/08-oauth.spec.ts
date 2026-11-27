@@ -13,6 +13,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import {
   ADMIN_EMAIL,
   waitForDashboard,
@@ -56,7 +57,7 @@ test.describe('OAuth/OIDC redirect login', () => {
     // /api/auth/me confirms the session resolves to the mapped user.
     const me = await page.request.get('/api/auth/me')
     expect(me.ok()).toBeTruthy()
-    const body = (await me.json()) as { email?: string }
+    const body = unwrapGatewaySuccess<{ email?: string }>(await me.json())
     expect(body.email?.toLowerCase()).toBe(OIDC_EMAIL.toLowerCase())
   })
 
