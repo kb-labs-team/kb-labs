@@ -322,7 +322,7 @@ jobs:
       # ── Run E2E suite ────────────────────────────────────────────────────
 
       - name: Install plugins for suite fixtures
-        if: inputs.suite == 'platform' || inputs.suite == 'plugins' || inputs.suite == 'studio'
+        if: inputs.suite == 'platform' || inputs.suite == 'plugins' || inputs.suite == 'studio' || inputs.suite == 'workflows'
         env:
           E2E_SUITE: ${{ inputs.suite }}
         run: |
@@ -334,6 +334,9 @@ jobs:
               for plugin in @kb-labs/commit @kb-labs/review @kb-labs/quality; do
                 docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install "$plugin" --scope project
               done
+              ;;
+            workflows)
+              docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/release --scope project
               ;;
             platform)
               docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/e2e-analytics-emitter@1.0.0 --scope project
