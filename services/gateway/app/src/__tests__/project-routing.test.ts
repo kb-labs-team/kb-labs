@@ -163,7 +163,9 @@ describe("registerProjectRoutes", () => {
       response.writeHead(secret ? 200 : 403, { "content-type": "application/json" });
       response.end(JSON.stringify(secret ? { ok: true } : { ok: false, error: { code: "KB_AUTH_FORBIDDEN" } }));
     });
-    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => {
+      upstream!.listen(0, "127.0.0.1", resolve);
+    });
     const port = (upstream.address() as { port: number }).port;
     app = Fastify();
     const prefix = "/api/v1/rest";
@@ -225,7 +227,9 @@ describe("registerProjectRoutes", () => {
       response.writeHead(secret ? 200 : 403, { "content-type": "application/json" });
       response.end(JSON.stringify(secret ? { ok: true } : { ok: false, error: { code: "KB_AUTH_FORBIDDEN" } }));
     });
-    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) => {
+      upstream!.listen(0, "127.0.0.1", resolve);
+    });
     const port = (upstream.address() as { port: number }).port;
     const proxyConfigs = [
       {

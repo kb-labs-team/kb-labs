@@ -82,7 +82,7 @@ describe('Gateway global auth gate', () => {
     expect(missing.json()).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/) } });
   });
 
-  // case: S-268.1
+  // case: S-323.1
   it('enumerates gateway routes and proxies anonymous Registry reads with trusted headers only', async () => {
     let upstreamHits = 0;
     upstream = createHttpServer((request, response) => {
@@ -211,7 +211,6 @@ describe('Gateway global auth gate', () => {
       'x-kb-auth-permissions': '["packages:read"]',
     });
 
-    // case: S-323.1
     for (const secretHeader of [undefined, 'client-invalid-secret']) {
       const internalAdapterCall = await app.inject({
         method: 'POST',

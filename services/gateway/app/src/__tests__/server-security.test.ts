@@ -278,7 +278,12 @@ describe('S-323.1 — static REST proxy keeps internal adapter-call private', ()
       expect(received.at(-1)).toEqual({ url: '/api/v1/health', secret: 'gateway-static-proxy-secret' });
     } finally {
       await gateway.close();
-      await new Promise<void>((resolve, reject) => rest.close(error => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) => {
+        rest.close(error => {
+          if (error) { reject(error); }
+          else { resolve(); }
+        });
+      });
       if (previousSecret === undefined) { delete process.env.GATEWAY_INTERNAL_SECRET; }
       else { process.env.GATEWAY_INTERNAL_SECRET = previousSecret; }
     }
