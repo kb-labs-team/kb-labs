@@ -300,6 +300,12 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 "stepSources": ["e2e/journey/service_runner.py"], "capabilities": ["gateway"],
                 "composeProfiles": [],
                 "selectedOwningSteps": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
+                "selectedOwningStepsByRunner": {
+                    "service-local:explore": {
+                        "platform readiness (gateway + project workflow)": ["S-042.1"]},
+                    "service-secured:explore": {
+                        "platform readiness (gateway + project workflow)": ["S-042.1"]},
+                },
                 "selectedClaimOwners": {"platform readiness (gateway + project workflow)": ["S-042.1"]},
             })
 
