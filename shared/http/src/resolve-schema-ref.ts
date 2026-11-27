@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { zodToJsonSchema, type ZodSchema } from 'zod-to-json-schema';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 
 export interface ZodSchemaRef {
   /** Reference in format "package-name#ExportedSchemaName" */
@@ -87,6 +87,6 @@ export async function resolveSchemaRef(ref: SchemaRef): Promise<Record<string, u
   return null;
 }
 
-function isLegacyZodSchema(value: unknown): value is ZodSchema {
+function isLegacyZodSchema(value: unknown): value is Parameters<typeof zodToJsonSchema>[0] {
   return value !== null && typeof value === 'object' && '_def' in value && !('_zod' in value);
 }

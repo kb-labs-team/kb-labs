@@ -270,6 +270,9 @@ export class OpenAILLM implements ILLM {
     const toolCalls: LLMToolCall[] = [];
     if (choice?.message?.tool_calls) {
       for (const tc of choice.message.tool_calls) {
+        if (!('function' in tc)) {
+          continue;
+        }
         try {
           const input = JSON.parse(tc.function.arguments);
           toolCalls.push({
