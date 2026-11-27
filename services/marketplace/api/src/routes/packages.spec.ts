@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import type { ILogger, IContextLogger } from '@kb-labs/core-platform';
 import { createContextLogger } from '@kb-labs/core-platform';
 import type { PackageSource, MarketplaceSource, ResolvedPackage, InstalledPackage } from '@kb-labs/marketplace-contracts';
-import { MarketplaceService, MarketplaceVersionError } from '@kb-labs/marketplace-core';
+import { MarketplaceInstallRollbackError, MarketplaceService, MarketplaceVersionError } from '@kb-labs/marketplace-core';
 import { NpmPackageSource, PackageInstallError, RegistryPackageSource } from '@kb-labs/marketplace-npm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from '../server.js';
@@ -224,12 +224,12 @@ describe('Marketplace API error boundary', () => {
   });
 
   // case: S-220.1
-    it('returns a catalogued install failure with the secret-free package-manager cause and logs it', async () => {
+  it('returns a concise install cause without exposing package-manager output', async () => {
     const { logger, errors } = makeContextLogger();
     const packageManagerError = new PackageInstallError(
       'INSTALL_FAILED',
       '@kb-labs/test-adapter@1.0.0',
-      'ERR_PNPM_NO_MATURE_MATCHING_VERSION: package is inside minimumReleaseAge',
+      'pnpm add @kb-labs/test-adapter@1.0.0 failed (RELEASE_TOO_FRESH).',
     );
     const service = makeMarketplaceService({
       platformRoot: tmpdir(),
@@ -257,14 +257,109 @@ describe('Marketplace API error boundary', () => {
         hint: expect.stringContaining('kb marketplace install @kb-labs/test-adapter@1.0.0 --scope platform'),
       },
     });
-    expect(result.error?.cause).toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
+    expect(result.error?.cause).toBe('Package manager operation failed (INSTALL_FAILED).');
+    expect(response.body).not.toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
     expect(errors).toHaveLength(1);
-    expect(errors[0]?.error?.message).toContain('ERR_PNPM_NO_MATURE_MATCHING_VERSION');
+    expect(errors[0]?.error?.message).toBe('pnpm add @kb-labs/test-adapter@1.0.0 failed (RELEASE_TOO_FRESH).');
     expect(errors[0]?.fields).toMatchObject({
       requestId: correlationId,
       errorCode: 'KB_MARKETPLACE_INSTALL_FAILED',
-      cause: expect.stringContaining('ERR_PNPM_NO_MATURE_MATCHING_VERSION'),
+      cause: expect.stringContaining('failed (INSTALL_FAILED)'),
     });
+  });
+
+  // case: S-220.1
+  it('logs redacted pnpm repair stderr without adding it to the public error envelope', async () => {
+    const { logger, errors } = makeContextLogger();
+    logger.registerSensitiveValues(['npm-repair-secret', 'registry-password', 'url-secret']);
+    const packageManagerError = new PackageInstallError(
+      'INSTALL_FAILED',
+      '@kb-labs/test-adapter@1.0.0',
+      'Marketplace could not restore package-manager state after installing @kb-labs/test-adapter@1.0.0. Retry after running pnpm install --offline.',
+    );
+    Object.assign(packageManagerError, {
+      packageManagerDiagnostics: [{
+        operation: 'pnpm.install-repair',
+        stream: 'stderr',
+        exitCode: 1,
+        output: 'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH: token=npm-repair-secret https://registry-password:registry-password@registry.test/?_authToken=url-secret ERR_PNPM_FAKE_CANARY_123',
+        sensitiveMetadata: 'ERR_PNPM_FAKE_CANARY_123',
+      }],
+    });
+    const service = makeMarketplaceService({
+      platformRoot: tmpdir(),
+      logger,
+      source: createFailingSource(packageManagerError, false),
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
+    });
+    const result = response.json();
+
+    expect(response.statusCode).toBe(422);
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        code: 'KB_MARKETPLACE_INSTALL_FAILED',
+        cause: 'Package manager operation failed (INSTALL_FAILED).',
+        details: { package: '@kb-labs/test-adapter@1.0.0', scope: 'platform', source: 'npm' },
+      },
+    });
+    expect(response.body).not.toContain('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
+    expect(response.body).not.toContain('npm-repair-secret');
+    expect(response.body).not.toContain('url-secret');
+    expect(response.body).not.toContain('registry-password');
+    expect(errors).toHaveLength(1);
+    const diagnostics = errors[0]?.fields?.packageManagerDiagnostics as Array<{ output: string }> | undefined;
+    expect(diagnostics?.[0]?.output).toBe('ERR_PNPM_LOCKFILE_CONFIG_MISMATCH');
+    expect(JSON.stringify(diagnostics)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
+    expect(errors[0]?.error?.message).toBe('Marketplace package-manager operation failed.');
+    expect(JSON.stringify(errors[0]?.error)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
+    expect(JSON.stringify(errors[0]?.error)).not.toContain('npm-repair-secret');
+    expect(JSON.stringify(errors[0])).not.toContain('npm-repair-secret');
+    expect(JSON.stringify(errors[0])).not.toContain('url-secret');
+    expect(JSON.stringify(errors[0])).not.toContain('registry-password');
+  });
+
+  // case: S-220.1
+  it('finds package-manager diagnostics nested inside Marketplace rollback causes', async () => {
+    const { logger, errors } = makeContextLogger();
+    const packageManagerError = new PackageInstallError(
+      'INSTALL_FAILED',
+      '@kb-labs/test-adapter@1.0.0',
+      'pnpm install repair failed for @kb-labs/test-adapter.',
+      { cause: new Error('Package-manager command failed (exit 1).') },
+    );
+    Object.assign(packageManagerError, {
+      packageManagerDiagnostics: [{ operation: 'pnpm.install-repair', stream: 'stdout', exitCode: 1, output: 'ERR_PNPM_NO_OFFLINE_META: token=[REDACTED] ERR_PNPM_FAKE_CANARY_123' }],
+    });
+    const rollbackError = new MarketplaceInstallRollbackError(
+      '@kb-labs/test-adapter', 'platform', 'npm', tmpdir(),
+      new Error('package validation failed'), new AggregateError([packageManagerError], 'rollback failed'),
+    );
+    const service = makeMarketplaceService({
+      platformRoot: tmpdir(), logger, source: createFailingSource(rollbackError, true),
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST', url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
+    });
+
+    expect(response.body).not.toContain('ERR_PNPM_NO_OFFLINE_META');
+    expect(response.json().error?.code).toBe('KB_MARKETPLACE_INSTALL_FAILED');
+    expect(errors[0]?.fields?.packageManagerDiagnostics).toMatchObject([{
+      operation: 'pnpm.install-repair', stream: 'stdout', output: 'ERR_PNPM_NO_OFFLINE_META',
+    }]);
+    expect(errors[0]?.error?.message).toBe('Marketplace package-manager operation failed.');
+    expect(JSON.stringify(errors[0]?.error)).not.toContain('ERR_PNPM_FAKE_CANARY_123');
   });
 
   // case: S-220.1

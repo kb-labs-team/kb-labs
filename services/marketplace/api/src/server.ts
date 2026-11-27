@@ -16,7 +16,7 @@ import type { ServiceHealthStatus, ObservabilityCheckStatus } from '@kb-labs/cor
 import { registerRoutes } from './routes/index.js';
 import { MarketplaceInstallRollbackError, MarketplaceVersionError, type MarketplaceService } from '@kb-labs/marketplace-core';
 import { ScopeResolutionError, AdapterScopeError, InvalidEntityError, PackageClassificationError } from '@kb-labs/marketplace-core';
-import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError, RegistryPackageError } from '@kb-labs/marketplace-npm';
+import { PackageInstallError, PackageMetadataError, PlatformArtifactPinsError, projectPackageManagerDiagnostics, RegistryPackageError } from '@kb-labs/marketplace-npm';
 import { ScopeRequestError } from './scope-parser.js';
 
 export interface CreateServerOptions {
@@ -83,15 +83,23 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         const body = request.body as { scope?: string } | undefined;
         const scope = typeof body?.scope === 'string' ? body.scope : 'platform';
         const mapped = mapMarketplaceError(err, correlationId, scope);
+        const capturedPackageManagerDiagnostics = collectPackageManagerDiagnostics(err);
+        const packageManagerDiagnostics = capturedPackageManagerDiagnostics.length > 0
+          ? logger.redactSensitiveValues(projectPackageManagerDiagnostics(capturedPackageManagerDiagnostics))
+          : undefined;
+        const logError = capturedPackageManagerDiagnostics.length > 0
+          ? new Error('Marketplace package-manager operation failed.')
+          : err;
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
-          err,
+          logError,
           {
             correlationId,
             requestId: correlationId,
             errorCode: mapped.envelope.code,
             statusCode: mapped.statusCode,
             cause: mapped.envelope.cause,
+            ...(packageManagerDiagnostics ? { packageManagerDiagnostics } : {}),
           },
         );
         return reply.code(mapped.statusCode).send({ ok: false, error: mapped.envelope });
@@ -105,6 +113,22 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
       await collector.observeOperation('marketplace.bootstrap', () => registerRoutes(app));
     },
   });
+}
+
+function collectPackageManagerDiagnostics(error: unknown): PackageInstallError['packageManagerDiagnostics'][number][] {
+  const diagnostics: PackageInstallError['packageManagerDiagnostics'][number][] = [];
+  const visited = new Set<unknown>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || visited.has(value)) { return; }
+    visited.add(value);
+    if (value instanceof PackageInstallError) { diagnostics.push(...value.packageManagerDiagnostics); }
+    if (value instanceof AggregateError) {
+      for (const nested of value.errors) { visit(nested); }
+    }
+    if ('cause' in value) { visit((value as { cause?: unknown }).cause); }
+  };
+  visit(error);
+  return diagnostics;
 }
 
 function asError(value: unknown): Error {
@@ -170,7 +194,7 @@ function mapMarketplaceError(err: Error, correlationId: string, scope: string): 
     } else if (err.code === 'INTEGRITY_MISMATCH') {
       diagnostic = { code: 'KB_MARKETPLACE_INTEGRITY_MISMATCH', details: { package: err.spec, scope } };
     } else {
-      diagnostic = { code: 'KB_MARKETPLACE_INSTALL_FAILED', details: { package: err.spec, scope, source: 'npm' }, cause: err.message, templateValues: { sourceName: 'npm' } };
+      diagnostic = { code: 'KB_MARKETPLACE_INSTALL_FAILED', details: { package: err.spec, scope, source: 'npm' }, cause: `Package manager operation failed (${err.code}).`, templateValues: { sourceName: 'npm' } };
     }
   } else if (err instanceof MarketplaceVersionError) {
     if (err.code === 'INTEGRITY_MISMATCH') {

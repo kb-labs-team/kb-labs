@@ -45,7 +45,7 @@ describe("Marketplace image default config", () => {
 
     const { setup } = await import("../bootstrap.js");
     const context = {
-      logger: { info: vi.fn() },
+      logger: { info: vi.fn(), redactSensitiveValues: (value: string) => value },
       port: 5070,
       host: "127.0.0.1",
       platformRoot: tempRoot,
@@ -56,7 +56,10 @@ describe("Marketplace image default config", () => {
     await expect(setup(context)).resolves.toBeTypeOf("function");
 
     expect(mocks.MarketplaceService).toHaveBeenCalledWith(expect.objectContaining({
-      sources: [expect.objectContaining({ options: { registryUrl: generatedConfig.marketplace.sources[0]?.url } })],
+      sources: [expect.objectContaining({ options: expect.objectContaining({
+        registryUrl: generatedConfig.marketplace.sources[0]?.url,
+        redactSensitiveValues: expect.any(Function),
+      }) })],
     }));
   });
 });

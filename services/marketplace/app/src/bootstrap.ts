@@ -47,7 +47,10 @@ export async function setup({
       })]
       : []),
     ...sourcesConfig.flatMap(source => source?.kind === 'npm'
-      ? [new NpmPackageSource({ registryUrl: source.url })]
+      ? [new NpmPackageSource({
+        registryUrl: source.url,
+        redactSensitiveValues: value => logger.redactSensitiveValues(value),
+      })]
       : []),
   ];
 

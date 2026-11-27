@@ -44,27 +44,80 @@ export class PlatformArtifactPinsError extends Error {
 
 export interface NpmPackageSourceOptions {
   registryUrl: string;
+  redactSensitiveValues?: (value: string) => string;
+}
+
+export interface PackageManagerDiagnostic {
+  operation: 'pnpm.add' | 'pnpm.install-repair' | 'pnpm.remove' | 'unknown';
+  stream: 'stdout' | 'stderr' | 'none';
+  exitCode?: number;
+  output: string;
 }
 
 export class PackageInstallError extends Error {
   readonly code: 'NOT_FOUND' | 'INSTALL_FAILED' | 'RELEASE_TOO_FRESH' | 'INTEGRITY_MISMATCH';
   readonly spec: string;
-  constructor(code: PackageInstallError['code'], spec: string, message: string, options?: ErrorOptions) {
+  readonly packageManagerDiagnostics: readonly PackageManagerDiagnostic[];
+
+  constructor(
+    code: PackageInstallError['code'],
+    spec: string,
+    message: string,
+    options?: ErrorOptions,
+    packageManagerDiagnostics: readonly PackageManagerDiagnostic[] = [],
+  ) {
     super(message, options);
     this.name = 'PackageInstallError';
     this.code = code;
     this.spec = spec;
+    this.packageManagerDiagnostics = packageManagerDiagnostics;
   }
+}
+
+const SAFE_PNPM_CODES = new Set([
+  'ERR_PNPM_ADDING_TO_ROOT',
+  'ERR_PNPM_FETCH_404',
+  'ERR_PNPM_LOCKFILE_CONFIG_MISMATCH',
+  'ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION',
+  'ERR_PNPM_NO_MATURE_MATCHING_VERSION',
+  'ERR_PNPM_NO_OFFLINE_META',
+  'ERR_PNPM_TARBALL_INTEGRITY',
+  'ERR_PNPM_TARBALL_INTEGRITY_FAILED',
+]);
+const SAFE_PNPM_OPERATIONS = new Set(['pnpm.add', 'pnpm.install-repair', 'pnpm.remove', 'unknown']);
+const SAFE_PNPM_STREAMS = new Set(['stdout', 'stderr', 'none']);
+
+export function projectPackageManagerDiagnostics(
+  diagnostics: readonly PackageManagerDiagnostic[],
+): PackageManagerDiagnostic[] {
+  return diagnostics.map(diagnostic => ({
+    operation: SAFE_PNPM_OPERATIONS.has(diagnostic.operation) ? diagnostic.operation : 'unknown',
+    stream: SAFE_PNPM_STREAMS.has(diagnostic.stream) ? diagnostic.stream : 'none',
+    ...(typeof diagnostic.exitCode === 'number' && Number.isInteger(diagnostic.exitCode) && Math.abs(diagnostic.exitCode) <= 255
+      ? { exitCode: diagnostic.exitCode }
+      : {}),
+    output: safePackageManagerOutput(typeof diagnostic.output === 'string' ? diagnostic.output : ''),
+  }));
+}
+
+function safePackageManagerOutput(output: string): string {
+  const safeCodes = [...new Set(output.match(/\bERR_PNPM_[A-Z0-9_]+\b/g) ?? [])]
+    .filter(code => SAFE_PNPM_CODES.has(code));
+  return safeCodes.length > 0 ? safeCodes.join('\n') : 'No recognized pnpm error code';
 }
 
 export class NpmPackageSource implements MarketplaceSource {
   readonly kind = 'npm' as const;
   readonly dependencyRegistryUrl: string;
   private readonly registryUrl: string;
+  private readonly registrySecrets: readonly string[];
+  private readonly redactSensitiveValues?: (value: string) => string;
   private readonly pendingInstalls = new Map<string, PackageManagerFileSnapshot[]>();
 
   constructor(options: NpmPackageSourceOptions) {
     this.registryUrl = options.registryUrl.replace(/\/$/, '');
+    this.registrySecrets = extractRegistrySecrets(this.registryUrl);
+    this.redactSensitiveValues = options.redactSensitiveValues;
     const dependencyRegistry = new URL(this.registryUrl);
     dependencyRegistry.username = '';
     dependencyRegistry.password = '';
@@ -164,14 +217,22 @@ export class NpmPackageSource implements MarketplaceSource {
         await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        const code = msg.includes('ERR_PNPM_FETCH_404') || msg.includes('Not Found - 404')
+        const diagnostics = this.packageManagerDiagnostics('pnpm.add', err);
+        const failureText = `${msg}\n${diagnostics.map(diagnostic => diagnostic.output).join('\n')}`;
+        const code = failureText.includes('ERR_PNPM_FETCH_404') || failureText.includes('Not Found - 404')
           ? 'NOT_FOUND'
-          : msg.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || msg.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
+          : failureText.includes('ERR_PNPM_NO_MATURE_MATCHING_VERSION') || failureText.includes('ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION')
             ? 'RELEASE_TOO_FRESH'
-            : msg.includes('ERR_PNPM_TARBALL_INTEGRITY') || msg.includes('ERR_PNPM_TARBALL_INTEGRITY_FAILED')
+            : failureText.includes('ERR_PNPM_TARBALL_INTEGRITY') || failureText.includes('ERR_PNPM_TARBALL_INTEGRITY_FAILED')
               ? 'INTEGRITY_MISMATCH'
               : 'INSTALL_FAILED';
-        throw new PackageInstallError(code, spec, `pnpm add ${spec} failed: ${msg}`, { cause: err });
+        throw new PackageInstallError(
+          code,
+          spec,
+          `pnpm add ${spec} failed (${code}).`,
+          { cause: safePackageManagerError(err) },
+          diagnostics,
+        );
       }
 
       const packageRoot = path.join(root, 'node_modules', pkg.id);
@@ -198,11 +259,18 @@ export class NpmPackageSource implements MarketplaceSource {
         if (pnpmStarted) {await reconcileRestoredPackageGraph(root, state);}
         else {await restorePackageManagerState(root, state);}
       } catch (rollbackError) {
+        const packageManagerDiagnostics = [
+          ...(error instanceof PackageInstallError ? error.packageManagerDiagnostics : []),
+          ...this.packageManagerDiagnostics('pnpm.install-repair', rollbackError),
+        ];
+        const safeInstallError = safePackageManagerError(error);
+        const safeRepairError = safePackageManagerError(rollbackError);
         throw new PackageInstallError(
           'INSTALL_FAILED',
           spec,
           `Marketplace could not restore package-manager state after installing ${spec}. Run "pnpm install --offline" in ${root}, then retry "kb marketplace install ${spec}".`,
-          { cause: new AggregateError([error, rollbackError], 'Marketplace package-manager rollback failed') },
+          { cause: new AggregateError([safeInstallError, safeRepairError], 'Marketplace package-manager rollback failed') },
+          packageManagerDiagnostics,
         );
       }
       throw error;
@@ -217,13 +285,94 @@ export class NpmPackageSource implements MarketplaceSource {
     const key = installKey(root, packageId);
     const snapshot = this.pendingInstalls.get(key);
     if (!snapshot) {return;}
-    await reconcileRestoredPackageGraph(root, snapshot);
-    this.pendingInstalls.delete(key);
+    try {
+      await reconcileRestoredPackageGraph(root, snapshot);
+      this.pendingInstalls.delete(key);
+    } catch (error) {
+      throw new PackageInstallError(
+        'INSTALL_FAILED',
+        packageId,
+        `pnpm install repair failed for ${packageId}.`,
+        { cause: safePackageManagerError(error) },
+        this.packageManagerDiagnostics('pnpm.install-repair', error),
+      );
+    }
   }
 
   async remove(packageId: string, root: string): Promise<void> {
-    await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
+    try {
+      await execa('pnpm', ['remove', packageId], { cwd: root, timeout: 2 * 60 * 1000 });
+    } catch (error) {
+      throw new PackageInstallError(
+        'INSTALL_FAILED', packageId, `pnpm remove failed for ${packageId}.`,
+        { cause: safePackageManagerError(error) }, this.packageManagerDiagnostics('pnpm.remove', error),
+      );
+    }
   }
+
+  private packageManagerDiagnostics(operation: PackageManagerDiagnostic['operation'], error: unknown): PackageManagerDiagnostic[] {
+    const result = error !== null && typeof error === 'object'
+      ? error as { exitCode?: unknown; stderr?: unknown; stdout?: unknown }
+      : {};
+    const stderr = typeof result.stderr === 'string' ? result.stderr : '';
+    const stdout = typeof result.stdout === 'string' ? result.stdout : '';
+    const exitCode = typeof result.exitCode === 'number' ? result.exitCode : undefined;
+    const streams: Array<PackageManagerDiagnostic['stream']> = [];
+    if (stderr) { streams.push('stderr'); }
+    if (stdout) { streams.push('stdout'); }
+    if (streams.length === 0) { streams.push('none'); }
+    return streams.map(stream => ({
+      operation,
+      stream,
+      ...(exitCode === undefined ? {} : { exitCode }),
+      output: stream === 'stderr'
+        ? redactPackageManagerOutput(stderr, this.registrySecrets, this.redactSensitiveValues)
+        : stream === 'stdout'
+          ? redactPackageManagerOutput(stdout, this.registrySecrets, this.redactSensitiveValues)
+          : 'No output captured',
+    }));
+  }
+}
+
+const MAX_PACKAGE_MANAGER_STDERR_LENGTH = 8 * 1024;
+const CREDENTIAL_NAME = /(?:auth|token|password|passwd|secret|credential|api[_-]?key)/i;
+
+function extractRegistrySecrets(registryUrl: string): string[] {
+  let parsed: URL;
+  try {
+    parsed = new URL(registryUrl);
+  } catch {
+    return [];
+  }
+  const values = [parsed.username, parsed.password]
+    .filter(Boolean)
+    .flatMap(value => {
+      try { return [value, decodeURIComponent(value)]; } catch { return [value]; }
+    });
+  for (const [name, value] of parsed.searchParams) {
+    if (CREDENTIAL_NAME.test(name) && value) { values.push(value); }
+  }
+  return [...new Set(values)];
+}
+
+function redactPackageManagerOutput(
+  output: string,
+  registrySecrets: readonly string[],
+  redactSensitiveValues?: (value: string) => string,
+): string {
+  const plain = output.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '');
+  const configuredRedacted = registrySecrets
+    .filter(Boolean)
+    .sort((left, right) => right.length - left.length)
+    .reduce((value, secret) => value.split(secret).join('[REDACTED]'), plain);
+  const platformRedacted = redactSensitiveValues?.(configuredRedacted) ?? configuredRedacted;
+  return safePackageManagerOutput(platformRedacted).slice(-MAX_PACKAGE_MANAGER_STDERR_LENGTH);
+}
+
+function safePackageManagerError(error: unknown): Error {
+  const result = error !== null && typeof error === 'object' ? error as { exitCode?: unknown } : {};
+  const exitCode = typeof result.exitCode === 'number' ? ` (exit ${result.exitCode})` : '';
+  return new Error(`Package-manager command failed${exitCode}.`);
 }
 
 function installKey(root: string, packageId: string): string {
