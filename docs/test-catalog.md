@@ -7581,10 +7581,10 @@
 
 **`e2e/workflows/scenarios/default/cases/plugin-templates.spec.ts`**
 
-- WFD-P01: plugin workflow templates appear in catalog
-- WFD-P02: plugin workflow template has source=plugin
-- WFD-P03: plugin workflow template has description
-- WFD-P04: plugin template is resolvable by ID
+- WFD-P01 @S-322.1: plugin workflow templates appear in catalog
+- WFD-P02 @S-322.1: plugin workflow template has source=plugin
+- WFD-P03 @S-322.1: plugin workflow template has description
+- WFD-P04 @S-322.2: plugin template is resolvable by ID
 
 **`e2e/workflows/scenarios/default/cases/runs.spec.ts`**
 
