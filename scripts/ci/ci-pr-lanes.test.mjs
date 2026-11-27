@@ -6,7 +6,8 @@ import { load } from 'js-yaml';
 import { test } from 'node:test';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const ciPr = load(readFileSync(join(root, '.github/workflows/ci-pr.yml'), 'utf8'));
+const workflow = (file) => load(readFileSync(join(root, '.github/workflows', file), 'utf8'));
+const ciPr = workflow('ci-pr.yml');
 const devkit = load(readFileSync(join(root, 'devkit.yaml'), 'utf8'));
 const installerJourney = load(readFileSync(join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
 
@@ -36,10 +37,10 @@ test('workspace package tests run the declared test script for plugin-entry pack
   assert.notEqual(pluginTest.command, 'pnpm run test:cli');
 });
 
-test('test (full) gates the shipped lane only', () => {
+test('full unit and CLI tests gate the shipped lane only', () => {
   const full = ciPr.jobs['full-unit-tests'];
   const steps = devkitTestRuns(full);
-  assert.ok(steps.length >= 2, 'test (full) must still run unit and CLI handler tests');
+  assert.ok(steps.length >= 2, 'full tests still run unit and CLI handler tests');
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
@@ -71,8 +72,30 @@ test('full workspace dist is built once and shared by full tests and Devkit chec
     assert.ok(consumer.steps.some((step) => step.with?.name === 'full-dist-for-devkit-checks'));
   }
   assert.ok(!ciPr.jobs['devkit-checks'].needs.includes('full-unit-tests'), 'Devkit checks can run alongside full tests');
-  assert.equal(ciPr.jobs['full-unit-tests'].name, 'test (full)');
   assert.ok(ciPr.jobs['ci-evidence'].needs.includes(producerId));
+});
+
+// case: S-262.25
+test('checks show their purpose while the E2E sources and tested tasks stay the same', () => {
+  const ci = workflow('ci.yml');
+  const security = workflow('security.yml');
+
+  for (const pipeline of [ci, ciPr]) {
+    assert.equal(pipeline.jobs['build-tools'].name, 'Build');
+    assert.equal(pipeline.jobs['devkit-checks'].name, 'Quality / Workspace checks');
+    assert.equal(pipeline.jobs.checks.name, '${{ matrix.label }}');
+  }
+  assert.equal(workflow('build-go-tools.yml').jobs.build.name, 'Go tools');
+  assert.equal(ci.jobs.coverage.name, 'Quality / TypeScript coverage');
+  assert.equal(ciPr.jobs['full-unit-tests'].name, 'Tests / Unit and CLI');
+  assert.equal(security.jobs['audit-npm'].name, 'Dependency audit');
+  assert.deepEqual(ci.jobs.checks.strategy.matrix.include.map(({ task }) => task), ['lint', 'type-check', 'test', 'test:cli']);
+  assert.deepEqual(ciPr.jobs.checks.strategy.matrix.include.map(({ task }) => task), ['lint', 'type-check']);
+
+  assert.equal(ci.name, 'CI');
+  assert.equal(ciPr.name, 'CI (PR)');
+  assert.deepEqual(workflow('e2e-platform.yml').on.workflow_run.workflows, [ci.name, 'Release Binaries']);
+  assert.deepEqual(workflow('e2e-affected.yml').on.workflow_run.workflows, [ciPr.name]);
 });
 
 test('internal tools run in their own visible job on their own affected inputs', () => {
@@ -80,7 +103,7 @@ test('internal tools run in their own visible job on their own affected inputs',
   assert.equal(lane.length, 1, 'exactly one job runs the internal-tool lane');
   const [id, job] = lane[0];
   assert.notEqual(id, 'full-unit-tests');
-  assert.match(job.name, /internal tools/);
+  assert.equal(job.name, 'Tests / Internal Go tools');
   const step = devkitTestRuns(job)[0];
   assert.match(step.run, /--affected --diff-only/, 'runs only when the tools inputs changed');
   assert.ok((job.steps ?? []).some((s) => String(s.uses ?? '').startsWith('actions/setup-go@')), 'same Go toolchain setup');
