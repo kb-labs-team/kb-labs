@@ -1,18 +1,12 @@
 name: Build Go tools (reusable)
 
-# Builds kb-devkit from source, then uses it to build the rest of the Go CLI
-# tools, and uploads them as the "go-tools" artifact. Extracted from ci.yml /
-# ci-pr.yml, which had this exact sequence duplicated. These binaries are
+# Builds the host Go CLI tools before the workspace dependency graph is
+# installed, then uploads them as the "go-tools" artifact. These binaries are
 # never committed to git — see tools/kb-*/kb-* in .gitignore.
 
 on:
   workflow_call:
     inputs:
-      packages:
-        description: >-
-          Comma-separated package list forwarded to `kb-devkit run build --packages`.
-        type: string
-        default: "github.com/kb-labs/clikit,github.com/kb-labs/devkit,github.com/kb-labs/dev,kb-create,github.com/kb-labs/kb-deploy,github.com/kb-labs/kb-monitor"
       fetch-depth:
         description: Passed through to actions/checkout.
         type: number
@@ -36,19 +30,14 @@ jobs:
             tools/kb-create/go.sum
             tools/kb-deploy/go.sum
             tools/kb-monitor/go.sum
-      - name: Build kb-devkit (host)
-        run: make build
-        working-directory: tools/kb-devkit
-      - name: Build all Go binaries via devkit
-        run: ./tools/kb-devkit/kb-devkit run build --packages ${{ inputs.packages }}
-      - name: Collect binaries
+      - name: Build and collect the host Go tools
         run: |
           mkdir -p go-tools
-          cp tools/kb-devkit/kb-devkit go-tools/kb-devkit
-          cp tools/kb-dev/kb-dev       go-tools/kb-dev
-          cp tools/kb-create/kb-create go-tools/kb-create
-          cp tools/kb-deploy/kb-deploy go-tools/kb-deploy
-          cp tools/kb-monitor/kb-monitor go-tools/kb-monitor
+          for tool in kb-devkit kb-dev kb-create kb-deploy kb-monitor; do
+            make -C "tools/$tool" build
+            test -x "tools/$tool/$tool"
+            cp "tools/$tool/$tool" go-tools/
+          done
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: go-tools
