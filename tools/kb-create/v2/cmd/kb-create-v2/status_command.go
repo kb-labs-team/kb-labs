@@ -20,6 +20,10 @@ import (
 
 type statusCommandInput struct{ PlatformRoot, Executable string }
 
+func unhealthyHostDiagnostic() (*diag.Diag, error) {
+	return diag.FromCatalog("KB_HOST_UNHEALTHY", map[string]string{"module": "gateway"})
+}
+
 func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any, *diag.Diag) {
 	root := inv.PlatformRoot
 	if root == "" {
@@ -136,7 +140,11 @@ func executeStatus(ctx context.Context, inv statusCommandInput) (map[string]any,
 		payload["supervisor"] = info
 	}
 	if status.State == host.StateUnhealthy {
-		return nil, contracts.NewDiag("KB_HOST_UNHEALTHY", "The host responds but is unhealthy.", "Run \"kb-create restart\" or \"kb-create doctor\".", nil)
+		failure, err := unhealthyHostDiagnostic()
+		if err != nil {
+			return nil, asDiag(err)
+		}
+		return nil, failure
 	}
 	return payload, nil
 }
