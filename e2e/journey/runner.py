@@ -969,7 +969,7 @@ def finalize_run(passed: bool) -> int:
                 journey_results.append(json.loads(service_report.read_text(encoding="utf-8")))
             except (OSError, UnicodeError, json.JSONDecodeError) as error:
                 fail(f"service runner result could not be read for selected claim completion: {error}")
-        selected_owning_steps = CASE_JOURNEY.selected_owning_steps if CASE_JOURNEY is not None else {}
+        selected_owning_steps = CASE_JOURNEY.selected_completion_owners if CASE_JOURNEY is not None else {}
         missing_selected_steps = check_selected_step_completion(journey_results, selected_owning_steps)
         missing_selected = check_selected_claim_completion(journey_results)
         passed = passed and not missing_selected and not missing_selected_steps and not FIRST_FAILURE
@@ -1666,7 +1666,7 @@ def _main(*, update_variant_runner=None):
         installed_state = installed_payload.get("host", {})
         install_running = (installed_status.returncode == 0 and installed_payload.get("installed") is True
                            and installed_payload.get("running") is True and installed_payload.get("reachable") is True
-                           and installed_state.get(layout_value('sharedStateDirectory')) == "running")
+                           and installed_state.get("state") == "running")
     except (json.JSONDecodeError, AttributeError):
         install_running = False
     if FRONT_DOOR == "agent":
@@ -1986,7 +1986,7 @@ def _main(*, update_variant_runner=None):
                 installation = status_payload.get("installation", {})
                 status_ok = (result.returncode == 0 and status_payload.get("installed") is True
                              and status_payload.get("running") is True and status_payload.get("reachable") is True
-                             and host_status.get(layout_value('sharedStateDirectory')) == "running"
+                             and host_status.get("state") == "running"
                              and installation.get("receiptId") == active_receipt.get("id"))
             except (json.JSONDecodeError, AttributeError, OSError):
                 status_ok = False
@@ -2001,7 +2001,7 @@ def _main(*, update_variant_runner=None):
                     spelling_ok = (spelling_result.returncode == 0
                                    and spelling_status.get("running") is True
                                    and spelling_status.get("reachable") is True
-                                   and spelling_status.get("host", {}).get(layout_value('sharedStateDirectory')) == "running"
+                                   and spelling_status.get("host", {}).get("state") == "running"
                                    and spelling_installation.get("receiptId") == active_receipt.get("id"))
                 except (ValueError, json.JSONDecodeError, AttributeError):
                     spelling_ok = False

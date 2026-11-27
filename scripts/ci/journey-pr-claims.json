@@ -1,4 +1,8 @@
 {
+  "legacyWorkflowChild": {
+    "owner": "initialize solo project workflow",
+    "claim": "S-002.1"
+  },
   "crossCutting": [
     "PC-001.2",
     "S-010.1",
@@ -41,6 +45,8 @@
       ],
       "claims": [
         "S-002.1",
+        "S-006.3",
+        "S-007.1",
         "S-056.1"
       ]
     },

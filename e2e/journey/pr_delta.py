@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from batch_summary import requested_selection, verify_run_commit
+from dispatch_registry import RUNNERS
 from invocations import print_report_text, run_harness_command
 from scoreboard import MODES, _service_message_for_comparison
 
@@ -38,6 +39,12 @@ class Evidence(NamedTuple):
     step: str
     status: str
     reason: str
+
+
+class SelectionEvidence(NamedTuple):
+    measured: dict[tuple[str, str], set[Evidence]]
+    indirect: dict[str, set[Evidence]]
+    plan: dict
 
 
 def plan_claims(paths: list[str]) -> list[str]:
@@ -76,7 +83,7 @@ def read_json(path: Path) -> dict:
 
 
 def selected_outcomes(directory: Path, sha: str, mode: str,
-                      claims: list[str]) -> dict[tuple[str, str], set[Evidence]]:
+                      claims: list[str]) -> SelectionEvidence:
     verify_run_commit(directory / "run.json", sha)
     metadata = read_json(directory / "batch-metadata.json")
     plan = read_json(directory / "selection-plan.json")
@@ -85,7 +92,7 @@ def selected_outcomes(directory: Path, sha: str, mode: str,
         raise ValueError(f"{mode}: invalid or incomplete metadata for commit {sha}")
     selected = set(plan["steps"])
     if metadata["result"] == "NO_SELECTED_CLAIMS" and not selected and not plan["runners"]:
-        return {}
+        return SelectionEvidence({}, {}, plan)
     if metadata["result"] not in {"PASS", "FAIL"} or not selected or not selected <= set(claims) or not plan["runners"]:
         raise ValueError(f"{mode}: invalid selected Journey plan for commit {sha}")
     owners = plan["selectedClaimOwners"]
@@ -94,7 +101,7 @@ def selected_outcomes(directory: Path, sha: str, mode: str,
         raise ValueError(f"{mode}: the selection plan omits a claim owner for commit {sha}")
     obligations.update((name, "") for name in plan["prerequisiteSteps"])
     measured = defaultdict(set)
-    unnamed_claim_results = defaultdict(list)
+    unnamed_claim_results = defaultdict(set)
     for path in sorted(directory.glob("*.json")):
         if not path.name.startswith(REPORT_PREFIXES):
             continue
@@ -113,10 +120,10 @@ def selected_outcomes(directory: Path, sha: str, mode: str,
                 if key in obligations:
                     measured[key].add(evidence)
                 elif claim in selected and row.get("capability") != "journey.selection":
-                    unnamed_claim_results[claim].append(evidence)
+                    unnamed_claim_results[claim].add(evidence)
     for key in obligations - measured.keys():
         _, claim = key
-        results = unnamed_claim_results.get(claim, [])
+        results = unnamed_claim_results.get(claim, set())
         if (results and all(row.status == "BLOCKED" and row.reason for row in results)
                 and sum(claim in ids for ids in owners.values()) == 1):
             measured[key].update(results)
@@ -127,17 +134,49 @@ def selected_outcomes(directory: Path, sha: str, mode: str,
     if metadata["result"] == "FAIL" and all(row.status == "PASS" for results in measured.values()
                                             for row in results):
         raise ValueError(f"{mode}: runner failed outside the available results for commit {sha}")
-    return dict(measured)
+    return SelectionEvidence(dict(measured), dict(unnamed_claim_results), plan)
+
+
+def workflow_child_recovered(mode: str, key: tuple[str, str], before: SelectionEvidence,
+                             after: SelectionEvidence) -> bool:
+    # The nightly install invokes the Workflow child and saves its own
+    # installer report separately from the child's service report.
+    step, claim = key
+    selector = f"service-{mode}:explore"
+    runner = RUNNERS[selector]
+    installer_report = f"installer-case-{mode}-{runner.front_door}-{runner.scenario}-{runner.variant}.json"
+    owner_assignments = after.plan.get("selectedOwningStepsByRunner", {})
+    assigned = {item for item, steps in owner_assignments.items() if claim in steps.get(step, [])}
+    if assigned != {selector} or claim not in before.plan.get("owners", {}).get(selector, []):
+        return False
+    for other in set(before.plan["runners"]) | set(after.plan["runners"]):
+        if other == selector:
+            continue
+        spec = RUNNERS[other]
+        if (spec.mode, spec.front_door, spec.scenario, spec.variant) == (
+                mode, runner.front_door, runner.scenario, runner.variant):
+            return False
+
+    blocked = before.measured.get((step, claim), set())
+    child_block = {row for row in blocked if row.step == "workflow execution journey"}
+    return (len(child_block) == 1
+            and all(row.report == installer_report and row.status == "BLOCKED" and row.reason
+                    and row.step in {"workflow execution journey", "workflow fixture lint"} for row in blocked)
+            and after.indirect.get(claim, set()) == blocked - child_block
+            and after.measured.get((step, claim)) == {Evidence(f"service-{mode}.json", step, "PASS", "")})
 
 
 def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, claims: list[str]) -> tuple[str, bool]:
     lines = ["## Journey baseline delta", "", f"- Base: `{base_sha}`", f"- Tested merge: `{candidate_sha}`",
              f"- Selected claims: {', '.join(claims)}", ""]
     improved, regressed, measured_claims = [], [], set()
+    workflow_child = read_json(CLAIM_MAP)["legacyWorkflowChild"]
+    workflow_child_key = workflow_child["owner"], workflow_child["claim"]
     for mode in MODES:
         try:
-            before = selected_outcomes(base / mode, base_sha, mode, claims)
-            after = selected_outcomes(candidate / mode, candidate_sha, mode, claims)
+            baseline = selected_outcomes(base / mode, base_sha, mode, claims)
+            proposed = selected_outcomes(candidate / mode, candidate_sha, mode, claims)
+            before, after = baseline.measured, proposed.measured
         except (OSError, ValueError, KeyError, TypeError) as error:
             regressed.append(f"{mode}: {error}")
             continue
@@ -154,7 +193,9 @@ def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, cla
                 continue
             # Multiple indirect blockers can demonstrate unchanged debt, not owner recovery.
             multiple_blockers = sum(row.step != name for row in old) > 1
-            if (not multiple_blockers and {row.report for row in old} == {row.report for row in new}
+            if key == workflow_child_key and workflow_child_recovered(mode, key, baseline, proposed):
+                improved.append(label)
+            elif (not multiple_blockers and {row.report for row in old} == {row.report for row in new}
                     and new_statuses == {"PASS"} and old_statuses & {"FAIL", "BLOCKED"}):
                 improved.append(label)
             else:

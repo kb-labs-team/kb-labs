@@ -1528,6 +1528,28 @@ class DispatchRegistryTests(unittest.TestCase):
             "plan the newer sealed release": ["S-023.2"],
         })
 
+    def test_selected_owner_plan_keeps_catalog_runner_scope(self):
+        self.assertEqual(runners_for_source("e2e/journey/workflow_steps.py", "local"),
+                         {"service-local:explore"})
+        resolved = resolve_selection(
+            ["S-010.6"],
+            {"S-010.6": {"e2e/journey/marketplace_steps.py"}},
+            {"S-010.6": [{"kind": "step", "name": "secured marketplace login error",
+                           "runners": ["service-secured:explore"]}]},
+            {},
+            {"S-010.6": {
+                "agent:commit": {"S-010.6"},
+                "service-secured:explore": {"S-010.6"},
+            }},
+            "",
+        )
+        self.assertEqual(resolved["selectedOwningSteps"], {
+            "secured marketplace login error": ["S-010.6"],
+        })
+        self.assertEqual(resolved["selectedOwningStepsByRunner"], {
+            "service-secured:explore": {"secured marketplace login error": ["S-010.6"]},
+        })
+
     # case: S-262.19
     def test_resolver_assigns_each_prerequisite_only_to_dependent_claims(self):
         resolved = resolve_selection(
