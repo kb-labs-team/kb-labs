@@ -189,6 +189,11 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertLess(fixtures, login)
         self.assertLess(login, register)
         self.assertLess(register, configure_provider)
+        provider_setup = entrypoint[register:restart]
+        self.assertIn('clientSecretEnv: "OIDC_CORP_CLIENT_SECRET"', provider_setup)
+        self.assertNotIn("$OIDC_CORP_CLIENT_SECRET", provider_setup)
+        self.assertIn("--allow-plain-secret", provider_setup)
+        self.assertIn("Fixture OAuth config command failed", provider_setup)
         self.assertLess(configure_provider, restart)
         self.assertLess(restart, provider_probe)
         self.assertLess(provider_probe, ready)

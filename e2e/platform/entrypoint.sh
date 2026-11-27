@@ -156,7 +156,15 @@ if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
         clientSecretEnv: "OIDC_CORP_CLIENT_SECRET", scopes: ["openid", "email"], pkce: true
       }
     }')
-  kb config set --scope platform gateway.auth.providers "$OIDC_PROVIDERS" --json > /dev/null
+  # The writer treats the provider name and clientSecretEnv field as secret keys.
+  # This fixture passes only their literal names; the credential stays in the environment.
+  if ! OIDC_CONFIG_RESULT=$(kb config set --scope platform gateway.auth.providers "$OIDC_PROVIDERS" \
+      --allow-plain-secret --json); then
+    OIDC_CONFIG_CODE=$(printf '%s\n' "$OIDC_CONFIG_RESULT" |
+      jq -r '(.error.code // .code // "") | select(test("^KB_[A-Z0-9_]+$"))' 2>/dev/null || true)
+    printf 'ERROR: Fixture OAuth config command failed (%s)\n' "${OIDC_CONFIG_CODE:-no error code}" >&2
+    exit 1
+  fi
   kb-create restart --platform-root "$PLATFORM_ROOT"
 fi
 
