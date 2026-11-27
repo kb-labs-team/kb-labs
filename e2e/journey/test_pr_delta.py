@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from pr_delta import check_pr, plan_claims
+from pr_delta import check_pr, plan_claims, without_devkit_coverage_tasks
 
 
 class PullRequestDeltaTests(unittest.TestCase):
@@ -21,6 +21,28 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertIn("PC-001.2", plan_claims(["e2e/platform/prepare-release-index.mjs"]))
         self.assertIn("PC-001.2", plan_claims(["core/runtime/src/main.ts"]))
         self.assertTrue(plan_claims(["services/new-service/src/main.ts"]))
+
+    # case: S-262.21
+    def test_only_devkit_coverage_tasks_are_outside_installed_scope(self):
+        base = (
+            "tasks:\n"
+            "  build:\n"
+            "    - command: build-platform\n\n"
+            "  test:coverage:\n"
+            "    - command: vitest --coverage\n\n"
+            "    - command: go test -coverprofile=coverage.out\n\n"
+            "  test:\n"
+            "    - command: make test\n\n"
+            "coverage:\n"
+            "  thresholds: {}\n"
+        )
+        split = base.replace("    - command: go test", "  test:coverage:go:\n    - command: go test", 1)
+        product_config = without_devkit_coverage_tasks(base)
+        self.assertEqual(product_config, without_devkit_coverage_tasks(split))
+        self.assertNotEqual(product_config, without_devkit_coverage_tasks(split.replace("build-platform", "true")))
+        self.assertNotEqual(product_config, without_devkit_coverage_tasks(split.replace("make test", "true")))
+        self.assertNotEqual(product_config, without_devkit_coverage_tasks(split.replace("thresholds: {}", "thresholds: null")))
+        self.assertEqual(plan_claims(["devkit.yaml"]), ["PC-001.2", "S-002.1", "S-010.1"])
 
     # case: S-262.23
     def test_shared_compose_selects_installed_claims_but_platform_overlay_is_fixture(self):
