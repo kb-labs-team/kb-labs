@@ -23,6 +23,18 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertTrue(plan_claims(["services/new-service/src/main.ts"]))
 
     # case: S-262.21
+    def test_native_macos_report_contract_does_not_select_linux_product_claims(self):
+        reporting_paths = [
+            "e2e/journey/native-macos-install.mjs",
+            "plugins/qa/tests/__tests__/cli/qa-coverage-show.cli.test.ts",
+        ]
+        self.assertEqual(plan_claims(reporting_paths), [])
+        for product_path in ("e2e/journey/runner.py", "plugins/qa/src/manifest.ts", "tools/kb-create/main.go"):
+            with self.subTest(product_path=product_path):
+                self.assertTrue(plan_claims([product_path]))
+                self.assertEqual(plan_claims([*reporting_paths, product_path]), plan_claims([product_path]))
+
+    # case: S-262.21
     def test_only_devkit_coverage_tasks_are_outside_installed_scope(self):
         base = (
             "tasks:\n"
