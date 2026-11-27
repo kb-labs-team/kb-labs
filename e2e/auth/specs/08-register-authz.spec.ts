@@ -14,6 +14,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import {
   loginAsAdmin,
   getAdminCookieHeader,
@@ -95,7 +96,7 @@ test('AUTH-33b: /auth/register via CLI Bearer token (no cookie) — admin 200, m
       headers: { 'Content-Type': 'application/json' },
     })
     expect(memberRes.ok()).toBe(true)
-    const { accessToken: memberToken } = (await memberRes.json()) as { accessToken: string }
+    const { accessToken: memberToken } = unwrapGatewaySuccess<{ accessToken: string }>(await memberRes.json())
 
     const memberReg = await apiPostBearer(request, '/api/auth/register', memberToken, {
       name: 'e2e-member-cli-33b',

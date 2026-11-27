@@ -4,6 +4,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import {
   loginAsAdmin,
   cookieMap,
@@ -63,7 +64,7 @@ test('AUTH-13: activate invite → sets password → auto-logged in as member', 
       headers: { Cookie: cookieHeader },
     })
     expect(meRes.status()).toBe(200)
-    const me = await meRes.json() as { email: string }
+    const me = unwrapGatewaySuccess<{ email: string }>(await meRes.json())
     expect(me.email).toBe(email)
   } finally {
     await anonCtx.close()

@@ -7,7 +7,7 @@ async function registerHostForAgent(
   name: string,
 ): Promise<{ hostId: string; token: string }> {
   const creds = await registerAgent(request, `e2e-agent-${name}`)
-  const namespaceId = 'e2e'
+  const namespaceId = creds.namespaceId
   const tokens = await issueToken(request, creds)
 
   const regRes = await request.post(`${GATEWAY}/hosts/register`, {
@@ -21,8 +21,8 @@ async function registerHostForAgent(
 }
 
 test('GW-H-01: POST /hosts/register returns hostId and machineToken', async ({ request }) => {
-  await registerAgent(request, 'e2e-agent-h01')
-  const namespaceId = 'e2e'
+  const agent = await registerAgent(request, 'e2e-agent-h01')
+  const namespaceId = agent.namespaceId
 
   const res = await request.post(`${GATEWAY}/hosts/register`, {
     data: { name: 'e2e-host-reg', namespaceId, capabilities: [], workspacePaths: [] },

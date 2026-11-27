@@ -9,11 +9,19 @@ export interface AuthCredentials {
   clientId: string
   clientSecret: string
   hostId: string
+  namespaceId: string
 }
 
 export interface AuthTokens {
   accessToken: string
   refreshToken?: string
+}
+
+export function unwrapGatewaySuccess<T>(value: unknown): T {
+  if (value && typeof value === 'object' && 'ok' in value && value.ok === true && 'data' in value) {
+    return value.data as T
+  }
+  return value as T
 }
 
 /** Establish the seeded admin session; Playwright retains the session cookies. */
@@ -35,18 +43,17 @@ export async function loginAdmin(request: APIRequestContext): Promise<void> {
 export async function registerAgent(
   request: APIRequestContext,
   name = 'e2e-test-agent',
-  namespaceId = 'e2e',
 ): Promise<AuthCredentials> {
   await loginAdmin(request)
 
   // Register the machine agent using the admin session cookies (sent automatically).
   const regRes = await request.post(`${GATEWAY}/auth/register`, {
-    data: { name, namespaceId, capabilities: [] },
+    data: { name, capabilities: [] },
   })
   if (!regRes.ok()) {
     throw new Error(`register failed: ${regRes.status()} ${await regRes.text()}`)
   }
-  return regRes.json()
+  return unwrapGatewaySuccess<AuthCredentials>(await regRes.json())
 }
 
 /** Exchange credentials for a JWT access token. */
@@ -58,7 +65,7 @@ export async function issueToken(
     data: { clientId: creds.clientId, clientSecret: creds.clientSecret },
   })
   if (!res.ok()) throw new Error(`token failed: ${res.status()} ${await res.text()}`)
-  return res.json()
+  return unwrapGatewaySuccess<AuthTokens>(await res.json())
 }
 
 /** Register agent and immediately issue a token. Returns the access token string. */

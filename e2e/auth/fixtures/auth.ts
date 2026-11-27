@@ -43,6 +43,7 @@
 
 import { expect } from '@playwright/test'
 import type { APIRequestContext, Browser, BrowserContext, Page } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -138,7 +139,7 @@ export async function loginAsAdminCli(
     headers: { 'Content-Type': 'application/json' },
   })
   if (!res.ok()) throw new Error(`CLI admin login failed: ${res.status()} ${await res.text()}`)
-  const body = await res.json() as { accessToken: string; refreshToken: string }
+  const body = unwrapGatewaySuccess<{ accessToken: string; refreshToken: string }>(await res.json())
   return body
 }
 
@@ -159,7 +160,7 @@ export async function inviteUser(
   options?: { ttlMs?: number },
 ): Promise<string> {
   const csrfToken = getCsrfFromCookieHeader(adminCookieHeader)
-  const data: Record<string, unknown> = { email, groupId: 'tenant-member' }
+  const data: Record<string, unknown> = { email, role: 'member' }
   if (options?.ttlMs !== undefined) {
     data['ttlMs'] = options.ttlMs
   }
@@ -172,7 +173,7 @@ export async function inviteUser(
     },
   })
   if (!res.ok()) throw new Error(`invite failed: ${res.status()} ${await res.text()}`)
-  const body = await res.json() as { activationUrl: string }
+  const body = unwrapGatewaySuccess<{ activationUrl: string }>(await res.json())
 
   // The gateway builds activationUrl using request.host (e.g. "kb-cloud.kblabs.ru") which
   // is not resolvable in E2E CI environments. Extract the token and rewrite to STUDIO_URL
@@ -280,7 +281,8 @@ export async function apiGet(
   const res = await request.get(`${GATEWAY}${path}`, {
     headers: { Cookie: cookieHeader },
   })
-  const body = await res.json().catch(() => null)
+  const rawBody = await res.json().catch(() => null)
+  const body = res.ok() ? unwrapGatewaySuccess(rawBody) : rawBody
   return { status: res.status(), body }
 }
 
@@ -302,7 +304,8 @@ export async function apiPost(
       ...(data !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
   })
-  const body = await res.json().catch(() => null)
+  const rawBody = await res.json().catch(() => null)
+  const body = res.ok() ? unwrapGatewaySuccess(rawBody) : rawBody
   return { status: res.status(), body }
 }
 
@@ -324,7 +327,8 @@ export async function apiPostBearer(
       ...(data !== undefined ? { 'Content-Type': 'application/json' } : {}),
     },
   })
-  const body = await res.json().catch(() => null)
+  const rawBody = await res.json().catch(() => null)
+  const body = res.ok() ? unwrapGatewaySuccess(rawBody) : rawBody
   return { status: res.status(), body }
 }
 
