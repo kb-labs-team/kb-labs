@@ -964,6 +964,53 @@ class DispatchRegistryTests(unittest.TestCase):
             self.assertTrue(graph.group_selected("isolated-fixture:selected_consumer"))
             self.assertTrue(graph.group_selected("isolated-fixture:fixture_producer"))
 
+    def test_s056_history_owner_selects_discovery_and_submission_prerequisites(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/workflow_steps.py"
+        line, declaration = next(
+            (line, item) for line, item in _case_declarations(source, root).items()
+            if item["name"] == "verify terminal status and submitted input"
+            and "S-056.1" in item["cases"]
+        )
+        self.assertEqual(set(declaration["requires"]), {
+            "step:discover installed project workflow definitions",
+            "step:start workflow with input",
+        })
+
+        resolved = resolve_selection(
+            ["S-056.1"],
+            {"S-056.1": {source}},
+            {"S-056.1": [_step_declaration(source, line, root)]},
+            validate_dependency_declarations({source}, root),
+            {"S-056.1": {"service-local:explore": {"S-056.1"}}},
+        )
+        self.assertEqual(resolved["prerequisiteSteps"], [
+            "discover installed project workflow definitions",
+            "start workflow with input",
+        ])
+
+        selection = JourneySelection(
+            requested=("S-056.1",), claims=frozenset({"S-056.1"}),
+            owning_steps=resolved["selectedOwningSteps"],
+            prerequisite_steps=frozenset(resolved["prerequisiteSteps"]),
+            prerequisite_flows=frozenset(resolved["prerequisiteFlows"]),
+            capabilities=frozenset(resolved["capabilities"]),
+            runner_selector="service-local:explore", requested_runners="",
+        )
+        journey = Journey("local", "s056-history-owner-selection", selection=selection)
+        events = []
+        journey.step("discover installed project workflow definitions", "workflow",
+                     lambda: events.append("discovered"), cases=["S-006.3"])
+        journey.step("start workflow with input", "workflow",
+                     lambda: events.append("started"), cases=["S-007.1"])
+        result = journey.step(
+            "verify terminal status and submitted input", "workflow",
+            lambda: events.append("verified"), cases=["S-056.1"],
+            requires=declaration["requires"],
+        )
+        self.assertEqual(events, ["discovered", "started", "verified"])
+        self.assertEqual(result.status, "PASS")
+
     def test_fixture_execution_and_host_cycle_use_outer_flow_graph(self):
         root = Path(__file__).resolve().parents[2]
         source = ast.parse((root / "e2e/journey/runner.py").read_text())
