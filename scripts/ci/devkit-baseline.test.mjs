@@ -40,6 +40,23 @@ test('a recovered finding must be removed so it cannot return', () => {
 // case: S-262.22
 test('missing results and check execution failures cannot use the snapshot', () => {
   assert.throws(() => readDevkitFindings({}, workspace), /complete DevKit/);
-  assert.throws(() => readDevkitFindings({ ...report, error: { code: 'KB_DEVKIT_CHECK_EXECUTION_FAILED' } }, workspace), /execution failed/);
+  assert.throws(() => readDevkitFindings({
+    ok: false,
+    error: { code: 'KB_DEVKIT_CHECK_EXECUTION_FAILED' },
+    data: {
+      checks: [
+        { check: 'ci-clean-machine-lanes', exitCode: 1, exitCodeKnown: true, rerunCommand: "kb-devkit check --only 'ci-clean-machine-lanes' --json", stderrTail: 'private raw output' },
+        { check: 'go-module-suite', exitCode: 0, exitCodeKnown: false },
+      ],
+    },
+  }, workspace), error => {
+    const [heading, details] = error.message.split('\n');
+    assert.match(heading, /execution failed/);
+    assert.deepEqual(JSON.parse(details), [
+      { check: 'ci-clean-machine-lanes', exitCode: 1, rerunCommand: "kb-devkit check --only 'ci-clean-machine-lanes' --json" },
+      { check: 'go-module-suite', exitCode: null },
+    ]);
+    return true;
+  });
   assert.throws(() => readDevkitFindings({ ...report, data: { ...report.data, results: [] } }, workspace), /complete DevKit/);
 });
