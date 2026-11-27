@@ -16,12 +16,12 @@ import { logDiagnosticEvent } from "@kb-labs/core-platform";
 import { isTerminal } from "@kb-labs/workflow-constants";
 import { getJobSecretNames, getStepSecretNames, requireWorkflowId } from "@kb-labs/workflow-contracts";
 import type {
+  ExecutionTarget,
   ILogger,
   IAnalytics,
   IWorkspaceProvider,
 } from "@kb-labs/core-platform";
 import type {
-  ExecutionTarget,
   ExpressionContext,
   StepSpec,
   WorkflowRun,
@@ -349,8 +349,7 @@ export async function createWorkflowWorker(
     // Resolve target hint from workflow spec (explicit override for execution plane)
     const runTarget = (run.metadata as Record<string, unknown> | undefined)
       ?.target as ExecutionTarget | undefined;
-    const jobTarget = job.target as ExecutionTarget | undefined;
-    const target = jobTarget ?? runTarget;
+    const target: ExecutionTarget | undefined = job.target ?? runTarget;
 
     // ── Workspace provisioning (worktree/container/remote) ──
     // If platform has a workspace provider, create an isolated workspace for this run.
@@ -900,7 +899,13 @@ export async function createWorkflowWorker(
 
           // Delegate execution to the execution plane.
           // The platform handles provisioning (workspace, environment, cleanup) transparently.
+          const localShell = interpolatedSpec.uses === "builtin:shell"
+            && executionBackend.executionMode === "in-process"
+            && !target?.environmentId
+            && (!target?.type || target.type === "platform");
+          const execution = localShell ? await engine.trackLocalShellExecution(run.id) : undefined;
           const result = await runner.execute({
+            signal: execution?.signal,
             spec: interpolatedSpec as StepSpec,
             context: {
               runId: run.id,
@@ -966,7 +971,12 @@ export async function createWorkflowWorker(
             // KB_WORKSPACE_ROOT themselves (agent scripts, git operations).
             workspace: workspaceRoot,
             target,
-          });
+          }).finally(() => execution?.finish());
+
+          if (execution?.signal.aborted) {
+            wasCancelled = true;
+            break;
+          }
 
           if (result.status === "failed") {
             const stepDurationMs = Date.now() - stepStartTime;

@@ -346,6 +346,7 @@ async function shellHandler(
     // the entire group (process.kill(-pid, 'SIGKILL')), which takes down both the shell
     // and any children it spawned. Without this, SIGTERM reaches only the shell; child
     // processes (e.g. `sleep N`) inherit the pipe write-end and block await indefinitely.
+    ctx.signal?.throwIfAborted();
     const proc = execaCommand(command, {
       cwd,
       env: mergedEnv,
@@ -361,8 +362,8 @@ async function shellHandler(
       if (pid === undefined) {
         throw new Error('Shell process started without an OS process id');
       }
-      const identity = await captureProcessIdentity(pid);
       try {
+        const identity = await captureProcessIdentity(pid);
         await ctx.onProcessStarted(identity);
       } catch (error) {
         try {
@@ -372,6 +373,8 @@ async function shellHandler(
             throw killError;
           }
         }
+        // Keep ownership until the spawned shell has actually exited.
+        await proc;
         throw error;
       }
     }

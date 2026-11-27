@@ -354,6 +354,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                     workflow_arg = next((arg.split("=", 1)[1] for arg in args if arg.startswith("--workflow-id=")), "")
                     if workflow_arg == "journey-hello":
                         successful_workflow_commands.append(workflow_arg)
+                    if workflow_arg == "journey-cancel":
+                        (cwd / ".kb" / "workflow-cancel-pids").write_text("321 322\n")
                     run_id = {"hello": "ok-run", "journey-hello": "ok-run", "journey-fails": "failed-run",
                               "journey-cancel": "cancel-run", "journey-progress": "progress-run",
                               "real-work": "real-run", "journey-rerun": "source-run"}.get(workflow_arg, "failed-run")
@@ -495,6 +497,8 @@ class WorkflowJourneyTests(unittest.TestCase):
 
             old_run_cli = workflow_steps.run_cli
             old_run_pty_command = workflow_steps.run_pty_command
+            old_process_running = workflow_steps._local_process_running
+            workflow_steps._local_process_running = lambda _pid: not cancelled[0]
             workflow_steps.run_cli = fake_run
             def fake_run_pty(command, *, cwd, env, timeout, on_output):
                 run_id = command[-1]
@@ -519,6 +523,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             finally:
                 workflow_steps.run_cli = old_run_cli
                 workflow_steps.run_pty_command = old_run_pty_command
+                workflow_steps._local_process_running = old_process_running
 
         self.assertEqual(journey_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID"), "failed-run")
         self.assertEqual(successful_workflow_commands, ["journey-hello"])

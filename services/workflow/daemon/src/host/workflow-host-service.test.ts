@@ -34,6 +34,19 @@ function createService(overrides: Partial<Record<string, any>> = {}) {
 }
 
 describe('WorkflowHostService', () => {
+  // case: S-008.4
+  it.each(['success', 'failed'])('rejects cancellation if the run concurrently reaches %s', async (status) => {
+    let currentStatus = 'running';
+    const service = createService({
+      engine: {
+        getRun: async () => ({ id: 'run-1', status: currentStatus }),
+        cancelRun: async () => { currentStatus = status; },
+      },
+    });
+
+    await expect(service.cancelRun('run-1')).rejects.toThrow(`Cannot cancel run with status "${status}"`);
+  });
+
   it('submits job and returns jobId', async () => {
     const submit = vi.fn(async () => ({ id: 'run-42' }));
     const service = createService({ jobBroker: { submit } });
