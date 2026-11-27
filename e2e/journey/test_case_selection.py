@@ -177,12 +177,19 @@ class CaseJourneySelectionTests(unittest.TestCase):
 
         default = selection_from_coverage(
             [coverage_for("S-047", {"S-047.1"}, release=True)], "S-047.1")
+        transitive_npm = selection_from_coverage(
+            [coverage_for("S-010", {"S-010.8"}, release=True)], "S-010.8")
         registry_steps = {f"S-268.{number}" for number in range(1, 9)}
         registry = selection_from_coverage(
             [coverage_for("S-268", registry_steps, release=False)], ",".join(sorted(registry_steps)))
 
         self.assertEqual(default["steps"], ["S-047.1"])
         self.assertNotIn("marketplace-registry", default["composeProfiles"])
+        self.assertEqual(transitive_npm["steps"], ["S-010.8"])
+        self.assertEqual(transitive_npm["runners"], ["service-local:explore"])
+        self.assertEqual(transitive_npm["capabilities"], ["marketplace-npm-dependency"])
+        self.assertNotIn("marketplace-fixtures", transitive_npm["capabilities"])
+        self.assertNotIn("commit-plugin", transitive_npm["capabilities"])
         self.assertEqual(set(registry["steps"]), registry_steps)
         self.assertEqual(registry["runners"], ["service-marketplace-registry:local"])
         self.assertEqual(registry["composeProfiles"], ["marketplace-registry"])

@@ -24,6 +24,7 @@ from runner import (login_and_configure_secured_admin,
                     uninstall_shim_result_matches)
 from service_runner import (SERVICE_GROUPS, STATE_PRODUCERS, checks, service_selection_groups,
                             configure_installed_cli_path, declared_capabilities,
+                            run_focused_transitive_npm_dependency,
                             discover_workflow, expect_json, mcp_diagnostics, mcp_initialize,
                             expect_html, install_project_agents_plugin,
                             prepare_mcp_projects, prepare_registry_install_project,
@@ -823,9 +824,152 @@ class ServiceJourneyTests(unittest.TestCase):
         self.assertEqual(probe.status, "PASS")
         self.assertEqual(lifecycle, "PASS")
         self.assertEqual(calls, ["producer"])
+
+    # case: S-010.8
+    def test_transitive_npm_claim_uses_ready_project_without_commit_fixture_producer(self):
+        groups = service_selection_groups()
+        self.assertIn("S-010.8", groups["marketplace-npm-dependency"]["cases"])
+        self.assertNotIn("S-010.8", groups["marketplace-lifecycle"]["cases"])
+        self.assertEqual(
+            groups["marketplace-npm-dependency"]["depends_on"],
+            ("host-running", "project-registered", "service-api-session"),
+        )
+        selected = "S-010.8"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace-npm-dependency",
+        }, clear=True):
+            journey = Journey("local", "selected-transitive-npm-dependency")
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "API session ready"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=groups,
+            )
+            self.assertTrue(graph.group_selected("marketplace-npm-dependency"))
+            self.assertFalse(graph.group_selected("marketplace-lifecycle"))
+            self.assertNotIn("marketplace-available", graph.needed_states)
+            producer_calls = []
+            self.assertEqual(
+                graph.flow("produce Commit project fixture", "marketplace-fixture-producer",
+                           "marketplace-fixtures", lambda: producer_calls.append("Commit"),
+                           record_empty_success=False),
+                "SKIPPED",
+            )
+            lifecycle_calls = []
+            self.assertEqual(
+                graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle",
+                           "marketplace", lambda: lifecycle_calls.append("lifecycle"),
+                           record_empty_success=False),
+                "SKIPPED",
+            )
+            selected_calls = []
+            def selected_assertion():
+                selected_calls.append("S-010.8")
+                journey.step("transitive npm dependency installed", "marketplace-npm-dependency",
+                             lambda: None, cases=["S-010.8"])
+            self.assertEqual(
+                run_focused_transitive_npm_dependency(graph, selected_assertion),
+                True,
+            )
+
+        self.assertEqual(producer_calls, [])
+        self.assertEqual(lifecycle_calls, [])
+        self.assertEqual(selected_calls, ["S-010.8"])
         self.assertEqual(journey.result().case_run["claims"], [
-            {"claimId": "S-010.1", "kind": "journey", "status": "PASS"},
+            {"claimId": "S-010.8", "kind": "journey", "status": "PASS"},
         ])
+
+    # case: S-010.8
+    def test_full_marketplace_selection_keeps_transitive_assertion_inside_lifecycle_once(self):
+        with patch.dict(os.environ, {}, clear=True):
+            journey = Journey("local", "full-transitive-npm-dependency")
+            groups = service_selection_groups()
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "API session ready"},
+                    "marketplace-available": {"passed": True, "evidence": "Commit fixture ready"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=groups,
+            )
+            self.assertFalse(graph.selection_active)
+            assertions = []
+            lifecycle = graph.flow(
+                "marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
+                lambda: journey.step("transitive npm dependency installed", "marketplace-npm-dependency",
+                                     lambda: assertions.append("S-010.8"), cases=["S-010.8"]),
+                record_empty_success=False,
+            )
+            focused = run_focused_transitive_npm_dependency(
+                graph, lambda: assertions.append("duplicate"))
+
+        self.assertEqual(lifecycle, "PASS")
+        self.assertFalse(focused)
+        self.assertEqual(assertions, ["S-010.8"])
+        self.assertEqual(journey.result().case_run["claims"], [
+            {"claimId": "S-010.8", "kind": "journey", "status": "PASS"},
+        ])
+
+    # case: S-010.8
+    def test_unrelated_selected_case_does_not_run_focused_marketplace_assertion(self):
+        selection = "S-042.1"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selection,
+            "KB_JOURNEY_CASES": selection,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "workspace",
+        }, clear=True):
+            journey = Journey("local", "unrelated-case-does-not-run-transitive-npm")
+            groups = service_selection_groups()
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                    "service-api-session": {"passed": True, "evidence": "API session ready"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=groups,
+            )
+            calls = []
+            ran = run_focused_transitive_npm_dependency(graph, lambda: calls.append("S-010.8"))
+
+        self.assertFalse(ran)
+        self.assertEqual(calls, [])
+
+    # case: S-010.8
+    def test_focused_marketplace_assertion_requires_all_ready_states(self):
+        selected = "S-010.8"
+        with patch.dict(os.environ, {
+            "KB_JOURNEY_SELECTED_STEPS": selected,
+            "KB_JOURNEY_CASES": selected,
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "marketplace-npm-dependency",
+        }, clear=True):
+            journey = Journey("local", "focused-transitive-npm-missing-session")
+            groups = service_selection_groups()
+            graph = FlowGraph(
+                journey,
+                {name: spec["depends_on"] for name, spec in groups.items()},
+                states={
+                    "host-running": {"passed": True, "evidence": "host ready"},
+                    "project-registered": {"passed": True, "evidence": "project registered"},
+                },
+                state_producers=STATE_PRODUCERS,
+                groups=groups,
+            )
+            with self.assertRaisesRegex(RuntimeError, "service-api-session: state probe has not run"):
+                run_focused_transitive_npm_dependency(graph, lambda: self.fail("must wait for service API"))
 
     def test_registry_marketplace_flow_is_scoped_to_registry_runners(self):
         service_runner_path = Path(__file__).with_name("service_runner.py")

@@ -82,6 +82,31 @@ e2e/journey/smoke.sh secured --resolve-only
 `--resolve-only` performs selection before report-directory setup and does not
 write journey reports or start build/container work.
 
+### Repeat S-010.8 on an installed candidate
+
+Use Node.js 24 with Corepack, Bash, Python 3, Git, curl, jq and lsof. This
+path uses native Verdaccio and a disposable project and platform. Unpack
+`build-candidate.tar` from the shared Journey producer once, then start the
+fixture from the checkout:
+
+```bash
+candidate_dir="$(mktemp -d)"
+tar -xf ./build-candidate.tar -C "$candidate_dir"
+bash e2e/journey/prepare-isolated-installed-root.sh --from-candidate "$candidate_dir"
+```
+
+In another terminal, run the `python3 e2e/journey/focused_case.py` command
+printed at startup. Repeat it against the same fixture after changing the
+case or test harness. It checks the active receipt against the supplied
+release index and prints the digest, case verdict, duration and invocation
+log directory. When platform code changes, prepare the artifact for that
+revision and start its fixture before testing. Press Ctrl-C in the fixture
+terminal to stop its host and registry.
+
+This local diagnostic runs the same private npm plugin install and execution
+assertions as the Journey. Use the existing PR and release routes for their
+required evidence.
+
 ## Journey plan and state contracts
 
 The unselected runner plan is checked against

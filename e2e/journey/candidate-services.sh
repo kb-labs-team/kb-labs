@@ -59,7 +59,7 @@ journey_stop_native_registry() {
       :
     else
       wait_status=$?
-      if (( wait_status != 143 && wait_status != 127 )); then
+      if (( wait_status != 130 && wait_status != 143 && wait_status != 127 )); then
         echo "Native Verdaccio exited with status $wait_status." >&2
         status=1
       fi
@@ -130,12 +130,13 @@ journey_stop_registry() {
 }
 
 journey_start_candidate_registry() {
-  local packages_directory="$1" candidate_directory="$2" registry_pipe="$3" root
+  local packages_directory="$1" candidate_directory="$2" registry_pipe="$3" root upstream
   journey_compose_require_workspace_source || return
   root="$KB_JOURNEY_WORKSPACE_SOURCE"
   journey_start_registry
+  upstream="${4:-$JOURNEY_REGISTRY_HOST_URL}"
   node "$root/e2e/journey/candidate-package-registry.mjs" \
-    "$packages_directory" "$candidate_directory" 0 "$JOURNEY_REGISTRY_HOST_URL" > "$registry_pipe" &
+    "$packages_directory" "$candidate_directory" 0 "$upstream" > "$registry_pipe" &
   JOURNEY_CANDIDATE_REGISTRY_PID=$!
   if ! IFS= read -r JOURNEY_CANDIDATE_REGISTRY_URL < "$registry_pipe"; then
     echo "Candidate package registry exited before reporting its URL." >&2
@@ -159,7 +160,7 @@ journey_start_candidate_registry() {
     return 1
   fi
   export JOURNEY_CANDIDATE_REGISTRY_URL
-  echo "Journey candidate registry: $JOURNEY_CANDIDATE_REGISTRY_URL (upstream $JOURNEY_REGISTRY_HOST_URL)."
+  echo "Journey candidate registry: $JOURNEY_CANDIDATE_REGISTRY_URL (upstream $upstream)."
 }
 
 journey_start_container_services() {

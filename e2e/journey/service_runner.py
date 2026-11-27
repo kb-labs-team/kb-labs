@@ -21,7 +21,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import traceback
-from typing import MutableMapping
+from typing import Callable, MutableMapping
 import urllib.error
 import urllib.request
 import uuid
@@ -49,7 +49,8 @@ from invocations import (
 )
 from plugin_author_steps import run_plugin_author_flow
 from marketplace_steps import (prepare_commit_project_fixture, prepare_registry_commit_project_fixture,
-                               run_marketplace_steps, run_ordered_source_journey_steps)
+                               run_marketplace_steps, run_ordered_source_journey_steps,
+                               run_transitive_npm_dependency_fixture)
 from marketplace_steps import _registry_version, _output
 from dispatch_registry import MARKETPLACE_REGISTRY_LANE, lane_for_runner
 from adapter_defaults_steps import _config_difference_keys, run_adapter_default_steps
@@ -911,6 +912,8 @@ SERVICE_GROUPS = {
                      "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-lifecycle": {"capabilities": {"commit-plugin"},
                               "depends_on": ("host-running", "project-registered", "marketplace-available", "service-api-session")},
+    "marketplace-npm-dependency": {"capabilities": {"marketplace-npm-dependency"},
+                                   "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-registry": {"capabilities": {"marketplace-registry"},
                              "depends_on": ("host-running", "project-registered", "service-api-session")},
     "marketplace-fixtures": {"capabilities": set(),
@@ -942,14 +945,22 @@ def service_selection_groups(root: Path | None = None, runner_selector: str = ""
     source_root = root or resource_root()
     declaration = journey_source_group_declaration(
         "e2e/journey/marketplace_steps.py", source_root, runner_selector)
+    npm_declaration = journey_source_group_declaration(
+        "e2e/journey/marketplace_steps.py", source_root, runner_selector,
+        capability="marketplace-npm-dependency")
     group_name = ("marketplace-registry" if runner_selector
                   and lane_for_runner(runner_selector) == MARKETPLACE_REGISTRY_LANE
                   else "marketplace-lifecycle")
     group = dict(groups[group_name])
-    group["cases"] = tuple(sorted(set(group.get("cases", ())) | set(declaration["cases"])))
+    npm_cases = set(npm_declaration["cases"])
+    lifecycle_cases = (set(group.get("cases", ())) | set(declaration["cases"])) - npm_cases
+    group["cases"] = tuple(sorted(lifecycle_cases))
     # The imported source closure includes unrelated runner owners. Case IDs identify
     # marketplace flows without making those cross-module step names select this group.
     groups[group_name] = group
+    npm_dependency_group = dict(groups["marketplace-npm-dependency"])
+    npm_dependency_group["cases"] = tuple(sorted(npm_cases))
+    groups["marketplace-npm-dependency"] = npm_dependency_group
     adapter_declaration = journey_source_group_declaration(
         "e2e/journey/adapter_defaults_steps.py", source_root, runner_selector)
     adapter_group = dict(groups["adapters"])
@@ -959,6 +970,21 @@ def service_selection_groups(root: Path | None = None, runner_selector: str = ""
         set(adapter_group.get("steps", ())) | set(adapter_declaration["steps"])))
     groups["adapters"] = adapter_group
     return groups
+
+
+def run_focused_transitive_npm_dependency(graph: FlowGraph, check: Callable[[], object]) -> bool:
+    """Run the narrow assertion when selected, while full runs keep lifecycle ownership."""
+    if (not graph.selection_active
+            or not graph.group_selected("marketplace-npm-dependency")
+            or graph.group_selected("marketplace-lifecycle")):
+        return False
+    missing = [state for state in graph.dependencies.get("marketplace-npm-dependency", ())
+               if graph.states.get(state, {}).get("passed") is not True]
+    if missing:
+        raise RuntimeError("focused Marketplace dependency prerequisites are not ready: "
+                           + ", ".join(f"{state}: {graph.state_failure(state)}" for state in missing))
+    check()
+    return True
 STATE_PRODUCERS = {
     state: group for group, spec in SERVICE_GROUPS.items()
     for state in spec.get("produces", ())
@@ -1461,6 +1487,26 @@ def main() -> int:
         graph.flow("marketplace lifecycle assertions", "marketplace-lifecycle", "marketplace",
                    marketplace_lifecycle,
                    record_empty_success=False)
+
+        def focused_transitive_npm_dependency() -> None:
+            # Full runs execute the transitive npm check within the complete Marketplace lifecycle.
+            # A selected check without another lifecycle claim can use its narrow
+            # ready-platform/project/Verdaccio path instead.
+            if not project_root:
+                raise RuntimeError("project-registered state did not provide a project root")
+            flow_env = env.copy()
+            token = service_api_token(graph)
+            if token is not None:
+                store_report_secret(flow_env, "KB_JOURNEY_SERVICE_TOKEN", token,
+                                    "focused Marketplace service API bearer")
+            flow_env["KB_JOURNEY_PLATFORM_ROOT"] = journey_value("KB_JOURNEY_PLATFORM_ROOT", required=True)
+            flow_env["KB_JOURNEY_REGISTRY"] = journey_value("KB_JOURNEY_REGISTRY", "http://verdaccio:4873")
+            run_transitive_npm_dependency_fixture(
+                journey, project_root, flow_env["KB_JOURNEY_PLATFORM_ROOT"], registry, flow_env)
+            return None
+
+        run_focused_transitive_npm_dependency(
+            graph, focused_transitive_npm_dependency)
 
         def registry_marketplace_lane() -> str | None:
             if not project_root:

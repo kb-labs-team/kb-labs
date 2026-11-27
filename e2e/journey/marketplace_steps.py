@@ -1078,59 +1078,27 @@ def run_ordered_source_journey_steps(journey: Journey, project_root: str | Path,
                  runners=("service-marketplace-registry:local", "service-marketplace-registry:secured"))
 
 
-def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path, registry: str,
-                          project_id: str,
-                          env: dict[str, str] | None = None,
-                          runner: CommandRunner = run_command,
-                          http_opener: Callable[..., object] = urllib.request.urlopen,
-                          commit_case_hook: Callable[[], None] | None = None,
-                          fixture_entry: dict | None = None) -> None:
-    """Execute S-010 and S-047 in the isolated installed platform."""
+def run_transitive_npm_dependency_fixture(
+    journey: Journey,
+    project_root: str | Path,
+    platform_root: str | Path,
+    registry: str,
+    env: dict[str, str],
+    runner: CommandRunner = run_command,
+    http_opener: Callable[..., object] = urllib.request.urlopen,
+    *,
+    marketplace_ready: bool = False,
+) -> None:
+    """Run the real S-010.8 fixture against a ready installed platform/project."""
     project = Path(project_root).resolve()
-    base_env = dict(os.environ if env is None else env)
+    platform = Path(platform_root).resolve()
+    base_env = dict(env)
     export_project_identity_to_child_environment(base_env, project_root=str(project))
-    platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
+    base_env["KB_JOURNEY_PLATFORM_ROOT"] = str(platform)
+
     def cli(args: list[str], cwd: Path = project) -> CompletedProcess[str]:
         preflight_installed_plugin_command(args, cwd, base_env, runner, Path("kb"))
         return _run(kb_command(args), cwd=cwd, env=base_env, runner=runner)
-
-    commit_package = "@kb-labs/commit"
-    unrelated_package = "@kb-labs/review"
-    authenticate_secured_marketplace(journey, project, base_env, runner)
-
-    def assert_shared_errors() -> None:
-        platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
-        status_command = [base_env.get("KB_JOURNEY_KB_CREATE_PATH", "kb-create"),
-                          "status", "--json", "--platform-root", str(platform_root)]
-        status = _json(run_with_runner(runner, status_command, cwd=project, env=base_env, timeout=120), status_command)
-        source_kinds = configured_marketplace_source_kinds(status)
-        failures = (
-            (["marketplace", "install", "journey-not-published"], "KB_PLUGIN_NOT_FOUND", "plugin", "journey-not-published"),
-            (["adapter", "bind", "storage", "@kb-labs/adapters-not-installed"], "KB_ADAPTER_NOT_INSTALLED", "package", "@kb-labs/adapters-not-installed"),
-        )
-        for command, code, value_name, value in failures:
-            message = catalogued_error_message(code).format_map({value_name: value})
-            hint = catalogued_error_hint(code, **{value_name: value})
-            for json_mode in (False, True):
-                with_flags = [*command, *( ["--json"] if json_mode else [])]
-                with invocation_context(step_id="S-051.2" if code == "KB_PLUGIN_NOT_FOUND" else "S-051.3"):
-                    result = _run(kb_command([ *with_flags]), cwd=project, env=base_env, runner=runner)
-                validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint,
-                                         marketplace_source_kinds=source_kinds if code == "KB_PLUGIN_NOT_FOUND" else ())
-    journey.step("marketplace and adapter failures use the shared envelope", "marketplace",
-                 assert_shared_errors, cases=["S-051.2", "S-051.3", "S-051.4"])
-    with invocation_context(step_id="S-010.1"):
-        wait_for_marketplace_ready(project, base_env, runner)
-        run_plugin_policy_diagnostic_step(journey, project, registry, base_env, runner)
-        # The malformed-policy diagnostic is an independent assertion. Its
-        # result does not determine whether the marketplace can install the
-        # Commit fixture that produces the project lock state.
-        commit_version = (fixture_entry or {}).get("version")
-        if not isinstance(commit_version, str) or not commit_version:
-            raise RuntimeError("published Commit fixture has no version to pin in lifecycle checks")
-        commit_install_package = (fixture_entry or {}).get("package")
-        if not isinstance(commit_install_package, str) or not commit_install_package:
-            raise RuntimeError("published Commit fixture has no package identity to pin in lifecycle checks")
 
     def install_npm_plugin_with_private_transitive_dependency() -> None:
         suffix = str(time.time_ns())
@@ -1253,8 +1221,69 @@ def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path,
                 _output(_run(kb_command(uninstall), cwd=project, env=base_env, runner=runner), uninstall)
             shutil.rmtree(fixture_root, ignore_errors=True)
 
+    if not marketplace_ready:
+        wait_for_marketplace_ready(project, base_env, runner)
     register_transitive_npm_dependency_step(
         journey, install_npm_plugin_with_private_transitive_dependency)
+
+
+def _run_marketplace_lifecycle_steps(journey: Journey, project_root: str | Path, registry: str,
+                          project_id: str,
+                          env: dict[str, str] | None = None,
+                          runner: CommandRunner = run_command,
+                          http_opener: Callable[..., object] = urllib.request.urlopen,
+                          commit_case_hook: Callable[[], None] | None = None,
+                          fixture_entry: dict | None = None) -> None:
+    """Execute S-010 and S-047 in the isolated installed platform."""
+    project = Path(project_root).resolve()
+    base_env = dict(os.environ if env is None else env)
+    export_project_identity_to_child_environment(base_env, project_root=str(project))
+    platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
+    def cli(args: list[str], cwd: Path = project) -> CompletedProcess[str]:
+        preflight_installed_plugin_command(args, cwd, base_env, runner, Path("kb"))
+        return _run(kb_command(args), cwd=cwd, env=base_env, runner=runner)
+
+    commit_package = "@kb-labs/commit"
+    unrelated_package = "@kb-labs/review"
+    authenticate_secured_marketplace(journey, project, base_env, runner)
+
+    def assert_shared_errors() -> None:
+        platform_root = Path(base_env.get("KB_JOURNEY_PLATFORM_ROOT", str(Path(base_env["HOME"]) / "kb-platform"))).resolve()
+        status_command = [base_env.get("KB_JOURNEY_KB_CREATE_PATH", "kb-create"),
+                          "status", "--json", "--platform-root", str(platform_root)]
+        status = _json(run_with_runner(runner, status_command, cwd=project, env=base_env, timeout=120), status_command)
+        source_kinds = configured_marketplace_source_kinds(status)
+        failures = (
+            (["marketplace", "install", "journey-not-published"], "KB_PLUGIN_NOT_FOUND", "plugin", "journey-not-published"),
+            (["adapter", "bind", "storage", "@kb-labs/adapters-not-installed"], "KB_ADAPTER_NOT_INSTALLED", "package", "@kb-labs/adapters-not-installed"),
+        )
+        for command, code, value_name, value in failures:
+            message = catalogued_error_message(code).format_map({value_name: value})
+            hint = catalogued_error_hint(code, **{value_name: value})
+            for json_mode in (False, True):
+                with_flags = [*command, *( ["--json"] if json_mode else [])]
+                with invocation_context(step_id="S-051.2" if code == "KB_PLUGIN_NOT_FOUND" else "S-051.3"):
+                    result = _run(kb_command([ *with_flags]), cwd=project, env=base_env, runner=runner)
+                validate_shared_failure(result, json_mode=json_mode, code=code, message=message, hint=hint,
+                                         marketplace_source_kinds=source_kinds if code == "KB_PLUGIN_NOT_FOUND" else ())
+    journey.step("marketplace and adapter failures use the shared envelope", "marketplace",
+                 assert_shared_errors, cases=["S-051.2", "S-051.3", "S-051.4"])
+    with invocation_context(step_id="S-010.1"):
+        wait_for_marketplace_ready(project, base_env, runner)
+        run_plugin_policy_diagnostic_step(journey, project, registry, base_env, runner)
+        # The malformed-policy diagnostic is an independent assertion. Its
+        # result does not determine whether the marketplace can install the
+        # Commit fixture that produces the project lock state.
+        commit_version = (fixture_entry or {}).get("version")
+        if not isinstance(commit_version, str) or not commit_version:
+            raise RuntimeError("published Commit fixture has no version to pin in lifecycle checks")
+        commit_install_package = (fixture_entry or {}).get("package")
+        if not isinstance(commit_install_package, str) or not commit_install_package:
+            raise RuntimeError("published Commit fixture has no package identity to pin in lifecycle checks")
+
+    run_transitive_npm_dependency_fixture(
+        journey, project, platform_root, registry, base_env, runner, http_opener,
+        marketplace_ready=True)
 
     # S-047 requires a second project plugin to survive target uninstall.
     unrelated_version = _registry_version(unrelated_package, registry, project, base_env, runner)
@@ -1759,7 +1788,7 @@ def register_transitive_npm_dependency_step(
     """Register S-010.8 on the service journeys that execute Marketplace lifecycle flows."""
     return journey.step(
         "install npm plugin with dependency from configured npm source",
-        "marketplace",
+        "marketplace-npm-dependency",
         check,
         cases=["S-010.8"],
         runners=("service-local:explore", "service-secured:explore"),

@@ -5,10 +5,31 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 source "$ROOT/e2e/compose-owner.sh"
 source "$ROOT/e2e/journey/candidate-services.sh"
-journey_compose_init "$ROOT"
+started=$SECONDS
+artifact=""
+if (( $# )); then
+  if [[ "$1" != "--from-candidate" || $# != 2 ]]; then
+    echo "Usage: $0 [--from-candidate <unpacked candidate artifact>]" >&2
+    exit 2
+  fi
+  artifact="$(cd "$2" && pwd -P)"
+  candidate_dir="$artifact/.journey/release/journey-candidate"
+  packages_dir="$artifact/e2e/packages"
+  if [[ ! -s "$candidate_dir/release-index.json" || ! -d "$packages_dir" ]]; then
+    echo "The artifact must contain the release index and e2e/packages from the same candidate." >&2
+    exit 2
+  fi
+  journey_compose_init "$ROOT" native
+else
+  journey_compose_init "$ROOT"
+  candidate_dir="$ROOT/.journey/release/journey-candidate"
+  packages_dir="$ROOT/e2e/packages"
+fi
 TMP_BASE="${TMPDIR:-/tmp}"
-RUN_HOME="$(mktemp -d "$TMP_BASE/kb-journey-home.XXXXXX")"
-PLATFORM_ROOT="$(mktemp -d "$TMP_BASE/kb-journey-platform.XXXXXX")"
+FIXTURE="$(mktemp -d "${TMP_BASE%/}/kb-journey-fixture.XXXXXX")"
+RUN_HOME="$FIXTURE/home"
+PLATFORM_ROOT="$FIXTURE/platform"
+mkdir -p "$RUN_HOME" "$PLATFORM_ROOT"
 REGISTRY_PIPE="$RUN_HOME/registry.pipe"
 PLAN_FILE=""
 KEEP_ROOT=0
@@ -42,51 +63,72 @@ cleanup() {
     fi
   fi
   if ! journey_stop_registry; then
-    echo "Cleanup could not stop the Compose Verdaccio service. Next: e2e/journey/run.sh --down" >&2
+    echo "Cleanup could not stop the fixture registry. Preserving $FIXTURE for diagnosis." >&2
     KEEP_ROOT=1
   fi
   if [[ -n "$PLAN_FILE" ]]; then rm -f "$PLAN_FILE"; fi
   if [[ -p "$REGISTRY_PIPE" ]]; then rm -f "$REGISTRY_PIPE"; fi
   if [[ "$KEEP_ROOT" != "1" ]]; then
     chmod -R u+w "$RUN_HOME" "$PLATFORM_ROOT" 2>/dev/null || true
-    rm -rf "$RUN_HOME" "$PLATFORM_ROOT"
+    rm -rf "$FIXTURE"
   fi
   journey_compose_cleanup
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 unset KB_PLATFORM_ROOT KB_HOME KB_NET_OFFSET GOFLAGS
 export KB_JOURNEY_PACKAGES_READY="${KB_JOURNEY_PACKAGES_READY:-0}"
-export PATH="/Users/kirillbaranov/.nvm/versions/node/v24.18.1/bin:$PATH"
-export GOMODCACHE="$(go env GOMODCACHE)"
+if [[ -z "$artifact" ]]; then
+  export GOMODCACHE="$(go env GOMODCACHE)"
+else
+  # npm's download cache avoids fetching Verdaccio for each disposable HOME.
+  npm_config_cache="$(npm config get cache)"
+  export npm_config_cache
+fi
 export HOME="$RUN_HOME"
 
 mkfifo "$REGISTRY_PIPE"
-journey_start_candidate_registry "$ROOT/e2e/packages" "$ROOT/.journey/release/journey-candidate" "$REGISTRY_PIPE"
+journey_start_candidate_registry "$packages_dir" "$candidate_dir" "$REGISTRY_PIPE" "${artifact:+https://registry.npmjs.org}"
 REGISTRY_PID="$JOURNEY_CANDIDATE_REGISTRY_PID"
 for attempt in $(seq 1 60); do
   if curl --fail --silent "$JOURNEY_REGISTRY_HOST_URL/-/ping" >/dev/null; then break; fi
   sleep 1
 done
 if ! curl --fail --silent "$JOURNEY_REGISTRY_HOST_URL/-/ping" >/dev/null; then
-  echo "Compose Verdaccio did not become ready within 60 seconds." >&2
+  echo "Journey Verdaccio did not become ready within 60 seconds." >&2
   printf 'Next: %s logs verdaccio\n' "${JOURNEY_COMPOSE[*]}" >&2
   exit 1
 fi
 REGISTRY_URL="$JOURNEY_CANDIDATE_REGISTRY_URL"
 
-KB_JOURNEY_NATIVE_BINARY=1 \
-KB_JOURNEY_REGISTRY_URL="$REGISTRY_URL" \
-KB_JOURNEY_BINARY_BASE_URL="$REGISTRY_URL/journey-candidate" \
-bash "$ROOT/e2e/journey/prepare-candidate.sh"
-CANDIDATE="$ROOT/.journey/release/journey-candidate"
-KB_CREATE="$RUN_HOME/kb-create"
-(cd "$ROOT/tools/kb-create" && go build -trimpath -o "$KB_CREATE" .)
+index_options=(--index "$candidate_dir/release-index.json" --registry "$REGISTRY_URL")
+if [[ -n "$artifact" ]]; then
+  case "$(uname -m)" in
+    arm64|aarch64) arch=arm64 ;;
+    x86_64) arch=amd64 ;;
+    *) echo "Unsupported candidate architecture: $(uname -m)" >&2; exit 2 ;;
+  esac
+  KB_CREATE="$candidate_dir/kb-create-$(uname -s | tr '[:upper:]' '[:lower:]')-$arch"
+  if [[ ! -x "$KB_CREATE" ]]; then
+    echo "The candidate does not contain the executable $KB_CREATE" >&2
+    exit 2
+  fi
+  index_options+=(--binary-source "$REGISTRY_URL" --marketplace-npm-url "$JOURNEY_REGISTRY_HOST_URL")
+else
+  KB_JOURNEY_NATIVE_BINARY=1 \
+  KB_JOURNEY_REGISTRY_URL="$REGISTRY_URL" \
+  KB_JOURNEY_BINARY_BASE_URL="$REGISTRY_URL/journey-candidate" \
+    bash "$ROOT/e2e/journey/prepare-candidate.sh"
+  KB_CREATE="$RUN_HOME/kb-create"
+  (cd "$ROOT/tools/kb-create" && go build -trimpath -o "$KB_CREATE" .)
+fi
 
 PLAN_FILE="$(mktemp "$TMP_BASE/kb-plan.XXXXXX")"
 for port in $(seq 4500 100 9900); do
   gateway="http://127.0.0.1:$port"
-  if ! "$KB_CREATE" plan --json --index "$CANDIDATE/release-index.json" --platform-root "$PLATFORM_ROOT" --gateway-url "$gateway" --registry "$REGISTRY_URL" >"$PLAN_FILE"; then
+  if ! "$KB_CREATE" plan --json "${index_options[@]}" --platform-root "$PLATFORM_ROOT" --gateway-url "$gateway" >"$PLAN_FILE"; then
     error_code="$(jq -r '.error.code // .data.error.code // empty' "$PLAN_FILE")"
     if [[ "$error_code" == "KB_INSTALL_PORT_IN_USE" ]]; then
       continue
@@ -127,13 +169,26 @@ fi
 
 GATEWAY_URL="http://127.0.0.1:$chosen_port"
 INSTALL_ATTEMPTED=1
-"$KB_CREATE" install --json --index "$CANDIDATE/release-index.json" --platform-root "$PLATFORM_ROOT" --gateway-url "$GATEWAY_URL" --registry "$REGISTRY_URL"
+if [[ -n "$artifact" ]]; then
+  "$KB_CREATE" install --json "${index_options[@]}" --platform-root "$PLATFORM_ROOT" --gateway-url "$GATEWAY_URL" > "$FIXTURE/install.json"
+else
+  "$KB_CREATE" install --json "${index_options[@]}" --platform-root "$PLATFORM_ROOT" --gateway-url "$GATEWAY_URL"
+fi
 after_install_4000="$(lsof -nP -iTCP:4000 -sTCP:LISTEN -Fp 2>/dev/null || true)"
 if [[ "$after_install_4000" != "$BASELINE_4000" ]]; then
   "$KB_CREATE" stop --json --platform-root "$PLATFORM_ROOT"
   INSTALL_ATTEMPTED=0
   echo "The install changed the listener set on :4000 despite --gateway-url $GATEWAY_URL." >&2
   exit 1
+fi
+if [[ -n "$artifact" ]]; then
+  mkdir "$FIXTURE/project"
+  git -C "$FIXTURE/project" init -q
+  "$PLATFORM_ROOT/current/.kb/v2/bin/kb" project add "$FIXTURE/project" --json > "$FIXTURE/project.json"
+  printf 'Ready in %ss. From another terminal run:\n  python3 %q --fixture %q --index %q\n' \
+    "$((SECONDS - started))" "$ROOT/e2e/journey/focused_case.py" "$FIXTURE" "$candidate_dir/release-index.json"
+  printf 'Press Ctrl-C to stop the disposable fixture.\n'
+  while true; do sleep 1; done
 fi
 "$KB_CREATE" doctor --json --platform-root "$PLATFORM_ROOT"
 curl --fail --silent --show-error "$GATEWAY_URL/health" >/dev/null
@@ -151,5 +206,5 @@ if [[ "$after_stop_4000" != "$BASELINE_4000" ]]; then
 fi
 
 KEEP_ROOT=1
-printf 'Platform root: %s\nHOME: %s\nGateway URL: %s\nStop: %q stop --json --platform-root %q\nCleanup: rm -rf %q %q\n' \
-  "$PLATFORM_ROOT" "$RUN_HOME" "$GATEWAY_URL" "$KB_CREATE" "$PLATFORM_ROOT" "$PLATFORM_ROOT" "$RUN_HOME"
+printf 'Platform root: %s\nHOME: %s\nGateway URL: %s\nStop: %q stop --json --platform-root %q\nCleanup: rm -rf %q\n' \
+  "$PLATFORM_ROOT" "$RUN_HOME" "$GATEWAY_URL" "$KB_CREATE" "$PLATFORM_ROOT" "$FIXTURE"

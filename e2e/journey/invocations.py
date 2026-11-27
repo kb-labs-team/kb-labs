@@ -181,6 +181,7 @@ def _acquire_controlling_terminal(slave_fd: int) -> None:
 
 _STEP_ID: ContextVar[str] = ContextVar("journey_step_id", default="journey.setup")
 _REPORT_ROOT: ContextVar[Path | None] = ContextVar("journey_report_root", default=None)
+_COMMAND_DEADLINE: ContextVar[float | None] = ContextVar("journey_command_deadline", default=None)
 _UNEXPECTED_DIAGNOSTICS: ContextVar[list[dict[str, Any]] | None] = ContextVar("journey_unexpected_diagnostics", default=None)
 # `root.go` routes these registered commands to JSON stream executors. Every
 # other registered kb-create command returns one ADR-0049 document.
@@ -513,12 +514,15 @@ def read_ux_http_result(body: bytes, status: int) -> dict[str, Any]:
     return value
 
 
-def invocation_context(*, step_id: str | None = None, report_root: str | Path | None = None):
+def invocation_context(*, step_id: str | None = None, report_root: str | Path | None = None,
+                       command_deadline: float | None = None):
     """Set the current case step and invocation destination for a scope."""
     class Context:
         def __enter__(self):
             self.step_token = _STEP_ID.set(step_id or _STEP_ID.get())
             self.report_token = _REPORT_ROOT.set(Path(report_root) if report_root else _REPORT_ROOT.get())
+            self.deadline_token = _COMMAND_DEADLINE.set(
+                command_deadline if command_deadline is not None else _COMMAND_DEADLINE.get())
             self.unexpected_error_diagnostics: list[dict[str, Any]] = []
             self.diagnostics_token = _UNEXPECTED_DIAGNOSTICS.set(self.unexpected_error_diagnostics)
             return self
@@ -527,6 +531,7 @@ def invocation_context(*, step_id: str | None = None, report_root: str | Path | 
             _UNEXPECTED_DIAGNOSTICS.reset(self.diagnostics_token)
             _STEP_ID.reset(self.step_token)
             _REPORT_ROOT.reset(self.report_token)
+            _COMMAND_DEADLINE.reset(self.deadline_token)
     return Context()
 
 
@@ -897,6 +902,11 @@ def run_command(argv: list[str], *, cwd: str | Path | None = None,
                 monitor_process: Callable[[int], None] | None = None,
                 **kwargs: Any) -> subprocess.CompletedProcess[str]:
     started = time.monotonic()
+    deadline = _COMMAND_DEADLINE.get()
+    if deadline is not None:
+        if started >= deadline:
+            raise TimeoutError("focused case exhausted its two-minute budget")
+        timeout = min(timeout, deadline - started)
     if runner is None and monitor_process is not None:
         return _run_monitored_command(argv, cwd=cwd, env=env, timeout=timeout,
                                       monitor_process=monitor_process, started=started, **kwargs)

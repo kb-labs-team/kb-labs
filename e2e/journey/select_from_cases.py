@@ -238,7 +238,8 @@ def _imported_journey_sources(sources: set[str], root: Path) -> set[str]:
 
 
 def journey_source_group_declaration(source: str, root: Path,
-                                     selector: str = "") -> dict[str, tuple[str, ...]]:
+                                     selector: str = "", *,
+                                     capability: str | None = None) -> dict[str, tuple[str, ...]]:
     """Resolve every step and claim registered by a journey module and its local imports."""
     sources = _imported_journey_sources({source}, root)
     # Keep this declaration scoped to the source's import closure. The broader
@@ -267,7 +268,10 @@ def journey_source_group_declaration(source: str, root: Path,
                     continue
                 if not declared_runners and RUNNERS[selector].lane:
                     continue
-            cases.update(str(case) for case in declaration.get("cases") or ())
+            if capability is not None and declaration.get("capability") != capability:
+                continue
+            declared_cases = {str(case) for case in declaration.get("cases") or ()}
+            cases.update(declared_cases)
     return {"cases": tuple(sorted(cases)), "steps": tuple(sorted(steps))}
 
 
