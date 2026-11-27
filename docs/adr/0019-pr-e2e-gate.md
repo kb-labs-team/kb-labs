@@ -131,7 +131,6 @@ Branch protection rules need to be applied manually via the GitHub UI
 - [ADR-0017: E2E pipeline sharding and incremental caching](./0017-e2e-pipeline-sharding-and-caching.md)
 - [ADR-0018: CI compute budget and transparency](./0018-ci-compute-budget-and-transparency.md)
 - [docs/ci-cd.md](../ci-cd.md)
-- [scripts/ci-status.sh](../../scripts/ci-status.sh)
 - [Plan file: tender-strolling-wind](../../.claude/plans/tender-strolling-wind.md)
 
 ---

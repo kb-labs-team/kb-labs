@@ -8,6 +8,7 @@ import { test } from 'node:test';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const ciPr = load(readFileSync(join(root, '.github/workflows/ci-pr.yml'), 'utf8'));
 const devkit = load(readFileSync(join(root, 'devkit.yaml'), 'utf8'));
+const installerJourney = load(readFileSync(join(root, '.github/workflows/reusable-installer-journey.yml'), 'utf8'));
 
 const jobs = Object.entries(ciPr.jobs);
 const runs = (job) => (job.steps ?? []).filter((step) => typeof step.run === 'string');
@@ -42,6 +43,20 @@ test('test (full) gates the shipped lane only', () => {
   for (const step of steps) assert.match(step.run, /--lane shipped\b/, `${step.name} must be limited to the shipped lane`);
 });
 
+// case: S-262.7
+test('master unit tests use the shipped lane while lint and type-check stay workspace-wide', () => {
+  const ci = load(readFileSync(join(root, '.github/workflows/ci.yml'), 'utf8'));
+  const steps = ci.jobs.checks.steps;
+  const shipped = steps.find((step) => step.name === 'Run ${{ matrix.task }} (shipped lane)');
+  const broad = steps.find((step) => step.name === 'Run ${{ matrix.task }} (lint / type-check)');
+
+  assert.equal(shipped.if, "matrix.task == 'test' || matrix.task == 'test:cli'");
+  assert.match(shipped.run, /kb-devkit run \$\{\{ matrix\.task \}\} --lane shipped --no-cache/);
+  assert.equal(broad.if, "matrix.task == 'lint' || matrix.task == 'type-check'");
+  assert.match(broad.run, /kb-devkit run \$\{\{ matrix\.task \}\} --no-cache/);
+  assert.doesNotMatch(broad.run, /--lane/);
+});
+
 test('full workspace dist is built once and shared by full tests and Devkit checks', () => {
   const producerId = 'full-dist-for-devkit-build';
   const producer = ciPr.jobs[producerId];
@@ -70,6 +85,29 @@ test('internal tools run in their own visible job on their own affected inputs',
   assert.match(step.run, /--affected --diff-only/, 'runs only when the tools inputs changed');
   assert.ok((job.steps ?? []).some((s) => String(s.uses ?? '').startsWith('actions/setup-go@')), 'same Go toolchain setup');
   assert.ok(ciPr.jobs['ci-evidence'].needs.includes(id), 'the lane is part of the CI evidence');
+});
+
+// case: S-262.22
+test('CI (PR) validates QA cases from the restored CLI dist before repository checks', () => {
+  const job = ciPr.jobs['devkit-checks'];
+  const steps = job.steps ?? [];
+  const find = (name) => steps.findIndex((step) => step.name === name);
+  const validatorIndex = find('Validate QA cases and test claims');
+  const validator = steps[validatorIndex];
+  const packageJson = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const installerSteps = runs(installerJourney.jobs.prepare);
+  const installerValidator = installerSteps.find((step) => step.name === 'Validate QA cases and test claims');
+
+  assert.equal(validator.run, 'pnpm kb qa cases validate');
+  assert.equal(packageJson.scripts.kb, 'node ./cli/bin/dist/bin.js',
+    'the validator uses the built CLI bundled by the dist artifact');
+  assert.ok(job.steps.some((step) => step.with?.name === 'full-dist-for-devkit-checks'));
+  assert.ok(find('Install dependencies and provision pinned pnpm for clean Go tests') < validatorIndex);
+  assert.ok(find('Register checkout for project-scoped CLI checks') < validatorIndex);
+  assert.ok(find('Lint workflow definitions') > validatorIndex);
+  assert.ok(find('Devkit workspace checks (structure, dependencies, boundaries)') > validatorIndex);
+  assert.equal(installerValidator.run, 'pnpm kb qa cases validate',
+    'release candidate preparation keeps its existing validation step');
 });
 
 test('every devkit test job uploads its task logs when it fails', () => {

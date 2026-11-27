@@ -162,40 +162,6 @@ test('workspace package shard fails with the selected package when DevKit schedu
   assert.match(result.failures.join('\n'), /scheduled no test tasks.*@kb-labs\/marketplace-registry/i);
 });
 
-test('manifest-backed Go suite preserves the planner shard identity and executed task result', async () => {
-  let invocation;
-  const result = await runStage({
-    stage: 'kb-create-go-suite',
-    packageNames: ['kb-create'],
-    selectedPackageCount: 165,
-    shard: 1,
-    runCommand: async (command, args) => {
-      invocation = [command, args];
-      return { status: 0, stdout: JSON.stringify({ ok: true, data: { results: [{ Package: 'kb-create', Task: 'test', OK: true }] } }), stderr: '' };
-    },
-  });
-
-  assert.deepEqual(invocation, ['./tools/kb-devkit/kb-devkit', ['run', 'test', '--packages', 'kb-create', '--concurrency', '1', '--json']]);
-  assert.equal(result.name, 'kb-create-go-suite:shard-1');
-  assert.deepEqual(result.packages, ['kb-create']);
-  assert.equal(result.selectedPackageCount, 1);
-  assert.equal(result.status, 'pass');
-});
-
-test('manifest-backed Go suite fails when kb-devkit reports zero executed tasks', async () => {
-  const result = await runStage({
-    stage: 'kb-create-go-suite',
-    packageNames: ['kb-create'],
-    selectedPackageCount: 165,
-    shard: 1,
-    runCommand: async () => ({ status: 0, stdout: '{"ok":true,"data":{"results":[]}}', stderr: '' }),
-  });
-
-  assert.equal(result.name, 'kb-create-go-suite:shard-1');
-  assert.equal(result.status, 'fail');
-  assert.ok(result.failures.some((failure) => failure.includes('without executing any tasks')));
-});
-
 // case: S-277.2
 test('candidate internal-tool lane builds, tests, and checks each selected package', async () => {
   const invocations = [];

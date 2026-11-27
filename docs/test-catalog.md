@@ -8,7 +8,7 @@
 | Package | CLI | SSE | WS | Integration | E2E | Unit | Total |
 |---|---|---|---|---|---|---|---|
 | `adapters-analytics-duckdb` | — | — | — | — | — | 17 | **17** |
-| `adapters-analytics-file` | — | — | — | — | 10 | 15 | **25** |
+| `adapters-analytics-file` | — | — | — | — | — | 25 | **25** |
 | `adapters-analytics-sqlite` | — | — | — | — | — | 27 | **27** |
 | `adapters-environment-docker` | — | — | — | — | — | 15 | **15** |
 | `adapters-eventbus-cache` | — | — | — | — | — | 9 | **9** |
@@ -32,33 +32,33 @@
 | `adapters-workspace-worktree` | — | — | — | — | — | 17 | **17** |
 | `agents` | 10 | — | — | — | — | 554 | **564** |
 | `cli-bin` | 4 | — | — | — | — | 189 | **193** |
-| `cli-commands` | 158 | — | — | 3 | 13 | 193 | **367** |
+| `cli-commands` | 158 | — | — | 3 | — | 206 | **367** |
 | `cli-contracts` | — | — | — | — | — | 9 | **9** |
 | `cli-runtime` | — | — | — | 7 | — | 122 | **129** |
 | `clickup` | 117 | — | — | — | — | 1 | **118** |
-| `commit` | — | — | — | — | 30 | 34 | **64** |
-| `core-bundle` | — | — | — | — | 15 | — | **15** |
-| `core-config` | — | — | — | — | 297 | 2 | **299** |
+| `commit` | — | — | — | — | — | 64 | **64** |
+| `core-bundle` | — | — | — | 12 | — | 3 | **15** |
+| `core-config` | — | — | — | — | — | 299 | **299** |
 | `core-contracts` | — | — | — | — | — | 28 | **28** |
-| `core-discovery` | 1 | — | — | — | 130 | 3 | **134** |
-| `core-extension-store` | — | — | — | — | 38 | — | **38** |
+| `core-discovery` | 1 | — | — | 9 | — | 124 | **134** |
+| `core-extension-store` | — | — | — | — | — | 38 | **38** |
 | `core-ipc` | — | — | — | 9 | — | 81 | **90** |
-| `core-platform` | — | — | — | — | 34 | 442 | **476** |
-| `core-policy` | — | — | — | — | 36 | — | **36** |
+| `core-platform` | — | — | — | — | — | 476 | **476** |
+| `core-policy` | — | — | — | — | — | 36 | **36** |
 | `core-project-registry` | — | — | — | — | — | 66 | **66** |
-| `core-registry` | — | — | — | — | 72 | 1 | **73** |
+| `core-registry` | — | — | — | 15 | — | 58 | **73** |
 | `core-resource-broker` | — | — | — | — | 5 | 177 | **182** |
 | `core-retry` | — | — | — | — | — | 5 | **5** |
-| `core-runtime` | — | — | — | — | 38 | 412 | **450** |
+| `core-runtime` | — | — | — | 1 | — | 449 | **450** |
 | `core-sandbox` | — | — | — | — | — | 40 | **40** |
 | `core-state-broker` | — | — | — | — | — | 38 | **38** |
 | `core-state-daemon` | — | — | — | 8 | — | 39 | **47** |
-| `core-sys` | — | — | — | — | 8 | — | **8** |
+| `core-sys` | — | — | — | — | — | 8 | **8** |
 | `core-tenant` | — | — | — | — | — | 20 | **20** |
-| `core-workspace` | — | — | — | — | 22 | — | **22** |
+| `core-workspace` | — | — | — | — | — | 22 | **22** |
 | `data-store` | — | — | — | — | — | 9 | **9** |
 | `devkit` | — | — | — | — | — | 7 | **7** |
-| `devlink` | 11 | — | — | — | 2 | — | **13** |
+| `devlink` | 11 | — | — | — | — | 2 | **13** |
 | `e2e` | — | — | — | — | 146 | — | **146** |
 | `e2e-auth` | — | — | — | — | 48 | — | **48** |
 | `e2e-gateway` | — | — | — | — | 63 | — | **63** |
@@ -86,17 +86,17 @@
 | `host-agent-transport` | — | — | — | — | — | 6 | **6** |
 | `host-app` | — | — | — | 33 | — | 69 | **102** |
 | `inbox` | 11 | — | — | — | — | — | **11** |
-| `infra-worker` | — | — | — | — | 4 | — | **4** |
+| `infra-worker` | — | — | — | — | — | 4 | **4** |
 | `llm-router` | — | — | — | — | — | 52 | **52** |
-| `marketplace-api` | — | — | — | — | 14 | — | **14** |
+| `marketplace-api` | — | — | — | — | — | 14 | **14** |
 | `marketplace-app` | — | — | — | — | — | 3 | **3** |
-| `marketplace-core` | — | — | — | — | 84 | 3 | **87** |
-| `marketplace-npm` | — | — | — | — | 26 | — | **26** |
+| `marketplace-core` | — | — | — | 8 | — | 79 | **87** |
+| `marketplace-npm` | — | — | — | — | — | 26 | **26** |
 | `marketplace-registry` | 36 | — | — | — | — | 3 | **39** |
 | `marketplace-registry-api` | — | — | — | 32 | — | 7 | **39** |
 | `marketplace-registry-core` | — | — | — | — | — | 55 | **55** |
 | `mcp-app` | — | — | — | — | — | 87 | **87** |
-| `mind` | 6 | — | — | — | 93 | 8 | **107** |
+| `mind` | 6 | — | — | 22 | — | 79 | **107** |
 | `notifier-router` | — | — | — | — | — | 15 | **15** |
 | `perm-presets` | — | — | — | — | — | 73 | **73** |
 | `platform-client` | 12 | — | — | — | — | — | **12** |
@@ -105,27 +105,27 @@
 | `plugin-execution-factory` | — | — | — | 6 | — | 143 | **149** |
 | `plugin-runtime` | — | — | — | 20 | 1 | 630 | **651** |
 | `project-runtime-app` | — | — | — | — | — | 37 | **37** |
-| `qa` | 26 | — | — | — | 78 | 2 | **106** |
-| `quality` | 1 | — | — | — | 23 | 3 | **27** |
+| `qa` | 26 | — | — | — | — | 80 | **106** |
+| `quality` | 1 | — | — | — | — | 26 | **27** |
 | `release` | 60 | — | — | 2 | — | 273 | **335** |
-| `rest-api-app` | — | — | — | — | 215 | 5 | **220** |
-| `rest-api-core` | — | — | — | — | 25 | — | **25** |
+| `rest-api-app` | — | — | — | — | — | 220 | **220** |
+| `rest-api-core` | — | — | — | — | — | 25 | **25** |
 | `review` | 10 | — | — | — | — | 3 | **13** |
 | `scaffold` | 13 | — | — | — | — | 4 | **17** |
-| `scaffold-core` | — | — | — | — | 6 | 23 | **29** |
+| `scaffold-core` | — | — | — | — | 5 | 24 | **29** |
 | `sdk` | — | — | — | — | — | 67 | **67** |
-| `shared-cli-ui` | — | — | — | — | 20 | 24 | **44** |
-| `shared-command-kit` | — | — | — | — | 92 | 126 | **218** |
+| `shared-cli-ui` | — | — | — | — | — | 44 | **44** |
+| `shared-command-kit` | — | — | — | — | — | 218 | **218** |
 | `shared-daemon` | — | — | — | — | — | 27 | **27** |
 | `shared-http` | — | — | — | — | — | 47 | **47** |
 | `shared-testing` | — | — | — | — | — | 43 | **43** |
-| `shared-testing-e2e` | — | — | — | — | 24 | — | **24** |
+| `shared-testing-e2e` | — | — | — | — | — | 24 | **24** |
 | `shared-testing-platform` | — | — | — | — | — | 55 | **55** |
 | `shared-tool-kit` | — | — | — | — | — | 19 | **19** |
 | `site-tools` | 28 | — | — | — | — | — | **28** |
 | `steward` | 68 | — | — | — | — | 69 | **137** |
 | `studio-app` | — | — | — | — | — | 32 | **32** |
-| `studio-data-client` | — | — | — | — | 29 | 14 | **43** |
+| `studio-data-client` | — | — | — | — | — | 43 | **43** |
 | `studio-event-bus` | — | — | — | — | — | 9 | **9** |
 | `studio-federation` | — | — | — | — | — | 35 | **35** |
 | `studio-plugin-tools` | — | — | — | — | — | 1 | **1** |
@@ -133,13 +133,13 @@
 | `workflow-constants` | — | — | — | — | — | 15 | **15** |
 | `workflow-contracts` | — | — | — | — | — | 106 | **106** |
 | `workflow-daemon` | — | — | — | 53 | 13 | 75 | **141** |
-| `workflow-engine` | — | — | — | — | 1 | 123 | **124** |
+| `workflow-engine` | — | — | — | — | — | 124 | **124** |
 | `workflow-entry` | 156 | — | — | — | — | 11 | **167** |
 | `workflow-runtime` | — | — | — | — | — | 70 | **70** |
 | `workflow-steps` | — | — | — | — | — | 89 | **89** |
 | `kb-create` | — | — | — | — | — | 1 | **1** |
 | `sdk-packed-plugin-fixture` | — | — | — | — | — | 2 | **2** |
-| **Total** | **736** | **13** | **54** | **198** | **2212** | **6452** | **9665** |
+| **Total** | **736** | **13** | **54** | **265** | **738** | **7859** | **9665** |
 
 ## Test Cases by Package
 
@@ -174,7 +174,7 @@
 
 ### `@kb-labs/adapters-analytics-file`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`adapters/analytics-file/src/__tests__/daily-stats.spec.ts`**
 
@@ -196,8 +196,6 @@
   - should sort results by date ascending
 - **Empty metrics**
   - should not include metrics object for unknown event types
-
-#### Unit tests
 
 **`adapters/analytics-file/src/__tests__/scoped-analytics.test.ts`**
 
@@ -2278,34 +2276,6 @@
   - propagates unavailable command metadata
   - prefers workspace manifests over node_modules
 
-#### E2E / journey tests
-
-**`cli/commands/src/commands/system/marketplace/__tests__/scope.spec.ts`**
-
-- **marketplace CLI project scope**
-  - selects the registered project containing cwd for implicit scope
-  - requires registry membership when project scope is explicitly requested
-
-**`cli/commands/src/registry/service.spec.ts`**
-
-- **registerManifest with subgroups**
-  - registers subgroup command with 3-part space and colon paths
-  - registers top-level command with 2-part space and colon paths
-  - creates synthetic subgroup accessible by space key
-  - manifest lookup works by colon path (for plugin executor)
-  - two subgroups with same command id do not collide
-- **registerGroup with subgroups**
-  - registers top-level commands
-  - registers subgroup commands as 3-part paths
-  - multiple subgroups do not collide
-  - bare command names from subgroups do not register at top level
-  - returns group object when looking up subgroup
-
-**`cli/commands/src/registry/system-command-scope.spec.ts`**
-
-- **system command scope declarations**
-  - declares scope on every command in the live system registry
-
 #### Unit tests
 
 **`cli/commands/src/__tests__/auth-login.test.ts`**
@@ -2443,6 +2413,12 @@
   - delegates marketplace REST calls to the shared authenticated client
   - preserves the catalog envelope from marketplace failures
   - points timeout recovery at the installed platform commands
+
+**`cli/commands/src/commands/system/marketplace/__tests__/scope.spec.ts`**
+
+- **marketplace CLI project scope**
+  - selects the registered project containing cwd for implicit scope
+  - requires registry membership when project scope is explicitly requested
 
 **`cli/commands/src/commands/system/marketplace/commands/__tests__/sync.test.ts`**
 
@@ -2647,6 +2623,26 @@
 
 - **registry protection classes**
   - derives each command class from its registered route and command declaration
+
+**`cli/commands/src/registry/service.spec.ts`**
+
+- **registerManifest with subgroups**
+  - registers subgroup command with 3-part space and colon paths
+  - registers top-level command with 2-part space and colon paths
+  - creates synthetic subgroup accessible by space key
+  - manifest lookup works by colon path (for plugin executor)
+  - two subgroups with same command id do not collide
+- **registerGroup with subgroups**
+  - registers top-level commands
+  - registers subgroup commands as 3-part paths
+  - multiple subgroups do not collide
+  - bare command names from subgroups do not register at top level
+  - returns group object when looking up subgroup
+
+**`cli/commands/src/registry/system-command-scope.spec.ts`**
+
+- **system command scope declarations**
+  - declares scope on every command in the live system registry
 
 ### `@kb-labs/cli-contracts`
 
@@ -3077,7 +3073,12 @@
 
 ### `@kb-labs/commit`
 
-#### E2E / journey tests
+#### Unit tests
+
+**`plugins/commit/tests/build-layout.test.ts`**
+
+- **commit build inputs**
+  - keeps test files outside the production source tree
 
 **`plugins/commit/tests/cli/apply.cli.spec.ts`**
 
@@ -3117,29 +3118,6 @@
   - returns the typed adapter envelope in JSON mode when the LLM is unconfigured
   - returns one typed missing OpenAI key envelope through the shared result boundary
   - returns a typed missing OpenAI key envelope in JSON mode when OpenAI is bound
-
-**`plugins/commit/tests/rest/handlers/files-handler.spec.ts`**
-
-- **files-handler — shell injection safety (H10)**
-  - calls execFile for git diff with args array, not a shell string
-  - passes file with backtick in name as literal arg (no shell execution)
-  - passes file with $() in name as literal arg (no shell execution)
-  - calls execFile for wc -l with args array for untracked files
-
-**`plugins/commit/tests/rest/handlers/scope-resolver.spec.ts`**
-
-- **resolveScopePath**
-  - returns base directory for root-like scopes
-  - joins scope path from id when no scopes config provided
-  - resolves scope path from scopes config when id matches
-  - falls back to id as path when scope not found in config
-
-#### Unit tests
-
-**`plugins/commit/tests/build-layout.test.ts`**
-
-- **commit build inputs**
-  - keeps test files outside the production source tree
 
 **`plugins/commit/tests/contracts/contracts.manifest.test.ts`**
 
@@ -3217,15 +3195,25 @@
   - should handle deeply nested scope paths correctly
   - should handle root scope (no prefix)
 
+**`plugins/commit/tests/rest/handlers/files-handler.spec.ts`**
+
+- **files-handler — shell injection safety (H10)**
+  - calls execFile for git diff with args array, not a shell string
+  - passes file with backtick in name as literal arg (no shell execution)
+  - passes file with $() in name as literal arg (no shell execution)
+  - calls execFile for wc -l with args array for untracked files
+
+**`plugins/commit/tests/rest/handlers/scope-resolver.spec.ts`**
+
+- **resolveScopePath**
+  - returns base directory for root-like scopes
+  - joins scope path from id when no scopes config provided
+  - resolves scope path from scopes config when id matches
+  - falls back to id as path when scope not found in config
+
 ### `@kb-labs/core-bundle`
 
-#### E2E / journey tests
-
-**`core/bundle/src/__tests__/explain-bundle.spec.ts`**
-
-- **explainBundle**
-  - returns merge trace array
-  - each trace entry has source and path fields
+#### Integration tests
 
 **`core/bundle/src/__tests__/integration.spec.ts`**
 
@@ -3248,6 +3236,14 @@
 - **Platform Configuration**
   - should load platform config from kb.config
 
+#### Unit tests
+
+**`core/bundle/src/__tests__/explain-bundle.spec.ts`**
+
+- **explainBundle**
+  - returns merge trace array
+  - each trace entry has source and path fields
+
 **`core/bundle/src/__tests__/load-bundle-validation.spec.ts`**
 
 - **bundle: loadBundle validation option**
@@ -3255,7 +3251,7 @@
 
 ### `@kb-labs/core-config`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`core/config/src/__tests__/cache.spec.ts`**
 
@@ -3686,18 +3682,6 @@
   - reclaims a lock whose owner process is gone
   - releases the lock when the callback throws
 
-**`core/config/src/utils/__tests__/env.spec.ts`**
-
-- **toBool**
-  - parses truthy values
-  - parses falsy values
-  - returns undefined for unknown or undefined
-- **toInt**
-  - parses valid integers
-  - returns undefined for invalid numbers or undefined
-
-#### Unit tests
-
 **`core/config/src/error-envelope.test.ts`**
 
 - **config error envelope**
@@ -3707,6 +3691,16 @@
 
 - **flattenZodIssues enum hints**
   - uses a hint resolver registered for the enum option tuple
+
+**`core/config/src/utils/__tests__/env.spec.ts`**
+
+- **toBool**
+  - parses truthy values
+  - parses falsy values
+  - returns undefined for unknown or undefined
+- **toInt**
+  - parses valid integers
+  - returns undefined for invalid numbers or undefined
 
 ### `@kb-labs/core-contracts`
 
@@ -3782,7 +3776,22 @@
 - **resolveCliHandlerPath**
   - resolves source-relative declarations under dist and keeps explicit dist paths
 
-#### E2E / journey tests
+#### Integration tests
+
+**`core/discovery/src/__tests__/discovery-integration.spec.ts`**
+
+- **Discovery Integration: install → discover → available**
+  - discovers a single CLI plugin end-to-end
+  - does not load a plugin resolved outside the project through a Marketplace lock path
+  - discovers a local link at its recorded absolute path outside the scope root
+  - fails closed for marketplace plugins when policy config is broken and retains local sources
+  - discovers multiple plugins with different entity kinds
+  - installed → disabled → not discovered → enabled → discovered
+  - tampered package is blocked (integrity mismatch)
+  - removed package directory produces PACKAGE_NOT_FOUND diagnostic
+  - no lock file produces empty result with diagnostic
+
+#### Unit tests
 
 **`core/discovery/src/__tests__/diagnostics.spec.ts`**
 
@@ -3812,19 +3821,6 @@
   - records and replays content, absence, presence, and listing through one facade
   - stores repeated identical reads once in the content-addressed observation set
   - walks workspace patterns as one union listing
-
-**`core/discovery/src/__tests__/discovery-integration.spec.ts`**
-
-- **Discovery Integration: install → discover → available**
-  - discovers a single CLI plugin end-to-end
-  - does not load a plugin resolved outside the project through a Marketplace lock path
-  - discovers a local link at its recorded absolute path outside the scope root
-  - fails closed for marketplace plugins when policy config is broken and retains local sources
-  - discovers multiple plugins with different entity kinds
-  - installed → disabled → not discovered → enabled → discovered
-  - tampered package is blocked (integrity mismatch)
-  - removed package directory produces PACKAGE_NOT_FOUND diagnostic
-  - no lock file produces empty result with diagnostic
 
 **`core/discovery/src/__tests__/discovery-manager.spec.ts`**
 
@@ -3991,8 +3987,6 @@
 - **first-party plugin CLI declarations**
   - validates every built kb.plugin/3 workspace manifest using discovery validation
 
-#### Unit tests
-
 **`core/discovery/src/marketplace-lock-scope.test.ts`**
 
 - **marketplace lock root scope**
@@ -4002,7 +3996,7 @@
 
 ### `@kb-labs/core-extension-store`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`core/extension-store/src/__tests__/entry.spec.ts`**
 
@@ -4220,70 +4214,6 @@
   - rejects at the request deadline while connection establishment is pending
 
 ### `@kb-labs/core-platform`
-
-#### E2E / journey tests
-
-**`core/platform/src/wrappers/analytics-llm-metadata.spec.ts`**
-
-- **AnalyticsLLM - Metadata Tracking**
-- **complete() - metadata in events**
-  - should track tier in started and completed events
-  - should track provider in events
-  - should track full metadata from LLMRouter
-  - should handle missing metadata gracefully (undefined tier/provider)
-  - should track metadata in error events
-- **stream() - metadata in events**
-  - should track tier/provider in stream events
-  - should track metadata in stream error events
-- **chatWithTools() - metadata in events**
-  - should track tier/provider in chatWithTools events
-  - should track metadata in chatWithTools error events
-- **Real-world routing scenarios**
-  - should track small tier → OpenAI routing
-  - should track medium tier → Anthropic routing
-  - should track large tier → Opus routing
-
-**`core/platform/src/wrappers/analytics-llm.spec.ts`**
-
-- **AnalyticsLLM - Cost Estimation**
-  - should match gpt-4o-2024-05-13 to gpt-4o pricing
-- **AnalyticsLLM - Cost Estimation > Versioned Model Name Matching**
-  - should match gpt-4o-mini-2024-07-18 to gpt-4o-mini pricing
-  - should match gpt-4-turbo-2024-04-09 to gpt-4-turbo pricing
-  - should match gpt-4-0125-preview to gpt-4 pricing
-  - should match claude-3-opus-20240229 to claude-3-opus pricing
-- **Model Name Priority (Longest First)**
-  - should NOT match gpt-4o-mini-2024-07-18 to gpt-4o (wrong)
-  - should match gpt-4o-mini before gpt-4o due to sorting
-- **Fallback for Unknown Models**
-  - should use gpt-4o-mini pricing for unknown models
-- **Cost Calculation Precision**
-  - should calculate cost per 1M tokens, not 1K tokens
-  - should handle small token counts without rounding to zero
-- **Case Insensitivity**
-  - should match uppercase model names
-  - should match mixed case model names
-- **Real-world Examples**
-  - should calculate realistic cost for typical query (gpt-4o-mini)
-  - should calculate realistic cost for expensive model (gpt-4)
-
-**`core/platform/src/wrappers/scoped-analytics.spec.ts`**
-
-- **ScopedAnalytics**
-- **Constructor**
-  - should store scoped source
-- **track()**
-  - should delegate to real analytics
-  - should override source.product with scoped value
-- **identify()**
-  - should delegate to real analytics
-- **Multiple scoped instances**
-  - should allow different plugins to have separate scopes
-- **Nested wrapper chains**
-  - should work with other analytics wrappers (AnalyticsEmbeddings, etc.)
-- **Integration: ScopedAnalytics + handler-executor**
-  - should demonstrate the complete flow
-  - should support getSource/setSource restore pattern
 
 #### Unit tests
 
@@ -4878,6 +4808,50 @@
   - accepts valid/${name}
   - rejects invalid/${name}
 
+**`core/platform/src/wrappers/analytics-llm-metadata.spec.ts`**
+
+- **AnalyticsLLM - Metadata Tracking**
+- **complete() - metadata in events**
+  - should track tier in started and completed events
+  - should track provider in events
+  - should track full metadata from LLMRouter
+  - should handle missing metadata gracefully (undefined tier/provider)
+  - should track metadata in error events
+- **stream() - metadata in events**
+  - should track tier/provider in stream events
+  - should track metadata in stream error events
+- **chatWithTools() - metadata in events**
+  - should track tier/provider in chatWithTools events
+  - should track metadata in chatWithTools error events
+- **Real-world routing scenarios**
+  - should track small tier → OpenAI routing
+  - should track medium tier → Anthropic routing
+  - should track large tier → Opus routing
+
+**`core/platform/src/wrappers/analytics-llm.spec.ts`**
+
+- **AnalyticsLLM - Cost Estimation**
+  - should match gpt-4o-2024-05-13 to gpt-4o pricing
+- **AnalyticsLLM - Cost Estimation > Versioned Model Name Matching**
+  - should match gpt-4o-mini-2024-07-18 to gpt-4o-mini pricing
+  - should match gpt-4-turbo-2024-04-09 to gpt-4-turbo pricing
+  - should match gpt-4-0125-preview to gpt-4 pricing
+  - should match claude-3-opus-20240229 to claude-3-opus pricing
+- **Model Name Priority (Longest First)**
+  - should NOT match gpt-4o-mini-2024-07-18 to gpt-4o (wrong)
+  - should match gpt-4o-mini before gpt-4o due to sorting
+- **Fallback for Unknown Models**
+  - should use gpt-4o-mini pricing for unknown models
+- **Cost Calculation Precision**
+  - should calculate cost per 1M tokens, not 1K tokens
+  - should handle small token counts without rounding to zero
+- **Case Insensitivity**
+  - should match uppercase model names
+  - should match mixed case model names
+- **Real-world Examples**
+  - should calculate realistic cost for typical query (gpt-4o-mini)
+  - should calculate realistic cost for expensive model (gpt-4)
+
 **`core/platform/src/wrappers/pii-detector.test.ts`**
 
 - **RegexPIIDetector**
@@ -4932,9 +4906,27 @@
 - **systemPrompt redaction**
   - should redact PII in systemPrompt option
 
+**`core/platform/src/wrappers/scoped-analytics.spec.ts`**
+
+- **ScopedAnalytics**
+- **Constructor**
+  - should store scoped source
+- **track()**
+  - should delegate to real analytics
+  - should override source.product with scoped value
+- **identify()**
+  - should delegate to real analytics
+- **Multiple scoped instances**
+  - should allow different plugins to have separate scopes
+- **Nested wrapper chains**
+  - should work with other analytics wrappers (AnalyticsEmbeddings, etc.)
+- **Integration: ScopedAnalytics + handler-executor**
+  - should demonstrate the complete flow
+  - should support getSource/setSource restore pattern
+
 ### `@kb-labs/core-policy`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`core/policy/src/__tests__/init-policy.spec.ts`**
 
@@ -5098,7 +5090,28 @@
 
 ### `@kb-labs/core-registry`
 
-#### E2E / journey tests
+#### Integration tests
+
+**`core/registry/src/__tests__/integration.spec.ts`**
+
+- **Registry Integration**
+  - does not persist a snapshot when the catalog is opened with persistence disabled
+  - full lifecycle: install → discover → query → uninstall → refresh
+  - multi-plugin registry with mixed entity types
+  - refreshes workspace CLI commands when matched package membership changes
+  - refreshes workspace commands when a declared manifest artifact is built
+  - refreshes a cached CLI capability when the platform marketplace lock changes
+  - does not execute a declared module while discovering other plugins
+  - rediscovers when a loaded static manifest artifact changes before reopen
+  - does not replay a snapshot when its canonical discovery roots change
+  - uses only the adjacent JSON artifact for a declared module manifest
+  - snapshot persistence and reload
+  - keeps an unrelated workflow discoverable while retaining a missing-plugin diagnostic
+  - onChange fires on refresh with added/removed plugins
+  - generators: OpenAPI and Studio registry
+  - health snapshot reflects registry state
+
+#### Unit tests
 
 **`core/registry/src/__tests__/diagnostics-reporter.spec.ts`**
 
@@ -5137,25 +5150,6 @@
 - **generateStudioRegistry**
   - generates sorted registry
   - detects capabilities from manifest
-
-**`core/registry/src/__tests__/integration.spec.ts`**
-
-- **Registry Integration**
-  - does not persist a snapshot when the catalog is opened with persistence disabled
-  - full lifecycle: install → discover → query → uninstall → refresh
-  - multi-plugin registry with mixed entity types
-  - refreshes workspace CLI commands when matched package membership changes
-  - refreshes workspace commands when a declared manifest artifact is built
-  - refreshes a cached CLI capability when the platform marketplace lock changes
-  - does not execute a declared module while discovering other plugins
-  - rediscovers when a loaded static manifest artifact changes before reopen
-  - does not replay a snapshot when its canonical discovery roots change
-  - uses only the adjacent JSON artifact for a declared module manifest
-  - snapshot persistence and reload
-  - keeps an unrelated workflow discoverable while retaining a missing-plugin diagnostic
-  - onChange fires on refresh with added/removed plugins
-  - generators: OpenAPI and Studio registry
-  - health snapshot reflects registry state
 
 **`core/registry/src/__tests__/registry.spec.ts`**
 
@@ -5206,8 +5200,6 @@
   - returns number as floor
   - parses string numbers
   - returns 0 for invalid input
-
-#### Unit tests
 
 **`core/registry/src/__tests__/workspace-default-adapter.test.ts`**
 
@@ -5510,62 +5502,12 @@
 
 ### `@kb-labs/core-runtime`
 
-#### E2E / journey tests
-
-**`core/runtime/src/__tests__/discover-adapters.spec.ts`**
-
-- **discoverAdapters (lock-based)**
-  - returns empty map when no lock file exists
-  - returns empty map when lock has no adapters
-  - skips disabled adapters
-  - skips adapters without built dist
-  - discovers adapter with createAdapter export
-  - loads a built adapter directly from its workspace package without a marketplace lock
-  - loads workspace CLI adapters from the CLI workspace when platform root is isolated
-  - classifies configured workspace adapters from their declared manifest, not package names
-  - rejects a configured package with an adapter-like name when its manifest does not classify it as an adapter
-  - loads only configured workspace packages
-  - fails when a configured workspace package manifest has no implements value
-  - fails when a configured workspace adapter does not export createAdapter
-  - does not activate workspace packages in an installed platform with pnpm-workspace.yaml
-  - never resolves a workspace adapter from the project root
-  - reports a configured unbuilt workspace adapter with a typed build hint
-- **discoverAdapters — platform lock is authoritative**
-  - returns empty when neither root has a lock
-  - returns platform-only adapters when project lock is absent
-  - does not discover adapters from a project lock
-  - platform adapter remains selected when a project lock has the same id
-  - loads only adapters from the platform lock
-  - behaves identically when projectRoot === platformRoot (dev mode)
-
-**`core/runtime/src/__tests__/platform-sync.spec.ts`**
-
-- **platformSync**
-  - returns ok with lockMissing when there is no lock file
-  - validate mode: passes when every local entry exists
-  - validate mode: reports missing local entry without installing
-  - validate mode: reports integrity mismatch for marketplace entries
-  - validate mode: accepts matching integrity
-  - validate mode: rejects an entry with empty integrity
-  - validate mode: skips disabled entries
-  - reconcile mode: installs missing marketplace entry via injected installer
-  - reconcile mode: surfaces installer errors and marks result not-ok
-  - reconcile mode: refuses to auto-install missing local entries
-  - dry-run: never installs even when reconcile is requested
-  - auto mode: picks validate when pnpm-workspace.yaml exists
-  - auto mode: picks reconcile when there is no monorepo marker
+#### Integration tests
 
 **`core/runtime/src/__tests__/unexpected-error-persistence.integration.spec.ts`**
 
 - **installed default log persistence across CLI processes**
   - drains a failed plugin command through CLI shutdown and queries it from a second process
-
-**`core/runtime/src/platform-version.spec.ts`**
-
-- **resolvePlatformVersion**
-  - uses the installed receipt despite a conflicting environment version
-  - fails with the catalogued diagnostic when the installed receipt is missing
-  - reads development version from the release owner package
 
 #### Unit tests
 
@@ -5879,6 +5821,32 @@
 - **stream**
   - delegates stream() to underlying LLM with merged policy
 
+**`core/runtime/src/__tests__/discover-adapters.spec.ts`**
+
+- **discoverAdapters (lock-based)**
+  - returns empty map when no lock file exists
+  - returns empty map when lock has no adapters
+  - skips disabled adapters
+  - skips adapters without built dist
+  - discovers adapter with createAdapter export
+  - loads a built adapter directly from its workspace package without a marketplace lock
+  - loads workspace CLI adapters from the CLI workspace when platform root is isolated
+  - classifies configured workspace adapters from their declared manifest, not package names
+  - rejects a configured package with an adapter-like name when its manifest does not classify it as an adapter
+  - loads only configured workspace packages
+  - fails when a configured workspace package manifest has no implements value
+  - fails when a configured workspace adapter does not export createAdapter
+  - does not activate workspace packages in an installed platform with pnpm-workspace.yaml
+  - never resolves a workspace adapter from the project root
+  - reports a configured unbuilt workspace adapter with a typed build hint
+- **discoverAdapters — platform lock is authoritative**
+  - returns empty when neither root has a lock
+  - returns platform-only adapters when project lock is absent
+  - does not discover adapters from a project lock
+  - platform adapter remains selected when a project lock has the same id
+  - loads only adapters from the platform lock
+  - behaves identically when projectRoot === platformRoot (dev mode)
+
 **`core/runtime/src/__tests__/environment-lease-store.test.ts`**
 
 - **EnvironmentLeaseStore (document-backed)**
@@ -6043,6 +6011,23 @@
   - is idempotent for one application identity
   - rejects a second application identity in one process
 
+**`core/runtime/src/__tests__/platform-sync.spec.ts`**
+
+- **platformSync**
+  - returns ok with lockMissing when there is no lock file
+  - validate mode: passes when every local entry exists
+  - validate mode: reports missing local entry without installing
+  - validate mode: reports integrity mismatch for marketplace entries
+  - validate mode: accepts matching integrity
+  - validate mode: rejects an entry with empty integrity
+  - validate mode: skips disabled entries
+  - reconcile mode: installs missing marketplace entry via injected installer
+  - reconcile mode: surfaces installer errors and marks result not-ok
+  - reconcile mode: refuses to auto-install missing local entries
+  - dry-run: never installs even when reconcile is requested
+  - auto mode: picks validate when pnpm-workspace.yaml exists
+  - auto mode: picks reconcile when there is no monorepo marker
+
 **`core/runtime/src/__tests__/project-context.test.ts`**
 
 - **requireProjectContext**
@@ -6166,6 +6151,13 @@
   - should pass workspace and analytics contexts to FileAnalytics via config
 - **Backward Compatibility**
   - should handle adapters without contexts field in manifest
+
+**`core/runtime/src/platform-version.spec.ts`**
+
+- **resolvePlatformVersion**
+  - uses the installed receipt despite a conflicting environment version
+  - fails with the catalogued diagnostic when the installed receipt is missing
+  - reads development version from the release owner package
 
 **`core/runtime/src/services/__tests__/hybrid-log-reader.test.ts`**
 
@@ -6426,7 +6418,7 @@
 
 ### `@kb-labs/core-sys`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`core/sys/src/fs/__tests__/fs.spec.ts`**
 
@@ -6476,7 +6468,7 @@
 
 ### `@kb-labs/core-workspace`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`core/workspace/src/workspace/__tests__/root-resolver.spec.ts`**
 
@@ -6574,7 +6566,7 @@
   - UNDO-03: --json outputs structured result
   - UNDO-04: --dry-run shows intent, restoreBackup is NOT called
 
-#### E2E / journey tests
+#### Unit tests
 
 **`plugins/devlink/tests/core/npm.spec.ts`**
 
@@ -9774,7 +9766,7 @@
 
 ### `@kb-labs/infra-worker`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`plugins/infra-worker/tests/cli/infra-worker-commands.spec.ts`**
 
@@ -9866,7 +9858,7 @@
 
 ### `@kb-labs/marketplace-api`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`services/marketplace/api/src/routes/health.spec.ts`**
 
@@ -9907,7 +9899,7 @@
 
 ### `@kb-labs/marketplace-core`
 
-#### E2E / journey tests
+#### Integration tests
 
 **`services/marketplace/core/src/__tests__/marketplace-discovery-integration.spec.ts`**
 
@@ -9920,6 +9912,8 @@
   - install → uninstall → discover: plugin is gone after uninstall
   - install → disable → discover: disabled plugin not found
   - link → discover: local linked plugin is available
+
+#### Unit tests
 
 **`services/marketplace/core/src/__tests__/marketplace-service.spec.ts`**
 
@@ -10018,6 +10012,13 @@
   - removes entry and persists
   - no-op if entry does not exist
 
+**`services/marketplace/core/src/strategies/adapter-strategy.test.ts`**
+
+- **AdapterStrategy**
+  - maps a failed adapter manifest load to its catalogued platform error
+  - returns null for a package without adapter metadata and throws a typed error for a failed manifest
+  - resolves required slots from installed manifests instead of guessing package names
+
 **`services/marketplace/core/src/strategies/plugin-strategy.spec.ts`**
 
 - **PluginStrategy**
@@ -10028,18 +10029,9 @@
 - **extractProvides**
   - returns no kinds when no plugin manifest is declared
 
-#### Unit tests
-
-**`services/marketplace/core/src/strategies/adapter-strategy.test.ts`**
-
-- **AdapterStrategy**
-  - maps a failed adapter manifest load to its catalogued platform error
-  - returns null for a package without adapter metadata and throws a typed error for a failed manifest
-  - resolves required slots from installed manifests instead of guessing package names
-
 ### `@kb-labs/marketplace-npm`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`services/marketplace/npm/src/npm-source.spec.ts`**
 
@@ -10438,21 +10430,7 @@
   - blocks deletion without --yes and returns the typed confirmation signal
   - emits the confirmationRequired signal in --json mode
 
-#### E2E / journey tests
-
-**`plugins/mind/tests/core/benchmarks/ab.spec.ts`**
-
-- **benchmark A/B gate**
-  - reports per-metric deltas and a verdict
-  - dedup ON must not regress quality vs OFF
-  - detects a deliberate regression (sanity: tiny limit hurts recall)
-  - exposes a per-group breakdown
-
-**`plugins/mind/tests/core/benchmarks/eval.spec.ts`**
-
-- **benchmark — regression gate**
-  - meets or exceeds the frozen baseline on every metric
-  - every non-abstain query retrieves its relevant file in the top 5
+#### Integration tests
 
 **`plugins/mind/tests/core/integration/ask.spec.ts`**
 
@@ -10495,6 +10473,36 @@
   - sync delete removes a document and its chunks
   - sync update replaces a document’s chunks (no duplication)
   - sync list reflects synced documents
+
+#### Unit tests
+
+**`plugins/mind/tests/contracts/agent.schema.test.ts`**
+
+- **agent response contract (lean)**
+  - accepts the lean agent-response shape
+  - round-trips without mutating the payload
+  - preserves unknown meta keys (open shape)
+  - requires matchedBy + stale on every source (no legacy shape)
+- **config resolution**
+  - fills defaults from an empty config
+  - honors overrides
+  - validates the full config schema
+- **search request**
+  - requires non-empty text
+
+**`plugins/mind/tests/core/benchmarks/ab.spec.ts`**
+
+- **benchmark A/B gate**
+  - reports per-metric deltas and a verdict
+  - dedup ON must not regress quality vs OFF
+  - detects a deliberate regression (sanity: tiny limit hurts recall)
+  - exposes a per-group breakdown
+
+**`plugins/mind/tests/core/benchmarks/eval.spec.ts`**
+
+- **benchmark — regression gate**
+  - meets or exceeds the frozen baseline on every metric
+  - every non-abstain query retrieves its relevant file in the top 5
 
 **`plugins/mind/tests/src/contracts/config.spec.ts`**
 
@@ -10626,22 +10634,6 @@
 - **vectorSearch**
   - checks the vector capability before embedding and preserves its typed unavailable error
   - skips embedding when the local vector namespace is empty
-
-#### Unit tests
-
-**`plugins/mind/tests/contracts/agent.schema.test.ts`**
-
-- **agent response contract (lean)**
-  - accepts the lean agent-response shape
-  - round-trips without mutating the payload
-  - preserves unknown meta keys (open shape)
-  - requires matchedBy + stale on every source (no legacy shape)
-- **config resolution**
-  - fills defaults from an empty config
-  - honors overrides
-  - validates the full config schema
-- **search request**
-  - requires non-empty text
 
 ### `@kb-labs/notifier-router`
 
@@ -12376,7 +12368,13 @@
   - QEF-06: --sync and --ingest compose — sync runs instead of being silently skipped by ingest
   - QEF-07: --ingest with no shard files found errors instead of saving an empty snapshot
 
-#### E2E / journey tests
+#### Unit tests
+
+**`plugins/qa/tests/__tests__/manifest-schema.test.ts`**
+
+- **QA CLI manifest**
+  - places case coverage under a noun followed by the show verb
+  - declares lowercase kebab-case CLI flag names so commands register
 
 **`plugins/qa/tests/core/baseline-comparator.spec.ts`**
 
@@ -12505,14 +12503,6 @@
 - **workspace case annotations**
   - places every unit claim directly above a supported test declaration
 
-#### Unit tests
-
-**`plugins/qa/tests/__tests__/manifest-schema.test.ts`**
-
-- **QA CLI manifest**
-  - places case coverage under a noun followed by the show verb
-  - declares lowercase kebab-case CLI flag names so commands register
-
 ### `@kb-labs/quality`
 
 #### CLI handler tests
@@ -12522,7 +12512,7 @@
 - **quality:check-layers**
   - returns the same typed failure with structured diagnostics in JSON and human modes
 
-#### E2E / journey tests
+#### Unit tests
 
 **`plugins/quality/tests/__tests__/calculate-stats.spec.ts`**
 
@@ -12540,6 +12530,13 @@
   - CS-04: estimates LOC from sample bytes/line ratio
   - CS-05: falls back to FALLBACK_BYTES_PER_LINE when sample reads all fail
   - CS-06: sizeFormatted is human-readable string
+
+**`plugins/quality/tests/contracts/contracts.manifest.test.ts`**
+
+- **pluginContractsManifest**
+  - is valid according to the schema
+  - rejects malformed manifests
+  - uses a semver-compatible contractsVersion
 
 **`plugins/quality/tests/entry/cli/fix-deps.cli.spec.ts`**
 
@@ -12567,15 +12564,6 @@
   - STATS-03: result shape has packages, loc, size (string)
 - **no cache adapter**
   - STATS-04: computes and returns stats without caching when cache unavailable
-
-#### Unit tests
-
-**`plugins/quality/tests/contracts/contracts.manifest.test.ts`**
-
-- **pluginContractsManifest**
-  - is valid according to the schema
-  - rejects malformed manifests
-  - uses a semver-compatible contractsVersion
 
 ### `@kb-labs/release`
 
@@ -13154,7 +13142,20 @@
 
 ### `@kb-labs/rest-api-app`
 
-#### E2E / journey tests
+#### Unit tests
+
+**`services/rest-api/app/src/__tests__/entry-side-effects.test.ts`**
+
+- **rest-api entrypoints**
+  - importing the library entry does not start the service
+  - bootstrap delegates to runService with the exported setup
+  - fails before starting when GATEWAY_INTERNAL_SECRET is missing
+
+**`services/rest-api/app/src/__tests__/ux-route-registry.test.ts`**
+
+- **REST production route declarations**
+  - adapts root Fastify log objects into platform logger message and fields
+  - discovers production registrations and requires closed request and response schemas or an explicit raw declaration
 
 **`services/rest-api/app/src/middleware/__tests__/cache.spec.ts`**
 
@@ -13486,24 +13487,9 @@
 - **cache middleware ordering**
   - ETag reflects the envelope-wrapped payload, not the raw data
 
-#### Unit tests
-
-**`services/rest-api/app/src/__tests__/entry-side-effects.test.ts`**
-
-- **rest-api entrypoints**
-  - importing the library entry does not start the service
-  - bootstrap delegates to runService with the exported setup
-  - fails before starting when GATEWAY_INTERNAL_SECRET is missing
-
-**`services/rest-api/app/src/__tests__/ux-route-registry.test.ts`**
-
-- **REST production route declarations**
-  - adapts root Fastify log objects into platform logger message and fields
-  - discovers production registrations and requires closed request and response schemas or an explicit raw declaration
-
 ### `@kb-labs/rest-api-core`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`services/rest-api/core/src/__tests__/config-schema.spec.ts`**
 
@@ -13616,11 +13602,6 @@
 
 #### E2E / journey tests
 
-**`cli/scaffold/core/src/emit/emit-manifest.spec.ts`**
-
-- **emitManifest**
-  - writes the named manifest export used by all loaders
-
 **`cli/scaffold/core/tests/engine.e2e.test.ts`**
 
 - **engine e2e: plugin/base block**
@@ -13631,6 +13612,11 @@
   - actually writes the tree to disk
 
 #### Unit tests
+
+**`cli/scaffold/core/src/emit/emit-manifest.spec.ts`**
+
+- **emitManifest**
+  - writes the named manifest export used by all loaders
 
 **`cli/scaffold/core/tests/doctor-lock-sync.test.ts`**
 
@@ -13783,50 +13769,13 @@
 
 ### `@kb-labs/shared-cli-ui`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`shared/cli-ui/src/__tests__/artifacts-display.spec.ts`**
 
 - **artifacts display formatting**
   - renders detailed artifact list with metadata
   - renders compact artifact summary
-
-**`shared/cli-ui/src/__tests__/format.spec.ts`**
-
-- **format helpers**
-  - formats timestamp in ISO mode with offset
-  - formats timestamp in local mode for a specific timezone
-  - returns human-friendly relative time
-- **sideBorderBox**
-  - keeps complete message text on a single line when wrapping is disabled
-
-**`shared/cli-ui/src/__tests__/retry.spec.ts`**
-
-- **withRetry**
-  - returns value on first try without calling onRetry
-  - succeeds after retries
-  - throws the last error when all attempts exhausted
-  - applies fixed delay between retries
-  - applies exponential backoff between retries
-  - calls onRetry with error and attempt number
-- **parameter validation**
-  - throws RangeError when attempts < 1
-  - throws RangeError when delay < 0
-  - throws TypeError when fn is not a function
-
-**`shared/cli-ui/src/__tests__/table.spec.ts`**
-
-- **formatTable**
-  - still counts CJK characters as width 2
-- **formatTable > visualWidth — dingbats and BMP symbols are single-width**
-  - treats ✓ ✗ ◆ ○ as width 1 (not 2)
-  - still counts high-plane emoji as width 2
-- **explicit column width**
-  - respects width: 1 on icon column — header padded to 1, not auto-calculated
-- **createBaseStdoutUI — table width passthrough**
-  - passes explicit column width through to formatTable
-
-#### Unit tests
 
 **`shared/cli-ui/src/__tests__/errors.test.ts`**
 
@@ -13839,6 +13788,15 @@
   - preserves a validated product code from an ErrorEnvelopeError
   - maps unexpected errors to a command failure for the shared renderer
   - preserves a permission carried by an authorization envelope in details
+
+**`shared/cli-ui/src/__tests__/format.spec.ts`**
+
+- **format helpers**
+  - formats timestamp in ISO mode with offset
+  - formats timestamp in local mode for a specific timezone
+  - returns human-friendly relative time
+- **sideBorderBox**
+  - keeps complete message text on a single line when wrapping is disabled
 
 **`shared/cli-ui/src/__tests__/interactive-input.test.ts`**
 
@@ -13854,10 +13812,36 @@
   - keeps human progress on stdout
   - routes useLoader output to an async request-scoped sink without mixing concurrent executions
 
+**`shared/cli-ui/src/__tests__/retry.spec.ts`**
+
+- **withRetry**
+  - returns value on first try without calling onRetry
+  - succeeds after retries
+  - throws the last error when all attempts exhausted
+  - applies fixed delay between retries
+  - applies exponential backoff between retries
+  - calls onRetry with error and attempt number
+- **parameter validation**
+  - throws RangeError when attempts < 1
+  - throws RangeError when delay < 0
+  - throws TypeError when fn is not a function
+
 **`shared/cli-ui/src/__tests__/stdout-ui.test.ts`**
 
 - **createBaseStdoutUI error rendering**
   - renders hints with the shared Hint: format
+
+**`shared/cli-ui/src/__tests__/table.spec.ts`**
+
+- **formatTable**
+  - still counts CJK characters as width 2
+- **formatTable > visualWidth — dingbats and BMP symbols are single-width**
+  - treats ✓ ✗ ◆ ○ as width 1 (not 2)
+  - still counts high-plane emoji as width 2
+- **explicit column width**
+  - respects width: 1 on icon column — header padded to 1, not auto-calculated
+- **createBaseStdoutUI — table width passthrough**
+  - passes explicit column width through to formatTable
 
 **`shared/cli-ui/src/destructive.test.ts`**
 
@@ -13875,7 +13859,7 @@
 
 ### `@kb-labs/shared-command-kit`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`shared/command-kit/src/__tests__/define-command.spec.ts`**
 
@@ -13899,6 +13883,34 @@
   - calls execute() when dry-run is true but intent is not defined
   - renders MutateIntent with operations list
   - renders ExecuteIntent without operations (no sections)
+
+**`shared/command-kit/src/__tests__/define-event-stream.test.ts`**
+
+- **defineEventStream**
+  - dispatches the stream lifecycle to declarative handlers
+  - rejects missing sender for connection lifecycle events
+  - rejects execution outside the REST host
+
+**`shared/command-kit/src/__tests__/define-route.test.ts`**
+
+- **defineRoute**
+- **host validation**
+  - should throw error if host is not rest
+  - should throw error if HTTP method mismatch
+  - should be case-insensitive for HTTP methods
+  - should accept valid REST host context
+- **handler execution**
+  - should call execute with context and input
+  - should return handler result
+  - should handle void return from handler
+- **cleanup**
+  - should call cleanup after successful execution
+  - should call cleanup even if handler throws
+  - should not call cleanup if validation fails
+  - should propagate handler error after cleanup
+- **isRESTHost**
+  - should return true for REST host context
+  - should return false for non-REST host context
 
 **`shared/command-kit/src/__tests__/define-system-command.spec.ts`**
 
@@ -13945,6 +13957,42 @@
 - **defineSystemCommandGroup**
   - should create a command group
   - should handle empty command array
+
+**`shared/command-kit/src/__tests__/define-webhook.test.ts`**
+
+- **defineWebhook**
+- **host validation**
+  - should throw error if host is not webhook
+  - should throw error if event name mismatch
+  - should accept valid webhook host context
+- **cleanup**
+  - should call cleanup after successful execution
+  - should call cleanup even if handler throws
+- **isWebhookHost**
+  - should return true for webhook host context
+  - should return false for non-webhook host context
+
+**`shared/command-kit/src/__tests__/define-websocket.test.ts`**
+
+- **defineWebSocket**
+- **host validation**
+  - should throw error if host is not ws
+  - should throw error if channel path mismatch
+  - should throw error if sender not provided for connect event
+  - should accept valid ws host context with sender
+- **message validation**
+  - should validate message structure
+  - should reject message without type field
+  - should reject message with empty type
+- **lifecycle events**
+  - should call onConnect handler
+  - should call onDisconnect handler without sender
+- **cleanup**
+  - should call cleanup after successful execution
+  - should call cleanup even if handler throws
+- **isWSHost**
+  - should return true for ws host context
+  - should return false for non-ws host context
 
 **`shared/command-kit/src/__tests__/error-envelope.spec.ts`**
 
@@ -13997,81 +14045,6 @@
   - should validate array maxLength
   - should validate string minLength
   - should validate string maxLength
-
-**`shared/command-kit/src/__tests__/plugin-context-v3.snapshot.spec.ts`**
-
-- **PluginContextV3 Structure Snapshot**
-  - should have ONLY PluginContextV3 fields (snapshot)
-  - should NOT have legacy EnhancedCliContext fields
-  - should have ui field with all required methods (snapshot)
-  - should have platform field with all required services (snapshot)
-  - should have runtime field with all required methods (snapshot)
-
-#### Unit tests
-
-**`shared/command-kit/src/__tests__/define-event-stream.test.ts`**
-
-- **defineEventStream**
-  - dispatches the stream lifecycle to declarative handlers
-  - rejects missing sender for connection lifecycle events
-  - rejects execution outside the REST host
-
-**`shared/command-kit/src/__tests__/define-route.test.ts`**
-
-- **defineRoute**
-- **host validation**
-  - should throw error if host is not rest
-  - should throw error if HTTP method mismatch
-  - should be case-insensitive for HTTP methods
-  - should accept valid REST host context
-- **handler execution**
-  - should call execute with context and input
-  - should return handler result
-  - should handle void return from handler
-- **cleanup**
-  - should call cleanup after successful execution
-  - should call cleanup even if handler throws
-  - should not call cleanup if validation fails
-  - should propagate handler error after cleanup
-- **isRESTHost**
-  - should return true for REST host context
-  - should return false for non-REST host context
-
-**`shared/command-kit/src/__tests__/define-webhook.test.ts`**
-
-- **defineWebhook**
-- **host validation**
-  - should throw error if host is not webhook
-  - should throw error if event name mismatch
-  - should accept valid webhook host context
-- **cleanup**
-  - should call cleanup after successful execution
-  - should call cleanup even if handler throws
-- **isWebhookHost**
-  - should return true for webhook host context
-  - should return false for non-webhook host context
-
-**`shared/command-kit/src/__tests__/define-websocket.test.ts`**
-
-- **defineWebSocket**
-- **host validation**
-  - should throw error if host is not ws
-  - should throw error if channel path mismatch
-  - should throw error if sender not provided for connect event
-  - should accept valid ws host context with sender
-- **message validation**
-  - should validate message structure
-  - should reject message without type field
-  - should reject message with empty type
-- **lifecycle events**
-  - should call onConnect handler
-  - should call onDisconnect handler without sender
-- **cleanup**
-  - should call cleanup after successful execution
-  - should call cleanup even if handler throws
-- **isWSHost**
-  - should return true for ws host context
-  - should return false for non-ws host context
 
 **`shared/command-kit/src/__tests__/manifest-builder.test.ts`**
 
@@ -14138,6 +14111,15 @@
 - **isPlatformConfigured()**
   - returns false for adapter named with "noop" constructor
   - returns true for logger (always present)
+
+**`shared/command-kit/src/__tests__/plugin-context-v3.snapshot.spec.ts`**
+
+- **PluginContextV3 Structure Snapshot**
+  - should have ONLY PluginContextV3 fields (snapshot)
+  - should NOT have legacy EnhancedCliContext fields
+  - should have ui field with all required methods (snapshot)
+  - should have platform field with all required services (snapshot)
+  - should have runtime field with all required methods (snapshot)
 
 **`shared/command-kit/src/__tests__/use-config.test.ts`**
 
@@ -14422,7 +14404,7 @@
 
 ### `@kb-labs/shared-testing-e2e`
 
-#### E2E / journey tests
+#### Unit tests
 
 **`shared/testing-e2e/src/__tests__/diag-collector.test.ts`**
 
@@ -15004,7 +14986,30 @@
 
 ### `@kb-labs/studio-data-client`
 
-#### E2E / journey tests
+#### Unit tests
+
+**`studio/data-client/src/client/__tests__/http-client-ux-result.test.ts`**
+
+- **Studio API client UX result envelope**
+  - derives a gateway base from the versioned API base for streaming routes
+  - unwraps the shared valid success fixture
+  - decodes a success envelope for routes that require the UX result contract
+  - rejects a raw success body for a route that requires the UX envelope
+  - rejects a raw not-ready error body for a route that requires the UX envelope
+  - preserves the typed shared error fields from a valid failure fixture
+  - validates failure codes and preserves ADR-0049 product errors
+  - maps an authorization denial from the shared envelope without legacy permission fields
+  - maps each invalid shared fixture to a safe typed error
+- **Studio response-envelope interceptor**
+  - canonicalizes an unknown platform code before returning a failure response
+
+**`studio/data-client/src/hooks/__tests__/use-job-events.test.ts`**
+
+- **decodeJobResponseData**
+  - unwraps a valid Gateway result envelope
+  - surfaces a safe error from a failed Gateway result envelope
+  - canonicalizes an invalid failure code before surfacing it
+  - rejects raw payloads and invalid job data
 
 **`studio/data-client/src/sources/__tests__/host-routing.spec.ts`**
 
@@ -15054,31 +15059,6 @@
 
 - **parsePrometheusMetrics**
   - builds studio metrics from canonical Prometheus text
-
-#### Unit tests
-
-**`studio/data-client/src/client/__tests__/http-client-ux-result.test.ts`**
-
-- **Studio API client UX result envelope**
-  - derives a gateway base from the versioned API base for streaming routes
-  - unwraps the shared valid success fixture
-  - decodes a success envelope for routes that require the UX result contract
-  - rejects a raw success body for a route that requires the UX envelope
-  - rejects a raw not-ready error body for a route that requires the UX envelope
-  - preserves the typed shared error fields from a valid failure fixture
-  - validates failure codes and preserves ADR-0049 product errors
-  - maps an authorization denial from the shared envelope without legacy permission fields
-  - maps each invalid shared fixture to a safe typed error
-- **Studio response-envelope interceptor**
-  - canonicalizes an unknown platform code before returning a failure response
-
-**`studio/data-client/src/hooks/__tests__/use-job-events.test.ts`**
-
-- **decodeJobResponseData**
-  - unwraps a valid Gateway result envelope
-  - surfaces a safe error from a failed Gateway result envelope
-  - canonicalizes an invalid failure code before surfacing it
-  - rejects raw payloads and invalid job data
 
 ### `@kb-labs/studio-event-bus`
 
@@ -15601,13 +15581,6 @@
 
 ### `@kb-labs/workflow-engine`
 
-#### E2E / journey tests
-
-**`services/workflow/engine/src/__tests__/dead-letter-key.spec.ts`**
-
-- **workflowDeadLetterCacheKey**
-  - keeps project-scoped keys within the state broker path parameter limit for reruns
-
 #### Unit tests
 
 **`services/workflow/engine/src/__tests__/concurrency-manager.test.ts`**
@@ -15621,6 +15594,11 @@
   - getActiveRun returns null when no lock
   - different groups are independent
   - release + re-acquire cycle works
+
+**`services/workflow/engine/src/__tests__/dead-letter-key.spec.ts`**
+
+- **workflowDeadLetterCacheKey**
+  - keeps project-scoped keys within the state broker path parameter limit for reruns
 
 **`services/workflow/engine/src/__tests__/engine.test.ts`**
 
