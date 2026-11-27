@@ -227,7 +227,16 @@ def monitor_container(backend: DockerBackend, container_id: str, report_dir: str
         if inspected.get("State", {}).get("Running") is not True:
             return
         identity = str(inspected.get("Id") or container_id)
-        sample = {"containerId": identity, "metrics": backend.metrics(identity)}
+        try:
+            metrics = backend.metrics(identity)
+        except RuntimeError:
+            # The container may exit between inspect() and the metrics exec.
+            # Its final state is captured by teardown; only keep the monitor
+            # failure when a follow-up inspect confirms it is still running.
+            if backend.inspect(container_id).get("State", {}).get("Running") is not True:
+                return
+            raise
+        sample = {"containerId": identity, "metrics": metrics}
         jsonl.write_jsonl(samples_path, [sample], append=True)
         time.sleep(0.5)
 
