@@ -349,6 +349,7 @@ jobs:
           REGISTRY_URL:    ${{ (inputs.suite == 'marketplace-registry' || inputs.suite == 'marketplace') && 'http://localhost:4000/api/v1/marketplace-registry' || 'http://localhost:5071' }}
           CI: "true"
           KB_DEBUG: "true"
+          E2E_SUITE:      ${{ inputs.suite }}
           KB_DEV_BIN: ${{ github.workspace }}/tools/scripts/kb-dev-docker.sh
 
       # ── Artifacts + summary ──────────────────────────────────────────────

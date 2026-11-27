@@ -38,10 +38,10 @@ export async function loginAdmin(request: APIRequestContext): Promise<void> {
 /**
  * Register a new machine agent via the admin user session.
  * Flow: login as bootstrap admin → POST /auth/register with admin cookies.
- * Playwright's APIRequestContext stores cookies automatically between calls.
+ * The registration session is isolated from later machine-token requests.
  */
 export async function registerAgent(
-  request: APIRequestContext,
+  _request: APIRequestContext,
   name = 'e2e-test-agent',
 ): Promise<AuthCredentials> {
   // Keep the admin cookie in a short-lived context. A shared Playwright

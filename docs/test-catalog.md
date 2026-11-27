@@ -6975,7 +6975,7 @@
 - ML-01: install package → appears in GET /packages
 - ML-02: disable package → disabled flag set in listing
 - ML-03: enable package → enabled flag restored in listing
-- ML-04: POST /packages/update — responds without error
+- ML-04: update to the installed version is refused with a typed diagnostic
 - ML-05: uninstall package → gone from GET /packages
 
 **`e2e/marketplace/scenarios/default/cases/link.spec.ts`**

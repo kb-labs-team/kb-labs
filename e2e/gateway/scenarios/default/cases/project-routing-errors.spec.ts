@@ -1,4 +1,4 @@
-import { createServer, type AddressInfo } from 'node:http'
+import { createServer } from 'node:http'
 import Fastify from 'fastify'
 import { expect, test } from '@playwright/test'
 import { registerProjectRoutes } from '@kb-labs/gateway-app'
@@ -24,7 +24,7 @@ test('Gateway sanitizes an unstructured project workflow failure @S-022.5', asyn
       { serviceId: 'workflow', rewritePrefix: '/api/v1', healthCheck: '/health' },
     ], {
       resolveProjectService: async () => ({
-        baseUrl: `http://127.0.0.1:${(upstreamAddress as AddressInfo).port}`,
+        baseUrl: `http://127.0.0.1:${upstreamAddress.port}`,
         pathPrefix: '',
         headers: {},
         release: () => undefined,
