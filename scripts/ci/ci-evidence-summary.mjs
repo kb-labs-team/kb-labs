@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// Produces one compact, deterministic view of every failed job in an Actions
-// run. GitHub's checks UI shows jobs independently; this turns repeated shard
-// failures into a single incident while preserving the evidence link per job.
+// Shows the jobs in an Actions run by purpose and groups repeated shard failures
+// into a single incident while preserving the evidence link for each job.
 
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -50,13 +49,28 @@ export function buildEvidence(jobs, failedLogs) {
   };
 }
 
-/** @param {ReturnType<typeof buildEvidence>} report */
-export function renderMarkdown(report) {
+/**
+ * @param {ReturnType<typeof buildEvidence>} report
+ * @param {Array<{name: string, html_url: string, conclusion: string | null, status?: string}>} allJobs
+ */
+export function renderMarkdown(report, allJobs) {
   const { jobs, failed, testsStarted } = report.totals;
   const lines = ['## CI evidence', ''];
   lines.push(`Jobs: **${jobs}** · Failed: **${failed}** · Failed jobs that started tests: **${testsStarted}**`);
-  if (failed === 0) return `${lines.join('\n')}\n\nAll completed jobs passed.\n`;
-  lines.push('', '### Incidents', '');
+  if (allJobs.length > 0 && allJobs.every(job => job.conclusion === 'success')) {
+    lines.push('', 'All completed jobs passed.');
+  }
+  lines.push('', '### Checks by category', '');
+  for (const [category, categoryJobs] of groupJobs(allJobs)) {
+    lines.push(`#### ${category}`, '');
+    for (const job of categoryJobs) {
+      const status = job.conclusion ?? job.status ?? 'unknown';
+      lines.push(`- [${escapeMarkdown(job.name)}](${job.html_url}) — **${escapeMarkdown(status)}**`);
+    }
+    lines.push('');
+  }
+  if (failed === 0) return `${lines.join('\n')}\n`;
+  lines.push('### Incidents', '');
   report.incidents.forEach((incident, index) => {
     lines.push(`${index + 1}. **${incident.fingerprint}** — ${incident.jobs.length} job(s)`);
     lines.push(`   - Failed step: \`${incident.failedStep}\``);
@@ -69,6 +83,27 @@ export function renderMarkdown(report) {
     lines.push(`| [${escapeMarkdown(job.name)}](${job.url}) | ${escapeMarkdown(job.failedStep)} | ${job.testsStarted ? 'yes' : 'no'} |`);
   }
   return `${lines.join('\n')}\n`;
+}
+
+// Include old display names because the same summary can replay historical runs.
+const CHECK_GROUPS = [
+  ['Build', /^Build\b/i],
+  ['Quality', /^(?:Quality\b|Devkit checks\b|Helm chart topology gate\b|Deps\b|Preflight$|lint$|type-check$|coverage$)/i],
+  ['Tests', /^(?:Tests\b|test(?:$|[ :(])|Unit tests\b|internal tools\b|kb-create V2\b)/i],
+  ['E2E', /\bE2E\b|^Flaky history$/i],
+  ['Security', /^(?:Security\b|(?:Go )?Dependency audit\b|Secret scan\b|Static analysis\b|pnpm audit\b|govulncheck\b|gitleaks\b|Semgrep\b)/i],
+  ['Packaging', /^(?:Packaging\b|Release build preflight\b)/i],
+  ['Release', /^(?:Release\b|Full candidate verification\b|Clean installer journey gate\b|Workspace unit verification\b)/i],
+];
+
+function groupJobs(jobs) {
+  const groups = new Map(CHECK_GROUPS.map(([category]) => [category, []]));
+  groups.set('Other', []);
+  for (const job of jobs) {
+    const category = CHECK_GROUPS.find(([, pattern]) => pattern.test(job.name))?.[0] ?? 'Other';
+    groups.get(category).push(job);
+  }
+  return [...groups].filter(([, categoryJobs]) => categoryJobs.length > 0);
 }
 
 function extractEvidence(log, failedStep) {
@@ -113,7 +148,7 @@ function main(argv) {
     .map(job => [job.id, logsDir ? readArtifactLogForJob(logsDir, job.name) : '']));
   const report = buildEvidence(response.jobs, failedLogs);
   if (output) writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`);
-  process.stdout.write(renderMarkdown(report));
+  process.stdout.write(renderMarkdown(report, response.jobs));
 }
 
 export function readArtifactLogForJob(root, jobName) {
