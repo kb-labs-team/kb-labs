@@ -67,6 +67,10 @@ func readChildProcStat(pid int) (childProcStat, error) {
 	if err != nil {
 		return childProcStat{}, err
 	}
+	return parseChildProcStat(pid, data)
+}
+
+func parseChildProcStat(pid int, data []byte) (childProcStat, error) {
 	open := strings.IndexByte(string(data), '(')
 	close := strings.LastIndexByte(string(data), ')')
 	if open < 1 || close <= open || close+2 >= len(data) {
@@ -81,12 +85,17 @@ func readChildProcStat(pid int) (childProcStat, error) {
 		return childProcStat{}, fmt.Errorf("/proc/%d/stat omits required process identity fields", pid)
 	}
 	processGroupID, err := strconv.Atoi(fields[2])
-	if err != nil || processGroupID < 0 {
+	if err != nil || processGroupID < -1 {
 		return childProcStat{}, fmt.Errorf("/proc/%d/stat has invalid process group", pid)
 	}
 	startTicks, err := strconv.ParseInt(fields[19], 10, 64)
 	if err != nil || startTicks < 0 {
 		return childProcStat{}, fmt.Errorf("/proc/%d/stat has invalid start time", pid)
+	}
+	if processGroupID == -1 {
+		// Linux leaves pgid unset when the task is exiting and its signal
+		// handlers cannot be locked. Treat this as a vanished observation.
+		return childProcStat{}, syscall.ESRCH
 	}
 	return childProcStat{state: fields[0][0], processGroupID: processGroupID, startTicks: startTicks}, nil
 }
