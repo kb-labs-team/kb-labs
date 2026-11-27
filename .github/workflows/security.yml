@@ -14,7 +14,7 @@ permissions:
 jobs:
   # ── 1. npm / pnpm dependency CVEs ─────────────────────────────────────────
   audit-npm:
-    name: pnpm audit
+    name: Dependency audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -30,7 +30,7 @@ jobs:
 
   # ── 2. Go dependency CVEs ─────────────────────────────────────────────────
   audit-go:
-    name: govulncheck
+    name: Go dependency audit
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false   # report every module's vulns, don't cancel siblings
@@ -68,7 +68,7 @@ jobs:
 
   # ── 3. Secrets in code and git history ────────────────────────────────────
   secrets:
-    name: gitleaks
+    name: Secret scan
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -88,7 +88,7 @@ jobs:
 
   # ── 4. SAST — injections, path traversal, info disclosure ─────────────────
   sast:
-    name: Semgrep
+    name: Static analysis
     runs-on: ubuntu-latest
     container:
       image: semgrep/semgrep
