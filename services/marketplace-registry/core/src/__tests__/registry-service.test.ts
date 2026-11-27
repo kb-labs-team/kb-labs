@@ -311,6 +311,39 @@ describe('RegistryService.publish', () => {
     });
   });
 
+  // case: S-268.25
+  it('skips legacy records without identity metadata during identity resolution', async () => {
+    const storage = createMemoryStorage();
+    const svc = new RegistryService({
+      storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+    });
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'healthy-package', identity: '@healthy/package' }),
+      'healthy-author', 'ns-healthy');
+    await storage.write('marketplace-registry/packages/legacy-author/legacy-package/meta.json', Buffer.from(JSON.stringify({
+      name: 'legacy-package',
+      authorHandle: 'legacy-author',
+      authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin',
+      visibility: 'private',
+      trust: 'untrusted',
+      allowlist: [],
+      versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00.000Z', integrity: 'sha256-legacy' }],
+      deprecated: false,
+      featured: false,
+      badges: [],
+      tags: [],
+      meta: { name: 'legacy-package', version: '1.0.0' },
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+    })));
+
+    await expect(svc.resolveIdentity('@healthy/package')).resolves.toMatchObject({
+      status: 'found', package: { id: 'healthy-package', version: '1.0.0' },
+    });
+    await expect(svc.resolveIdentity('@unknown/package')).resolves.toEqual({ status: 'not-found-unowned' });
+  });
+
   // case: S-268.21
   it('snapshots legacy release metadata and kind while keeping an unknown legacy release private', async () => {
     const storage = createMemoryStorage();
