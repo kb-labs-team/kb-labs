@@ -26,43 +26,101 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  actions: read
 
 jobs:
   discover:
     if: >-
       (github.event_name == 'workflow_dispatch' && inputs.replay-run-id == '') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.pull_requests[0].number != '') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.pull_requests[0].number != '') ||
       (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'e2e-test'))
     runs-on: ubuntu-latest
     outputs:
       generic: ${{ steps.matrix.outputs.generic }}
       has-auth: ${{ steps.matrix.outputs.has-auth }}
-      pr-number: ${{ steps.pr.outputs.number }}
+      checkout-ref: ${{ steps.source.outputs.sha }}
     steps:
+      - name: Restore originating CI test plan and source
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: e2e-test-plan
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+          path: /tmp/source-ci
       - name: Resolve pull request refs
+        if: github.event_name != 'workflow_run'
         id: pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
         env:
           INPUT_PR: ${{ inputs.pr-number }}
-          WORKFLOW_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
           EVENT_PR: ${{ github.event.pull_request.number }}
         with:
           script: |
-            const number = process.env.INPUT_PR || process.env.WORKFLOW_PR || process.env.EVENT_PR;
+            const number = process.env.INPUT_PR || process.env.EVENT_PR;
             if (!number) core.setFailed('Affected E2E requires a pull request run.');
             const { data: pr } = await github.rest.pulls.get({
               ...context.repo, pull_number: Number(number),
             });
-            core.setOutput('number', String(pr.number));
-            core.setOutput('base', pr.base.ref);
+            core.setOutput('base', pr.base.sha);
             core.setOutput('head', pr.head.sha);
+      - name: Select source revision
+        id: select
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          SOURCE_HEAD: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_PR: ${{ github.event.workflow_run.pull_requests[0].number }}
+          SNAPSHOT: ${{ steps.pr.outputs.head }}
+        run: |
+          if [ "$EVENT_NAME" = workflow_run ]; then
+            test "$(jq -r .run /tmp/source-ci/e2e-source.json)" = "$SOURCE_RUN"
+            test "$(jq -r .pr /tmp/source-ci/e2e-source.json)" = "$SOURCE_PR"
+            sha=$(jq -r .sha /tmp/source-ci/e2e-source.json)
+            head=$(jq -r .head /tmp/source-ci/e2e-source.json)
+            base=$(jq -r .base /tmp/source-ci/e2e-source.json)
+            [[ "$head" =~ ^[0-9a-f]{40}$ && "$base" =~ ^[0-9a-f]{40}$ ]]
+            test "$SOURCE_HEAD" = "$head" || test "$SOURCE_HEAD" = "$sha"
+          else
+            sha="$SNAPSHOT"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ steps.pr.outputs.head }}
+          ref: ${{ steps.select.outputs.sha }}
           fetch-depth: 0
-      - name: Resolve affected E2E zones
+          persist-credentials: false
+      - name: Verify and identify tested source
+        id: source
         env:
-          KB_DEVKIT_BASE_REF: origin/${{ steps.pr.outputs.base }}...HEAD
+          EVENT_NAME: ${{ github.event_name }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+          EXPECTED_SHA: ${{ steps.select.outputs.sha }}
+          SNAPSHOT_BASE: ${{ steps.pr.outputs.base }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          if [ "$EVENT_NAME" = workflow_run ]; then
+            test "$(git rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = 3
+            test "$(git rev-parse HEAD^1)" = "$(jq -r .base /tmp/source-ci/e2e-source.json)"
+            test "$(git rev-parse HEAD^2)" = "$(jq -r .head /tmp/source-ci/e2e-source.json)"
+            echo "base=$(git rev-parse HEAD^1)" >> "$GITHUB_OUTPUT"
+            echo "CI run $SOURCE_RUN tested merge $EXPECTED_SHA" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "base=$SNAPSHOT_BASE" >> "$GITHUB_OUTPUT"
+            echo "PR head snapshot $EXPECTED_SHA ($EVENT_NAME)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "sha=$EXPECTED_SHA" >> "$GITHUB_OUTPUT"
+      - name: Restore validated CI plan
+        if: github.event_name == 'workflow_run'
+        run: |
+          mkdir -p .ci
+          cp /tmp/source-ci/e2e-test-plan.json .ci/e2e-test-plan.json
+      - name: Resolve affected E2E zones
+        if: github.event_name != 'workflow_run'
+        env:
+          KB_DEVKIT_BASE_REF: ${{ steps.source.outputs.base }}...HEAD
         run: |
           mkdir -p .ci
           node scripts/ci/resolve-e2e-zones.mjs \
@@ -73,24 +131,37 @@ jobs:
       - name: Create runner matrix
         id: matrix
         run: |
-          generic=$(node -e '
-            const plan = require("./.ci/e2e-test-plan.json");
-            const suites = [...new Set(plan.selected
-              .filter((zone) => zone.runner === "docker")
-              .flatMap((zone) => zone.suites)
-              .filter((suite) => !["e2e-auth", "e2e-oauth"].includes(suite))
-              .map((suite) => suite.replace(/^e2e-/, "")))];
-            process.stdout.write(JSON.stringify(suites));
-          ')
-          auth=$(node -e '
-            const plan = require("./.ci/e2e-test-plan.json");
-            process.stdout.write(String(plan.selected.some((zone) => zone.suites.includes("e2e-auth"))));
-          ')
-          echo "generic=$generic" >> "$GITHUB_OUTPUT"
-          echo "has-auth=$auth" >> "$GITHUB_OUTPUT"
+          node <<'NODE'
+          const fs = require('fs');
+          const plan = JSON.parse(fs.readFileSync('.ci/e2e-test-plan.json', 'utf8'));
+          if (!plan || !Array.isArray(plan.selected)) throw new Error('Invalid E2E plan');
+          const generic = new Set();
+          let auth = false;
+          for (const zone of plan.selected) {
+            if (!zone || !['docker', 'launcher'].includes(zone.runner) || !Array.isArray(zone.suites)) throw new Error('Invalid E2E zone');
+            for (const suite of zone.suites) {
+              if (typeof suite !== 'string' || !/^e2e-[a-z][a-z0-9-]*$/.test(suite)) throw new Error('Invalid E2E suite');
+              if (suite === 'e2e-auth') auth = true;
+              if (zone.runner === 'docker' && !['e2e-auth', 'e2e-oauth'].includes(suite)) generic.add(suite.slice(4));
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `generic=${JSON.stringify([...generic])}\nhas-auth=${auth}\n`);
+          NODE
+
+  prepare:
+    name: Prepare affected E2E bundle
+    needs: discover
+    if: needs.discover.outputs.generic != '[]' || needs.discover.outputs.has-auth == 'true'
+    uses: ./.github/workflows/reusable-e2e-platform-build.yml
+    with:
+      artifact-name: e2e-affected-prebuilt-${{ github.run_id }}
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
+      cache-mode: off
+    permissions:
+      contents: read
 
   docker-e2e:
-    needs: discover
+    needs: [discover, prepare]
     if: needs.discover.outputs.generic != '[]'
     strategy:
       fail-fast: false
@@ -99,6 +170,9 @@ jobs:
     uses: ./.github/workflows/reusable-e2e-docker.yml
     with:
       suite: ${{ matrix.suite }}
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
+      cache-mode: off
+      prebuilt-artifact: e2e-affected-prebuilt-${{ github.run_id }}
       e2e-package: "@kb-labs/e2e-${{ matrix.suite }}"
       health-url: http://localhost:4000/ready
       health-steps: 60
@@ -121,11 +195,14 @@ jobs:
       contents: read
 
   auth-e2e:
-    needs: discover
+    needs: [discover, prepare]
     if: needs.discover.outputs.has-auth == 'true'
     uses: ./.github/workflows/reusable-e2e-playwright.yml
     with:
       suite: auth
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
+      cache-mode: off
+      prebuilt-artifact: e2e-affected-prebuilt-${{ github.run_id }}
       compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml
       compose-project: kb-e2e-affected-auth
       run-command: cd e2e/auth && pnpm e2e
@@ -138,11 +215,14 @@ jobs:
       contents: read
 
   oauth-e2e:
-    needs: discover
+    needs: [discover, prepare]
     if: needs.discover.outputs.has-auth == 'true'
     uses: ./.github/workflows/reusable-e2e-playwright.yml
     with:
       suite: oauth
+      checkout-ref: ${{ needs.discover.outputs.checkout-ref }}
+      cache-mode: off
+      prebuilt-artifact: e2e-affected-prebuilt-${{ github.run_id }}
       compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml:e2e/docker-compose.oauth-ci.yml
       compose-project: kb-e2e-affected-oauth
       run-command: cd e2e/auth && pnpm e2e:oauth
@@ -157,7 +237,7 @@ jobs:
 
   evidence:
     name: CI evidence
-    needs: [discover, docker-e2e, auth-e2e, oauth-e2e]
+    needs: [discover, prepare, docker-e2e, auth-e2e, oauth-e2e]
     if: always() && !(github.event_name == 'workflow_dispatch' && inputs.replay-run-id != '')
     uses: ./.github/workflows/reusable-ci-evidence.yml
     with:

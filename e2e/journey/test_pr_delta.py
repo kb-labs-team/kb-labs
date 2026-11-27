@@ -15,8 +15,17 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertIn("S-160.5", plan_claims(["e2e/journey/plugin_author_steps.py"]))
         self.assertEqual(plan_claims(["tools/kb-devkit/internal/engine/executor.go"]), [])
         self.assertIn("PC-001.2", plan_claims(["tools/kb-devkit/internal/engine/executor.go", "tools/kb-create/main.go"]))
+        self.assertEqual(plan_claims(["e2e/docker-compose.platform.yml", "e2e/docker-compose.oauth-ci.yml",
+                                     "e2e/platform/entrypoint.sh"]), [])
+        self.assertIn("PC-001.2", plan_claims(["e2e/docker-compose.yml", "e2e/journey/docker-compose.yml"]))
+        self.assertIn("PC-001.2", plan_claims(["e2e/platform/prepare-release-index.mjs"]))
         self.assertIn("PC-001.2", plan_claims(["core/runtime/src/main.ts"]))
         self.assertTrue(plan_claims(["services/new-service/src/main.ts"]))
+
+    # case: S-262.23
+    def test_shared_compose_selects_installed_claims_but_platform_overlay_is_fixture(self):
+        self.assertEqual(plan_claims(["e2e/docker-compose.yml"]), ["PC-001.2", "S-002.1", "S-010.1"])
+        self.assertEqual(plan_claims(["e2e/docker-compose.platform.yml"]), [])
 
     # case: S-262.21
     def test_requires_real_improvement_and_rejects_regressions_and_missing_evidence(self):

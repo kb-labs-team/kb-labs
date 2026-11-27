@@ -76,8 +76,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Resolve zones from the complete PR diff
         id: resolve-zones
+        env:
+          KB_DEVKIT_BASE_REF: HEAD^1...HEAD
         run: |
           mkdir -p .ci
           node scripts/ci/resolve-e2e-zones.mjs \
@@ -90,6 +93,13 @@ jobs:
           else
             echo "launcher_changed=false" >> "$GITHUB_OUTPUT"
           fi
+      - name: Record tested E2E source
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          jq -n --arg sha "$(git rev-parse HEAD)" --arg base "$(git rev-parse HEAD^1)" --arg head "$PR_HEAD_SHA" --arg run "$GITHUB_RUN_ID" --arg pr "$PR_NUMBER" \
+            '{sha: $sha, base: $base, head: $head, run: $run, pr: $pr}' > .ci/e2e-source.json
       - name: Update PR test-plan comment
         # Fork PR tokens cannot write comments; their plan remains available in
         # the job summary and artifact.
@@ -114,7 +124,9 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: e2e-test-plan
-          path: .ci/e2e-test-plan.json
+          path: |
+            .ci/e2e-test-plan.json
+            .ci/e2e-source.json
           retention-days: 14
 
   # ── 0b. kb-create V2 contract matrix — no registry, Docker or shared HOME ─
