@@ -1069,6 +1069,71 @@ def find_project_id(payload):
     return ""
 
 
+def run_empty_project_studio_fixture(project: Path, env: dict[str, str], report: Path,
+                                     *, command_runner=run, browser_runner=None) -> str | None:
+    """Run S-120.1 with the disposable project temporarily absent from the registry."""
+    if browser_runner is None:
+        browser_runner = run_studio_browser_step
+
+    def cli(args):
+        with invocation_context(step_id="S-120.1"):
+            return command_runner(
+                kb_command(args, executable=str(BIN / "kb")), env=env, cwd=project, timeout=90,
+            )
+    try:
+        listed, _ = cli(["project", "list", "--json"])
+        data = decode_ux_success_result(read_ux_cli_result(listed))
+        projects = data.get("projects") if isinstance(data, dict) else None
+        if not isinstance(projects, list) or len(projects) != 1:
+            return "S-120.1 requires exactly one registered Journey project before its empty-registry check"
+        project_row = projects[0]
+        if (not isinstance(project_row, dict) or project_row.get("path") != str(project.resolve())
+                or not isinstance(project_row.get("id"), str)):
+            return "S-120.1 could not identify exactly one registered Journey project"
+        project_id = project_row["id"]
+    except (json.JSONDecodeError, ValueError, OSError) as error:
+        return f"S-120.1 could not inspect the Journey project registry: {error}"
+
+    removed, _ = cli(["project", "remove", project_id, "--yes", "--json"])
+    if removed.returncode != 0:
+        return f"S-120.1 could not temporarily unregister the Journey project: {' '.join(removed.stdout.split())[-400:]}"
+
+    primary_error: str | None = None
+    try:
+        studio_env = {
+            **env,
+            "GATEWAY_URL": "http://127.0.0.1:4000",
+            "KB_ACCESS_MODE": "local",
+            "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
+        }
+        service_report = report.with_name("service-local.json")
+        with invocation_context(step_id="S-120.1"):
+            passed, elapsed, message = browser_runner([
+                "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
+            ], studio_env, service_report, "local", True, cases=["S-120.1"], timeout=180)
+        TIMES["Studio empty project browser journey"] = elapsed
+        if not passed:
+            primary_error = message
+    except Exception as error:
+        primary_error = f"S-120.1 empty-project check failed: {error}"
+
+    try:
+        restored, _ = cli(["project", "add", "--json"])
+        if restored.returncode != 0:
+            raise RuntimeError(f"kb project add exited {restored.returncode}: {' '.join(restored.stdout.split())[-400:]}")
+        data = decode_ux_success_result(read_ux_cli_result(restored))
+        details = data.get("project") if isinstance(data, dict) else None
+        if (not isinstance(details, dict) or details.get("id") != project_id
+                or details.get("path") != str(project.resolve())):
+            raise RuntimeError("kb project add did not restore the original Journey project identity")
+    except (json.JSONDecodeError, ValueError, OSError, RuntimeError) as error:
+        restoration_error = f"S-120.1 could not restore the Journey project: {error}"
+        return f"{primary_error}; {restoration_error}" if primary_error else restoration_error
+
+    return primary_error
+
+
 def verify_listener_ownership():
     result, _ = run(["ss", "-H", "-ltnp"], timeout=20)
     if not require(result, step="list platform listeners"):
@@ -1737,21 +1802,8 @@ def _main(*, update_variant_runner=None):
     def run_empty_project_studio_case() -> str | None:
         if mode != "local":
             return "S-120.1 requires the local-mode empty-project fixture"
-        studio_env = {
-            **env,
-            "GATEWAY_URL": "http://127.0.0.1:4000",
-            "KB_ACCESS_MODE": "local",
-            "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
-        }
         report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
-        service_report = report.with_name("service-local.json")
-        with invocation_context(step_id="S-120.1"):
-            passed, elapsed, message = run_studio_browser_step([
-                "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
-                "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
-            ], studio_env, service_report, "local", True, cases=["S-120.1"], timeout=180)
-        TIMES["Studio empty project browser journey"] = elapsed
-        return None if passed else message
+        return run_empty_project_studio_fixture(PROJECT, env, report)
 
     if mode == "local":
         CASE_JOURNEY.step(

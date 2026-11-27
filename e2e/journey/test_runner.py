@@ -51,6 +51,42 @@ class WorkflowHostStateBoundaryTests(unittest.TestCase):
         self.assertEqual(calls, ["browser"])
         self.assertEqual(journey.steps[-1].cases, ["S-120.1"])
 
+    # case: S-120.1
+    def test_empty_project_studio_restores_project_when_browser_check_fails(self):
+        with tempfile.TemporaryDirectory(prefix="s120-empty-registry-") as directory:
+            project = Path(directory) / "fresh-project"
+            project.mkdir()
+            project_id = "prj_s120_fixture"
+            project_row = {"id": project_id, "path": str(project.resolve())}
+            calls = []
+
+            def command_runner(args, **_kwargs):
+                command = args[1:3]
+                calls.append(command)
+                if command == ["project", "list"]:
+                    payload = {"ok": True, "data": {"projects": [project_row]}}
+                elif command == ["project", "remove"]:
+                    payload = {"ok": True, "data": {"removed": project_id}}
+                elif command == ["project", "add"]:
+                    payload = {"ok": True, "data": {"project": project_row}}
+                else:
+                    self.fail(f"unexpected kb invocation: {args}")
+                return subprocess.CompletedProcess(args, 0, json.dumps(payload), ""), 0.01
+
+            def browser_runner(*_args, **_kwargs):
+                calls.append(["browser"])
+                return False, 1.0, "Playwright assertion failed"
+
+            result = runner.run_empty_project_studio_fixture(
+                project, {"HOME": directory}, Path(directory) / "journey-summary.md",
+                command_runner=command_runner, browser_runner=browser_runner,
+            )
+
+            self.assertEqual(result, "Playwright assertion failed")
+            self.assertEqual(calls, [
+                ["project", "list"], ["project", "remove"], ["browser"], ["project", "add"],
+            ])
+
     # case: S-262.9
     def test_host_state_is_reprobed_after_a_workflow_failure(self):
         journey = Journey("local", "workflow-boundary-test")

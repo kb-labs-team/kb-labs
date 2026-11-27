@@ -15,8 +15,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from adapter_defaults_steps import (_assert_missing_embeddings, _assert_missing_vector_store, _assert_vector_store_restart,
                                     _assert_no_network_defaults, _assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
-                                    _run_from_registered_project, run_adapter_default_steps,
+                                    _project_registry_path, _project_state_dir, _run_from_registered_project, run_adapter_default_steps,
                                     _assert_no_project_adapter_config, _assert_missing_gateway_dispatch_error)
+from installed_fixture import installed_path, layout_value
 from sdk_runtime_import_check import check_installed_runtime_imports
 from invocations import invocation_context
 import jsonl
@@ -422,21 +423,41 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
             (project_a / ".kb").mkdir(parents=True)
             (project_a / "README.md").write_text("adapter defaults fixture\n")
             project_id = "prj_" + hashlib.sha256(unicodedata.normalize("NFC", str(project_a.resolve())).encode()).hexdigest()[:16]
-            registry_home = (home / ".kb").resolve()
-            registry_home.mkdir()
+            install_root = (home / "kb-platform").resolve()
+            platform_root = create_test_install_container(install_root)
+            registry_home = installed_path(
+                install_root, "sharedStateDirectory", layout_value("kbHomeDirectory"),
+            ).resolve()
+            registry_home.mkdir(parents=True)
             (registry_home / "projects.json").write_text(json.dumps({"schemaVersion": 1, "projects": [
                 {"id": project_id, "path": str(project_a.resolve()), "name": "project-a", "status": "active",
                  "addedAt": "2026-10-01T00:00:00.000Z", "lastUsedAt": None}
             ]}))
-            storage_default = registry_home / "state" / project_id / "storage"
-            env = {"HOME": str(home), "KB_JOURNEY_PROJECT_ROOT": str(project_a),
+            legacy_home = home / ".kb"
+            legacy_home.mkdir()
+            (legacy_home / "projects.json").write_text(json.dumps({"schemaVersion": 1, "projects": [
+                {"id": "legacy-wrong-project", "path": str(project_a.resolve()), "name": "legacy-project",
+                 "status": "active"}
+            ]}))
+            storage_default = registry_home / layout_value("sharedStateDirectory") / project_id / "storage"
+            env = {"HOME": str(home), "KB_JOURNEY_PLATFORM_ROOT": str(install_root),
+                   "KB_JOURNEY_PROJECT_ROOT": str(project_a),
                    "KB_GATEWAY_URL": "http://127.0.0.1:4000",
                    "KB_JOURNEY_SERVICE_TOKEN": "journey-token"}
+            self.assertEqual(_project_state_dir(project_a, env),
+                             registry_home / layout_value("sharedStateDirectory") / project_id)
+            explicit_kb_home = home / "explicit-kb-home"
+            explicit_kb_home.mkdir()
+            (explicit_kb_home / "projects.json").write_text(json.dumps({"projects": [
+                {"id": "explicit-project", "path": str(project_a.resolve())},
+            ]}))
+            explicit_env = {**env, "KB_HOME": str(explicit_kb_home)}
+            self.assertEqual(_project_state_dir(project_a, explicit_env),
+                             (explicit_kb_home / layout_value("sharedStateDirectory")
+                              / "explicit-project").resolve())
             calls: list[tuple[str, ...]] = []
             run_counter = 0
             host_running = True
-            install_root = (home / "kb-platform").resolve()
-            platform_root = create_test_install_container(install_root)
             sdk_root = platform_root / "node_modules" / "@kb-labs" / "sdk"
             (sdk_root / "dist").mkdir(parents=True)
             (sdk_root / "package.json").write_text(json.dumps({
@@ -577,7 +598,7 @@ class AdapterDefaultJourneyTests(unittest.TestCase):
                 if args[:3] == ["adapter", "list", "--json"]:
                     value = config(root)
                     project_platform = value.get("platform", {})
-                    registry_path = Path(env["HOME"]) / ".kb" / "projects.json"
+                    registry_path = _project_registry_path(env)
                     registry_data = json.loads(registry_path.read_text())
                     registered_paths = {Path(item["path"]).resolve() for item in registry_data.get("projects", [])}
                     if root.resolve() in registered_paths and ("adapters" in project_platform or "adapterOptions" in project_platform or
