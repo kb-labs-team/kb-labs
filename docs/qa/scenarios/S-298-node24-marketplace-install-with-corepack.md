@@ -30,4 +30,6 @@ has Corepack but no standalone `pnpm` executable.
 ## Pass criteria
 
 The Marketplace plugin is available to the installed host, and a fresh install
-completes without a standalone pnpm executable.
+completes without a standalone pnpm executable. The native journey report records
+the outcome as a valid case run that the coverage collector accepts and uses
+for release evaluation.
