@@ -10,6 +10,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.js"
+    },
+    "./project-run-storage": {
+      "types": "./dist/project-run-storage.d.ts",
+      "import": "./dist/project-run-storage.js"
     }
   },
   "files": [

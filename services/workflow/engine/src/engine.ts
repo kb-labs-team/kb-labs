@@ -108,7 +108,7 @@ export class WorkflowEngine {
     this.instanceId = options.instanceId ?? randomUUID()
     this.secretProvider = options.secretProvider
 
-    this.stateStore = new StateStore(projectCache, options.storage, this.logger)
+    this.stateStore = new StateStore(projectCache, options.storage, this.logger, options.projectId)
     this.concurrency = new ConcurrencyManager(
       projectCache,
       this.logger,

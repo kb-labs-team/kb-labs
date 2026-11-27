@@ -73,12 +73,18 @@ kb workflow runs rerun <runId>         # resubmit with same inputs
 ```
 
 The daemon stores each run through the project's storage adapter at
-`workflows/<runId>.json`. The record includes run status, trigger and metadata,
+`workflow/projects/project-<registered-project-id-as-utf8-hex>/runs/<runId>.json`.
+The record includes run status, trigger and metadata,
 jobs, steps, artifact references, and step outputs. The filesystem adapter is
 the default in the built-in adapter pack. The cache coordinates live work but
 does not provide workflow history. Completed shell stdout/stderr are retained
 in step outputs so `kb workflow runs logs <runId>` can still show them after a
 host restart.
+
+Older unscoped run records are left untouched and are not shown in project
+history automatically. Their owning project cannot be proven from the record
+when the storage adapter is shared; an owner-proven migration is required
+before those records can be displayed safely.
 
 ### Running workflows
 

@@ -23,6 +23,8 @@ import { requireProjectContext } from "@kb-labs/core-runtime";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { createWorkflowActiveWorkProvider } from "./active-work.js";
+import { importLegacyWorkflowHistory } from "./legacy-history-importer.js";
+import { trustedLegacyProjectStorageRoot } from "./legacy-storage-origin.js";
 
 /**
  * Bootstrap workflow daemon.
@@ -78,6 +80,32 @@ export async function setup({
       spanId: startupSpanId,
     })
     .with({ invocationId: startupSpanId, executionId: startupSpanId });
+
+  const trustedLegacyStorageRoot = await trustedLegacyProjectStorageRoot(runtime, projectId);
+  if (trustedLegacyStorageRoot) {
+    const migration = await importLegacyWorkflowHistory(trustedLegacyStorageRoot, projectId);
+    if (migration.status === 'retryable-failure' || migration.status === 'blocked' || migration.status === 'conflict' ||
+        migration.skipped > 0 || migration.conflicts > 0) {
+      bootstrapLogger.warn('Legacy workflow history import did not fully migrate every record', {
+        status: migration.status,
+        imported: migration.imported,
+        alreadyPresent: migration.alreadyPresent,
+        alreadyDecided: migration.alreadyDecided,
+        skipped: migration.skipped,
+        conflicts: migration.conflicts,
+        ...(migration.reason ? { reason: migration.reason } : {}),
+      });
+      if (migration.status === 'retryable-failure' || migration.status === 'blocked') {
+        throw new Error('Workflow legacy history migration could not complete safely; refusing to start.')
+      }
+    } else if (migration.status === 'imported' && migration.imported > 0) {
+      bootstrapLogger.info('Imported legacy workflow history into project-scoped storage', {
+        imported: migration.imported,
+        alreadyPresent: migration.alreadyPresent,
+        alreadyDecided: migration.alreadyDecided,
+      });
+    }
+  }
 
   if (!platform.isConfigured("workspace")) {
     bootstrapLogger.warn("Workspace adapter is not configured", {
