@@ -201,6 +201,13 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
+    if (specs.some(spec => spec.startsWith('kb:'))) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+        details: { field: 'specs' },
+        message: 'Marketplace install specs do not use the Registry CLI "kb:" prefix.',
+        hint: 'Use the Marketplace package identity, for example "@scope/name", without the "kb:" prefix.',
+      }));
+    }
     const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
     for (const spec of specs) {

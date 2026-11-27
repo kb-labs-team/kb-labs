@@ -124,7 +124,9 @@ test('AUTH-21: change password with wrong current → 400 error', async ({
     await activateUser(memberPage, activationUrl, 'CorrectPass123!')
     await fillChangePasswordForm(memberPage, 'WrongCurrent!', 'NewPass456!', 'NewPass456!')
 
-    await expect(memberPage.locator('[role="alert"]')).toBeVisible({ timeout: 10_000 })
+    const error = memberPage.getByRole('alert')
+    await expect(error).toContainText('Current password is incorrect', { timeout: 10_000 })
+    await expect(error).toContainText('Check the current password and retry the password change.')
   } finally {
     await memberCtx.close()
   }

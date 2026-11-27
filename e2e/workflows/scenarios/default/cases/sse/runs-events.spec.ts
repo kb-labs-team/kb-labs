@@ -1,7 +1,8 @@
-import { collectAuthenticatedSseEvents, expectAuthenticatedSseTerminates } from '../../sse-auth.js';
+import { listPendingApprovals, resolveApproval, startWorkflowRun } from '../../approvals.js';
+import { collectAuthenticatedSseEvents, expectAuthenticatedSseTerminates, sseAuthHeaders } from '../../sse-auth.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import {
-  assertNoSseDuplicates,
+  assertNoSseDuplicates, readSse,
 } from '@kb-labs/shared-testing-e2e';
 import type { SseEvent } from '@kb-labs/shared-testing-e2e';
 import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
@@ -87,21 +88,31 @@ test('SE-04: invalid runId returns 404, not an SSE stream', async ({ request }) 
   expect((await res.json()).error.code).toBe('KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND');
 });
 
-test('SE-06: log.appended events include stepName in payload', async ({ request }) => {
-  const runId = await startRun(request);
-  const events = await collectAuthenticatedSseEvents(request, eventsUrl(runId), { timeoutMs: 30_000 });
-
-  const logEvents = events.filter((e) => eventType(e) === 'log.appended');
-
-  // Workflow may produce zero log events if steps emit nothing — only assert when present
-  if (logEvents.length === 0) { return; }
-
-  // At least one log event must carry stepName (set by engine.publishLog)
-  const withStepName = logEvents.filter((e) => {
-    const payload = (e.json as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined;
-    return typeof payload?.stepName === 'string' && payload.stepName.length > 0;
-  });
-  expect(withStepName.length).toBeGreaterThan(0);
+test('SE-06: a connected subscriber receives stdout from the step after approval', async ({ request }) => {
+  test.setTimeout(60_000);
+  const runId = await startWorkflowRun(request, 'e2e-approval');
+  let pending: Awaited<ReturnType<typeof listPendingApprovals>> = [];
+  await expect.poll(async () => {
+    pending = await listPendingApprovals(request, runId);
+    return pending.length;
+  }, { timeout: 20_000 }).toBe(1);
+  const { jobId, stepId } = pending[0]!;
+  const logs = [];
+  const headers = await sseAuthHeaders(request);
+  for await (const event of readSse(eventsUrl(runId), { headers, timeoutMs: 30_000 })) {
+    if (eventType(event) === 'run.snapshot') {
+      // Receiving the snapshot proves this connection is open before the shell can emit.
+      const approval = await resolveApproval(request, runId, jobId, stepId, 'approve');
+      expect(approval.status).toBe(200);
+    }
+    if (eventType(event) === 'log.appended') {
+      logs.push(event.json);
+    }
+  }
+  expect(logs).toContainEqual(expect.objectContaining({
+    runId,
+    payload: expect.objectContaining({ stepName: 'After gate', stream: 'stdout', message: 'after approval' }),
+  }));
 });
 
 test('SE-05: multiple simultaneous subscribers receive same events', async ({ request }) => {

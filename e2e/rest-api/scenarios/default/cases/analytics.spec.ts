@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 // Analytics endpoints may return 501 if the adapter is not configured.
 // Envelope middleware wraps responses: { ok: true, data: <payload>, meta: {...} }

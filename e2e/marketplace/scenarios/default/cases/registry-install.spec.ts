@@ -16,7 +16,7 @@ const TEST_VERSION = '1.0.0'
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function uniquePkg(prefix: string): string {
-  return `${prefix}-${Date.now()}`
+  return `@e2e/${prefix}-${Date.now()}`
 }
 
 async function publishToRegistry(
@@ -39,7 +39,7 @@ async function publishToRegistry(
   return request.post(`${REGISTRY}/api/v1/packages/publish`, {
     headers: { Authorization: `Bearer ${token}`, 'X-Author-Handle': REG_HANDLE },
     multipart: {
-      tarball: { name: `${pkgName}-${TEST_VERSION}.tgz`, mimeType: 'application/octet-stream', buffer: tarball },
+      tarball: { name: `${encodeURIComponent(pkgName)}-${TEST_VERSION}.tgz`, mimeType: 'application/octet-stream', buffer: tarball },
       meta,
     },
   })
@@ -104,7 +104,7 @@ test('MI-03: install private Registry package with share token → 201', async (
 
   // Generate a share token
   const tokenRes = await request.post(
-    `${REGISTRY}/api/v1/packages/${REG_HANDLE}/${pkgName}/share/token`,
+    `${REGISTRY}/api/v1/packages/${REG_HANDLE}/${encodeURIComponent(pkgName)}/share/token`,
     { headers: { Authorization: `Bearer ${token}` }, data: { ttlDays: 1 } },
   )
   expect(tokenRes.status()).toBe(201)
@@ -122,12 +122,19 @@ test('MI-03: install private Registry package with share token → 201', async (
 
 // ── kb: spec format validation ────────────────────────────────────────────────
 
-test('MI-04: install with malformed kb: spec → 400', async ({ request }) => {
+test('MI-04 @S-268.24: reject unsupported kb: prefix before source resolution', async ({ request }) => {
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
     data: { specs: ['kb:no-slash-here'] },
     timeout: 10_000,
   })
   skipOnRegistryNotConfigured(install.status())
-  // malformed spec should be rejected with 400 or 422
-  expect([400, 422]).toContain(install.status())
+  expect(install.status()).toBe(400)
+  expect(await install.json()).toMatchObject({
+    ok: false,
+    error: {
+      code: 'KB_RUNTIME_INPUT_INVALID',
+      message: expect.stringContaining('kb:'),
+      hint: expect.stringContaining('@scope/name'),
+    },
+  })
 })

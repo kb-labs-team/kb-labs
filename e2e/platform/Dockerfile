@@ -58,7 +58,7 @@ RUN cp /out/binaries/kb-create-release-index /usr/local/bin/kb-create-release-in
 FROM node:24-bookworm
 
 RUN apt-get update -qq && \
-    apt-get install -y -qq curl ca-certificates git jq && \
+    apt-get install -y -qq curl ca-certificates git jq python3 && \
     npm install -g pnpm@11.4.0 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -74,6 +74,7 @@ COPY --from=release-index-builder /out/release-index.json /release-index.json
 # Manifest that points kb-create at the local Verdaccio registry
 COPY e2e/platform/registry-manifest.json /e2e-registry-manifest.json
 
+COPY e2e/journey/invocations.py e2e/journey/journey_values.py e2e/journey/redaction.py e2e/journey/jsonl.py e2e/journey/journey_resources.py e2e/journey/platform_registry_plan.py /opt/kb-e2e-journey/
 COPY e2e/platform/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

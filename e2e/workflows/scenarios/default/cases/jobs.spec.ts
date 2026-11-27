@@ -58,7 +58,7 @@ test('WJ-03: GET /api/v1/jobs/:jobId returns job detail', async ({ request }) =>
   const body = await detailRes.json();
   const job = body.data?.job ?? body.data ?? body;
   expect(job?.id ?? job?.jobId).toBeTruthy();
-  expect(job?.status).toMatch(/pending|running|completed|failed|cancelled/);
+  expect(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq']).toContain(job?.status);
 });
 
 test('WJ-04: GET /api/v1/jobs/:jobId/logs returns log entries array', async ({ request }) => {

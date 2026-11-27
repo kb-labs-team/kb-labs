@@ -175,6 +175,36 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    // case: S-268.24
+    it('rejects the unsupported kb: Registry CLI prefix before contacting sources', async () => {
+      const registryResolve = vi.fn(async () => ({ status: 'not-found-unowned' as const }));
+      const npmResolve = vi.fn(async () => ({ status: 'not-found-unowned' as const }));
+      const createSource = (kind: 'registry' | 'npm', resolveIdentity: MarketplaceSource['resolveIdentity']): MarketplaceSource => ({
+        kind,
+        resolveIdentity,
+        async resolve() { throw new Error('identity resolver should reject the spec first'); },
+        async install() { throw new Error('identity resolver should reject the spec first'); },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      });
+      const service = makeMarketplaceService({
+        platformRoot: tmpDir,
+        sources: [createSource('registry', registryResolve), createSource('npm', npmResolve)],
+      });
+
+      await expect(service.install({ scope: 'platform' }, ['kb:no-slash-here']))
+        .rejects.toMatchObject({ envelope: {
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          details: { field: 'specs' },
+          message: expect.stringContaining('kb:'),
+          hint: expect.stringContaining('@scope/name'),
+        } });
+      expect(registryResolve).not.toHaveBeenCalled();
+      expect(npmResolve).not.toHaveBeenCalled();
+      expect(await fs.readdir(tmpDir)).toEqual([]);
+    });
+
     // case: S-268.14
     it('installs the npm artifact under the same identity recorded in the Marketplace lock', async () => {
       const sourceDir = path.join(marketplaceServiceTestWorkspaceRoot, 'plugins/commit');

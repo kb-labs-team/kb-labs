@@ -179,7 +179,7 @@ export class RegistryService {
     await this.storage.write(tarballPath, tarball);
 
     let signature: EntitySignature | undefined;
-    if (visibility === 'public' && this.signingPrivateKey) {
+    if (this.signingPrivateKey) {
       signature = this.signTarball(
         tarball,
         integrity,

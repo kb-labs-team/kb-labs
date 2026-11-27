@@ -183,7 +183,7 @@ describe('WebSocket: full handshake', () => {
   // case: S-203.29
   it('heartbeat gets ack response while buffered calls are being flushed', async () => {
     vi.spyOn(AdaptiveBuffer.prototype, 'flush').mockImplementation(async () => {
-      await new Promise(resolve => setTimeout(resolve, 300));
+      await new Promise(resolve => { setTimeout(resolve, 300); });
       return [];
     });
     const { machineToken } = await registerHost('e2e-host-2');

@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 // ETag middleware applies to GET responses.
 // Using /plugins/registry as the cacheable endpoint (stable, always returns JSON).

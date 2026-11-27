@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 interface ReadinessPayload {
   schema: string

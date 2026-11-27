@@ -159,13 +159,13 @@ test('WR-08: built-in workflow route GET /runs responds 200', async ({ request }
 
 // ── WR-09: built-in workflow REST API — start a run ─────────────────────────
 
-test('WR-09: built-in workflow route POST /workflows/:id/run returns runId', async ({ request }) => {
+test('WR-09: built-in workflow route POST /workflows/:id/runs returns runId', async ({ request }) => {
   expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy()
   const wf = await getFirstWorkflow(request)
   expect(!wf, 'no workflows in catalog').toBe(false)
 
   const id = wf!.id ?? wf!.name!
-  const res = await request.post(`${GATEWAY}${projectWorkflowRoute(projectId!, `workflows/${encodeURIComponent(id)}/run`)}`)
+  const res = await request.post(`${GATEWAY}${projectWorkflowRoute(projectId!, `workflows/${encodeURIComponent(id)}/runs`)}`)
   expect(res.status() === 404, 'built-in workflow REST route is missing').toBe(false)
   expect([200, 201]).toContain(res.status())
   const body = await res.json()

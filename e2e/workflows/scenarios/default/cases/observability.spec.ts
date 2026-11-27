@@ -147,10 +147,9 @@ test('OBS-E2E-08: GET /runs/:id/logs — shell step stdout is durably queryable 
   const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/logs`);
   expect(res.status()).toBe(200);
   const body = await res.json();
-  const logs: Array<{ message?: string; context?: Record<string, unknown> }> = body.data?.logs ?? [];
-
-  const shellOutput = logs.find(
-    (l) => typeof l.context?.text === 'string' && (l.context!.text as string).includes('hello from e2e'),
-  );
-  expect(shellOutput, `expected a durable log entry carrying the shell step's stdout; got: ${JSON.stringify(logs)}`).toBeDefined();
+  expect(body.data?.logs).toContainEqual(expect.objectContaining({
+    stepName: 'Say hello',
+    stream: 'stdout',
+    message: 'hello from e2e',
+  }));
 });
