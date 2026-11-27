@@ -4,7 +4,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { simpleGit } from 'simple-git';
 import type { PluginContextV3, RestInput } from '@kb-labs/sdk';
 import { createTestContext } from '@kb-labs/sdk/testing';
@@ -40,11 +41,15 @@ function cleanupHandlerContexts(): void {
 }
 
 describe('apply-handler - path transformation for scoped repos', () => {
-  const testRoot = join(process.cwd(), '.test-apply-handler');
-  const rootCwd = join(testRoot, 'kb-labs');
-  const nestedRepo = join(testRoot, 'kb-labs', 'kb-labs-commit-plugin');
+  let testRoot: string;
+  let rootCwd: string;
+  let nestedRepo: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-apply-handler-'));
+    rootCwd = join(testRoot, 'kb-labs');
+    nestedRepo = join(testRoot, 'kb-labs', 'kb-labs-commit-plugin');
+
     // Create directory structure
     await mkdir(join(nestedRepo, 'packages', 'commit-cli', 'src'), { recursive: true });
 
@@ -241,11 +246,15 @@ describe('apply-handler - path transformation for scoped repos', () => {
 });
 
 describe('apply-handler - scope prefix edge cases', () => {
-  const testRoot = join(process.cwd(), '.test-apply-handler-edge');
-  const rootCwd = join(testRoot, 'kb-labs');
-  const setupRepo = join(testRoot, 'kb-labs', 'kb-labs-setup-engine');
+  let testRoot: string;
+  let rootCwd: string;
+  let setupRepo: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-apply-handler-edge-'));
+    rootCwd = join(testRoot, 'kb-labs');
+    setupRepo = join(testRoot, 'kb-labs', 'kb-labs-setup-engine');
+
     await mkdir(join(setupRepo, 'packages', 'setup-core'), { recursive: true });
 
     const setupGit = simpleGit(setupRepo);
