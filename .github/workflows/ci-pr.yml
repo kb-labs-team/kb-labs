@@ -445,6 +445,8 @@ jobs:
         run: echo "KB_HOME=${RUNNER_TEMP}/kb-home" >> "$GITHUB_ENV"
       - name: Register checkout for project-scoped CLI checks
         run: pnpm kb project add "$GITHUB_WORKSPACE"
+      - name: Validate QA cases and test claims
+        run: pnpm kb qa cases validate
       - name: Lint workflow definitions
         run: pnpm kb workflow lint --path .kb/workflows --strict
       - name: Devkit workspace checks (structure, dependencies, boundaries)

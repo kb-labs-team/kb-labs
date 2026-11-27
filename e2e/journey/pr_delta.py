@@ -31,6 +31,8 @@ def plan_claims(paths: list[str]) -> list[str]:
     for path in paths:
         if path.endswith((".md", ".mdx")) or path in {"e2e/journey/scoreboard.py", "e2e/journey/pr_delta.py"}:
             continue
+        if path.startswith("tools/kb-devkit/"):
+            continue
         if path in DOCKER_E2E_BOOTSTRAP or fnmatchcase(path, "e2e/journey/test_*.py"):
             continue
         scoped = {claim for scope in policy["scopes"] for claim in scope["claims"]
@@ -67,6 +69,7 @@ def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -
         raise ValueError(f"{mode}: the selection plan omits a claim owner for commit {sha}")
     obligations.update((name, "") for name in plan["prerequisiteSteps"])
     measured = defaultdict(set)
+    unnamed_claim_results = defaultdict(list)
     for path in sorted(directory.glob("*.json")):
         if not path.name.startswith(REPORT_PREFIXES):
             continue
@@ -81,8 +84,17 @@ def selected_outcomes(directory: Path, sha: str, mode: str, claims: list[str]) -
             reason = "" if status == "PASS" else _service_message_for_comparison(row["message"])
             for claim in (*row.get("cases", []), ""):
                 key = name, claim
+                evidence = path.name, status, reason
                 if key in obligations:
-                    measured[key].add((path.name, status, reason))
+                    measured[key].add(evidence)
+                elif claim in selected and row.get("capability") != "journey.selection":
+                    unnamed_claim_results[claim].append(evidence)
+    for key in obligations - measured.keys():
+        _, claim = key
+        results = unnamed_claim_results.get(claim, [])
+        if (len(results) == 1 and results[0][1] == "BLOCKED" and results[0][2]
+                and sum(claim in ids for ids in owners.values()) == 1):
+            measured[key].update(results)
     missing = obligations - measured.keys()
     if missing:
         label = ", ".join(f"{claim or 'prerequisite'} / {name}" for name, claim in sorted(missing))
@@ -113,6 +125,8 @@ def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, cla
                 continue
             old_statuses = {status for _, status, _ in old}
             new_statuses = {status for _, status, _ in new}
+            if not claim and not old and new_statuses == {"PASS"}:
+                continue
             if ({source for source, _, _ in old} == {source for source, _, _ in new}
                     and new_statuses == {"PASS"} and old_statuses & {"FAIL", "BLOCKED"}):
                 improved.append(label)

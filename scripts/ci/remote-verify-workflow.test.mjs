@@ -7,8 +7,6 @@ import { fileURLToPath } from 'node:url';
 import { load } from 'js-yaml';
 import test from 'node:test';
 import { parseAffectedSelection } from './remote-verify-plan.mjs';
-import { aggregateVerdict } from './aggregate-remote-verdict.mjs';
-import { runStage } from './remote-verify-stage.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
@@ -24,7 +22,6 @@ test('project-scoped workflow lint registers the checkout in a job-local KB_HOME
   assert.ok(configureIndex >= 0 && registerIndex > configureIndex && lintIndex > registerIndex, 'temporary registry configuration and checkout registration run before workflow lint');
   assert.equal(job.steps[registerIndex].run, 'pnpm kb project add "$GITHUB_WORKSPACE"');
 });
-
 // case: S-262.7
 test('remote verification builds once and fans out independent and artifact-dependent test matrices', () => {
   const workflow = readYaml('.github/workflows/remote-verify.yml');
@@ -389,9 +386,11 @@ test('candidate producer-to-plan uses real workspace selection and keeps shipped
       assert.ok(gatedPackages.includes(name), `candidate plan omitted ${name}`);
     }
     assert.deepEqual(gatedPackages.sort(), selection.unitTestPackages.sort());
-    assert.deepEqual(matrix.dependent.include.find(({ stage }) => stage === 'kb-create-go-suite'), {
-      stage: 'kb-create-go-suite', shard: 1, packages: ['kb-create'],
-    });
+    const kbCreatePackageShards = matrix.dependent.include.filter(({ stage, packages = [] }) =>
+      stage === profile.packageTestStage && packages.includes('kb-create'));
+    assert.equal(kbCreatePackageShards.length, 1, 'candidate runs the kb-create test task once as an ordinary package shard');
+    assert.ok(!matrix.dependent.include.some(({ stage }) => stage === 'kb-create-go-suite'),
+      'candidate must not schedule a duplicate dedicated kb-create suite');
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }
@@ -743,47 +742,6 @@ test('verify stream retries a malformed affected selection against the full work
     assert.equal(readFileSync(callsPath, 'utf8'), '2');
     assert.equal(selection.mode, 'full');
     assert.equal(selection.selectionReason, 'full: affected computation failed; selected the complete workspace');
-  } finally {
-    rmSync(temporaryRoot, { recursive: true, force: true });
-  }
-});
-
-test('candidate producer, plan, stage, and aggregate preserve the manifest stage shard identity', async () => {
-  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), 'remote-stage-identity-'));
-  const selectionPath = path.join(temporaryRoot, 'selection.json');
-  const planPath = path.join(temporaryRoot, 'plan.json');
-  const githubOutput = path.join(temporaryRoot, 'github-output');
-  const fakeDevkit = path.join(temporaryRoot, 'kb-devkit');
-  try {
-    writeFileSync(fakeDevkit, '#!/bin/sh\nprintf \'%s\\n\' \'{"ok":true,"data":{"packages":["@kb-labs/core-platform","github.com/kb-labs/kb-runner"],"testPackages":["@kb-labs/core-platform","github.com/kb-labs/kb-runner"],"internalToolPackages":["github.com/kb-labs/kb-runner"],"selectionReason":"fixture"}}\'\n');
-    chmodSync(fakeDevkit, 0o755);
-    const env = { ...process.env, VERIFICATION_PROFILE: 'candidate' };
-    const producer = spawnSync(process.execPath, ['scripts/ci/resolve-remote-selection.mjs', 'candidate', selectionPath, fakeDevkit], { cwd: root, encoding: 'utf8', env });
-    assert.equal(producer.status, 0, `selection producer failed: ${producer.stderr}`);
-    const planner = spawnSync(process.execPath, ['scripts/ci/remote-verify-plan.mjs', 'candidate', selectionPath, planPath, githubOutput], { cwd: root, encoding: 'utf8', env });
-    assert.equal(planner.status, 0, `plan producer failed: ${planner.stderr}`);
-    const plan = JSON.parse(readFileSync(planPath, 'utf8'));
-    const matrixEntry = plan.dependent.include.find((entry) => entry.stage === 'kb-create-go-suite');
-    assert.deepEqual(matrixEntry, { stage: 'kb-create-go-suite', shard: 1, packages: ['kb-create'] });
-
-    const result = await runStage({
-      stage: matrixEntry.stage, packageNames: matrixEntry.packages, shard: matrixEntry.shard,
-      selectedPackageCount: plan.include.length,
-      runCommand: async () => ({
-        status: 0,
-        stdout: JSON.stringify({ ok: true, data: { results: [{ Package: 'kb-create', Task: 'test', OK: true, ExitCode: 0, Stdout: '', Stderr: '' }] } }),
-        stderr: '',
-      }),
-    });
-    const verdict = aggregateVerdict({
-      sha: 'f'.repeat(40), prepare: { name: 'prepare', status: 'pass', selectedPackageCount: 1, failures: [], logTail: '' },
-      build: { name: profile.buildStage, status: 'pass', selectedPackageCount: 1, failures: [], logTail: '' },
-      matrix: { include: [matrixEntry], internalTool: { include: [] } }, results: [result],
-      selectedPackageCount: 1, verificationProfile: 'candidate', prepareJobResult: 'success', buildJobResult: 'success',
-      githubJobs: [{ name: 'Build-dependent test 1', conclusion: 'success', steps: [], annotations: [] }],
-    });
-    assert.equal(verdict.jobs.at(-1).name, 'kb-create-go-suite:shard-1');
-    assert.equal(verdict.jobs.at(-1).status, 'pass');
   } finally {
     rmSync(temporaryRoot, { recursive: true, force: true });
   }

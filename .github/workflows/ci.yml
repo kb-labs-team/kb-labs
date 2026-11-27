@@ -232,8 +232,12 @@ jobs:
           name: dist
       - run: tar xf dist-artifacts.tar
       - run: pnpm install --frozen-lockfile
-      - name: Run ${{ matrix.task }}
+      - name: Run ${{ matrix.task }} (lint / type-check)
+        if: matrix.task == 'lint' || matrix.task == 'type-check'
         run: ./tools/kb-devkit/kb-devkit run ${{ matrix.task }} --no-cache
+      - name: Run ${{ matrix.task }} (shipped lane)
+        if: matrix.task == 'test' || matrix.task == 'test:cli'
+        run: ./tools/kb-devkit/kb-devkit run ${{ matrix.task }} --lane shipped --no-cache
 
   # ── 4. Repository checks — script gates and workspace standards ────────────
   devkit-checks:

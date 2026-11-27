@@ -32,6 +32,23 @@ class NightlyReportTests(unittest.TestCase):
         self.assertIn("test_nightly_report.py", step)
         self.assertNotIn("test_*.py", step)
 
+    # case: S-261.3
+    def test_nightly_report_consumes_validated_full_coverage_from_reusable_producer(self):
+        root = Path(__file__).resolve().parents[2]
+        nightly = (root / ".github/workflows/nightly-user-journey.yml").read_text()
+        reusable = (root / ".github/workflows/reusable-installer-journey.yml").read_text()
+        report = nightly.split("  report:", 1)[1]
+        producer = reusable.split("  coverage:", 1)[1].split("  evidence_diagnostic:", 1)[0]
+        self.assertIn("name: installer-case-coverage", report)
+        self.assertNotIn("kb-devkit run build", report)
+        self.assertNotIn("qa coverage show", report)
+        self.assertIn("!cancelled() && needs.prepare.result == 'success'", producer)
+        self.assertIn("qa coverage show --level all", producer)
+        self.assertIn("kb.qa-case-coverage/v1", producer)
+        self.assertIn(".mode == $mode and (.releasePassed | type) == \"boolean\"", producer)
+        self.assertIn("if: always()\n        with:\n          name: installer-case-coverage", producer)
+        self.assertIn("jq -e '.releasePassed == true'", producer)
+
     def test_aggregate_compares_previous_status_and_uses_stable_fingerprint(self):
         bad = {"capability": "workflow", "mode": "local", "name": "run", "status": "FAIL",
                "message": "HTTP 404 at host A", "duration_seconds": 1}
