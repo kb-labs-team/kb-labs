@@ -35,12 +35,13 @@ export async function loginAdmin(request: APIRequestContext): Promise<void> {
 export async function registerAgent(
   request: APIRequestContext,
   name = 'e2e-test-agent',
+  namespaceId = 'e2e',
 ): Promise<AuthCredentials> {
   await loginAdmin(request)
 
   // Register the machine agent using the admin session cookies (sent automatically).
   const regRes = await request.post(`${GATEWAY}/auth/register`, {
-    data: { name, capabilities: [] },
+    data: { name, namespaceId, capabilities: [] },
   })
   if (!regRes.ok()) {
     throw new Error(`register failed: ${regRes.status()} ${await regRes.text()}`)
