@@ -16,7 +16,7 @@ import { EnvSecretProvider, WorkflowEngine, workflowDeadLetterCacheKey, workflow
 import { createExecutionBackend, createNormalizedExecutionBackend } from '@kb-labs/plugin-execution-factory/construct';
 import { createWorkflowWorker } from '../src/worker.js';
 
-// case: S-029.2, S-009.4
+// case: S-029.2, S-029.4, S-009.4
 describe('live workflow failure terminalization', () => {
   let roots: string[] = [];
   let children: ChildProcess[] = [];
@@ -34,11 +34,19 @@ describe('live workflow failure terminalization', () => {
     roots = [];
   });
 
+  const commandFailure = {
+    code: 'KB_RUNTIME_COMMAND_FAILED',
+    message: 'Structured command failure',
+    hint: 'Inspect the command output.',
+    diagnostics: [{ code: 'FIXTURE_COMMAND_FAILED', severity: 'error', message: 'A task failed' }],
+  };
+
   it.each([
     ['handler throws', 'builtin:shell', { command: 'throw-handler' }, 'failed unexpectedly'],
     ['plugin is missing', 'plugin:@kb-labs/missing/handle', {}, 'Plugin not found'],
     ['command is unknown', 'command:missing:command', {}, 'CLI command not found'],
     ['shell exits non-zero', 'builtin:shell', { command: 'exit 23' }, 'shell exited 23'],
+    ['handler returns a structured command failure', 'builtin:shell', { command: 'structured-failure' }, commandFailure.message],
   ])('%s reaches failed run and persisted history without restart', async (_kind, uses, input, diagnostic) => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'workflow-live-failure-'));
     roots.push(workspaceRoot);
@@ -70,9 +78,17 @@ describe('live workflow failure terminalization', () => {
     const backend = createNormalizedExecutionBackend({
       async execute(request) {
         executionCount++;
-        if (request.input && typeof request.input === 'object' && 'command' in request.input
-            && request.input.command === 'exit 23') {
-          return { ok: true as const, data: { exitCode: 23, stderr: 'shell exited 23' }, executionTimeMs: 1 };
+        if (request.input && typeof request.input === 'object' && 'command' in request.input) {
+          if (request.input.command === 'exit 23') {
+            return { ok: true as const, data: { exitCode: 23, stderr: 'shell exited 23' }, executionTimeMs: 1 };
+          }
+          if (request.input.command === 'structured-failure') {
+            return {
+              ok: true as const,
+              data: { ok: false, error: commandFailure, stdout: 'partial report', stderr: 'failure details', exitCode: 23 },
+              executionTimeMs: 1,
+            };
+          }
         }
         throw new Error('handler threw');
       },
@@ -99,6 +115,12 @@ describe('live workflow failure terminalization', () => {
         steps: [{ status: 'failed', error: { message: expect.stringContaining(diagnostic) } }],
       });
       expect(current?.result).toMatchObject({ status: 'failed', error: { message: expect.stringContaining(diagnostic) } });
+      if (diagnostic === commandFailure.message) {
+        expect(current?.jobs[0]?.steps[0]).toMatchObject({
+          error: commandFailure,
+          outputs: { stdout: 'partial report', stderr: 'failure details', exitCode: 23 },
+        });
+      }
       await expect(engine.listRuns()).resolves.toEqual([expect.objectContaining({ id: run.id, status: 'failed' })]);
     } finally {
       await worker.stop();

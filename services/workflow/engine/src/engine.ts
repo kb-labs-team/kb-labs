@@ -435,7 +435,7 @@ export class WorkflowEngine {
   async markJobFailed(
     runId: string,
     jobId: string,
-    error: Error & { code?: string; hint?: string; details?: Record<string, unknown> },
+    error: Error & { code?: string; hint?: string; details?: Record<string, unknown>; diagnostics?: unknown[] },
     failure?: ClassifiedFailure,
     policyOverride?: false | { max: number; backoff?: 'exp' | 'lin'; initialIntervalMs?: number; maxIntervalMs?: number; on?: string[] }
   ): Promise<WorkflowOperationResult> {
@@ -459,6 +459,7 @@ export class WorkflowEngine {
         code: error.code,
         hint: error.hint,
         details: error.details,
+        diagnostics: error.diagnostics,
         stack: error.stack,
         timestamp: new Date().toISOString(),
       }
@@ -871,7 +872,7 @@ export class WorkflowEngine {
     runId: string,
     jobId: string,
     stepId: string,
-    error: Error & { code?: string; hint?: string; details?: Record<string, unknown> },
+    error: Error & { code?: string; hint?: string; details?: Record<string, unknown>; diagnostics?: unknown[] },
     outputs?: Record<string, unknown>,
   ): Promise<void> {
     const step = await this.stateStore.transitionStep(runId, jobId, stepId, 'failed', (draft) => {
@@ -881,6 +882,7 @@ export class WorkflowEngine {
         code: error.code,
         hint: error.hint,
         details: error.details,
+        diagnostics: error.diagnostics,
         stack: error.stack,
       }
       if (outputs) {draft.outputs = outputs}

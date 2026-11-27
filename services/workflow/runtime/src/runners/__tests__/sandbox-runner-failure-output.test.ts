@@ -62,6 +62,50 @@ describe('SandboxRunner failed shell output', () => {
 })
 
 describe('SandboxRunner plugin failure diagnostics', () => {
+  // case: S-029.4
+  it('preserves platform diagnostics and command output on failed steps', async () => {
+    const diagnostics = [{ code: 'KB_QA_TASK_FAILED', severity: 'error', path: '@fixture/pkg', message: 'assertion failed' }];
+    const runner = new SandboxRunner({
+      backend: {
+        execute: vi.fn().mockResolvedValue({
+          ok: false,
+          data: { ok: false, stdout: 'partial report', stderr: 'failed fixture-secret', exitCode: 23 },
+          error: {
+            code: 'KB_RUNTIME_COMMAND_FAILED',
+            message: 'QA run failed',
+            hint: 'Inspect the task result.',
+            diagnostics,
+          },
+          executionTimeMs: 1,
+        }),
+      } as unknown as ExecutionBackend,
+      cliApi: { snapshot: () => ({ manifests: [{
+        pluginId: '@kb-labs/test-plugin', pluginRoot: '/plugin',
+        manifest: { version: '1.0.0', workflows: { handlers: [{ id: 'run', handler: './dist/run.js' }] } },
+      }] }) } as unknown as IEntityRegistry,
+    });
+
+    const result = await runner.execute({
+      spec: { name: 'QA failure', uses: 'plugin:@kb-labs/test-plugin/run' },
+      context: {
+        runId: 'run-qa', jobId: 'run-qa:check', stepId: 'qa', attempt: 1,
+        env: {}, secrets: { FIXTURE_SECRET: 'fixture-secret' },
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+      },
+    });
+
+    expect(result.status).toBe('failed');
+    if (result.status !== 'failed') { throw new Error('expected a failed step result'); }
+    expect(result.error).toMatchObject({
+      code: 'KB_RUNTIME_COMMAND_FAILED',
+      hint: 'Inspect the task result.',
+      diagnostics,
+    });
+    expect(result.outputs).toMatchObject({ stdout: 'partial report', exitCode: 23 });
+    expect(result.outputs?.stderr).toContain('failed');
+    expect(result.outputs?.stderr).not.toContain('fixture-secret');
+  });
+
   // case: S-243.5
   it('preserves the catalogue timeout code and hint on a failed step', async () => {
     const timeout = createErrorEnvelope('KB_RUNTIME_TIMEOUT', { details: { timeoutMs: '25' } });

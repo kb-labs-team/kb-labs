@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import workflow_steps
 from installed_fixture import configure_hermetic_cli_fixture
+from journey_selection import read_journey_selection
 from service_steps import Journey
 from invocations import catalogued_error_hint, catalogued_error_message
 import jsonl
@@ -355,6 +356,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                     if workflow_arg == "journey-hello":
                         successful_workflow_commands.append(workflow_arg)
                     run_id = {"hello": "ok-run", "journey-hello": "ok-run", "journey-fails": "failed-run",
+                              "journey-command-fails": "command-failed-run",
                               "journey-cancel": "cancel-run", "journey-progress": "progress-run",
                               "real-work": "real-run", "journey-rerun": "source-run"}.get(workflow_arg, "failed-run")
                     output = {"ok": True, "data": {"runId": run_id, "status": "queued"}}
@@ -372,7 +374,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                             "hint": 'Run "kb workflow runs list" to inspect available runs.',
                         }}))
                     status = ("cancelled" if run_id == "cancel-run" and cancelled[0] else
-                              "failed" if run_id in {"failed-run", "source-run", "rerun-one", "rerun-failed"} else "success")
+                              "failed" if run_id in {"failed-run", "command-failed-run", "source-run", "rerun-one", "rerun-failed"}
+                              else "success")
                     if run_id == "cancel-run" and not cancelled[0]:
                         status = "running"
                     if run_id == "progress-run" and not progress_finished[0]:
@@ -406,6 +409,17 @@ class WorkflowJourneyTests(unittest.TestCase):
                                  {"spec": {"id": "check-health"}, "status": "success"}]}]
                               if run_id == "real-run" else []))),
                     }}
+                    if run_id == "command-failed-run":
+                        output["data"]["jobs"] = [{"steps": [{
+                            "spec": {"id": "command-failure"}, "status": "failed",
+                            "error": {
+                                "code": "KB_RUNTIME_COMMAND_FAILED", "hint": "Inspect the journey command output.",
+                                "diagnostics": [{"code": "JOURNEY_COMMAND_FAILED", "severity": "error",
+                                                 "path": "report.txt", "message": "A reported check failed."}],
+                            },
+                            "outputs": {"stdout": "partial workflow report", "stderr": "workflow failure details",
+                                        "exitCode": 23},
+                        }]}]
                 elif args[:3] == ["workflow", "runs", "logs"]:
                     run_id = args[3]
                     message = "hello hello-workflow" if run_id == "ok-run" else "journey-failure-diagnostic"
@@ -487,6 +501,7 @@ class WorkflowJourneyTests(unittest.TestCase):
                     output = {"ok": True, "data": [
                         {"id": "journey-hello", "name": "journey-hello", "source": "standalone"},
                         {"id": "journey-fails", "name": "journey-fails", "source": "standalone"},
+                        {"id": "journey-command-fails", "name": "journey-command-fails", "source": "standalone"},
                         {"id": "journey-cron-target", "name": "journey-cron-target", "source": "standalone"},
                         {"id": "hello", "name": "hello", "source": "standalone"}]}
                 else:
@@ -506,7 +521,8 @@ class WorkflowJourneyTests(unittest.TestCase):
                 return CompletedProcess(command, 0, transcript), 0.0
             workflow_steps.run_pty_command = fake_run_pty
             try:
-                journey = Journey("local", "workflow-fixture")
+                journey = Journey("local", "workflow-fixture", selection=read_journey_selection(
+                    {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}))
                 journey_env = {"HOME": directory}
                 workflow_steps.run_workflow_journey(
                     journey,
@@ -538,7 +554,7 @@ class WorkflowJourneyTests(unittest.TestCase):
             "S-027.1", "S-027.2", "S-027.3", "S-028.1", "S-028.2", "S-028.3",
             "S-143.1", "S-143.2", "S-143.3", "S-143.4",
             "S-006.3", "S-007.1", "S-007.2", "S-007.3", "S-009.1", "S-009.2", "S-009.3", "S-009.4", "PC-002.5",
-            "S-029.1", "S-029.2", "S-029.3", "S-044.1", "S-044.2", "S-044.3", "S-044.4",
+            "S-029.1", "S-029.2", "S-029.3", "S-029.4", "S-044.1", "S-044.2", "S-044.3", "S-044.4",
             "S-044.5", "S-044.6", "S-044.7", "S-044.8", "S-044.9",
             "S-056.1", "S-056.2", "S-056.3",
         })

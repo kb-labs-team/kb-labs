@@ -2471,7 +2471,7 @@ def _main(*, update_variant_runner=None):
                     restart_host=restart_for_workflow_history,
                 ),
             ),
-            cases=[*workflow_claims, "S-007.5"], record_empty_success=False,
+            cases=[*workflow_claims, "S-007.5", "S-029.4"], record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
         if isinstance(project_b_handoff, ProjectBRootValid):
