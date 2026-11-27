@@ -101,7 +101,7 @@ describe('resolvePluginSettingsValidator', () => {
 
     const validation = await validator.validate({ name: 'Ada' });
     expect(validation).toMatchObject({ valid: false });
-    if (!validation.valid) expect(validation.cause).toMatch(/timed out/i);
+    if (!validation.valid) {expect(validation.cause).toMatch(/timed out/i);}
     expect(await fs.readFile(marker, 'utf8')).toBe('started');
   }, 10_000);
 

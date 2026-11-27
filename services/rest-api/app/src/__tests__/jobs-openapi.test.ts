@@ -11,12 +11,20 @@ import {
   ListJobsQuerySchema,
 } from '@kb-labs/rest-api-contracts';
 import { withUxErrorResponses } from '../routes/route-schema.js';
+import { registerEnvelopeMiddleware } from '../middleware/envelope.js';
+import type { RestApiConfig } from '@kb-labs/rest-api-core';
 
 describe('scheduled jobs OpenAPI and validation', () => {
   // case: S-257.4
   it('documents the Zod request and response schemas with JSON error responses', async () => {
     const server = Fastify();
+    const config: RestApiConfig = {
+      port: 3000, basePath: '/api/v1', apiVersion: '1.0.0',
+      cors: { origins: [], allowCredentials: true, profile: 'dev' }, plugins: [], mockMode: false,
+    };
+    registerEnvelopeMiddleware(server, config);
     await registerOpenAPI(server, { title: 'REST API', version: '1.0.0', ui: false });
+    let available = true;
 
     await server.register(async (scope) => {
       scope.setValidatorCompiler(validatorCompiler);
@@ -29,9 +37,10 @@ describe('scheduled jobs OpenAPI and validation', () => {
           querystring: ListJobsQuerySchema,
           response: withUxErrorResponses({ 200: JobsListResponseSchema }),
         },
-      }, async (request) => ({
-        jobs: [{ id: 'daily', name: 'Daily cleanup', status: request.query.status ?? 'active', schedule: '0 9 * * *' }],
-      }));
+      }, async (request) => {
+        if (!available) { throw Object.assign(new Error('Cron manager not available'), { statusCode: 503 }); }
+        return { jobs: [{ id: 'daily', name: 'Daily cleanup', status: request.query.status ?? 'active', schedule: '0 9 * * *' }] };
+      });
     });
 
     await server.ready();
@@ -57,15 +66,20 @@ describe('scheduled jobs OpenAPI and validation', () => {
     });
     expect(operation?.responses['503']?.content?.['application/json']?.schema).toMatchObject({
       type: 'object',
-      properties: { ok: { const: false }, error: { type: 'object' } },
+      properties: { ok: { enum: [false] }, error: { type: 'object' } },
     });
 
     const validResponse = await server.inject('/api/v1/jobs?status=active');
     expect(validResponse.statusCode).toBe(200);
-    expect(validResponse.json()).toEqual({ jobs: [{ id: 'daily', name: 'Daily cleanup', status: 'active', schedule: '0 9 * * *' }] });
+    expect(validResponse.json().data).toEqual({ jobs: [{ id: 'daily', name: 'Daily cleanup', status: 'active', schedule: '0 9 * * *' }] });
 
     const invalidResponse = await server.inject('/api/v1/jobs?status=unsupported');
     expect(invalidResponse.statusCode).toBe(400);
+    expect(invalidResponse.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_INPUT_INVALID' } });
+    available = false;
+    const unavailableResponse = await server.inject('/api/v1/jobs?status=active');
+    expect(unavailableResponse.statusCode).toBe(503);
+    expect(unavailableResponse.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_UNEXPECTED' } });
     await server.close();
   });
 });
