@@ -49,11 +49,36 @@ export interface NpmPackageSourceOptions {
 export class PackageInstallError extends Error {
   readonly code: 'NOT_FOUND' | 'INSTALL_FAILED' | 'RELEASE_TOO_FRESH' | 'INTEGRITY_MISMATCH';
   readonly spec: string;
-  constructor(code: PackageInstallError['code'], spec: string, message: string, options?: ErrorOptions) {
+  readonly primaryFailureCode?: PackageInstallError['code'];
+  readonly recoveryFailureCode?: PackageManagerRecoveryFailureCode;
+  constructor(
+    code: PackageInstallError['code'],
+    spec: string,
+    message: string,
+    options?: ErrorOptions & {
+      primaryFailureCode?: PackageInstallError['code'];
+      recoveryFailureCode?: PackageManagerRecoveryFailureCode;
+    },
+  ) {
     super(message, options);
     this.name = 'PackageInstallError';
     this.code = code;
     this.spec = spec;
+    this.primaryFailureCode = options?.primaryFailureCode;
+    this.recoveryFailureCode = options?.recoveryFailureCode;
+  }
+}
+
+export type PackageManagerRecoveryFailureCode =
+  | 'PNPM_OFFLINE_RECONCILE_FAILED'
+  | 'PACKAGE_MANAGER_STATE_RESTORE_FAILED';
+
+class PackageManagerRecoveryError extends Error {
+  constructor(readonly code: PackageManagerRecoveryFailureCode) {
+    super(code === 'PNPM_OFFLINE_RECONCILE_FAILED'
+      ? 'Offline package-manager reconciliation failed.'
+      : 'Package-manager state restoration failed.');
+    this.name = 'PackageManagerRecoveryError';
   }
 }
 
@@ -198,11 +223,15 @@ export class NpmPackageSource implements MarketplaceSource {
         if (pnpmStarted) {await reconcileRestoredPackageGraph(root, state);}
         else {await restorePackageManagerState(root, state);}
       } catch (rollbackError) {
+        const primaryFailureCode = error instanceof PackageInstallError ? error.code : 'INSTALL_FAILED';
+        const recoveryFailureCode = rollbackError instanceof PackageManagerRecoveryError
+          ? rollbackError.code
+          : 'PACKAGE_MANAGER_STATE_RESTORE_FAILED';
         throw new PackageInstallError(
           'INSTALL_FAILED',
           spec,
-          `Marketplace could not restore package-manager state after installing ${spec}. Run "pnpm install --offline" in ${root}, then retry "kb marketplace install ${spec}".`,
-          { cause: new AggregateError([error, rollbackError], 'Marketplace package-manager rollback failed') },
+          `Marketplace install failed (${primaryFailureCode}); package-manager recovery failed (${recoveryFailureCode}).`,
+          { primaryFailureCode, recoveryFailureCode },
         );
       }
       throw error;
@@ -371,7 +400,11 @@ async function reconcileRestoredPackageGraph(root: string, snapshot: PackageMana
 async function reconcilePackageManagerState(root: string, snapshot: PackageManagerFileSnapshot[]): Promise<void> {
   const hasLock = snapshot.some(entry => entry.name === 'pnpm-lock.yaml' && entry.contents !== undefined);
   const args = ['install', '--offline', hasLock ? '--frozen-lockfile' : '--lockfile=false'];
-  await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
+  try {
+    await execa('pnpm', args, { cwd: root, timeout: 5 * 60 * 1000 });
+  } catch {
+    throw new PackageManagerRecoveryError('PNPM_OFFLINE_RECONCILE_FAILED');
+  }
 }
 
 export async function mergeMinimumReleaseAgeExclude(root: string, packageId: string, version: string): Promise<void> {

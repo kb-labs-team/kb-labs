@@ -267,6 +267,58 @@ describe('Marketplace API error boundary', () => {
     });
   });
 
+  // case: S-220.12
+  it('reports both package-install and recovery codes without exposing underlying errors', async () => {
+    const { logger, errors } = makeContextLogger();
+    const packageManagerError = new PackageInstallError(
+      'INSTALL_FAILED',
+      '@kb-labs/test-adapter@1.0.0',
+      'Marketplace install failed (INTEGRITY_MISMATCH); package-manager recovery failed (PNPM_OFFLINE_RECONCILE_FAILED).',
+      {
+        primaryFailureCode: 'INTEGRITY_MISMATCH',
+        recoveryFailureCode: 'PNPM_OFFLINE_RECONCILE_FAILED',
+      },
+    );
+    const service = makeMarketplaceService({
+      platformRoot: tmpdir(),
+      logger,
+      source: createFailingSource(packageManagerError, false),
+    });
+    const server = await createServer({ service, logger });
+    servers.push(server);
+
+    const response = await server.inject({
+      method: 'POST',
+      url: '/api/v1/marketplace/packages/install',
+      payload: { specs: ['@kb-labs/test-adapter'], scope: 'platform' },
+    });
+    const result = response.json();
+    const correlationId = result.error?.correlationId;
+
+    expect(response.statusCode).toBe(422);
+    expect(result.error).toMatchObject({
+      code: 'KB_MARKETPLACE_INSTALL_FAILED',
+      cause: expect.stringContaining('INTEGRITY_MISMATCH'),
+      correlationId: expect.any(String),
+    });
+    expect(result.error?.cause).toContain('PNPM_OFFLINE_RECONCILE_FAILED');
+    expect(JSON.stringify(result)).not.toContain('sentinel-secret');
+    expect(JSON.stringify(result)).not.toContain('/private/var/');
+    expect(JSON.stringify(result).toLowerCase()).not.toContain('authorization');
+    expect(errors).toHaveLength(1);
+    expect(errors[0]?.error?.message).toContain('PNPM_OFFLINE_RECONCILE_FAILED');
+    expect(errors[0]?.error?.message).toContain('INTEGRITY_MISMATCH');
+    expect(JSON.stringify(errors[0]?.fields)).not.toContain('sentinel-secret');
+    expect(JSON.stringify(errors[0]?.fields)).not.toContain('/private/var/');
+    expect(JSON.stringify(errors[0]?.fields).toLowerCase()).not.toContain('authorization');
+    expect(errors[0]?.fields).toMatchObject({
+      requestId: correlationId,
+      errorCode: 'KB_MARKETPLACE_INSTALL_FAILED',
+      primaryInstallFailureCode: 'INTEGRITY_MISMATCH',
+      packageManagerRecoveryFailureCode: 'PNPM_OFFLINE_RECONCILE_FAILED',
+    });
+  });
+
   // case: S-220.1
   it('returns a typed freshness refusal without exposing pnpm output', async () => {
     const { logger, errors } = makeContextLogger();

@@ -6,7 +6,7 @@ import * as crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createServer as createHttpServer } from 'node:http';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { assertSealedPlatformOverrides, mergeMinimumReleaseAgeExclude, NpmPackageSource } from './npm-source.js';
+import { assertSealedPlatformOverrides, mergeMinimumReleaseAgeExclude, NpmPackageSource, PackageInstallError } from './npm-source.js';
 import type { PackageMetadataError, PlatformArtifactPinsError } from './npm-source.js';
 
 interface RegistryPackage {
@@ -460,6 +460,62 @@ describe('NpmPackageSource', () => {
       }
       const restoredUnrelated = await import(pathToFileURL(path.join(root, 'node_modules', unrelatedId, 'manifest.mjs')).href);
       expect(restoredUnrelated.manifest.id).toBe(unrelatedId);
+    } finally {
+      await registry.close();
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
+  // case: S-220.12
+  it('reports typed install and offline-recovery failures without leaking pnpm output', async () => {
+    const { root, home } = await createInstallRoot();
+    const registry = await createLocalRegistry(root);
+    try {
+      const packageId = '@kb-labs/rollback-failure';
+      await registry.publish(packageId);
+      const corepackHome = getCorepackHome();
+      const pnpmManager = path.join(corepackHome, 'v1', 'pnpm', '11.4.0', 'bin', 'pnpm.cjs');
+      await isolatePnpmEnvironment(home, registry.url, path.join(root, 'pnpm-store'));
+      const pnpmShim = path.join(path.dirname(home), 'bin', 'pnpm');
+      await fs.writeFile(pnpmShim, [
+        '#!/bin/sh',
+        'if [ "$1" = "add" ]; then',
+        `  case "$*" in *"${packageId}"*)`,
+        `    "${process.execPath}" -e 'const fs=require("node:fs"); const p=process.argv[1]; const x=JSON.parse(fs.readFileSync(p,"utf8")); x.description="partial package-manager change"; fs.writeFileSync(p,JSON.stringify(x));' "${path.join(root, 'package.json')}"`,
+        '    echo "sentinel-secret-install-output" >&2',
+        '    exit 17;;',
+        '  esac',
+        'fi',
+        'if [ "$1" = "install" ] && [ "$2" = "--offline" ]; then',
+        '  echo "sentinel-secret-recovery-output" >&2',
+        '  exit 23',
+        'fi',
+        `exec "${process.execPath}" "${pnpmManager}" "$@"`,
+        '',
+      ].join('\n'), { mode: 0o700 });
+
+      const source = new NpmPackageSource({ registryUrl: registry.url });
+      const resolved = await source.resolve(packageId);
+      const packageFile = path.join(root, 'package.json');
+      const workspaceFile = path.join(root, 'pnpm-workspace.yaml');
+      const originalPackage = await fs.readFile(packageFile);
+      const originalWorkspace = await fs.readFile(workspaceFile);
+      const error = await source.install(resolved, root).catch(value => value as PackageInstallError);
+
+      expect(error).toMatchObject({
+        name: 'PackageInstallError',
+        code: 'INSTALL_FAILED',
+        primaryFailureCode: 'INSTALL_FAILED',
+        recoveryFailureCode: 'PNPM_OFFLINE_RECONCILE_FAILED',
+      });
+      expect(error.message).toContain('INSTALL_FAILED');
+      expect(error.message).toContain('PNPM_OFFLINE_RECONCILE_FAILED');
+      expect(error.message).not.toContain('sentinel-secret');
+      expect(error.message).not.toContain(root);
+      expect(error.cause).toBeUndefined();
+      expect(await fs.readFile(packageFile)).toEqual(originalPackage);
+      expect(await fs.readFile(workspaceFile)).toEqual(originalWorkspace);
+      await expect(fs.stat(path.join(root, 'node_modules', packageId))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await registry.close();
       await fs.rm(root, { recursive: true, force: true });

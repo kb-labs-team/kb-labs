@@ -83,6 +83,12 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
         const body = request.body as { scope?: string } | undefined;
         const scope = typeof body?.scope === 'string' ? body.scope : 'platform';
         const mapped = mapMarketplaceError(err, correlationId, scope);
+        const installFailureFields = err instanceof PackageInstallError && err.recoveryFailureCode
+          ? {
+              primaryInstallFailureCode: err.primaryFailureCode ?? 'INSTALL_FAILED',
+              packageManagerRecoveryFailureCode: err.recoveryFailureCode,
+            }
+          : {};
         logger.forOperation('marketplace.api.request', { requestId: correlationId }).error(
           'Marketplace API request failed',
           err,
@@ -92,6 +98,7 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
             errorCode: mapped.envelope.code,
             statusCode: mapped.statusCode,
             cause: mapped.envelope.cause,
+            ...installFailureFields,
           },
         );
         return reply.code(mapped.statusCode).send({ ok: false, error: mapped.envelope });
