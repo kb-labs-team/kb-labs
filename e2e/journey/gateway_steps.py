@@ -337,6 +337,35 @@ def run_gateway_steps(journey: Journey, *, token: str, project_id: str, project_
     run_llm_provider_steps(journey, project_id=project_id, project_root=project_root,
                            project_b_id=project_b_id, project_b_root=project_b_root, runner=runner)
 
+    base = journey_value("KB_JOURNEY_BASE_URL", "http://127.0.0.1:4000").rstrip("/")
+    internal_path = f"/api/v1/projects/{project_id}/rest/internal/adapter-call"
+    adapter_call = {
+        "requestId": "journey-internal-route-auth",
+        "adapter": "cache",
+        "method": "get",
+        "args": ["journey-internal-route-auth"],
+        "context": {"namespaceId": "test", "hostId": "test"},
+    }
+    internal_route_results: list[tuple[int, dict[str, Any] | None]] = []
+    for extra_headers in ({}, {"x-internal-secret": "definitely-wrong-secret-journey"}):
+        request = urllib.request.Request(
+            base + internal_path,
+            data=json.dumps(adapter_call).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json", **extra_headers},
+            method="POST",
+        )
+        with invocation_context(step_id="S-323.1"):
+            status, raw, _ = open_http(opener, request, timeout=60, env=os.environ)
+        envelope = read_ux_http_result(raw, status)
+        error = decode_ux_error_result(envelope) if status >= 400 else None
+        internal_route_results.append((status, error))
+    journey.step("reject internal adapter calls through project REST routing", "gateway", lambda: (
+        None if len(internal_route_results) == 2 and all(
+            status == 403 and isinstance(error, dict) and error.get("code") == "KB_AUTH_FORBIDDEN"
+            for status, error in internal_route_results
+        ) else f"project REST internal adapter-call was not denied for both absent and invalid client secrets: {internal_route_results}"
+    ), cases=["S-323.1"])
+
     with invocation_context(step_id="S-189.7"):
         missing_status, missing = _http("/platform/v1/unknown/resource", token=token, opener=opener)
     journey.step("return a JSON 404 for an unmounted Platform API route", "gateway", lambda: (

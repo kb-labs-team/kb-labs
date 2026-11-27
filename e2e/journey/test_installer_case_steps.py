@@ -31,6 +31,7 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_stable_layout_contract_refusal_step,
                                   run_gateway_allocation_step, run_port_conflict_step,
+                                  verify_request_file_gateway_input,
                                   assert_root_offset, run_json_install_project_step,
                                   installer_primary_host_guard, run_fixture_group,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
@@ -47,6 +48,95 @@ from installer_case_steps import (assert_immutable_publish_conflict,
                                   assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
 from journey_resources import active_platform_root, case_catalog_root
+
+
+class RequestPlanConfigRoundTripTests(unittest.TestCase):
+    # case: PC-001.20
+    def test_installed_request_plan_config_apply_recalculates_tampered_fields(self):
+        with tempfile.TemporaryDirectory(prefix="pc001-plan-config-") as directory:
+            parent = Path(directory)
+            stable_index = parent / "stable-index.json"
+            update_index = parent / "update-index.json"
+            stable_index.write_text("{}", encoding="utf-8")
+            update_index.write_text("{}", encoding="utf-8")
+            observed = {"apply": False, "update": False}
+
+            def command(args, **_kwargs):
+                if args[1] == "plan" and "--input" in args:
+                    input_path = Path(args[args.index("--input") + 1])
+                    if input_path.name == "invalid-request.json":
+                        return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": {
+                            "code": "KB_INSTALL_INPUT_REQUIRED", "message": "invalid Gateway", "hint": ""}}), "")
+                    request = json.loads(input_path.read_text(encoding="utf-8"))
+                    config_path = Path(args[args.index("--config") + 1])
+                    config = json.loads(config_path.read_text(encoding="utf-8"))
+                    request["marketplaceSources"] = config["marketplaceSources"]
+                    request.setdefault("values", {}).update({key: json.dumps(value, separators=(",", ":"))
+                                                              for key, value in config.get("values", {}).items()})
+                    gateway_url = request["gatewayUrl"]
+                    envelope = {"ok": True, "data": {"plan": {
+                        "request": request,
+                        "host": {"healthUrl": gateway_url + "/health"},
+                        "serviceGraph": {"services": [{"id": "gateway", "port": int(gateway_url.rsplit(":", 1)[1])}]},
+                        "artifacts": [{"package": "@kb/platform"}],
+                        "configPatches": [{"path": "/platform/adapterOptions", "json": "{}"}],
+                    }}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(envelope), "")
+
+                if args[1] == "apply":
+                    plan_path = Path(args[args.index("--input") + 1])
+                    config_path = Path(args[args.index("--config") + 1])
+                    self.assertEqual(args[args.index("--registry") + 1], "http://verdaccio:4873")
+                    self.assertEqual(json.loads(config_path.read_text(encoding="utf-8"))["values"],
+                                     {"gateway.access.mode": "local"})
+                    plan = json.loads(plan_path.read_text(encoding="utf-8"))["data"]["plan"]
+                    self.assertEqual(plan["host"]["healthUrl"], "http://127.0.0.1:1/health")
+                    self.assertEqual(plan["configPatches"][0]["path"], str(plan_path.parent / "outside-config.json"))
+                    self.assertEqual(plan["artifacts"][0]["package"], "attacker-controlled-package")
+                    request = plan["request"]
+                    gateway_url = request["gatewayUrl"]
+                    install_root = Path(request["platformRoot"])
+                    receipt = {"plan": {"request": request, "serviceGraph": {
+                        "services": [{"id": "gateway", "port": int(gateway_url.rsplit(":", 1)[1])}]}},
+                        "verification": {"hostHealthUrl": gateway_url + "/health"}}
+                    install_root.mkdir(parents=True, exist_ok=True)
+                    (install_root / ".kb/v2").mkdir(parents=True, exist_ok=True)
+                    (install_root / ".kb/v2/receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+                    (install_root / "config.jsonc").write_text(json.dumps({
+                        "gateway": {"access": {"mode": "local"}},
+                        "platform": {"adapterOptions": {"serviceTransport": {"services": {
+                            "gateway": {"url": gateway_url},
+                        }}}},
+                        "marketplace": {"sources": [{"kind": "npm", "url": "http://verdaccio:4873"}]},
+                    }), encoding="utf-8")
+                    observed["root"] = install_root
+                    observed["apply"] = True
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "operation": "apply", "receipt": receipt, "logPath": str(parent / "apply.log")}}), "")
+
+                if args[1] == "status":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "running": True, "reachable": True}}), "")
+
+                if args[1] == "update":
+                    receipt_path = observed["root"] / ".kb/v2/receipt.json"
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                    observed["update"] = True
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "operation": "update"}}), "")
+
+                self.fail(f"unexpected kb-create invocation: {args}")
+
+            with patch("installer_case_steps.active_platform_root", side_effect=lambda value: Path(value)), \
+                    patch("installer_case_steps.layout_value", return_value="config.jsonc"), \
+                    patch("installer_case_steps.cleanup_installer_fixture_root"):
+                verify_request_file_gateway_input(
+                    launcher="kb-create", stable_index=stable_index, update_index=update_index,
+                    registry="http://verdaccio:4873", run_command=command)
+
+            self.assertTrue(observed["apply"])
+            self.assertTrue(observed["update"])
 from service_steps import Journey
 from installed_fixture import layout_value
 

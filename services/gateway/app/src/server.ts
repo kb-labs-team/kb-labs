@@ -79,6 +79,7 @@ import {
 } from "./webhook/router.js";
 import {
   registerProjectRoutes,
+  rewriteStaticProxyRequestHeaders,
   type ProjectRouting,
 } from "./project-routing.js";
 import type { HostRoutes } from "./host-routes.js";
@@ -310,6 +311,18 @@ export async function createServer(
       prefix: upstream.prefix,
       rewritePrefix: upstream.rewritePrefix ?? upstream.prefix,
       disableCache: true,
+      replyOptions: {
+        rewriteRequestHeaders: (request, headers) => {
+          return rewriteStaticProxyRequestHeaders(
+            request.raw.url ?? request.url,
+            request.params as Record<string, string | undefined>,
+            upstream.prefix,
+            upstream.rewritePrefix ?? upstream.prefix,
+            conn.baseUrl,
+            headers,
+          );
+        },
+      },
       // Disable http-proxy WS for socket upstreams — the gateway dialer owns it.
       websocket: wsOverSocket ? false : (upstream.websocket ?? false),
       undici: {

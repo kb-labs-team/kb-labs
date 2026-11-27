@@ -582,6 +582,57 @@ describe('MarketplaceService', () => {
       expect(result.installed[0]?.primaryKind).toBe('plugin');
     });
 
+    it('forwards per-request Registry artifact headers to the extension store', async () => {
+      const packageId = '@kb-labs/shared-token-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'shared-token-plugin', packageId);
+      const artifactUrl = 'https://registry.fixture.test/packages/author/plugin/1.0.0.tgz';
+      const token = 'kbrt_0123456789abcdef0123456789abcdef';
+      const createSource = (shareToken?: string): PackageSource => Object.assign(
+        createMockSource(new Map([[packageId, { dir, version: '1.0.0', integrity }]])),
+        {
+          getArtifactRequestHeaders: vi.fn(() => shareToken ? { 'X-Share-Token': shareToken } : {}),
+          ...(shareToken ? {} : { withShareToken: (nextToken: string) => createSource(nextToken) }),
+          resolve: async (spec: string): Promise<ResolvedPackage> => ({
+            id: spec,
+            version: '1.0.0',
+            integrity,
+            source: 'marketplace',
+            primaryKind: 'plugin',
+            downloadUrl: artifactUrl,
+          }),
+        },
+      );
+      const storeResolve = vi.fn(async () => ({
+        entry: {
+          schema: 'kb.store-entry/1' as const,
+          name: packageId,
+          version: '1.0.0',
+          kind: 'plugin' as const,
+          integrity,
+          installedAt: new Date().toISOString(),
+        },
+        packageRoot: dir,
+        entryDir: path.join(tmpDir, 'store', 'entries', 'shared-token-plugin'),
+      }));
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+      const source = asMarketplaceSource(createSource(), 'registry');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, sources: [source], extensionStore: store });
+
+      await service.install({ scope: 'platform' }, [packageId], { shareToken: token });
+
+      expect(storeResolve).toHaveBeenCalledWith(expect.objectContaining({
+        spec: artifactUrl,
+        artifactHeaders: { 'X-Share-Token': token },
+      }));
+    });
+
     // case: S-300.1
     it('leaves dependency registry routing to the platform package manager config', async () => {
       const packageId = '@kb-labs/test-plugin';

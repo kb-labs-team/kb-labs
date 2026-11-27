@@ -131,6 +131,57 @@ describe('PnpmInstaller registry tarball integrity', () => {
     expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toContain('@kb-labs/demo');
   });
 
+  it('uses scoped artifact headers and refuses redirects for authenticated tarball downloads', async () => {
+    const { dir, pnpmPath } = await createInstallerFixture();
+    const packageDir = path.join(dir, 'package');
+    await fs.mkdir(packageDir);
+    await fs.writeFile(path.join(packageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/demo', version: '1.2.3' }));
+    const archive = path.join(dir, 'package.tgz');
+    execFileSync('tar', ['-czf', archive, '-C', dir, 'package']);
+    const tarball = await fs.readFile(archive);
+    const expectedIntegrity = `sha512-${crypto.createHash('sha512').update(tarball).digest('base64')}`;
+    const shareToken = 'kbrt_0123456789abcdef0123456789abcdef';
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response(tarball));
+    vi.stubGlobal('fetch', fetchMock);
+    const projectDir = path.join(dir, 'project');
+
+    await new PnpmInstaller({ pnpmPath }).install({
+      name: '@kb-labs/demo',
+      version: '1.2.3',
+      spec: 'https://registry.example.test/demo-entry-1.2.3.tgz',
+      expectedIntegrity,
+      artifactHeaders: { 'X-Share-Token': shareToken },
+      projectDir,
+      casDir: path.join(dir, 'store'),
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: { 'X-Share-Token': shareToken },
+      redirect: 'manual',
+    });
+    expect(await fs.readFile(path.join(projectDir, 'package.json'), 'utf8')).not.toContain(shareToken);
+    expect(await fs.readFile(path.join(projectDir, 'observed-spec.txt'), 'utf8')).not.toContain(shareToken);
+  });
+
+  it('does not follow an authenticated tarball redirect', async () => {
+    const { dir, pnpmPath } = await createInstallerFixture();
+    const expectedIntegrity = `sha512-${crypto.createHash('sha512').update(Buffer.from('archive')).digest('base64')}`;
+    const fetchMock = vi.fn(async () => new Response('', { status: 302, headers: { Location: 'https://attacker.test/collect' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(new PnpmInstaller({ pnpmPath }).install({
+      name: '@kb-labs/demo',
+      version: '1.2.3',
+      spec: 'https://registry.example.test/demo-entry-1.2.3.tgz',
+      expectedIntegrity,
+      artifactHeaders: { 'X-Share-Token': 'kbrt_0123456789abcdef0123456789abcdef' },
+      projectDir: path.join(dir, 'project'),
+      casDir: path.join(dir, 'store'),
+    })).rejects.toThrow('Package tarball request was redirected; authenticated artifact redirects are refused.');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it('rejects tarball bytes that do not match the registry integrity', async () => {
     const { dir, pnpmPath } = await createInstallerFixture();
     const expectedIntegrity = `sha512-${crypto.createHash('sha512').update('expected').digest('base64')}`;

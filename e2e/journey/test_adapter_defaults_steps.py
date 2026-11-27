@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from adapter_defaults_steps import (_assert_missing_embeddings, _assert_missing_vector_store, _assert_vector_store_restart,
                                     _assert_no_network_defaults, _assert_required_upstreams_ready, _json, _restore_platform_adapter_fixture,
                                     _run_from_registered_project, run_adapter_default_steps,
-                                    _assert_no_project_adapter_config, _assert_missing_gateway_dispatch_error)
+                                    _assert_no_project_adapter_config, _assert_missing_gateway_dispatch_error,
+                                    _project_state_dir)
 from sdk_runtime_import_check import check_installed_runtime_imports
 from invocations import invocation_context
 import jsonl
@@ -195,6 +196,25 @@ class InstalledDefaultAdapterGapTests(unittest.TestCase):
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    def test_project_state_uses_installed_host_state_home_when_kb_home_is_not_exported(self):
+        with tempfile.TemporaryDirectory(prefix="journey-adapter-installed-home-") as directory:
+            root = Path(directory)
+            platform_root = root / "kb-platform"
+            kb_home = platform_root / "state" / "home"
+            kb_home.mkdir(parents=True)
+            project = root / "project"
+            project.mkdir()
+            (kb_home / "projects.json").write_text(json.dumps({"projects": [
+                {"id": "prj_fixture", "path": str(project.resolve())},
+            ]}))
+
+            resolved = _project_state_dir(project, {
+                "HOME": str(root),
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+            })
+
+        self.assertEqual(resolved, (kb_home / "state" / "prj_fixture").resolve())
+
     # case: S-054.4
     def test_network_requirement_check_excludes_slots_that_require_configuration(self):
         rows = {

@@ -449,6 +449,10 @@ def read_kb_create_cli_result(command: str, result: subprocess.CompletedProcess[
     try:
         envelope = read_ux_cli_result(result)
     except ValueError as document_error:
+        # Apply emits one result envelope, including the secured installer’s
+        # firstAdmin disclosure. Only install owns the interactive JSONL stream.
+        if command == "apply":
+            raise
         try:
             records = read_ux_cli_stream(result)
         except ValueError as stream_error:

@@ -125,7 +125,15 @@ def write_config(root: Path, value: dict) -> None:
 
 
 def _project_state_dir(project_root: Path, env: dict[str, str]) -> Path:
-    kb_home = Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb"))).resolve()
+    kb_home_value = env.get("KB_HOME", "").strip()
+    if kb_home_value:
+        kb_home = Path(kb_home_value)
+    elif env.get("KB_JOURNEY_PLATFORM_ROOT", "").strip():
+        platform_root = Path(env["KB_JOURNEY_PLATFORM_ROOT"])
+        kb_home = platform_root / layout_value("sharedStateDirectory") / layout_value("kbHomeDirectory")
+    else:
+        kb_home = Path(env["HOME"]) / ".kb"
+    kb_home = kb_home.resolve()
     registry_path = kb_home / "projects.json"
     try:
         projects = json.loads(registry_path.read_text()).get("projects", [])

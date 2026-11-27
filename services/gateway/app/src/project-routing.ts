@@ -98,6 +98,7 @@ function buildRequestHeaders(
   request: FastifyRequest,
   upstream: ProjectUpstream,
   suppressTrustedOrigin: boolean,
+  suppressGatewayInternalSecret: boolean,
 ): IncomingHttpHeaders {
   const supplied = new Set(
     Object.keys(upstream.headers).map((name) => name.toLowerCase()),
@@ -108,6 +109,7 @@ function buildRequestHeaders(
     // Client-supplied copies of the runtime control headers are never forwarded.
     if (
       HOP_BY_HOP.has(lower) || lower === "host" || supplied.has(lower) ||
+      (lower === "x-internal-secret" && suppressGatewayInternalSecret) ||
       (lower === "origin" && suppressTrustedOrigin)
     ) {
       continue;
@@ -115,11 +117,111 @@ function buildRequestHeaders(
     headers[lower] = value;
   }
   for (const [name, value] of Object.entries(upstream.headers)) {
-    headers[name.toLowerCase()] = value;
+    const lower = name.toLowerCase();
+    if (lower === "x-internal-secret" && suppressGatewayInternalSecret) {continue;}
+    headers[lower] = value;
   }
   headers.host = upstream.socketPath ? upstream.host : `${upstream.host}:${upstream.port}`;
   headers["x-forwarded-for"] = request.ip;
   return headers;
+}
+
+/**
+ * `/internal/adapter-call` uses x-internal-secret as a capability. The global
+ * Gateway auth hook also uses that header to mark a trusted forwarded identity,
+ * so do not leak the generated Gateway secret to this project REST endpoint.
+ * Normalize equivalent path spellings before matching because the upstream
+ * HTTP router may decode or collapse them before route dispatch.
+ */
+export function isInternalAdapterCallPath(path: string): boolean {
+  let pathname: string;
+  try {
+    pathname = new URL(path, "http://gateway.local").pathname;
+  } catch {
+    return true;
+  }
+  const segments: string[] = [];
+  try {
+    for (const rawSegment of pathname.split("/")) {
+      let segment = rawSegment;
+      for (let decodeCount = 0; decodeCount < 8; decodeCount += 1) {
+        const decoded = decodeURIComponent(segment);
+        if (decoded === segment) {break;}
+        segment = decoded;
+        if (decodeCount === 7 && /%[\da-f]{2}/i.test(segment)) {return true;}
+      }
+      if (!segment || segment === ".") {continue;}
+      if (segment === "..") {segments.pop();}
+      else {segments.push(segment);}
+    }
+  } catch {
+    // A malformed encoded path must not retain the Gateway's internal secret;
+    // the downstream router may normalize or reject it differently.
+    return true;
+  }
+  return `/${segments.join("/")}`.toLowerCase().endsWith("/api/v1/internal/adapter-call");
+}
+
+export function rewrittenStaticProxyPath(
+  rawUrl: string,
+  params: Record<string, string | undefined>,
+  prefix: string,
+  rewritePrefix: string,
+  upstreamBaseUrl: string,
+): string {
+  // Keep this in sync with @fastify/http-proxy 11.4.4's generateRewritePrefix
+  // and fromParameters: an empty rewrite falls back to upstream.pathname, and
+  // parameterized route prefixes are expanded from request.params.
+  const pathname = rawUrl.split("?", 1)[0] ?? rawUrl;
+  let effectiveRewritePrefix = rewritePrefix || (upstreamBaseUrl ? new URL(upstreamBaseUrl).pathname : "/");
+  if (!prefix.endsWith("/") && effectiveRewritePrefix.endsWith("/")) {
+    effectiveRewritePrefix = effectiveRewritePrefix.slice(0, -1);
+  }
+  let destination = pathname;
+  if (prefix.includes(":")) {
+    const requestedPathElements = pathname.split("/");
+    const prefixPathWithVariables = prefix.split("/")
+      .map((_, index) => requestedPathElements[index])
+      .join("/");
+    let rewritePrefixWithVariables = effectiveRewritePrefix;
+    for (const [name, value] of Object.entries(params)) {
+      rewritePrefixWithVariables = rewritePrefixWithVariables.replace(`:${name}`, String(value));
+    }
+    if (destination.startsWith(prefixPathWithVariables)) {
+      destination = destination.replace(prefixPathWithVariables, rewritePrefixWithVariables);
+    }
+  } else if (destination.startsWith(prefix)) {
+    destination = destination.replace(prefix, effectiveRewritePrefix);
+  }
+  return destination || "/";
+}
+
+export function rewriteStaticProxyRequestHeaders(
+  rawUrl: string,
+  params: Record<string, string | undefined>,
+  prefix: string,
+  rewritePrefix: string,
+  upstreamBaseUrl: string,
+  headers: Record<string, string | string[] | undefined>,
+): typeof headers {
+  let suppressSecret: boolean;
+  try {
+    const targetPath = rewrittenStaticProxyPath(rawUrl, params, prefix, rewritePrefix, upstreamBaseUrl);
+    // reply-from resolves relative source paths against its configured base URL.
+    // Classify the same final pathname, including any base pathname, independent
+    // of the logical serviceId alias used by the static upstream declaration.
+    const source = targetPath.length > 1 && targetPath.startsWith("//") ? `.${targetPath}` : targetPath;
+    const destination = new URL(source, upstreamBaseUrl);
+    suppressSecret = isInternalAdapterCallPath(destination.pathname);
+  } catch {
+    suppressSecret = true;
+  }
+  if (!suppressSecret) {return headers;}
+  const forwarded = { ...headers };
+  for (const name of Object.keys(forwarded)) {
+    if (name.toLowerCase() === "x-internal-secret") {delete forwarded[name];}
+  }
+  return forwarded;
 }
 
 function projectRoutingEnvelope(error: unknown): ErrorEnvelope | undefined {
@@ -157,6 +259,7 @@ function forward(
   request: FastifyRequest,
   upstream: ProjectUpstream,
   suppressTrustedOrigin: boolean,
+  suppressGatewayInternalSecret: boolean,
   path: string,
   timeoutMs: number,
   signal: AbortSignal,
@@ -176,7 +279,7 @@ function forward(
         ...(upstream.socketPath ? { socketPath: upstream.socketPath } : {}),
         method: request.method,
         path,
-        headers: buildRequestHeaders(request, upstream, suppressTrustedOrigin),
+        headers: buildRequestHeaders(request, upstream, suppressTrustedOrigin, suppressGatewayInternalSecret),
       },
       (response) => {
         if (settled) {
@@ -315,7 +418,13 @@ export async function registerProjectRoutes(
             ...(upstream.socketPath ? { socketPath: upstream.socketPath } : {}),
             headers: upstream.headers ?? {},
             release,
-          }, suppressTrustedOrigin, path, timeoutMs, abortController.signal);
+          },
+          suppressTrustedOrigin,
+          isInternalAdapterCallPath(path),
+          path,
+          timeoutMs,
+          abortController.signal,
+        );
         } catch (error) {
           release();
           if (isHealthRequest) {

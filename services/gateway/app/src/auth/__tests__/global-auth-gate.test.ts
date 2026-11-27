@@ -90,6 +90,18 @@ describe('Gateway global auth gate', () => {
       lastUpstreamHeaders = request.headers;
       lastUpstreamUrl = request.url;
       lastUpstreamIdentityKind = readForwardedIdentity(request.headers, 'gateway-internal-secret').kind;
+      if (request.url === '/api/v1/internal/adapter-call') {
+        const secretWasForwarded = request.headers['x-internal-secret'] === 'gateway-internal-secret';
+        response.writeHead(secretWasForwarded ? 200 : 403, { 'content-type': 'application/json' });
+        response.end(secretWasForwarded ? '{"ok":true}' : JSON.stringify({
+          ok: false,
+          error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+            details: { permission: 'internal.adapter-call' },
+            correlationId: 'route-auth-test',
+          }),
+        }));
+        return;
+      }
       if (lastUpstreamIdentityKind !== 'service' && lastUpstreamIdentityKind !== 'identity') {
         response.writeHead(401, { 'content-type': 'application/json' });
         response.end('{"error":"gateway identity required"}');
@@ -199,6 +211,33 @@ describe('Gateway global auth gate', () => {
       'x-kb-auth-permissions': '["packages:read"]',
     });
 
+    // case: S-323.1
+    for (const secretHeader of [undefined, 'client-invalid-secret']) {
+      const internalAdapterCall = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/test-project/rest/internal/adapter-call',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          ...(secretHeader ? { 'x-internal-secret': secretHeader } : {}),
+        },
+        payload: {
+          requestId: 'gateway-route-auth-test',
+          adapter: 'cache',
+          method: 'get',
+          args: ['gateway-route-auth-test'],
+          context: { namespaceId: 'test', hostId: 'test' },
+        },
+      });
+      expect(internalAdapterCall.statusCode, `client secret ${secretHeader ?? '<missing>'}`).toBe(403);
+      expect(lastUpstreamUrl).toBe('/api/v1/internal/adapter-call');
+      expect(lastUpstreamHeaders?.['x-internal-secret']).toBeUndefined();
+      expect(lastUpstreamHeaders).toMatchObject({
+        'x-kb-auth-user-id': 'member-1',
+        'x-kb-auth-namespace-id': 'tenant-1',
+      });
+    }
+
     const anonymousRegistryRead = await app.inject({
       method: 'GET',
       url: '/api/v1/marketplace-registry/api/v1/resolve?identity=%40acme%2Fwidget',
@@ -210,7 +249,7 @@ describe('Gateway global auth gate', () => {
       },
     });
     expect(anonymousRegistryRead.statusCode).toBe(200);
-    expect(upstreamHits).toBe(2);
+    expect(upstreamHits).toBe(4);
     expect(lastUpstreamHeaders).toMatchObject({ 'x-internal-secret': 'gateway-internal-secret' });
     expect(lastUpstreamHeaders?.['x-kb-auth-user-id']).toBeUndefined();
     expect(lastUpstreamHeaders?.['x-kb-auth-namespace-id']).toBeUndefined();
@@ -233,7 +272,7 @@ describe('Gateway global auth gate', () => {
       method: 'POST', url: '/api/v1/marketplace-registry/api/v1/packages/publish',
     });
     expect(anonymousPublish.statusCode).toBe(401);
-    expect(upstreamHits).toBe(3);
+    expect(upstreamHits).toBe(5);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {

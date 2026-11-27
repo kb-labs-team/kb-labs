@@ -22,6 +22,7 @@ WORKDIR /src
 COPY e2e/packages /src/packages
 COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
+COPY e2e/platform/prepare-release-index-config.mjs /src/prepare-release-index-config.mjs
 COPY e2e/platform/release-index-package-stage.mjs /src/release-index-package-stage.mjs
 COPY e2e/platform/release-provenance.mjs /src/release-provenance.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
@@ -73,6 +74,7 @@ COPY --from=release-index-builder /out/release-index.json /release-index.json
 
 # Manifest that points kb-create at the local Verdaccio registry
 COPY e2e/platform/registry-manifest.json /e2e-registry-manifest.json
+COPY e2e/platform/registry-install-config.mjs /registry-install-config.mjs
 
 COPY e2e/journey/invocations.py e2e/journey/journey_values.py e2e/journey/redaction.py e2e/journey/jsonl.py e2e/journey/journey_resources.py e2e/journey/platform_registry_plan.py /opt/kb-journey/e2e/journey/
 COPY core/platform/src/error-envelope/errors.catalog.json /opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json

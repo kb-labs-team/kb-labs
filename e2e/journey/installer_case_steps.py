@@ -867,6 +867,8 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
         parent = Path(temporary)
         root = parent / "platform"
         request_path = parent / "request.json"
+        config_path = parent / "config.json"
+        plan_path = parent / "plan.json"
         gateway_url = unused_loopback_gateway_url()
         request = {
             "schema": "kb.create/v2",
@@ -876,6 +878,11 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
             "platformRoot": str(root),
         }
         request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
+        config = {
+            "marketplaceSources": {"npmUrl": registry},
+            "values": {"gateway.access.mode": "local"},
+        }
+        config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
 
         invalid_root = parent / "invalid-platform"
         invalid_request_path = parent / "invalid-request.json"
@@ -889,28 +896,40 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
                 or invalid_root.exists()):
             raise RuntimeError("invalid request-file Gateway input was not rejected before target writes")
 
-        planned = _json_command(
-            run_command,
+        plan_result = run_command(
             [launcher, "plan", "--json", "--index", str(stable_index),
-             "--input", str(request_path), "--registry", registry],
-            "PC-001 request-file Gateway plan",
-        ).get("plan", {})
+             "--input", str(request_path), "--config", str(config_path), "--registry", registry],
+        )
+        plan_envelope, plan_data = _payload(plan_result, "PC-001 request-file Gateway plan")
+        planned = plan_data.get("plan", {})
         planned_request = planned.get("request", {})
         planned_host = planned.get("host", {})
         gateway_service = next((item for item in planned.get("serviceGraph", {}).get("services", [])
                                 if item.get("id") == "gateway"), {})
         if (planned_request.get("gatewayUrl") != gateway_url
-                or "marketplaceSources" in planned_request
+                or planned_request.get("marketplaceSources", {}).get("npmUrl") != registry
+                or planned_request.get("values", {}).get("gateway.access.mode") != '"local"'
                 or planned_host.get("healthUrl") != gateway_url + "/health"
                 or gateway_service.get("port") != urlsplit(gateway_url).port):
-            raise RuntimeError("request-file plan did not carry the Gateway topology input without Marketplace sources")
+            raise RuntimeError("request-file plan did not carry the Gateway topology and declarative Marketplace config")
         if root.exists():
             raise RuntimeError("planning the request-file Gateway input changed the target root")
+
+        # Applying a saved plan consumes only its request. Derived plan fields
+        # are recalculated from the sealed index and cannot redirect writes.
+        tampered = json.loads(json.dumps(plan_envelope))
+        tampered_plan = tampered.get("data", {}).get("plan", {})
+        tampered_plan.setdefault("host", {})["healthUrl"] = "http://127.0.0.1:1/health"
+        if tampered_plan.get("configPatches"):
+            tampered_plan["configPatches"][0]["path"] = str(parent / "outside-config.json")
+        if tampered_plan.get("artifacts"):
+            tampered_plan["artifacts"][0]["package"] = "attacker-controlled-package"
+        plan_path.write_text(json.dumps(tampered, indent=2) + "\n", encoding="utf-8")
 
         try:
             result = _data(
                 run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                             "--input", str(request_path), "--registry", registry]),
+                             "--input", str(plan_path), "--config", str(config_path), "--registry", registry]),
                 "PC-001 request-file Gateway apply",
             )
             if result.get("operation") != "apply" or not result.get("receipt") or not result.get("logPath"):
@@ -927,11 +946,15 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
             config = json.loads(config_path.read_text(encoding="utf-8"))
             gateway_config = (config.get("platform", {}).get("adapterOptions", {})
                               .get("serviceTransport", {}).get("services", {}).get("gateway", {}))
+            marketplace_sources = config.get("marketplace", {}).get("sources", [])
             if (installed_request.get("gatewayUrl") != gateway_url
+                    or installed_request.get("marketplaceSources", {}).get("npmUrl") != registry
+                    or installed_request.get("values", {}).get("gateway.access.mode") != '"local"'
                     or health_url != gateway_url + "/health"
                     or installed_gateway.get("port") != urlsplit(gateway_url).port
-                    or gateway_config.get("url") != gateway_url):
-                raise RuntimeError("applied request did not persist its Gateway address in receipt and generated config")
+                    or gateway_config.get("url") != gateway_url
+                    or marketplace_sources != [{"kind": "npm", "url": registry}]):
+                raise RuntimeError("apply did not re-resolve the saved plan and persist its Gateway and Marketplace config")
 
             status = _data(run_command([launcher, "status", "--json", "--platform-root", str(root)]),
                            "PC-001 request-file Gateway status")
@@ -950,12 +973,18 @@ def verify_request_file_gateway_input(*, launcher: str, stable_index: Path,
             updated_config = json.loads((active_platform_root(root) / layout_value('sharedRuntimePaths.kb_kb_config_jsonc.platformPath')).read_text(encoding="utf-8"))
             effective_gateway = (updated_config.get("platform", {}).get("adapterOptions", {})
                                  .get("serviceTransport", {}).get("services", {}).get("gateway", {}))
+            updated_marketplace_sources = updated_config.get("marketplace", {}).get("sources", [])
+            effective_access_mode = (updated_config.get("gateway", {}).get("access", {})
+                                     .get("mode"))
             if (updated.get("operation") != "update"
                     or updated_request.get("gatewayUrl") != gateway_url
+                    or updated_request.get("marketplaceSources", {}).get("npmUrl") != registry
+                    or effective_access_mode != "local"
                     or updated_health != gateway_url + "/health"
                     or updated_gateway.get("port") != urlsplit(gateway_url).port
-                    or effective_gateway.get("url") != gateway_url):
-                raise RuntimeError("update did not preserve the request-file Gateway topology input")
+                    or effective_gateway.get("url") != gateway_url
+                    or updated_marketplace_sources != [{"kind": "npm", "url": registry}]):
+                raise RuntimeError("update did not preserve the request-file Gateway and Marketplace config")
         finally:
             cleanup_installer_fixture_root(root, launcher, run_command)
 

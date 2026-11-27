@@ -53,7 +53,7 @@ const clientService = platformSuite ? `  platform:
         condition: service_started
     volumes:
       - ${JSON.stringify(`${path.join(root, 'e2e/platform/entrypoint.sh')}:/entrypoint.sh:ro`)}
-      - ${JSON.stringify(`${path.join(root, 'e2e/platform/registry-install-request.mjs')}:/registry-install-request.mjs:ro`)}
+      - ${JSON.stringify(`${path.join(root, 'e2e/platform/registry-install-config.mjs')}:/registry-install-config.mjs:ro`)}
 ` : `  runner:
     env_file:
       - ${JSON.stringify(gatewaySecretPath)}

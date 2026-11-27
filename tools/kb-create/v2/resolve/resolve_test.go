@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"reflect"
 	stdruntime "runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -883,6 +884,83 @@ func TestStableFixturePlansHaveUniqueArtifactIdentitiesAcrossProfilesAndScenario
 				}
 			})
 		}
+	}
+}
+
+// case: PC-001.20, S-268.6
+func TestMarketplaceExternalTransportUsesTrustedGeneratedPlatformDefault(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "e2e", "platform", "fixtures", "release-index-v2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := catalog.Decode(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	platform, ok := findPlatform(source.Platforms, source.Channels[contracts.ChannelStable])
+	if !ok {
+		t.Fatal("stable platform is absent from generated fixture index")
+	}
+	updatedDefault := false
+	for index := range platform.Config {
+		if platform.Config[index].ID != "platform.adapterOptions" {
+			continue
+		}
+		var options map[string]any
+		if err := json.Unmarshal([]byte(platform.Config[index].Default), &options); err != nil {
+			t.Fatal(err)
+		}
+		transport := options["serviceTransport"].(map[string]any)
+		services := transport["services"].(map[string]any)
+		services["marketplace-registry"] = map[string]any{"url": "http://127.0.0.1:5071"}
+		encoded, err := json.Marshal(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		platform.Config[index].Default = string(encoded)
+		updatedDefault = true
+	}
+	if !updatedDefault {
+		t.Fatal("generated platform index omitted platform.adapterOptions")
+	}
+	sealed, err := catalog.Seal(source)
+	if err != nil {
+		t.Fatalf("seal generated platform default fixture: %v", err)
+	}
+	request := contracts.InstallRequest{
+		PlatformRoot: t.TempDir(), ServiceProfile: "default",
+		Platform: contracts.VersionSelector{Channel: contracts.ChannelStable},
+		ServiceTransportURLs: map[string]string{
+			"mcp-daemon": "http://mcp:7779", "marketplace-registry": "http://registry:5071",
+		},
+	}
+	plan, err := PlanWith(request, sealed, Options{})
+	if err != nil {
+		t.Fatalf("resolve external Registry transport from trusted default: %v", err)
+	}
+	if slices.ContainsFunc(plan.ServiceGraph.Services, func(service contracts.Service) bool { return service.ID == "marketplace-registry" }) {
+		t.Fatal("external Registry transport was incorrectly added to the platform host graph")
+	}
+	var transportPaths []string
+	for _, patch := range plan.ConfigPatches {
+		if strings.HasPrefix(patch.Path, "/platform/adapterOptions/serviceTransport/services/") && strings.HasSuffix(patch.Path, "/url") {
+			transportPaths = append(transportPaths, patch.Path)
+		}
+	}
+	wantPaths := []string{
+		"/platform/adapterOptions/serviceTransport/services/marketplace-registry/url",
+		"/platform/adapterOptions/serviceTransport/services/mcp-daemon/url",
+	}
+	if !reflect.DeepEqual(transportPaths, wantPaths) || !slices.ContainsFunc(plan.ConfigPatches, func(patch contracts.ConfigPatch) bool {
+		return patch.Path == wantPaths[0] && patch.JSON == `"http://registry:5071"`
+	}) {
+		t.Fatalf("generated plan omitted stable trusted transport overrides: %#v", plan.ConfigPatches)
+	}
+
+	request.Values = map[string]string{"platform.adapterOptions": `{"serviceTransport":{"services":{"attacker-service":{"url":"http://127.0.0.1:99"}}}}`}
+	request.ServiceTransportURLs = map[string]string{"attacker-service": "http://attacker:5071"}
+	if _, err := PlanWith(request, sealed, Options{}); err == nil {
+		t.Fatal("request-supplied adapterOptions self-declared an untrusted service transport ID")
 	}
 }
 

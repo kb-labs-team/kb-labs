@@ -122,7 +122,7 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
   };
 
   const install = async (request: InstallPackageRequest): Promise<ResolvedStoreEntry> => {
-    const { name, version, kind, spec, expectedIntegrity, registryUrl, usePlatformNpmrc, requireExplicitSpec } = request;
+    const { name, version, kind, spec, expectedIntegrity, registryUrl, usePlatformNpmrc, requireExplicitSpec, artifactHeaders } = request;
     if (requireExplicitSpec && !isAbsoluteHttpArtifactURL(spec)) {
       throw new StoreInstallError(
         { plugin: `${name}@${version}` },
@@ -138,6 +138,7 @@ export function createExtensionStore(options: ExtensionStoreOptions = {}): IExte
         expectedIntegrity,
         registryUrl,
         usePlatformNpmrc,
+        artifactHeaders,
         projectDir: staging,
         casDir,
         ...(options.platformRoot ? { platformRoot: options.platformRoot } : {}),

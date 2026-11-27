@@ -271,6 +271,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           ctx.scope,
           ctx.scope === 'project' ? source.dependencyRegistryUrl : undefined,
           ctx.scope === 'platform',
+          resolved.downloadUrl ? source.getArtifactRequestHeaders?.(resolved.downloadUrl) : undefined,
         )
         : await source.install(resolved, scopeRoot, opts);
 
@@ -584,6 +585,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     scope: MarketplaceScope,
     registryUrl?: string,
     usePlatformNpmrc = false,
+    artifactHeaders?: Record<string, string>,
   ): Promise<InstalledPackage> {
     const store = this.extensionStore;
     if (!store) {
@@ -600,6 +602,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         ...(registryUrl ? { registryUrl } : {}),
         ...(usePlatformNpmrc ? { usePlatformNpmrc: true } : {}),
         ...(usePlatformNpmrc ? { requireExplicitSpec: true } : {}),
+        ...(artifactHeaders && Object.keys(artifactHeaders).length > 0 ? { artifactHeaders } : {}),
       });
     } catch (error) {
       if (error instanceof IntegrityMismatchError) {

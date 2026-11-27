@@ -88,7 +88,7 @@ test('SE-04: invalid runId returns 404, not an SSE stream', async ({ request }) 
   expect((await res.json()).error.code).toBe('KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND');
 });
 
-test('SE-06: a connected subscriber receives stdout from the step after approval', async ({ request }) => {
+test('SE-06 @S-027.7: a connected subscriber receives stdout from the step after approval', async ({ request }) => {
   test.setTimeout(60_000);
   const runId = await startWorkflowRun(request, 'e2e-approval');
   let pending: Awaited<ReturnType<typeof listPendingApprovals>> = [];
@@ -97,22 +97,25 @@ test('SE-06: a connected subscriber receives stdout from the step after approval
     return pending.length;
   }, { timeout: 20_000 }).toBe(1);
   const { jobId, stepId } = pending[0]!;
-  const logs = [];
+  const events: SseEvent[] = [];
   const headers = await sseAuthHeaders(request);
   for await (const event of readSse(eventsUrl(runId), { headers, timeoutMs: 30_000 })) {
+    events.push(event);
     if (eventType(event) === 'run.snapshot') {
       // Receiving the snapshot proves this connection is open before the shell can emit.
       const approval = await resolveApproval(request, runId, jobId, stepId, 'approve');
       expect(approval.status).toBe(200);
     }
-    if (eventType(event) === 'log.appended') {
-      logs.push(event.json);
-    }
   }
-  expect(logs).toContainEqual(expect.objectContaining({
-    runId,
-    payload: expect.objectContaining({ stepName: 'After gate', stream: 'stdout', message: 'after approval' }),
-  }));
+  const stdoutIndex = events.findIndex((event) =>
+    eventType(event) === 'log.appended' &&
+    expect.objectContaining({ runId, payload: expect.objectContaining({
+      stepName: 'After gate', stream: 'stdout', message: 'after approval',
+    }) }).asymmetricMatch(event.json),
+  );
+  const terminalIndex = events.findIndex(isTerminal);
+  expect(stdoutIndex, 'stdout from After gate must be delivered').toBeGreaterThanOrEqual(0);
+  expect(terminalIndex, 'the stream must close with a terminal run event').toBeGreaterThan(stdoutIndex);
 });
 
 test('SE-05: multiple simultaneous subscribers receive same events', async ({ request }) => {

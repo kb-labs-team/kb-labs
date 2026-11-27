@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,8 +14,17 @@ import (
 
 func TestPlanUsesOnlyV2JSONRequestAndCatalog(t *testing.T) {
 	source := testfixtures.MustSealCatalog(catalog.Catalog{Channels: map[contracts.Channel]string{contracts.ChannelStable: "2.0.0"}, Platforms: []catalog.PlatformBundle{{ID: "platform", Version: "2.0.0", Package: "@kb/platform", SHA256: "sha", Host: &contracts.HostSpec{Command: "kb-host", HealthURL: "http://127.0.0.1:4000/health"}, Profiles: map[string]contracts.ServiceGraph{"default": {}}}}})
-	response := Plan([]byte(`{"schema":"kb.create/v2","platformRoot":"/tmp/platform","source":"registry"}`), source)
-	if !response.OK || response.Plan == nil || response.Plan.Request.PlatformRoot != "/tmp/platform" {
+	root := filepath.Join(t.TempDir(), "platform")
+	input, err := json.Marshal(contracts.InstallRequest{Schema: contracts.RequestSchema, PlatformRoot: root, Source: contracts.SourceRegistry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := Plan(input, source)
+	canonicalParent, err := filepath.EvalSymlinks(filepath.Dir(root))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.OK || response.Plan == nil || response.Plan.Request.PlatformRoot != filepath.Join(canonicalParent, filepath.Base(root)) {
 		t.Fatalf("response = %#v", response)
 	}
 }

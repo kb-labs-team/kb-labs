@@ -844,6 +844,29 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 			result = append(result, contracts.ConfigPatch{Path: requirement.Path, JSON: value, Owner: "manifest:" + requirement.ID})
 		}
 	}
+	serviceTransportIDs := declaredServiceTransportIDs(platform.Config)
+	serviceIDs := make([]string, 0, len(request.ServiceTransportURLs))
+	for serviceID := range request.ServiceTransportURLs {
+		serviceIDs = append(serviceIDs, serviceID)
+	}
+	sort.Strings(serviceIDs)
+	for _, serviceID := range serviceIDs {
+		endpoint := request.ServiceTransportURLs[serviceID]
+		if !serviceTransportIDs[serviceID] {
+			return nil, resolutionDiag(contracts.CodeConfigRequired,
+				"service transport override "+serviceID+" is not declared by the selected platform manifest",
+				map[string]string{"field": "serviceTransportURLs." + serviceID})
+		}
+		encoded, err := json.Marshal(endpoint)
+		if err != nil {
+			return nil, fmt.Errorf("encode service transport URL for %s: %w", serviceID, err)
+		}
+		servicePath := strings.NewReplacer("~", "~0", "/", "~1").Replace(serviceID)
+		result = append(result, contracts.ConfigPatch{
+			Path: "/platform/adapterOptions/serviceTransport/services/" + servicePath + "/url",
+			JSON: string(encoded), Owner: "request:serviceTransportURLs." + serviceID,
+		})
+	}
 	for id := range request.Values {
 		if !known[id] {
 			return nil, resolutionDiag(contracts.CodeConfigRequired, "configuration "+id+" is not declared by selected manifests", map[string]string{"field": id})
@@ -853,6 +876,28 @@ func configPatches(platform catalog.PlatformBundle, artifacts []contracts.Artifa
 		return nil, err
 	}
 	return result, nil
+}
+
+func declaredServiceTransportIDs(requirements []catalog.ConfigRequirement) map[string]bool {
+	result := map[string]bool{}
+	var raw string
+	for _, requirement := range requirements {
+		if requirement.ID == "platform.adapterOptions" {
+			raw = requirement.Default
+			break
+		}
+	}
+	var options struct {
+		ServiceTransport struct {
+			Services map[string]json.RawMessage `json:"services"`
+		} `json:"serviceTransport"`
+	}
+	if json.Unmarshal([]byte(raw), &options) == nil {
+		for serviceID := range options.ServiceTransport.Services {
+			result[serviceID] = true
+		}
+	}
+	return result
 }
 
 // ValidateSecretInputIDs checks operator-provided requirement IDs against the

@@ -228,6 +228,9 @@ function rootPath() {
 test('release-index Docker stage copies the package preparation helper', () => {
   const platformDirectory = dirname(fileURLToPath(import.meta.url));
   const dockerfile = readFileSync(join(platformDirectory, 'Dockerfile'), 'utf8');
+  const prepareScript = readFileSync(join(platformDirectory, 'prepare-release-index.mjs'), 'utf8');
+  assert.match(prepareScript, /from '\.\/prepare-release-index-config\.mjs'/);
+  assert.match(dockerfile, /COPY e2e\/platform\/prepare-release-index-config\.mjs \/src\/prepare-release-index-config\.mjs/);
   assert.match(dockerfile, /COPY e2e\/platform\/release-provenance\.mjs \/src\/release-provenance\.mjs/);
   assert.match(dockerfile, /COPY e2e\/platform\/journey-update-packages\.mjs \/src\/journey-update-packages\.mjs/);
   assert.match(dockerfile, /COPY tools\/kb-create\/scripts\/package-provenance\.mjs \/src\/node_modules\/kb-create\/scripts\/package-provenance\.mjs/);

@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
+import fastifyHttpProxy from "@fastify/http-proxy";
 import { createCatalogErrorEnvelope, type CatalogErrorRequest } from "@kb-labs/core-platform";
-import { registerProjectRoutes } from "../project-routing.js";
+import { registerProjectRoutes, rewriteStaticProxyRequestHeaders } from "../project-routing.js";
 import type { ProjectOriginTrustOptions } from "../project-origin.js";
 
 const PROJECT_SERVICES = [{ serviceId: "rest", rewritePrefix: "/api/v1", healthCheck: "/health" }];
@@ -107,6 +108,183 @@ describe("registerProjectRoutes", () => {
     expect(seen[0]?.headers["x-kb-runtime-token"]).toBe("real");
     expect(seen[0]?.body).toBe('{"a":1}');
     expect(released).toBe(1);
+  });
+
+  // case: S-323.1
+  it("does not forward Gateway identity secret to the REST internal adapter-call route", async () => {
+    const seen = await setup((port) => ({
+      resolveProjectService: async () => ({
+        baseUrl: `http://127.0.0.1:${port}`,
+        pathPrefix: "/rest",
+        headers: {
+          "x-kb-runtime-token": "runtime-secret",
+          "x-internal-secret": "trusted-project-route-secret",
+        },
+        release: () => undefined,
+      }),
+    }));
+
+    for (const route of [
+      "/api/v1/projects/prj_a/rest/internal/adapter-call",
+      "/api/v1/projects/prj_a/rest//internal/%61dapter-call",
+      "/api/v1/projects/prj_a/rest/internal/../internal/adapter-call",
+    ]) {
+      const response = await app!.inject({
+        method: "POST",
+        url: route,
+        headers: {
+          "x-internal-secret": "gateway-internal-secret",
+          "x-kb-auth-user-id": "member-1",
+          "content-type": "application/json",
+        },
+        payload: "{}",
+      });
+
+      expect(response.statusCode, `${route}: ${response.body}; upstream=${JSON.stringify(seen.at(-1))}`).toBe(202);
+      expect(seen.at(-1)?.headers["x-internal-secret"], route).toBeUndefined();
+      expect(seen.at(-1)?.headers["x-kb-runtime-token"], route).toBe("runtime-secret");
+    }
+
+    const ordinary = await app!.inject({
+      method: "GET",
+      url: "/api/v1/projects/prj_a/rest/analytics/events",
+      headers: { "x-internal-secret": "gateway-internal-secret" },
+    });
+    expect(ordinary.statusCode).toBe(202);
+    expect(seen.at(-1)?.headers["x-internal-secret"]).toBe("trusted-project-route-secret");
+  });
+
+  // case: S-323.1
+  it("filters the generated secret on the actual static HTTP proxy after prefix rewrite", async () => {
+    const seen: Array<{ url: string; secret?: string }> = [];
+    upstream = createServer((request, response) => {
+      const secret = request.headers["x-internal-secret"];
+      seen.push({ url: request.url ?? "", secret: typeof secret === "string" ? secret : undefined });
+      response.writeHead(secret ? 200 : 403, { "content-type": "application/json" });
+      response.end(JSON.stringify(secret ? { ok: true } : { ok: false, error: { code: "KB_AUTH_FORBIDDEN" } }));
+    });
+    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    const port = (upstream.address() as { port: number }).port;
+    app = Fastify();
+    const prefix = "/api/v1/rest";
+    const rewritePrefix = "/api/v1";
+    await app.register(fastifyHttpProxy, {
+      upstream: `http://127.0.0.1:${port}`,
+      prefix,
+      rewritePrefix,
+      replyOptions: {
+        rewriteRequestHeaders: (request, headers) => rewriteStaticProxyRequestHeaders(
+          request.raw.url ?? request.url,
+          request.params as Record<string, string | undefined>,
+          prefix,
+          rewritePrefix,
+          `http://127.0.0.1:${port}`,
+          headers,
+        ),
+      },
+    });
+    await app.ready();
+
+    const aliases = [
+      "/api/v1/rest/internal/adapter-call",
+      "/api/v1/rest/internal/%61dapter-call",
+      "/api/v1/rest/%69nternal/adapter-call",
+      "/api/v1/rest//internal/adapter-call",
+      "/api/v1/rest/internal/../internal/adapter-call",
+      "/api/v1/rest/internal%2Fadapter-call",
+    ];
+    for (const path of aliases) {
+      const previousCount = seen.length;
+      const response = await app.inject({
+        method: "POST",
+        url: path,
+        headers: { "x-internal-secret": "gateway-internal-secret", "content-type": "application/json" },
+        payload: "{}",
+      });
+      expect([403, 404], path).toContain(response.statusCode);
+      if (seen.length > previousCount) {
+        expect(seen.at(-1)?.secret, path).toBeUndefined();
+      }
+    }
+
+    const ordinary = await app.inject({
+      method: "GET",
+      url: "/api/v1/rest/health",
+      headers: { "x-internal-secret": "gateway-internal-secret" },
+    });
+    expect(ordinary.statusCode).toBe(200);
+    expect(seen.at(-1)).toEqual({ url: "/api/v1/health", secret: "gateway-internal-secret" });
+  });
+
+  // case: S-323.1
+  it("uses the resolved http-proxy destination for parameterized, relative, and empty rewrite prefixes", async () => {
+    const seen: Array<{ url: string; secret?: string }> = [];
+    upstream = createServer((request, response) => {
+      const secret = request.headers["x-internal-secret"];
+      seen.push({ url: request.url ?? "", secret: typeof secret === "string" ? secret : undefined });
+      response.writeHead(secret ? 200 : 403, { "content-type": "application/json" });
+      response.end(JSON.stringify(secret ? { ok: true } : { ok: false, error: { code: "KB_AUTH_FORBIDDEN" } }));
+    });
+    await new Promise<void>((resolve) => upstream!.listen(0, "127.0.0.1", resolve));
+    const port = (upstream.address() as { port: number }).port;
+    const proxyConfigs = [
+      {
+        prefix: "/api/v1/:tenant/rest",
+        rewritePrefix: "/api/v1",
+        upstream: `http://127.0.0.1:${port}`,
+        path: "/api/v1/acme/rest/internal/adapter-call",
+      },
+      {
+        prefix: "/api/v1/rest",
+        rewritePrefix: "",
+        upstream: `http://127.0.0.1:${port}/api/v1`,
+        path: "/api/v1/rest/internal/adapter-call",
+      },
+      {
+        prefix: "/api/v1/:tenant/rest",
+        rewritePrefix: "v1",
+        upstream: `http://127.0.0.1:${port}/api/`,
+        path: "/api/v1/acme/rest/internal/adapter-call",
+      },
+      {
+        prefix: "/api/v1/rest",
+        rewritePrefix: "",
+        upstream: `http://127.0.0.1:${port}/api/v1/`,
+        path: "/api/v1/rest/internal/adapter-call",
+      },
+    ];
+
+    for (const config of proxyConfigs) {
+      const proxyApp = Fastify();
+      await proxyApp.register(fastifyHttpProxy, {
+        upstream: config.upstream,
+        prefix: config.prefix,
+        rewritePrefix: config.rewritePrefix,
+        replyOptions: {
+          rewriteRequestHeaders: (request, headers) => rewriteStaticProxyRequestHeaders(
+            request.raw.url ?? request.url,
+            request.params as Record<string, string | undefined>,
+            config.prefix,
+            config.rewritePrefix,
+            config.upstream,
+            headers,
+          ),
+        },
+      });
+      await proxyApp.ready();
+      try {
+        const response = await proxyApp.inject({
+          method: "POST",
+          url: config.path,
+          headers: { "x-internal-secret": "gateway-internal-secret", "content-type": "application/json" },
+          payload: "{}",
+        });
+        expect(response.statusCode, config.path).toBe(403);
+        expect(seen.at(-1)).toEqual({ url: "/api/v1/internal/adapter-call", secret: undefined });
+      } finally {
+        await proxyApp.close();
+      }
+    }
   });
 
   it("mounts a service-relative workflow operation under the declared API prefix exactly once", async () => {

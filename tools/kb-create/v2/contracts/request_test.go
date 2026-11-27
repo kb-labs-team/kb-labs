@@ -42,6 +42,28 @@ func TestNormalizeMakesRelativeRootsAbsolute(t *testing.T) {
 	}
 }
 
+func TestNormalizeRejectsMarketplaceBaseURLQueries(t *testing.T) {
+	for _, source := range []MarketplaceSources{
+		{NpmURL: "https://npm.example.test/?token=secret"},
+		{RegistryURL: "https://registry.example.test/api?auth=secret", SigningPublicKeyEnv: "REGISTRY_KEY"},
+	} {
+		_, err := (InstallRequest{PlatformRoot: filepath.Join(t.TempDir(), "platform"), MarketplaceSources: &source}).Normalize()
+		if err == nil {
+			t.Fatalf("accepted query parameters in Marketplace base URL: %#v", source)
+		}
+	}
+}
+
+func TestNormalizeRejectsGatewayTransportURLOverride(t *testing.T) {
+	_, err := (InstallRequest{
+		PlatformRoot:         filepath.Join(t.TempDir(), "platform"),
+		ServiceTransportURLs: map[string]string{"gateway": "http://127.0.0.1:4999"},
+	}).Normalize()
+	if err == nil {
+		t.Fatal("accepted a Gateway transport URL that can disagree with gatewayUrl topology")
+	}
+}
+
 func TestInstallRequestNormalizeCanonicalizesRelativeAndSymlinkPlatformRoots(t *testing.T) {
 	base, err := os.MkdirTemp(".", ".platform-roots-")
 	if err != nil {
