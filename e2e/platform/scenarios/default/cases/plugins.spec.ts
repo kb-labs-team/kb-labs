@@ -1,12 +1,13 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { projectRest } from '@kb-labs/e2e-shared/project-rest.js'
 
 // Verifies plugins are actually discovered and registered — not just that REST API is up
 // /api/v1/plugins/registry returns: { manifests: [...], apiBasePath, diagnostics }
 // /api/v1/plugins/health returns:  { healthy, snapshot: { partial, stale, ... }, ... }
 
 test('PL-01: plugin registry is populated after startup', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/plugins/registry`)
+  const rest = await projectRest(request)
+  const res = await rest.get(`/plugins/registry`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Envelope: { ok: true, data: { manifests: [...] } }
@@ -15,7 +16,8 @@ test('PL-01: plugin registry is populated after startup', async ({ request }) =>
 })
 
 test('PL-02: plugin registry health — no validation errors', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/plugins/health`)
+  const rest = await projectRest(request)
+  const res = await rest.get(`/plugins/health`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Envelope: { ok: true, data: { healthy, snapshot: { partial, stale, ... } } }
@@ -26,7 +28,8 @@ test('PL-02: plugin registry health — no validation errors', async ({ request 
 })
 
 test('PL-03: studio plugin registry loaded (MF pages)', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/studio/registry`)
+  const rest = await projectRest(request)
+  const res = await rest.get(`/studio/registry`)
   test.skip(res.status() === 404, 'Studio registry not available')
   expect(res.status()).toBe(200)
   const body = await res.json()
