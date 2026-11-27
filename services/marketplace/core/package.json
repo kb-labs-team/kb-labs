@@ -33,7 +33,7 @@
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/marketplace-contracts": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*",
-    "glob": "^11.0.0",
+    "glob": "^14.0.6",
     "semver": "^7.8.5"
   },
   "devDependencies": {
