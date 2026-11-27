@@ -145,7 +145,7 @@ async function runZodWorker(
 
   const env: NodeJS.ProcessEnv = {};
   for (const key of ['PATH', 'TMPDIR', 'TMP', 'TEMP', 'LANG', 'LC_ALL', 'SYSTEMROOT', 'WINDIR']) {
-    if (process.env[key] !== undefined) env[key] = process.env[key];
+    if (process.env[key] !== undefined) {env[key] = process.env[key];}
   }
   const child = spawn(process.execPath, [
     `--max-old-space-size=${ZOD_VALIDATION_HEAP_MB}`,
@@ -160,12 +160,12 @@ async function runZodWorker(
     throw new Error('Could not open plugin settings worker pipes.');
   }
 
-  return await new Promise<ZodWorkerResult>((resolve, reject) => {
+  return new Promise<ZodWorkerResult>((resolve, reject) => {
     const output: Buffer[] = [];
     let outputBytes = 0;
     let settled = false;
     const finish = (callback: () => void): void => {
-      if (settled) return;
+      if (settled) {return;}
       settled = true;
       clearTimeout(timer);
       callback();
@@ -193,7 +193,7 @@ async function runZodWorker(
         }
         try {
           const result: { ok: boolean; valid?: boolean; cause?: string; error?: string } = JSON.parse(Buffer.concat(output).toString('utf8'));
-          if (!result.ok) throw new Error(result.error ?? `Plugin settings ${phase} failed.`);
+          if (!result.ok) {throw new Error(result.error ?? `Plugin settings ${phase} failed.`);}
           resolve({ valid: result.valid, cause: result.cause });
         } catch (error) {
           reject(error instanceof Error ? error : new Error(`Plugin settings ${phase} returned invalid output.`));
