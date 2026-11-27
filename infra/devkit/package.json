@@ -135,7 +135,7 @@
     "eslint-plugin-jsx-a11y": "^6.10.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-unused-imports": "^4.1.4",
-    "glob": "^11.0.0",
+    "glob": "^14.0.6",
     "postcss": "^8.5.23",
     "postcss-modules": "^9.0.1",
     "yaml": "^2.8.0"
