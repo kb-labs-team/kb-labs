@@ -294,6 +294,10 @@ jobs:
 
       # ── Run E2E suite ────────────────────────────────────────────────────
 
+      - name: Install plugin for Platform registry checks
+        if: inputs.suite == 'platform'
+        run: docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/e2e-analytics-emitter@1.0.0 --scope project
+
       - name: Run e2e tests (${{ inputs.suite }})
         run: |
           chmod +x tools/kb-devkit/kb-devkit tools/kb-dev/kb-dev || true

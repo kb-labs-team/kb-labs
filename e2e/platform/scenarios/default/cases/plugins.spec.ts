@@ -22,7 +22,9 @@ test('PL-02: plugin registry health — no validation errors', async ({ request 
   const body = await res.json()
   // Envelope: { ok: true, data: { healthy, snapshot: { partial, stale, ... } } }
   const data = body.data ?? body
-  expect(data.healthy).toBe(true)
+  expect(data.healthy, JSON.stringify({
+    snapshot: data.snapshot, validation: data.validation, registryErrors: data.registryErrors,
+  })).toBe(true)
   expect(data.snapshot?.partial).toBeFalsy()
   expect(data.snapshot?.stale).toBeFalsy()
 })
