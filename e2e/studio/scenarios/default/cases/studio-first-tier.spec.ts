@@ -113,6 +113,8 @@ test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ p
   await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
   await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Marketplace', exact: true })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Plugins', exact: true })).toHaveCount(0)
   const studioRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/studio/registry`)
   expect(studioRegistryResponse.status()).toBe(200)
   const studioRegistry = await studioRegistryResponse.json() as {
@@ -141,33 +143,6 @@ test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ p
     await expect(page).toHaveURL(new RegExp(`${path.replaceAll('/', '\\/')}$`))
     await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
   }
-})
-
-test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.9', async ({ page }) => {
-  test.skip(!enabled, 'Enabled by the installed Studio journey hook')
-  await signInIfSecured(page)
-
-  let catalogAttempts = 0
-  await page.route('**/api/v1/plugins/registry', async (route) => {
-    catalogAttempts += 1
-    if (catalogAttempts === 1) {
-      await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'unavailable' }) })
-      return
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({ ok: true, data: { manifests: [], apiBasePath: '/api/v1', diagnostics: { total: 0, items: [] } } }),
-    })
-  })
-
-  await page.goto(`${GATEWAY}/`)
-  await page.getByRole('link', { name: 'Marketplace', exact: true }).click()
-  await expect(page.getByText('Marketplace unavailable', { exact: true })).toBeVisible()
-  await expect(page.getByText('No extensions found', { exact: true })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Retry', exact: true }).click()
-  await expect(page.getByText('No extensions found', { exact: true })).toBeVisible()
-  expect(catalogAttempts).toBe(2)
 })
 
 test('inspect, register, and safely unregister a project @S-046.4 @S-124.7', async ({ page }) => {

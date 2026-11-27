@@ -32,7 +32,6 @@ import { AVAILABLE_ICONS, KBPageLayout, KBStatusBar, type NavigationItem, Status
 import { dashboardRoutes, dashboardNavigation } from './modules/dashboard/routes';
 import { projectsRoutes, projectsNavigation } from './modules/projects/routes';
 import { pluginsRoutes, pluginsNavigation } from './modules/plugins/routes';
-import { projectPluginsRoutes, projectPluginsNavigation } from './modules/project-plugins/routes';
 import { analyticsRoutes, analyticsNavigation } from './modules/analytics/routes';
 import { observabilityRoutes, observabilityNavigation } from './modules/observability/routes';
 import { settingsRoutes, settingsNavigation } from './modules/settings/routes';
@@ -72,7 +71,6 @@ function renderPluginIcon(iconName?: string): React.ReactElement | undefined {
 const systemNavigation: NavigationItem[] = [
   dashboardNavigation,
   projectsNavigation,
-  projectPluginsNavigation,
   pluginsNavigation,
   analyticsNavigation,
   observabilityNavigation,
@@ -149,7 +147,9 @@ function LayoutContent() {
     }
 
     // Platform settings are administrator-only.
-    if (auth.permissions.has('platform-settings:read')) items.push(settingsNavigation);
+    if (auth.permissions.has('platform-settings:read')) {
+      items.push(settingsNavigation);
+    }
 
     return items;
   }, [pluginNavModel, auth.permissions]);
@@ -272,7 +272,6 @@ export const router = createBrowserRouter([
     children: [
       ...dashboardRoutes,
       ...projectsRoutes,
-      ...projectPluginsRoutes,
       ...pluginsRoutes,
       ...analyticsRoutes,
       ...observabilityRoutes,

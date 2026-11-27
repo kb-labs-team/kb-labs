@@ -3,7 +3,7 @@
  * Plugins module routing configuration
  */
 
-import type { RouteObject } from 'react-router-dom';
+import { Navigate, type RouteObject } from 'react-router-dom';
 import { PluginsPage } from '../pages/marketplace-page';
 import { PluginDetailPage } from '../pages/plugin-detail-page';
 import { ErrorBoundary } from '../../../components/error-boundary';
@@ -30,6 +30,10 @@ export const pluginsRoutes: RouteObject[] = [
     path: PATHS.ROOT,
     element: <PluginsPage />,
     errorElement: <ErrorBoundary />,
+  },
+  {
+    path: '/plugins',
+    element: <Navigate to="/marketplace" replace />,
   },
   {
     path: PATHS.DETAIL,

@@ -8,6 +8,7 @@ import type { PlatformDataSource } from './sources/platform-source';
 import type { PluginsDataSource } from './sources/plugins-source';
 import type { ProjectsDataSource } from './sources/projects-source';
 import type { ProjectPluginsDataSource } from './sources/project-plugins-source';
+import type { MarketplaceInventoryDataSource } from './sources/marketplace-inventory-source';
 import { MockSystemSource } from './mocks/mock-system-source';
 import { MockWorkflowSource } from './mocks/mock-workflow-source';
 import { MockCacheSource } from './mocks/mock-cache-source';
@@ -18,6 +19,7 @@ import { MockPlatformSource } from './mocks/mock-platform-source';
 import { MockPluginsSource } from './mocks/mock-plugins-source';
 import { MockProjectsSource } from './mocks/mock-projects-source';
 import { MockProjectPluginsSource } from './mocks/mock-project-plugins-source';
+import { MockMarketplaceInventorySource } from './mocks/mock-marketplace-inventory-source';
 import { HttpSystemSource } from './sources/http-system-source';
 import { HttpWorkflowSource } from './sources/http-workflow-source';
 import { HttpCacheSource } from './sources/http-cache-source';
@@ -28,6 +30,7 @@ import { HttpPlatformSource } from './sources/http-platform-source';
 import { HttpPluginsSource } from './sources/http-plugins-source';
 import { HttpProjectsSource } from './sources/http-projects-source';
 import { HttpProjectPluginsSource } from './sources/http-project-plugins-source';
+import { HttpMarketplaceInventorySource } from './sources/http-marketplace-inventory-source';
 import { HttpClient } from './client/http-client';
 
 export interface DataSourcesConfig {
@@ -50,6 +53,7 @@ export interface DataSources {
   plugins: PluginsDataSource;
   projects: ProjectsDataSource;
   projectPlugins: ProjectPluginsDataSource;
+  marketplaceInventory: MarketplaceInventoryDataSource;
 }
 
 export function createDataSources(config: DataSourcesConfig): DataSources {
@@ -65,6 +69,7 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
       plugins: new MockPluginsSource(),
       projects: new MockProjectsSource(),
       projectPlugins: new MockProjectPluginsSource(),
+      marketplaceInventory: new MockMarketplaceInventorySource(),
     };
   }
 
@@ -82,5 +87,6 @@ export function createDataSources(config: DataSourcesConfig): DataSources {
     plugins: new HttpPluginsSource(client),
     projects: new HttpProjectsSource(client),
     projectPlugins: new HttpProjectPluginsSource(client),
+    marketplaceInventory: new HttpMarketplaceInventorySource(client),
   };
 }

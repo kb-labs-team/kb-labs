@@ -190,6 +190,25 @@ install time overrides that default and persists across updates. Once the public
 Registry is live, changing the release-owned default to Registry-first is a
 separate owner decision. Case: S-268.9.
 
+## 2026-11-24
+
+### Studio manages installed project plugins from Marketplace
+
+Studio opens its single Marketplace navigation destination on installed
+entities grouped by type. Its Plugins category uses the selected project's
+Marketplace state and supports enable, disable, and removal; an `Open
+marketplace` action opens package search and install separately. The Studio
+runtime plugin registry remains a projection used to render plugin pages and
+menus; it is not the package catalog. Connecting the separate package view to
+Marketplace Registry packages remains required before S-182's discovery steps
+are covered. This increment does not display adapter lifecycle controls or
+adapter rows without platform Marketplace data; adapters remain platform-scope
+packages shown read-only from the platform Marketplace inventory. Adapter
+enable/disable/removal and selecting/configuring adapter slots stay with
+platform owners.
+An unavailable installed-plugin request has its own retry state and never
+renders as an empty installation. Cases: S-120.1, S-182.7, S-182.8.
+
 ## 2026-10-21
 
 ### Marketplace management is built in; the publishing registry is optional
