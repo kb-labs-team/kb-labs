@@ -23,6 +23,7 @@ class JourneySelection:
     capabilities: frozenset[str]
     runner_selector: str
     requested_runners: str
+    completion_owners: dict[str, tuple[str, ...]] | None = None
 
     @property
     def active(self) -> bool:
@@ -33,6 +34,7 @@ SELECTION_KEYS = (
     "KB_JOURNEY_CASES",
     "KB_JOURNEY_SELECTED_STEPS",
     "KB_JOURNEY_SELECTED_OWNING_STEPS",
+    "KB_JOURNEY_SELECTED_COMPLETION_OWNERS",
     "KB_JOURNEY_PREREQUISITE_STEPS",
     "KB_JOURNEY_PREREQUISITE_FLOWS",
     "KB_JOURNEY_SELECTED_CAPABILITIES",
@@ -97,6 +99,28 @@ def _json_array(environment: Mapping[str, str], key: str, *, required: bool) -> 
     return tuple(value)
 
 
+def _owner_map(environment: Mapping[str, str], key: str) -> dict[str, tuple[str, ...]] | None:
+    if key not in environment:
+        return None
+    try:
+        payload = json.loads(environment[key])
+    except json.JSONDecodeError as error:
+        raise JourneySelectionError(
+            f"{key} must be a JSON object mapping step names to claim IDs: {error.msg}") from error
+    if not isinstance(payload, dict):
+        raise JourneySelectionError(f"{key} must be a JSON object mapping step names to claim IDs")
+    owners = {}
+    for name, claims in payload.items():
+        if not isinstance(name, str) or not name or not isinstance(claims, list) or not claims \
+                or any(not isinstance(claim, str) or not claim for claim in claims):
+            raise JourneySelectionError(
+                f"{key} values must be non-empty arrays of claim IDs keyed by non-empty step names")
+        if len(claims) != len(set(claims)):
+            raise JourneySelectionError(f"{key}[{name!r}] contains duplicate claim IDs")
+        owners[name] = tuple(claims)
+    return owners
+
+
 def read_journey_selection(environment: Mapping[str, str], *, strict: bool = False,
                            default_runner_selector: str = "agent:commit") -> JourneySelection:
     """Read and validate all selection metadata exactly once at runner entry."""
@@ -115,33 +139,27 @@ def read_journey_selection(environment: Mapping[str, str], *, strict: bool = Fal
     flows = _json_array(environment, "KB_JOURNEY_PREREQUISITE_FLOWS", required=active and strict)
 
     owners_key = "KB_JOURNEY_SELECTED_OWNING_STEPS"
-    if owners_key not in environment:
-        if active and strict:
+    owners = _owner_map(environment, owners_key)
+    if active and strict:
+        if owners is None:
             raise JourneySelectionError(f"{owners_key} is missing while claim selection is active")
-        owners: dict[str, tuple[str, ...]] = {}
-    else:
-        try:
-            owner_payload = json.loads(environment[owners_key])
-        except json.JSONDecodeError as error:
-            raise JourneySelectionError(f"{owners_key} must be a JSON object mapping step names to claim IDs: {error.msg}") from error
-        if not isinstance(owner_payload, dict):
-            raise JourneySelectionError(f"{owners_key} must be a JSON object mapping step names to claim IDs")
-        owners = {}
-        for name, owner_claims in owner_payload.items():
-            if not isinstance(name, str) or not name or not isinstance(owner_claims, list) or not owner_claims \
-                    or any(not isinstance(claim, str) or not claim for claim in owner_claims):
-                raise JourneySelectionError(
-                    f"{owners_key} values must be non-empty arrays of claim IDs keyed by non-empty step names")
-            if len(owner_claims) != len(set(owner_claims)):
-                raise JourneySelectionError(f"{owners_key}[{name!r}] contains duplicate claim IDs")
-            owners[name] = tuple(owner_claims)
-        if active and strict and not owners:
+        if not owners:
             raise JourneySelectionError(
                 f"{owners_key} is empty while {claims!r} is selected; the resolver must provide owning steps")
         unknown_claims = sorted({claim for values in owners.values() for claim in values} - set(claims))
-        if active and strict and unknown_claims:
+        if unknown_claims:
             raise JourneySelectionError(
                 f"{owners_key} names claims not present in KB_JOURNEY_SELECTED_STEPS: {', '.join(unknown_claims)}")
+    owners = owners or {}
+
+    completion_key = "KB_JOURNEY_SELECTED_COMPLETION_OWNERS"
+    completion_owners = _owner_map(environment, completion_key)
+    if active and strict and completion_owners is not None:
+        for name, step_claims in completion_owners.items():
+            if name in owners and set(step_claims) <= set(owners[name]):
+                continue
+            raise JourneySelectionError(
+                f"{completion_key}[{name!r}] must contain only selected claims for that step")
 
     selector_key = "KB_JOURNEY_RUNNER_SELECTOR"
     host_selector_key = "KB_JOURNEY_ONLY"
@@ -159,4 +177,5 @@ def read_journey_selection(environment: Mapping[str, str], *, strict: bool = Fal
         raise JourneySelectionError(f"{host_selector_key} must be a comma-separated list of runner selectors")
 
     return JourneySelection(requested, frozenset(claims), owners, frozenset(prerequisites),
-                            frozenset(flows), frozenset(capabilities), selector, requested_runners)
+                            frozenset(flows), frozenset(capabilities), selector, requested_runners,
+                            completion_owners)

@@ -45,9 +45,30 @@ function writeEvidence(root: string, claim: Record<string, unknown>): { run: str
   return { run, plan };
 }
 
-afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+afterEach(() => { for (const dir of dirs.splice(0)) { rmSync(dir, { recursive: true, force: true }); } });
 
 describe('qa:coverage-show evidence mode', () => {
+  it('accepts native macOS reports while retaining failed release claims', async () => {
+    const root = fixture();
+    const scenario = join(root, 'docs', 'qa', 'scenarios', 'S-010-example.md');
+    const catalog = readFileSync(scenario, 'utf8');
+    rmSync(scenario);
+    writeFileSync(join(root, 'docs', 'qa', 'scenarios', 'S-298-example.md'), catalog.replaceAll('S-010', 'S-298'));
+    writeFileSync(join(root, 'docs', 'qa', 'scenarios', 'S-261-example.md'), catalog
+      .replaceAll('S-010', 'S-261').replace('S-261.1', 'S-261.2'));
+    writeFileSync(join(root, 'e2e', 'journey', 'claims.py'), 'step("native", cases=["S-298.1", "S-261.2"])\n');
+    const writerUrl = new URL('../../../../../e2e/journey/native-macos-install.mjs', import.meta.url);
+    const { nativeCaseReport } = await import(writerUrl.href);
+    const run = join(root, 'runs', 'native.json');
+    const ui = { warn: vi.fn(), success: vi.fn() };
+    for (const [status, passed] of [['PASS', true], ['FAIL', false]] as const) {
+      writeFileSync(run, JSON.stringify(nativeCaseReport(status, 'native smoke failed')));
+      const result = await command.handler.execute({ ui, cwd: root } as never, { flags: {
+        run, level: 'all', mode: 'local', json: true,
+      } } as never);
+      expect(result).toMatchObject({ schema: 'kb.qa-case-coverage/v1', releasePassed: passed });
+    }
+  });
   it('retains step FAIL and incomplete evidence diagnostics for a failed release evaluation', async () => {
     const root = fixture();
     const { run, plan } = writeEvidence(root, {

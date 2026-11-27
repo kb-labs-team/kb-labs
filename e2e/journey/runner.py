@@ -969,7 +969,7 @@ def finalize_run(passed: bool) -> int:
                 journey_results.append(json.loads(service_report.read_text(encoding="utf-8")))
             except (OSError, UnicodeError, json.JSONDecodeError) as error:
                 fail(f"service runner result could not be read for selected claim completion: {error}")
-        selected_owning_steps = CASE_JOURNEY.selected_owning_steps if CASE_JOURNEY is not None else {}
+        selected_owning_steps = CASE_JOURNEY.selected_completion_owners if CASE_JOURNEY is not None else {}
         missing_selected_steps = check_selected_step_completion(journey_results, selected_owning_steps)
         missing_selected = check_selected_claim_completion(journey_results)
         passed = passed and not missing_selected and not missing_selected_steps and not FIRST_FAILURE

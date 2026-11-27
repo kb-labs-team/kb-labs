@@ -17,7 +17,7 @@ from unittest.mock import patch
 
 import jsonl
 from service_steps import FlowGraph, Journey
-from journey_selection import JourneySelection
+from journey_selection import JourneySelection, read_journey_selection
 from invocations import catalogued_error_hint, catalogued_error_message
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (commit_marketplace_install_record,
@@ -801,6 +801,40 @@ thread.join()
         self.assertEqual(runner.check_selected_step_completion([{
             "steps": [{"name": "selected owner", "status": "PASS"}],
         }], {"selected owner": ["S-100.1"]}), [])
+
+    def test_selected_claim_completion_is_scoped_to_current_runner_owner_map(self):
+        selection = JourneySelection(
+            requested=("S-100.1", "S-101.1"),
+            claims=frozenset({"S-100.1", "S-101.1"}),
+            owning_steps={"current runner owner": ("S-100.1",)},
+            prerequisite_steps=frozenset(), prerequisite_flows=frozenset(),
+            capabilities=frozenset(), runner_selector="service-secured:explore", requested_runners="",
+            completion_owners={"current runner owner": ("S-100.1",)},
+        )
+        journey = Journey("secured", "runner-scoped-selected-claims", selection=selection)
+        self.assertEqual(journey.missing_selected_claims([{
+            "steps": [{"name": "other runner owner", "status": "PASS", "cases": ["S-101.1"]}],
+        }]), ["S-100.1"])
+        self.assertEqual(journey.missing_selected_claims([{
+            "steps": [{"name": "current runner owner", "status": "PASS", "cases": ["S-100.1"]}],
+        }]), [])
+
+    def test_explicit_empty_runner_completion_scope_does_not_fall_back_to_global_owners(self):
+        environment = {
+            "KB_JOURNEY_CASES": "S-100.1",
+            "KB_JOURNEY_SELECTED_STEPS": "S-100.1",
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": '{"global owner":["S-100.1"]}',
+            "KB_JOURNEY_SELECTED_COMPLETION_OWNERS": "{}",
+            "KB_JOURNEY_PREREQUISITE_STEPS": "[]",
+            "KB_JOURNEY_PREREQUISITE_FLOWS": "[]",
+            "KB_JOURNEY_SELECTED_CAPABILITIES": "",
+            "KB_JOURNEY_RUNNER_SELECTOR": "agent:commit",
+        }
+        selection = read_journey_selection(environment, strict=True)
+        journey = Journey("local", "empty-runner-completion-scope", selection=selection)
+        self.assertEqual(journey.selected_owning_steps, {"global owner": ("S-100.1",)})
+        self.assertEqual(journey.selected_completion_owners, {})
+        self.assertEqual(journey.missing_selected_claims([]), [])
 
     def test_state_environment_exports_are_not_read_back_by_runner(self):
         sources = {path.name: path.read_text(encoding="utf-8")

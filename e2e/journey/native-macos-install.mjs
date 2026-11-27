@@ -1,10 +1,30 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const cases = ['S-298.1', 'S-261.2'];
+
+export function nativeCaseReport(status, failure = '') {
+  return {
+    case_run: {
+      schema: 'kb.qa-case-run/v2',
+      runId: `native-macos-${randomUUID()}`,
+      mode: 'local',
+      claims: cases.map(claimId => ({ claimId, kind: 'journey', status })),
+    },
+    steps: [{
+      stepId: 'native-macos-marketplace-corepack',
+      name: 'Install scenario plugin through Marketplace with Node 24 Corepack',
+      mode: 'local',
+      cases,
+      status,
+      ...(status === 'FAIL' && failure ? { message: failure } : {}),
+    }],
+  };
+}
 
 export function nativeInstallCommands({ workspace = workspaceRoot, tempRoot, platformRoot, registryUrl }) {
   if (!registryUrl) throw new Error('Registry URL is required; run e2e/journey/native-macos-smoke.sh.');
@@ -91,17 +111,7 @@ function run() {
   if (reportPath) {
     const resolvedReport = path.resolve(workspaceRoot, reportPath);
     mkdirSync(path.dirname(resolvedReport), { recursive: true });
-    writeFileSync(resolvedReport, `${JSON.stringify({
-      case_run: { mode: 'local', claims: cases.map(claimId => ({ claimId, kind: 'journey', status: caseStatus })) },
-      steps: [{
-        stepId: 'native-macos-marketplace-corepack',
-        name: 'Install scenario plugin through Marketplace with Node 24 Corepack',
-        mode: 'local',
-        cases,
-        status: caseStatus,
-        ...(caseStatus === 'FAIL' && failure ? { message: failure } : {}),
-      }],
-    }, null, 2)}\n`);
+    writeFileSync(resolvedReport, `${JSON.stringify(nativeCaseReport(caseStatus, failure), null, 2)}\n`);
   }
   if (status !== 'PASS') throw new Error(failure || 'Native macOS Marketplace install did not pass.');
 }

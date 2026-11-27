@@ -163,6 +163,14 @@ class Journey:
         self.selected_steps = set(self.selection_boundary.claims)
         self.selected_claims = set(self.selected_steps)
         self.selected_owning_steps = self.selection_boundary.owning_steps
+        self.selected_completion_owners = (
+            self.selection_boundary.completion_owners
+            if self.selection_boundary.completion_owners is not None
+            else self.selected_owning_steps
+        )
+        self.selected_runner_claims = (self.selected_steps if self.selection_boundary.completion_owners is None
+                                       else {claim for claims in self.selected_completion_owners.values()
+                                             for claim in claims})
         self.selected_capabilities = set(self.selection_boundary.capabilities)
         self.prerequisite_steps = set(self.selection_boundary.prerequisite_steps)
         self.prerequisite_flows = set(self.selection_boundary.prerequisite_flows)
@@ -397,7 +405,7 @@ class Journey:
             if step.get("status") in {"PASS", "FAIL", "BLOCKED"}
             for case_id in step.get("cases", [])
         }
-        return sorted(self.selected_steps - executed)
+        return sorted(self.selected_runner_claims - executed)
 
     def result(self) -> JourneyResult:
         first_step = next((step for step in self.steps if step.status == "FAIL"), None)

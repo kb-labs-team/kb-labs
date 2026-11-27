@@ -36,6 +36,37 @@ def _journey_step_line(source: str, step_name: str, case_id: str) -> int:
 
 
 class JourneyBatchEntryTests(unittest.TestCase):
+    def test_runner_launch_passes_completion_owners_for_its_selector(self):
+        source = (REPO / "e2e/journey/run.sh").read_text(encoding="utf-8")
+        launch = source[source.index("run_journey() {"):source.index("\nRUN_INDEX=0")]
+        result = subprocess.run(["bash", "-c", launch + r'''
+set -eu
+journey_compose() {
+  local scope=unset arg
+  for arg in "$@"; do
+    case "$arg" in KB_JOURNEY_SELECTED_COMPLETION_OWNERS=*) scope="${arg#*=}";; esac
+  done
+  printf '%s %s\n' "$KB_JOURNEY_RUNNER_SELECTOR" "$scope" >&2
+  printf 'runner-id\n'
+}
+start_container_monitor() { :; }
+start_project_container_monitors() { :; }
+docker() { printf '0\n'; }
+RUN_INDEX=0
+status=0
+selection_json='{"selectedOwningStepsByRunner":{"service-local:explore":{"workflow owner":["S-002.1"]}}}'
+run_journey agent:commit agent commit default
+run_journey service-local:explore agent explore default
+selection_json=''
+run_journey service-local:explore agent explore default
+exit "$status"
+'''], check=True, capture_output=True, text=True)
+        self.assertEqual(result.stderr.splitlines(), [
+            "agent:commit {}",
+            'service-local:explore {"workflow owner":["S-002.1"]}',
+            "service-local:explore unset",
+        ])
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="journey-batch-entry-")
         self.root = Path(self.temporary.name)
