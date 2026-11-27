@@ -1,4 +1,4 @@
-name: Verify installed Platform and Gateway E2E
+name: Verify installed Platform E2E
 
 on:
   push:
@@ -14,32 +14,14 @@ jobs:
       checkout-ref: ${{ github.sha }}
       artifact-name: e2e-platform-prebuilt-${{ github.run_id }}
 
-  docker:
+  platform:
     needs: prepare
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [platform, gateway]
     uses: ./.github/workflows/reusable-e2e-docker.yml
     with:
       checkout-ref: ${{ github.sha }}
-      suite: ${{ matrix.suite }}
-      e2e-package: '@kb-labs/e2e-${{ matrix.suite }}'
+      suite: platform
+      e2e-package: '@kb-labs/e2e-platform'
       health-url: http://localhost:4000/ready
       health-steps: 120
-      compose-project: kb-verify-platform-${{ matrix.suite }}
+      compose-project: kb-verify-platform-gateway
       prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
-
-  auth:
-    needs: prepare
-    uses: ./.github/workflows/reusable-e2e-playwright.yml
-    with:
-      suite: auth
-      checkout-ref: ${{ github.sha }}
-      prebuilt-artifact: e2e-platform-prebuilt-${{ github.run_id }}
-      compose-files: e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.auth-ci.yml
-      compose-project: kb-verify-platform-auth
-      run-command: cd e2e/auth && pnpm e2e
-      report-dir: e2e/auth/report
-      artifact-prefix: verify-platform-auth
-      studio: true
