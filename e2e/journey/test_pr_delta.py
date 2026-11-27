@@ -13,6 +13,8 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertEqual(plan_claims(["e2e/journey/marketplace_steps.py", "docs/guide.md"]),
                          ["S-010.1", "S-010.8", "S-012.1"])
         self.assertIn("S-160.5", plan_claims(["e2e/journey/plugin_author_steps.py"]))
+        self.assertEqual(plan_claims(["services/workflow/daemon/src/api/workflows-api.ts"]),
+                         ["S-002.1", "S-006.3", "S-007.1", "S-056.1"])
         self.assertEqual(plan_claims(["tools/kb-devkit/internal/engine/executor.go"]), [])
         self.assertIn("PC-001.2", plan_claims(["tools/kb-devkit/internal/engine/executor.go", "tools/kb-create/main.go"]))
         self.assertEqual(plan_claims(["e2e/docker-compose.platform.yml", "e2e/docker-compose.oauth-ci.yml",
@@ -144,6 +146,61 @@ class PullRequestDeltaTests(unittest.TestCase):
                     replace_owner_with_blockers(candidate, blocks)
                     summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, ["S-010.1"])
                     self.assertEqual(passed, expected, summary)
+
+    # case: S-262.21
+    def test_workflow_child_recovery_requires_matching_legacy_runner_and_unchanged_siblings(self):
+        owner = "initialize solo project workflow"
+        local_report = "installer-case-local-agent-explore-default.json"
+        secured_report = "installer-case-secured-human-explore-secured.json"
+
+        def write_workflow_run(root, sha, *, candidate, claim="S-002.1", changed_lint=False,
+                               misplaced=False, ambiguous=False):
+            for mode, installer in (("local", local_report), ("secured", secured_report)):
+                runner = f"service-{mode}:explore"
+                directory = root / mode
+                directory.mkdir(parents=True, exist_ok=True)
+                report_scope = {"mode": mode}
+                blockers = [{"name": "workflow fixture lint", "status": "BLOCKED", "cases": [claim],
+                             "message": "different cause" if changed_lint else "fixture not installed"}]
+                if not candidate:
+                    blockers.append({"name": "workflow execution journey", "status": "BLOCKED",
+                                     "cases": [claim], "message": "adapter fixture could not read project registry"})
+                plan = {"selection": [claim], "steps": [claim], "selectedClaimOwners": {owner: [claim]},
+                        "prerequisiteSteps": [], "runners": [runner], "owners": {runner: [claim]}}
+                if candidate:
+                    plan["selectedOwningStepsByRunner"] = {runner: {owner: [claim]}}
+                    if ambiguous:
+                        other = f"service-marketplace-registry:{mode}"
+                        plan["runners"].append(other)
+                        plan["selectedOwningStepsByRunner"][other] = {owner: [claim]}
+                reports = {
+                    "run.json": {"commit": sha},
+                    "batch-metadata.json": {"commit": sha, "mode": mode, "requestedSelection": [claim],
+                                            "result": "PASS" if candidate else "FAIL"},
+                    "selection-plan.json": plan,
+                    installer: {"case_run": report_scope, "steps": blockers},
+                }
+                if candidate:
+                    filename = f"service-auth-{mode}.json" if misplaced else f"service-{mode}.json"
+                    reports[filename] = {"case_run": report_scope, "steps": [
+                        {"name": owner, "status": "PASS", "cases": [claim], "message": "passed"},
+                    ]}
+                for name, value in reports.items():
+                    (directory / name).write_text(json.dumps(value), encoding="utf-8")
+
+        for claim, changes, expected in (
+            ("S-002.1", {}, True),
+            ("S-002.1", {"changed_lint": True}, False),
+            ("S-002.1", {"misplaced": True}, False),
+            ("S-002.1", {"ambiguous": True}, False),
+            ("S-010.1", {}, False),
+        ):
+            with self.subTest(claim=claim, changes=changes), tempfile.TemporaryDirectory() as directory:
+                base, candidate = Path(directory) / "base", Path(directory) / "candidate"
+                write_workflow_run(base, "a" * 40, candidate=False, claim=claim)
+                write_workflow_run(candidate, "b" * 40, candidate=True, claim=claim, **changes)
+                summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, [claim])
+                self.assertEqual(passed, expected, summary)
 
     # case: S-262.21
     def test_passing_added_prerequisite_does_not_count_as_recovery(self):
