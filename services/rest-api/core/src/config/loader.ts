@@ -170,10 +170,10 @@ export async function loadRestApiConfig(
       }
       return {
         ok: false,
-        diagnostics: result.error.errors.map((err) => ({
+        diagnostics: result.error.issues.map((err) => ({
           level: 'error' as const,
           code: 'CONFIG_VALIDATION_ERROR',
-          message: `${err.path.join('.')}: ${err.message}`,
+          message: `${err.path.map(String).join('.')}: ${err.message}`,
         })),
       };
     },

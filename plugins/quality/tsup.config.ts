@@ -4,6 +4,10 @@ import nodePreset from '@kb-labs/devkit/tsup/node';
 export default defineConfig({
   ...nodePreset,
   tsconfig: "tsconfig.build.json",
+  dts: {
+    ...nodePreset.dts,
+    entry: nodePreset.entry,
+  },
   entry: [
     'src/**/*.ts',
     'src/index.ts',
