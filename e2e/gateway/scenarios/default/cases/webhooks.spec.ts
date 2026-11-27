@@ -10,7 +10,7 @@
  *   2. Restart gateway
  *   3. WEBHOOK_ECHO_PLUGIN_INSTALLED=1 pnpm e2e --grep "WH-"
  *
- * Machine-token auth: registerAgent('e2e-webhook-test', 'e2e') → Bearer JWT.
+ * Machine-token auth: registerAgent(request, 'e2e-webhook-test') → Bearer JWT.
  * All admin calls use Bearer JWT; delivery routes use plugin-specific secret.
  */
 
