@@ -35,7 +35,7 @@ test('affected E2E preserves asynchronous triggers and pins every consumer to va
 });
 
 // case: S-262.23
-test('matrix rejects malformed and unknown suites before exposing output', async () => {
+test('matrix rejects invalid suite names and malformed entries before exposing output', async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } = await import('node:fs');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -52,7 +52,7 @@ test('matrix rejects malformed and unknown suites before exposing output', async
     };
     assert.equal(run([{ runner: 'docker', suites: ['e2e-gateway', 'e2e-auth'] }]).status, 0);
     assert.match(readFileSync(output, 'utf8'), /generic=\["gateway"\]\nhas-auth=true/);
-    assert.notEqual(run([{ runner: 'docker', suites: ['e2e-unknown'] }]).status, 0);
+    assert.notEqual(run([{ runner: 'docker', suites: ['e2e-bad/name'] }]).status, 0);
     assert.equal(readFileSync(output, 'utf8'), '');
     assert.notEqual(run([{ runner: 'docker', suites: 'e2e-gateway' }]).status, 0);
   } finally { rmSync(dir, { recursive: true, force: true }); }

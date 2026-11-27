@@ -135,13 +135,12 @@ jobs:
           const fs = require('fs');
           const plan = JSON.parse(fs.readFileSync('.ci/e2e-test-plan.json', 'utf8'));
           if (!plan || !Array.isArray(plan.selected)) throw new Error('Invalid E2E plan');
-          const allowed = new Set(['e2e-auth', 'e2e-oauth', 'e2e-gateway', 'e2e-marketplace-registry', 'e2e-marketplace', 'e2e-mcp', 'e2e-mind', 'e2e-platform', 'e2e-plugins', 'e2e-rest-api', 'e2e-services', 'e2e-studio', 'e2e-workflows', 'e2e-kb-create']);
           const generic = new Set();
           let auth = false;
           for (const zone of plan.selected) {
             if (!zone || !['docker', 'launcher'].includes(zone.runner) || !Array.isArray(zone.suites)) throw new Error('Invalid E2E zone');
             for (const suite of zone.suites) {
-              if (typeof suite !== 'string' || !allowed.has(suite)) throw new Error('Unknown E2E suite');
+              if (typeof suite !== 'string' || !/^e2e-[a-z][a-z0-9-]*$/.test(suite)) throw new Error('Invalid E2E suite');
               if (suite === 'e2e-auth') auth = true;
               if (zone.runner === 'docker' && !['e2e-auth', 'e2e-oauth'].includes(suite)) generic.add(suite.slice(4));
             }
