@@ -159,7 +159,7 @@ export async function inviteUser(
   options?: { ttlMs?: number },
 ): Promise<string> {
   const csrfToken = getCsrfFromCookieHeader(adminCookieHeader)
-  const data: Record<string, unknown> = { email, groupId: 'tenant-member' }
+  const data: Record<string, unknown> = { email, role: 'member' }
   if (options?.ttlMs !== undefined) {
     data['ttlMs'] = options.ttlMs
   }
