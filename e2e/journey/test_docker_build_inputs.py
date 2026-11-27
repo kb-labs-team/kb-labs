@@ -144,6 +144,9 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertLess(login, register)
         self.assertLess(register, ready)
         self.assertLess(entrypoint.index('kb-create restart --platform-root'), ready)
+        provider_probe = entrypoint.index('curl -sf http://localhost:4000/auth/providers')
+        self.assertLess(entrypoint.index('kb-create restart --platform-root'), provider_probe)
+        self.assertLess(provider_probe, ready)
         self.assertIn('test -f /tmp/kb-e2e-ready', (ROOT / "e2e" / "docker-compose.yml").read_text())
         for workflow in ("reusable-e2e-docker.yml", "reusable-e2e-playwright.yml"):
             content = (ROOT / ".github" / "workflows" / workflow).read_text()

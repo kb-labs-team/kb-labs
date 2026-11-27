@@ -207,7 +207,21 @@ until curl -sf http://localhost:4000/ready > /dev/null 2>&1; do
   sleep 2
 done
 
-echo "==> Platform fully ready after ${ATTEMPTS}x2s"
+if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
+  echo "==> Waiting for the configured OAuth provider..."
+  ATTEMPTS=0
+  until curl -sf http://localhost:4000/auth/providers | jq -e 'any(.providers[]?; .id == "corp")' > /dev/null; do
+    ATTEMPTS=$((ATTEMPTS + 1))
+    if [ "$ATTEMPTS" -ge 60 ]; then
+      echo "ERROR: Gateway did not expose the corp OAuth provider after restart"
+      kb-create status --platform-root "$PLATFORM_ROOT" || true
+      exit 1
+    fi
+    sleep 2
+  done
+fi
+
+echo "==> Platform ready with registered project and fixtures"
 
 kb-create status --platform-root "$PLATFORM_ROOT"
 
