@@ -81,7 +81,7 @@ jobs:
     timeout-minutes: 30
 
     env:
-      COMPOSE_FILE: ${{ inputs.compose-files }}
+      COMPOSE_FILE: ${{ inputs.compose-files }}:e2e/docker-compose.platform.yml
       COMPOSE_PROJECT_NAME: ${{ inputs.compose-project }}
 
     steps:

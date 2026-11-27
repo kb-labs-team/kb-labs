@@ -71,7 +71,7 @@ permissions:
 
 env:
   COMPOSE_FILE: >-
-    ${{ inputs.fast-registry && 'e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.fast-ci.yml' || 'e2e/docker-compose.yml:e2e/docker-compose.ci.yml' }}
+    ${{ inputs.fast-registry && 'e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.fast-ci.yml:e2e/docker-compose.platform.yml' || 'e2e/docker-compose.yml:e2e/docker-compose.ci.yml:e2e/docker-compose.platform.yml' }}
   COMPOSE_PROJECT_NAME: ${{ inputs.compose-project }}
 
 jobs:

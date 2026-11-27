@@ -18,7 +18,7 @@ CLAIM_MAP = Path(__file__).resolve().parents[2] / "scripts/ci/journey-pr-claims.
 PRODUCT_PREFIXES = ("adapters/", "cli/", "core/", "plugins/", "sdk/", "services/", "shared/",
                     "studio/", "tools/", "e2e/", ".kb/")
 DOCKER_E2E_BOOTSTRAP = {
-    "e2e/docker-compose.yml",
+    "e2e/docker-compose.platform.yml",
     "e2e/docker-compose.oauth-ci.yml",
     "e2e/platform/entrypoint.sh",
 }

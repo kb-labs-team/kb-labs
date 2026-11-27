@@ -338,7 +338,6 @@ if (!configResult.ok) {
             ("runner", "/e2e-oidc-certs"): ROOT / "e2e" / "oidc-idp" / "certs",
             ("marketplace-tamper", "/fixture/marketplace_tamper_proxy.py"): ROOT / "e2e" / "journey" / "marketplace_tamper_proxy.py",
             ("origin", "/release"): ROOT / ".journey" / "release",
-            ("origin", "/release/journey-candidate"): ROOT / ".journey" / "e2e-platform-binaries",
             ("mock-llm", "/fixture/mock_llm_server.py"): ROOT / "e2e" / "journey" / "mock_llm_server.py",
             ("idp-stub", "/certs"): ROOT / "e2e" / "oidc-idp" / "certs",
             ("verdaccio", "/verdaccio/conf/config.yaml"): ROOT / "e2e" / "verdaccio" / "config.yaml",

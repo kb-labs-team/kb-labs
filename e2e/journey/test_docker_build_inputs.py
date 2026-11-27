@@ -1,10 +1,14 @@
 import fnmatch
 import glob
 import json
+import os
 import re
 import shlex
+import subprocess
 import unittest
 from pathlib import Path
+
+from test_environment import require_compose_command
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -108,14 +112,16 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertEqual([], excluded,
                          f"Dockerfile COPY sources are excluded by .dockerignore: {sorted(set(excluded))}")
 
-    def test_e2e_platform_serves_the_prepared_candidate_binary_from_origin(self):
-        compose_path = ROOT / "e2e" / "docker-compose.yml"
+    def test_e2e_platform_overlay_serves_the_prepared_candidate_binary_from_origin(self):
+        compose_path = ROOT / "e2e" / "docker-compose.platform.yml"
         compose = compose_path.read_text()
         workflow = (ROOT / ".github" / "workflows" / "reusable-e2e-platform-build.yml").read_text()
         preparation = (ROOT / "e2e" / "platform" / "prepare-container-binaries.sh").read_text()
         staging = (ROOT / "e2e" / "platform" / "stage-release-binaries.mjs").read_text()
+        base_compose = (ROOT / "e2e" / "docker-compose.yml").read_text()
 
         self.assertIn("  origin:\n", compose)
+        self.assertNotIn("  origin:\n", base_compose)
         origin = self._compose_service(compose, "origin")
         self.assertIn("python:3.12-alpine", origin)
         staged_path = re.search(r'^output="\$root/([^"\n]+)"$', preparation, re.MULTILINE).group(1)
@@ -130,6 +136,43 @@ class DockerBuildInputsTest(unittest.TestCase):
         self.assertIn("--asset-base-url http://origin:8080/journey-candidate", preparation)
         self.assertIn("copyFileSync(artifact.path, join(outputDirectory, artifact.name))", staging)
 
+    # case: S-262.23
+    def test_platform_overlay_preserves_local_and_ci_registry_storage(self):
+        compose = require_compose_command(self)
+        base = "e2e/docker-compose.yml"
+        ci = "e2e/docker-compose.ci.yml"
+        platform = "e2e/docker-compose.platform.yml"
+
+        def render(*files):
+            env = os.environ.copy()
+            env.pop("COMPOSE_FILE", None)
+            command = [*compose]
+            for file in files:
+                command.extend(("-f", file))
+            command.extend(("config", "--format", "json"))
+            result = subprocess.run(command, cwd=ROOT, env=env, capture_output=True, text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return json.loads(result.stdout)
+
+        local = render(base, platform)
+        local_origin = local["services"]["origin"]
+        self.assertIn("/release/journey-candidate", {mount["target"] for mount in local_origin["volumes"]})
+        verdaccio_mount = next(mount for mount in local["services"]["verdaccio"]["volumes"]
+                               if mount["target"] == "/verdaccio/storage")
+        self.assertEqual(verdaccio_mount["type"], "volume")
+        self.assertEqual(verdaccio_mount["source"], "verdaccio-storage")
+
+        ci_platform = render(base, ci, platform)
+        verdaccio_mounts = ci_platform["services"]["verdaccio"]["volumes"]
+        self.assertTrue(any(mount.get("type") == "bind" and mount["target"] == "/verdaccio/storage"
+                            for mount in verdaccio_mounts))
+
+        docker_workflow = (ROOT / ".github" / "workflows" / "reusable-e2e-docker.yml").read_text()
+        playwright_workflow = (ROOT / ".github" / "workflows" / "reusable-e2e-playwright.yml").read_text()
+        launcher_workflow = (ROOT / ".github" / "workflows" / "reusable-launcher-e2e.yml").read_text()
+        self.assertIn("e2e/docker-compose.platform.yml", docker_workflow)
+        self.assertIn("e2e/docker-compose.platform.yml", playwright_workflow)
+        self.assertNotIn("e2e/docker-compose.platform.yml", launcher_workflow)
 
     # case: S-262.23
     def test_e2e_readiness_waits_for_registered_project_after_install(self):
@@ -147,7 +190,7 @@ class DockerBuildInputsTest(unittest.TestCase):
         provider_probe = entrypoint.index('curl -sf http://localhost:4000/auth/providers')
         self.assertLess(entrypoint.index('kb-create restart --platform-root'), provider_probe)
         self.assertLess(provider_probe, ready)
-        self.assertIn('test -f /tmp/kb-e2e-ready', (ROOT / "e2e" / "docker-compose.yml").read_text())
+        self.assertIn('test -f /tmp/kb-e2e-ready', (ROOT / "e2e" / "docker-compose.platform.yml").read_text())
         for workflow in ("reusable-e2e-docker.yml", "reusable-e2e-playwright.yml"):
             content = (ROOT / ".github" / "workflows" / workflow).read_text()
             self.assertIn("docker compose exec -T platform test -f /tmp/kb-e2e-ready", content)
