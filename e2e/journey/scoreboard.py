@@ -331,7 +331,8 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
                     _journey_evidence(data, path, selected_evidence)
                 for index, step in mode_rows:
                     details = _step_details(step)
-                    if details.get("runnerFailure"):
+                    if (step.get("capability") == "journey.runner" and step.get("status") == "FAIL"
+                            and step.get("name") in ("journey selection metadata", "runner startup", "runner crash")):
                         runner_failures.append(f"{path.name}#{index}")
                     reference = details.get("invocation_evidence")
                     match = INVOCATION_REFERENCE.match(reference) if isinstance(reference, str) else None
