@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from collections import defaultdict
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -24,6 +25,8 @@ DOCKER_E2E_BOOTSTRAP = {
     "e2e/platform/entrypoint.sh",
 }
 REPORT_PREFIXES = ("service-", "installer-case-", "platform-")
+DEVKIT_TASKS = re.compile(r"^tasks:\n(?:^[ #][^\n]*\n|^\n)*", re.MULTILINE)
+DEVKIT_COVERAGE_TASK = re.compile(r"^  test:coverage(?::go)?:\n(?:^ {4}[^\n]*\n|^\n)*", re.MULTILINE)
 
 
 class Evidence(NamedTuple):
@@ -50,6 +53,11 @@ def plan_claims(paths: list[str]) -> list[str]:
             scoped.update(policy["crossCutting"])
         claims.update(scoped)
     return sorted(claims)
+
+
+def without_devkit_coverage_tasks(config: str) -> str:
+    # Strip only top-level task declarations. Build rules and coverage thresholds stay in scope.
+    return DEVKIT_TASKS.sub(lambda section: DEVKIT_COVERAGE_TASK.sub("", section.group()), config)
 
 
 def read_json(path: Path) -> dict:
@@ -174,7 +182,16 @@ def main() -> int:
         )
         if result.returncode != 0:
             raise ValueError(f"Could not select changed paths: {result.stderr.strip()}")
-        print(",".join(plan_claims(result.stdout.split("\0"))))
+        paths = result.stdout.split("\0")
+        if "devkit.yaml" in paths:
+            base_config = run_harness_command(["git", "show", f"{args.base}:devkit.yaml"])
+            candidate_config = run_harness_command(["git", "show", f"{args.candidate}:devkit.yaml"])
+            if (base_config.returncode == candidate_config.returncode == 0
+                    and base_config.stdout != candidate_config.stdout
+                    and without_devkit_coverage_tasks(base_config.stdout)
+                    == without_devkit_coverage_tasks(candidate_config.stdout)):
+                paths.remove("devkit.yaml")
+        print(",".join(plan_claims(paths)))
         return 0
     summary, passed = check_pr(args.base, args.candidate, args.base_sha, args.candidate_sha,
                                requested_selection(args.claims))

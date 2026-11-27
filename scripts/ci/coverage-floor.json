@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "reference": {
+    "sha": "5c38d7697e4d67e625773d53f9c65c53c6964923",
+    "measurementSha": "8f9eee4d61d45afcd8966bb525bf0b08466a27d6",
+    "runId": 45954941952,
+    "jobId": 140362725511,
+    "precision": "one decimal place as emitted by scripts/merge-coverage.mjs"
+  },
+  "metrics": {
+    "@kb-labs/studio-devtools": { "functions": 0, "branches": 0 },
+    "@kb-labs/studio-ui-core": { "functions": 0, "branches": 0 },
+    "@kb-labs/shared-testing-platform": { "functions": 18.9, "branches": 40.6 },
+    "@kb-labs/shared-cli-ui": { "branches": 35.4 },
+    "@kb-labs/core-sandbox": { "functions": 25, "branches": 42 },
+    "@kb-labs/core-bundle": { "functions": 58.3, "branches": 46.4 },
+    "@kb-labs/shared-testing-e2e": { "branches": 46.1 },
+    "@kb-labs/core-platform": { "functions": 40.3 },
+    "@kb-labs/sdk": { "branches": 67.7 },
+    "@kb-labs/shared-http": { "branches": 40.2 },
+    "@kb-labs/cli-commands": { "branches": 45 },
+    "@kb-labs/core-state-broker": { "functions": 52.5, "branches": 46.4 },
+    "@kb-labs/core-sys": { "branches": 44.7 },
+    "@kb-labs/core-state-daemon": { "branches": 54.9 }
+  }
+}

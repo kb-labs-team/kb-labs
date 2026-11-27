@@ -314,6 +314,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Run coverage
         run: pnpm coverage
+      - name: Upload coverage summary
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: coverage-summary-${{ github.run_id }}
+          path: coverage/summary.json
+          if-no-files-found: warn
+          retention-days: 7
 
   # ── 5. kb-create e2e — always on main ──────────────────────────────────────
   #

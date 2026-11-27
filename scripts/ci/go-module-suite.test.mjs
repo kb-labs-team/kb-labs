@@ -19,6 +19,21 @@ test.after(() => {
 });
 const suite = path.join(root, 'scripts/ci/go-module-suite.mjs');
 
+test('coverage instruments only packages consumed by the coverage report while Go tests remain in the regular test task', () => {
+  const devkit = load(readFileSync(path.join(root, 'devkit.yaml'), 'utf8'));
+  const coverageTasks = devkit.tasks['test:coverage'];
+  const goCoverageTasks = devkit.tasks['test:coverage:go'];
+  const regularTasks = devkit.tasks.test;
+
+  assert.ok(coverageTasks.length > 0);
+  assert.ok(coverageTasks.every((task) => !task.categories.some((category) => ['go-binary', 'internal-tool'].includes(category))),
+    'the report aggregator reads Istanbul coverage-final.json, not Go coverage.out');
+  assert.ok(goCoverageTasks.some((task) => task.categories.some((category) => ['go-binary', 'internal-tool'].includes(category)) && task.command.includes('-coverprofile=coverage.out')),
+    'manual Go coverage remains available as a separate task');
+  assert.ok(regularTasks.some((task) => task.categories.some((category) => ['go-binary', 'internal-tool'].includes(category)) && task.command === 'make test'),
+    'ordinary Go tests remain part of the regular test task');
+});
+
 test('coverage hydrates and verifies the workspace-pinned Corepack package manager before DevKit tests', () => {
   const manifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
