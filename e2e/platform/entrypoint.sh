@@ -61,34 +61,6 @@ kb-create apply \
   --registry http://verdaccio:4873
 cd "$PLATFORM_ROOT"
 
-# ── OIDC redirect-provider config (OAuth E2E stack only) ───────────────────────
-# Apply creates the active platform root. Restart the host after writing the
-# override so Gateway loads it. The override refers to the secret by env name.
-if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
-  echo "    OIDC_E2E_ENABLED=true — writing gateway config override"
-  OIDC_ISSUER="${OIDC_CORP_ISSUER:-https://idp-stub:9443}"
-  OIDC_CLIENT_ID="${OIDC_CORP_CLIENT_ID:-kb-gateway}"
-  cat > "$PLATFORM_ROOT/current/.kb/kb.config.override.json" << OIDC_OVERRIDE
-{
-  "gateway": {
-    "auth": {
-      "providers": {
-        "email-password": { "type": "email-password" },
-        "corp": {
-          "type": "oidc",
-          "issuer": "${OIDC_ISSUER}",
-          "clientId": "${OIDC_CLIENT_ID}",
-          "clientSecretEnv": "OIDC_CORP_CLIENT_SECRET",
-          "scopes": ["openid", "email"],
-          "pkce": true
-        }
-      }
-    }
-  }
-}
-OIDC_OVERRIDE
-fi
-
 # Scaffold test workflows used by E2E suite
 mkdir -p .kb/workflows
 
@@ -175,6 +147,16 @@ echo "==> [3/3] Registering the project..."
 printf '%s\n' "$GATEWAY_BOOTSTRAP_ADMIN_PASSWORD" | kb auth login --gateway-url http://127.0.0.1:4000 --email "$GATEWAY_BOOTSTRAP_ADMIN_EMAIL" --password-stdin
 kb project add "$PLATFORM_ROOT"
 if [ "${OIDC_E2E_ENABLED:-false}" = "true" ]; then
+  echo "==> Configuring the OAuth provider through the installed CLI..."
+  OIDC_PROVIDERS=$(jq -cn --arg issuer "${OIDC_CORP_ISSUER:-https://idp-stub:9443}" \
+    --arg clientId "${OIDC_CORP_CLIENT_ID:-kb-gateway}" '{
+      "email-password": {type: "email-password"},
+      corp: {
+        type: "oidc", issuer: $issuer, clientId: $clientId,
+        clientSecretEnv: "OIDC_CORP_CLIENT_SECRET", scopes: ["openid", "email"], pkce: true
+      }
+    }')
+  kb config set --scope platform gateway.auth.providers "$OIDC_PROVIDERS" --json > /dev/null
   kb-create restart --platform-root "$PLATFORM_ROOT"
 fi
 
