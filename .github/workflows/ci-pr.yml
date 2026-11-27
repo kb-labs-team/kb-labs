@@ -23,7 +23,7 @@ env:
 jobs:
   # ── 0. Preflight — gates everything else (~30s) ────────────────────────────
   preflight:
-    name: Preflight
+    name: Quality / Workspace dependencies
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -42,7 +42,7 @@ jobs:
   # This runs the same versioned release build path used for immutable
   # candidates, with a throwaway commit-scoped preflight version.
   release-build-preflight:
-    name: Release build preflight
+    name: Packaging / Release preflight
     runs-on: ubuntu-latest
     needs: preflight
     timeout-minutes: 120
@@ -64,7 +64,7 @@ jobs:
   # ── 0a. Resolve E2E ownership from the complete PR diff ──────────────────
   # The same JSON plan drives the selective E2E jobs below.
   e2e-test-plan:
-    name: E2E test plan
+    name: E2E / Test plan
     runs-on: ubuntu-latest
     needs: preflight
     outputs:
@@ -134,7 +134,7 @@ jobs:
   # owns one V2 contract and only deterministic fixtures, making configuration
   # and recovery failures fast, diagnosable PR feedback.
   launcher-v2-contracts:
-    name: kb-create V2 / ${{ matrix.shard }}
+    name: Tests / kb-create contracts / ${{ matrix.shard }}
     runs-on: ubuntu-latest
     needs: e2e-test-plan
     if: needs.e2e-test-plan.outputs.launcher_changed == 'true'
@@ -175,7 +175,7 @@ jobs:
 
   # ── 1. Build Go tools ──────────────────────────────────────────────────────
   build-tools:
-    name: Build Go tools
+    name: Build
     needs: preflight
     uses: ./.github/workflows/build-go-tools.yml
     permissions:
@@ -183,7 +183,7 @@ jobs:
 
   # ── 2. Build TS packages in the complete PR diff closure ───────────────────
   build:
-    name: Build TS (affected)
+    name: Build / TypeScript (affected)
     runs-on: ubuntu-latest
     needs: [preflight, build-tools]
     permissions:
@@ -225,7 +225,7 @@ jobs:
 
   # ── 3. Lint / Type-check — affected packages only ──────────────────────────
   checks:
-    name: ${{ matrix.task }}
+    name: ${{ matrix.label }}
     runs-on: ubuntu-latest
     needs: build
     permissions:
@@ -233,7 +233,11 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        task: [lint, type-check]
+        include:
+          - task: lint
+            label: Quality / Lint (affected)
+          - task: type-check
+            label: Quality / Type checking (affected)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -268,7 +272,7 @@ jobs:
   # a regression in an otherwise-unaffected package. This remains much cheaper
   # than E2E and matches main's unit-test scope and Node runtime.
   full-dist-for-devkit-build:
-    name: Build full workspace dist
+    name: Build / Workspace dist
     runs-on: ubuntu-latest
     needs: [build-tools, build]
     permissions:
@@ -321,7 +325,7 @@ jobs:
           retention-days: 7
 
   full-unit-tests:
-    name: test (full)
+    name: Tests / Unit and CLI
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: [build, full-dist-for-devkit-build]
@@ -376,7 +380,7 @@ jobs:
   # never skipped. They run here, on their own affected inputs, as their own
   # check.
   internal-tool-tests:
-    name: internal tools (go)
+    name: Tests / Internal Go tools
     runs-on: ubuntu-latest
     needs: build-tools
     permissions:
@@ -410,7 +414,7 @@ jobs:
 
   # ── 4. Workspace checks — devkit structure, deps and boundaries ────────────
   devkit-checks:
-    name: Devkit checks
+    name: Quality / Workspace checks
     runs-on: ubuntu-latest
     needs: [build-tools, build, e2e-test-plan, full-dist-for-devkit-build]
     permissions:
@@ -484,7 +488,7 @@ jobs:
   # NPM_CONFIG_REGISTRY is intentionally NOT set: pm.Detect() only falls back
   # to KB_REGISTRY_URL when NPM_CONFIG_REGISTRY is absent.
   launcher-e2e:
-    name: kb-create e2e / ${{ matrix.shard }}
+    name: E2E / kb-create / ${{ matrix.shard }}
     runs-on: ubuntu-latest
     needs: [build-tools, build, e2e-test-plan]
     if: needs.e2e-test-plan.outputs.launcher_changed == 'true'

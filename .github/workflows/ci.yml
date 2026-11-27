@@ -33,7 +33,7 @@ jobs:
   # Keep the release candidate's exact build path green on every merge to
   # master, using a throwaway version derived from this commit.
   release-build-preflight:
-    name: Release build preflight
+    name: Packaging / Release preflight
     runs-on: ubuntu-latest
     timeout-minutes: 120
     permissions:
@@ -53,7 +53,7 @@ jobs:
 
   # The chart's render-time config/security contract is a static release gate.
   helm-chart-static:
-    name: Helm chart topology gate
+    name: Quality / Helm topology
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -75,7 +75,7 @@ jobs:
   # Kept separate from Verdaccio/Docker launcher E2E so a configuration or
   # recovery regression has a small, stable failure domain.
   launcher-v2-contracts:
-    name: kb-create V2 / ${{ matrix.shard }}
+    name: Tests / kb-create contracts / ${{ matrix.shard }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
@@ -117,12 +117,12 @@ jobs:
   # All quality checks (lint/test/e2e) are driven through kb-devkit so the
   # same task graph and cache semantics apply everywhere.
   build-tools:
-    name: Build Go tools
+    name: Build
     uses: ./.github/workflows/build-go-tools.yml
 
   # ── 2. Build all TS packages via devkit (topological order) ──────────────────
   build:
-    name: Build TS (devkit)
+    name: Build / TypeScript
     runs-on: ubuntu-latest
     needs: build-tools
     steps:
@@ -182,7 +182,7 @@ jobs:
 
   # ── 2b. Dependency hygiene (Single Version Policy) ─────────────────────────
   deps:
-    name: Deps (syncpack)
+    name: Quality / Workspace dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -198,13 +198,21 @@ jobs:
 
   # ── 3. Lint / Type-check / Test — all packages ──────────────────────────────
   checks:
-    name: ${{ matrix.task }}
+    name: ${{ matrix.label }}
     runs-on: ubuntu-latest
     needs: build
     strategy:
       fail-fast: false
       matrix:
-        task: [lint, type-check, test, 'test:cli']
+        include:
+          - task: lint
+            label: Quality / Lint
+          - task: type-check
+            label: Quality / Type checking
+          - task: test
+            label: Tests / Unit
+          - task: 'test:cli'
+            label: Tests / CLI
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -241,7 +249,7 @@ jobs:
 
   # ── 4. Repository checks — script gates and workspace standards ────────────
   devkit-checks:
-    name: Devkit checks
+    name: Quality / Workspace checks
     runs-on: ubuntu-latest
     needs: [build-tools, build]
     steps:
@@ -282,7 +290,7 @@ jobs:
 
   # ── 5. Coverage — run tests with instrumentation + check thresholds ─────────
   coverage:
-    name: coverage
+    name: Quality / TypeScript coverage
     runs-on: ubuntu-latest
     needs: build
     steps:
@@ -332,7 +340,7 @@ jobs:
   #   build → pack .tgz → start Verdaccio (Docker, port 4873) →
   #   publish → run Go e2e tests with KB_REGISTRY_URL=http://localhost:4873
   launcher-e2e:
-    name: kb-create e2e / ${{ matrix.shard }}
+    name: E2E / kb-create / ${{ matrix.shard }}
     runs-on: ubuntu-latest
     needs: [build-tools, build]
     timeout-minutes: 60
