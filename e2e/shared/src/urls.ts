@@ -2,7 +2,6 @@ export const GATEWAY     = process.env.GATEWAY_URL     ?? 'http://localhost:4000
 export const REST        = process.env.REST_URL        ?? 'http://localhost:5050'
 export const REST_API_PREFIX = process.env.REST_URL?.includes('/api/v1/projects/') ? '' : '/api/v1'
 export const MARKETPLACE = process.env.MARKETPLACE_URL ?? 'http://localhost:5070'
-export const MARKETPLACE_DIRECT = process.env.MARKETPLACE_DIRECT_URL ?? MARKETPLACE
 export const REGISTRY    = process.env.REGISTRY_URL    ?? 'http://localhost:5071'
 export const WORKFLOW    = process.env.WORKFLOW_URL    ?? 'http://localhost:7778'
 export const WORKFLOW_API_PREFIX = process.env.WORKFLOW_URL?.includes('/api/v1/projects/') ? '' : '/api/v1'

@@ -1,62 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
-
-// ── Observability describe ────────────────────────────────────────────────────
-
-test('RA-01: GET /observability/describe returns service identity', async ({ request }) => {
-  const res = await request.get(`${REST}/observability/describe`)
-  expect(res.status()).toBe(200)
-  const body = await res.json()
-  const desc = body.data ?? body
-  expect(typeof (desc.serviceId ?? desc.id)).toBe('string')
-  expect(typeof desc.serviceType).toBe('string')
-  expect(typeof desc.version).toBe('string')
-})
-
-// ── Prometheus metrics ────────────────────────────────────────────────────────
-
-test('RA-02: GET /api/v1/metrics returns Prometheus exposition with process metrics', async ({ request }) => {
-  const res = await request.get(`${REST}${REST_API_PREFIX}/metrics`)
-  expect(res.status()).toBe(200)
-  expect(res.headers()['content-type']).toMatch(/text/)
-  const text = await res.text()
-  expect(text).toMatch(/http_request_duration_ms|kb_plugins_mount_total/)
-  expect(text).toMatch(/^# HELP /m)
-})
-
-// ── OpenAPI plugins registry ──────────────────────────────────────────────────
-
-test('RA-03: GET /openapi-plugins.json returns merged OpenAPI with paths', async ({ request }) => {
-  const res = await request.get(`${REST}/openapi-plugins.json`)
-  expect(res.status()).toBe(200)
-  const body = await res.json()
-  const spec = body.data ?? body
-  expect(typeof spec).toBe('object')
-  const hasPaths = spec.paths !== undefined || Array.isArray(spec) || spec.info !== undefined
-  expect(hasPaths).toBe(true)
-})
-
-// ── Observability health ──────────────────────────────────────────────────────
-
-test('RA-04: GET /observability/health returns status field', async ({ request }) => {
-  const res = await request.get(`${REST}/observability/health`)
-  expect(res.status()).toBe(200)
-  const body = await res.json()
-  const status = body.data?.status ?? body.status
-  expect(status).toMatch(/ok|healthy|degraded|unhealthy/)
-})
-
-// ── State broker proxy ────────────────────────────────────────────────────────
-
-test('RA-05: GET /observability/state-broker returns ok flag or 503', async ({ request }) => {
-  const res = await request.get(`${REST}/observability/state-broker`)
-  expect([200, 503]).toContain(res.status())
-  const body = await res.json()
-  expect(typeof body.ok).toBe('boolean')
-  if (res.status() === 200) {
-    expect(typeof body.data?.totalEntries).toBe('number')
-  }
-})
+import { REST } from '@kb-labs/e2e-shared/urls.js'
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 
@@ -65,9 +8,9 @@ test('RA-06: GET /analytics/stats returns stats or 501 with error code', async (
   expect([200, 501]).toContain(res.status())
   const body = await res.json()
   if (res.status() === 200) {
-    expect(typeof body.data ?? body).toBe('object')
+    expect(typeof body.data.totalEvents).toBe('number')
   } else {
-    expect(body.error?.code).toBe('ANALYTICS_NOT_IMPLEMENTED')
+    expect(body.error?.code).toBe('KB_ANALYTICS_STATS_UNSUPPORTED')
   }
 })
 

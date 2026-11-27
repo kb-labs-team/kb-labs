@@ -60,12 +60,12 @@ export async function createServer(opts: CreateServerOptions): Promise<FastifyIn
     serviceId: 'marketplace',
     logger,
     observability,
-    // Preserve the legacy /health contract { status:'ok', service, ts } (e2e MH-01/MH-02),
+    // Preserve the legacy /health contract { status:'ok', service, ts },
     // not the observability buildHealth() shape.
     healthResponse: () => ({ status: 'ok', service: 'marketplace', ts: Date.now() }),
     // /ready must return { ready, components } (createServiceReadyResponse shape),
-    // not the bare buildHealth() payload — e2e MH-03/MH-04 assert body.ready and
-    // body.components.marketplaceService.
+    // not the bare buildHealth() payload. The host integration checks the ready
+    // flag and body.components.marketplaceService.
     readyCheck: () =>
       createServiceReadyResponse({
         ready: true,

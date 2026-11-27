@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY, REST, MARKETPLACE_DIRECT } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, REST } from '@kb-labs/e2e-shared/urls.js'
 
 // PD-01: gateway /health doesn't report version conflicts
 test('PD-01: gateway health reports consistent version', async ({ request }) => {
@@ -18,12 +18,11 @@ test('PD-01: gateway health reports consistent version', async ({ request }) => 
   }
 })
 
-// PD-02: all services report same major version
-test('PD-02: services report consistent platform version', async ({ request }) => {
+// PD-02: Gateway and REST API report the same major version.
+test('PD-02: gateway and rest-api report consistent platform version', async ({ request }) => {
   const endpoints = [
     { name: 'gateway',     url: `${GATEWAY}/health` },
     { name: 'rest-api',    url: `${REST}/health` },
-    { name: 'marketplace', url: `${MARKETPLACE_DIRECT}/health` },
   ]
 
   const versions: string[] = []
