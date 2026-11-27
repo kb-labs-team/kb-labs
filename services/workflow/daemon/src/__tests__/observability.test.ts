@@ -57,6 +57,24 @@ describe('workflow observability surfaces', () => {
     }
   });
 
+  it('reports workflow engine, catalog, and scheduler readiness', async () => {
+    const server = await createWorkflowServer();
+    servers.push(server);
+
+    const response = await server.inject({ method: 'GET', url: '/ready' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      ready: true,
+      status: 'ready',
+      reason: 'ready',
+      components: {
+        workflowEngine: { ready: true },
+        workflowCatalog: { ready: true },
+        cronScheduler: { ready: true },
+      },
+    });
+  });
+
   it('exposes versioned describe and structured health', async () => {
     const server = await createWorkflowServer();
     servers.push(server);
