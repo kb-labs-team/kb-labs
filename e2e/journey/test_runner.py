@@ -1296,6 +1296,7 @@ thread.join()
                               if step["name"] == "workflow execution journey")
         self.assertEqual(dependent_flow["status"], "BLOCKED")
         self.assertIn("host-running", dependent_flow["message"])
+        self.assertTrue({"S-056.1", "S-056.2", "S-056.3"}.issubset(dependent_flow["cases"]))
         update_failure = next(step for step in update_results[0]["steps"]
                               if step["name"] == "stage candidate update")
         update_dependent = next(step for step in update_results[0]["steps"]
