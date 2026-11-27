@@ -10,12 +10,14 @@ import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'f
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { load as parseYaml } from 'js-yaml'
+import { checkCoverageFloor, countAcceptedThresholdViolations, findNewThresholdViolations } from './ci/coverage-floor.mjs'
 
 const ROOT = join(fileURLToPath(import.meta.url), '..', '..')
 const CHECK_ONLY = process.argv.includes('--check')
 const JSON_MODE = process.argv.includes('--json')
 const OUT_DIR = join(ROOT, 'coverage')
 const SUMMARY = join(OUT_DIR, 'summary.json')
+const FLOOR_PATH = join(ROOT, 'scripts/ci/coverage-floor.json')
 
 // ── Load thresholds from devkit.yaml ────────────────────────────────────────
 
@@ -118,8 +120,6 @@ function aggregate() {
     packages,
   }
 
-  mkdirSync(OUT_DIR, { recursive: true })
-  writeFileSync(SUMMARY, JSON.stringify(result, null, 2))
   return result
 }
 
@@ -148,6 +148,7 @@ function checkThresholds(result, config) {
 // ── Main ─────────────────────────────────────────────────────────────────────
 
 const config = loadCoverageConfig()
+const coverageFloor = JSON.parse(readFileSync(FLOOR_PATH, 'utf8'))
 
 let result
 if (CHECK_ONLY) {
@@ -163,10 +164,26 @@ if (CHECK_ONLY) {
 
 const violations = checkThresholds(result, config)
 result.violations = violations
+const floorViolations = checkCoverageFloor(result, coverageFloor)
+const newThresholdViolations = findNewThresholdViolations(violations, coverageFloor)
+const acceptedThresholdMissCount = countAcceptedThresholdViolations(violations, coverageFloor)
+result.coverageFloor = {
+  reference: coverageFloor.reference,
+  acceptedMetricCount: Object.values(coverageFloor.metrics).reduce((count, metrics) => count + Object.keys(metrics).length, 0),
+  acceptedThresholdMissCount,
+  floorViolations,
+  newThresholdViolations,
+}
+result.ok = floorViolations.length === 0 && newThresholdViolations.length === 0
+
+if (!CHECK_ONLY) {
+  mkdirSync(OUT_DIR, { recursive: true })
+  writeFileSync(SUMMARY, JSON.stringify(result, null, 2))
+}
 
 if (JSON_MODE) {
   process.stdout.write(JSON.stringify(result, null, 2))
-  process.exit(violations.length > 0 ? 1 : 0)
+  process.exit(result.ok ? 0 : 1)
 }
 
 const t = result.total
@@ -175,10 +192,8 @@ console.log(`  Statements: ${t.statements.pct}%  (${t.statements.hit}/${t.statem
 console.log(`  Branches:   ${t.branches.pct}%  (${t.branches.hit}/${t.branches.total})`)
 console.log(`  Functions:  ${t.functions.pct}%  (${t.functions.hit}/${t.functions.total})`)
 
-if (violations.length === 0) {
-  console.log('\n✓ All packages meet coverage thresholds')
-} else {
-  console.log(`\n✗ ${violations.length} threshold violation(s):\n`)
+if (violations.length > 0) {
+  console.log(`\nCoverage target shortfalls (${violations.length}; retained in the report):\n`)
   // Group by package for readability
   const byPkg = {}
   for (const v of violations) {
@@ -189,6 +204,20 @@ if (violations.length === 0) {
     console.log(`  ${pkg}\n    ${issues.join(', ')}`)
 }
 
+if (result.ok) {
+  console.log(`\n✓ Coverage floor preserved (${result.coverageFloor.acceptedMetricCount} package metrics)`)
+} else {
+  console.log('\n✗ Coverage floor or new threshold failure:')
+  for (const issue of newThresholdViolations) {
+    console.log(`  ${issue.package} ${issue.metric}: ${issue.actual}% remains below target ${issue.limit}% and has no accepted floor`)
+  }
+  for (const issue of floorViolations) {
+    if (issue.type === 'missing-package') console.log(`  ${issue.package}: package missing from coverage report`)
+    else if (issue.type === 'missing-metric') console.log(`  ${issue.package} ${issue.metric}: baseline metric missing`)
+    else console.log(`  ${issue.package} ${issue.metric}: ${issue.actual}% < accepted floor ${issue.minimum}%`)
+  }
+}
+
 console.log(`\nJSON report: coverage/summary.json`)
 
-process.exit(violations.length > 0 ? 1 : 0)
+process.exit(result.ok ? 0 : 1)
