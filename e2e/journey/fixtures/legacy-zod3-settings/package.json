@@ -1,0 +1,13 @@
+{
+  "name": "@kb-labs/e2e-legacy-zod3-settings",
+  "version": "1.0.0",
+  "description": "Installed Journey fixture for project settings validation with npm Zod 3",
+  "type": "module",
+  "main": "./dist/manifest.js",
+  "exports": { ".": "./dist/manifest.js" },
+  "files": ["dist/manifest.js", "dist/manifest.json", "dist/settings-schema.mjs"],
+  "kb": { "manifest": "./dist/manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/settings-schema.mjs"] },
+  "dependencies": { "zod": "3.25.76" },
+  "scripts": { "prepack": "node ./build.mjs" },
+  "license": "UNLICENSED"
+}

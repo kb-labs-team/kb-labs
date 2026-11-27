@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
+import time
 import traceback
 from typing import MutableMapping
 import urllib.error
@@ -535,6 +536,108 @@ def _workflow_cron_parity(project_id: str, token: str | None, project_root: str)
     )
 
 
+def installed_zod3_project_settings() -> str | None:
+    """Exercise installed CLI validation using the public Zod 3.25.76 dependency fixture."""
+    cli = journey_value("KB_JOURNEY_CLI_PATH", "")
+    if not cli or not Path(cli).is_file():
+        return "BLOCKED: provide KB_JOURNEY_CLI_PATH for installed Zod 3 settings checks"
+
+    def run_cli(project: Path, *args: str, timeout: int = 30) -> CompletedProcess[str]:
+        return run_command(kb_command(list(args), executable=cli), cwd=project, env=os.environ.copy(),
+                           capture_output=True, text=True, check=False, timeout=timeout)
+
+    def success(result: CompletedProcess[str], action: str) -> dict | str:
+        try:
+            payload = decode_ux_success_result(read_ux_cli_result(result))
+        except (json.JSONDecodeError, ValueError) as error:
+            return f"{action} returned an invalid UX result: {error}"
+        if result.returncode != 0 or not isinstance(payload, dict):
+            return f"{action} failed: {(result.stderr or result.stdout).strip()}"
+        return payload
+
+    package = "@kb-labs/e2e-legacy-zod3-settings@1.0.0"
+    with tempfile.TemporaryDirectory(prefix="kb-installed-zod3-settings-") as temp, ExitStack() as cleanup:
+        project = Path(temp) / "project"
+        project.mkdir()
+        initialized = run_command(["git", "init", "--quiet", str(project)], capture_output=True,
+                                  text=True, check=False, timeout=30)
+        if initialized.returncode != 0:
+            return f"could not initialize the installed Zod 3 fixture project: {initialized.stderr.strip()}"
+        registered = success(run_cli(project, "project", "add", str(project), "--json"), "kb project add")
+        if isinstance(registered, str):
+            return registered
+        queue = [registered]
+        project_id = ""
+        while queue:
+            item = queue.pop(0)
+            if isinstance(item, dict):
+                project_value = item.get("project")
+                if isinstance(project_value, dict) and isinstance(project_value.get("id"), str):
+                    project_id = project_value["id"]
+                    break
+                queue.extend(item.values())
+            elif isinstance(item, list):
+                queue.extend(item)
+        if not project_id:
+            return "kb project add returned no project ID for the installed Zod 3 fixture"
+        cleanup.callback(run_cli, project, "project", "remove", project_id, "--yes", "--json")
+        installed = success(run_cli(project, "marketplace", "install", package,
+                                    "--scope", "project", "--json"), "marketplace install")
+        if isinstance(installed, str):
+            return installed
+
+        key = "plugins.legacyZod3.value"
+        valid = success(run_cli(project, "config", "set", key, '{"text":"valid"}', "--json"),
+                        "valid Zod 3 config set")
+        if isinstance(valid, str):
+            return valid
+
+        def read_value(action: str) -> dict | str:
+            return success(run_cli(project, "config", "get", key, "--json"), action)
+
+        saved = read_value("config get after valid Zod 3 write")
+        if isinstance(saved, str):
+            return saved
+        expected_value = {"text": "valid"}
+        if saved.get("value") != expected_value:
+            return "installed Zod 3 config get did not return the valid saved value"
+
+        invalid = run_cli(project, "config", "set", key, '{"text":"x"}', "--json")
+        try:
+            invalid_payload = decode_ux_error_result(read_ux_cli_result(invalid))
+        except (json.JSONDecodeError, ValueError) as error:
+            return f"invalid Zod 3 config set returned an invalid UX error: {error}"
+        if (invalid.returncode == 0 or not isinstance(invalid_payload, dict)
+                or invalid_payload.get("code") != "KB_PLUGIN_SETTINGS_INVALID"):
+            return "installed Zod 3 config set did not reject an invalid value with KB_PLUGIN_SETTINGS_INVALID"
+        after_invalid = read_value("config get after invalid Zod 3 write")
+        if isinstance(after_invalid, str):
+            return after_invalid
+        if after_invalid.get("value") != expected_value:
+            return "invalid installed Zod 3 write replaced the previous project setting"
+
+        started = time.monotonic()
+        stalled = run_cli(project, "config", "set", key, '{"text":"valid","stall":true}', "--json", timeout=20)
+        elapsed = time.monotonic() - started
+        try:
+            stalled_payload = decode_ux_error_result(read_ux_cli_result(stalled))
+        except (json.JSONDecodeError, ValueError) as error:
+            return f"stalled Zod 3 config set returned an invalid UX error: {error}"
+        if (stalled.returncode == 0 or not isinstance(stalled_payload, dict)
+                or stalled_payload.get("code") != "KB_PLUGIN_SETTINGS_INVALID"):
+            return "installed Zod 3 stalled validator did not return KB_PLUGIN_SETTINGS_INVALID"
+        cause = stalled_payload.get("cause")
+        if not isinstance(cause, str) or "timed out after 3000 ms" not in cause:
+            return "installed Zod 3 stalled config write did not report the validator worker timeout"
+        if elapsed >= 15:
+            return f"installed Zod 3 stalled validator exceeded its bounded lifetime ({elapsed:.1f}s)"
+        after_stall = read_value("config get after stalled Zod 3 write")
+        if isinstance(after_stall, str):
+            return after_stall
+        if after_stall.get("value") != expected_value:
+            return "stalled installed Zod 3 write replaced the previous project setting"
+        return None
+
 def _checks(mode: str, graph: FlowGraph | None = None):
     def project_data() -> dict:
         value = graph.state_value_if_passed("project-registered") if graph is not None else None
@@ -604,6 +707,8 @@ def _checks(mode: str, graph: FlowGraph | None = None):
         if body.get("status") not in {"healthy", "degraded"}:
             return "registered project runtime REST health payload has no recognized status"
         return None
+
+
     yield service_check("registered project runtime identity", "projects", project_runtime_identity,
                         cases=["PC-002.8", "S-124.11", "S-124.13"])
     def project_settings_check():
@@ -611,6 +716,9 @@ def _checks(mode: str, graph: FlowGraph | None = None):
     yield service_check("project plugin settings isolation and clean repositories", "projects",
                         project_settings_check,
                         cases=["S-204.1", "S-204.2", "S-204.8", "S-204.9", "S-204.10", "S-204.11"])
+    yield service_check("installed Zod 3 project settings validation", "projects",
+                        installed_zod3_project_settings,
+                        cases=["S-204.13"], runners=("service-local:explore", "service-secured:explore"))
     yield service_check("workflow discovery", "workflow", lambda: discover_workflow(pid(), auth_token()))
     yield service_check("workflow execution endpoint", "workflow", lambda: expect(
         project_service_path(pid(), "workflow", "workflows/e2e-hello/runs"), {200, 201, 202},
