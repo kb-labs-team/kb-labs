@@ -64,13 +64,14 @@ function transformRouteSchema(input: Parameters<typeof jsonSchemaTransform>[0]) 
   }
 
   const transformed = jsonSchemaTransform({ ...input, schema: zodSchema });
+  const convertedResponses = transformed.schema.response;
   return {
     ...transformed,
     schema: {
       ...schema,
       ...transformed.schema,
-      ...(response && Object.keys(zodResponses).length > 0
-        ? { response: { ...response, ...transformed.schema.response } }
+      ...(response && convertedResponses && typeof convertedResponses === 'object'
+        ? { response: { ...response, ...convertedResponses } }
         : {}),
     },
   };
