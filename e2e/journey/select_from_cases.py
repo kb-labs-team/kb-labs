@@ -976,12 +976,17 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
                                 if Dependency.parse(item).kind == "flow")
     selected_owners: dict[str, set[str]] = {}
     selected_claim_owners: dict[str, set[str]] = {}
+    selected_owners_by_runner: dict[str, dict[str, set[str]]] = {}
     for step_id in selected:
         for declaration in declarations_by_step.get(step_id, []):
             if declaration.get("kind", "step") == "step":
                 owner_name = str(declaration.get("name") or step_id)
                 selected_owners.setdefault(owner_name, set()).add(step_id)
                 selected_claim_owners.setdefault(owner_name, set()).add(step_id)
+                selectors = declaration.get("runnerSelectors", declaration.get("runners")
+                                            or owners_by_step.get(step_id, {}).keys())
+                for selector in runners.intersection(selectors):
+                    selected_owners_by_runner.setdefault(selector, {}).setdefault(owner_name, set()).add(step_id)
     for name in step_prerequisites:
         selected_owners.setdefault(name, set()).update(prerequisite_claims.get(name, set()))
     return {"runners": sorted(runners), "owners": {key: sorted(value) for key, value in sorted(owners.items())},
@@ -990,6 +995,9 @@ def resolve_selection(selected_steps: list[str], sources_by_step: dict[str, set[
             "stepSources": sorted(sources), "capabilities": sorted(capabilities),
             "composeProfiles": lanes_for_runners(runners),
             "selectedOwningSteps": {key: sorted(value) for key, value in sorted(selected_owners.items())},
+            "selectedOwningStepsByRunner": {
+                selector: {key: sorted(value) for key, value in sorted(owner_map.items())}
+                for selector, owner_map in sorted(selected_owners_by_runner.items())},
             "selectedClaimOwners": {key: sorted(value) for key, value in sorted(selected_claim_owners.items())}}
 
 
@@ -1125,8 +1133,9 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
                             owners_by_step.setdefault(step_id, {}).setdefault(selector, set()).add(step_id)
                         if declaration:
                             declarations = declarations_by_step.setdefault(step_id, [])
-                            if declaration not in declarations:
-                                declarations.append(declaration)
+                            scoped_declaration = {**declaration, "runnerSelectors": sorted(selectors)}
+                            if scoped_declaration not in declarations:
+                                declarations.append(scoped_declaration)
 
     # Browser evidence can help locate a runner, but cannot extend explicit Journey registrations.
     for step_id, declarations in declarations_by_step.items():
@@ -1183,6 +1192,7 @@ def selection_from_coverage(results: list[dict], requested: str, *, mode: str | 
                 return {"selection": sorted(set(tokens)), "steps": [], "owners": {}, "runners": [],
                         "prerequisiteSteps": [], "prerequisiteFlows": [], "stepSources": [],
                         "capabilities": [], "composeProfiles": [], "selectedOwningSteps": {},
+                        "selectedOwningStepsByRunner": {},
                         "selectedClaimOwners": {}}
     claim_sources = set().union(*sources_by_step.values()) if sources_by_step else set()
     declarations_by_name = validate_dependency_declarations(claim_sources, root)

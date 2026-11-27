@@ -219,14 +219,22 @@ journey_wait_container_publisher
 
 run_journey() {
   local runner_selector="$1" front_door="$2" scenario="$3" variant="$4"
-  local container_name="journey-runner-$$-${RUN_INDEX}" container_id container_exit
+  local container_name="journey-runner-$$-${RUN_INDEX}" container_id container_exit completion_owners
+  local runner_env=(
+    -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT
+    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES
+    -e KB_JOURNEY_SELECTED_STEPS -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS
+    -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES
+  )
+  if [[ -n "$selection_json" ]]; then
+    completion_owners="$(python3 -c 'import json,sys; plan=json.load(sys.stdin); print(json.dumps(plan["selectedOwningStepsByRunner"].get(sys.argv[1], {}), separators=(",",":")))' \
+      "$runner_selector" <<< "$selection_json")"
+    runner_env+=(-e "KB_JOURNEY_SELECTED_COMPLETION_OWNERS=$completion_owners")
+  fi
   RUN_INDEX=$((RUN_INDEX + 1))
   echo "==> $front_door / $scenario / $variant"
   if ! container_id=$(KB_JOURNEY_RUNNER_SELECTOR="$runner_selector" KB_JOURNEY_SCENARIO="$scenario" KB_JOURNEY_FRONT_DOOR="$front_door" KB_JOURNEY_VARIANT="$variant" \
-    journey_compose run -d --name "$container_name" -e KB_JOURNEY_SCENARIO -e KB_JOURNEY_FRONT_DOOR -e KB_JOURNEY_VARIANT \
-    -e KB_JOURNEY_RUNNER_SELECTOR -e KB_JOURNEY_SERVICE_PROFILE -e KB_JOURNEY_CASES -e KB_JOURNEY_SELECTED_STEPS \
-    -e KB_JOURNEY_PREREQUISITE_STEPS -e KB_JOURNEY_PREREQUISITE_FLOWS \
-    -e KB_JOURNEY_SELECTED_OWNING_STEPS -e KB_JOURNEY_SELECTED_CAPABILITIES runner < /dev/null); then
+    journey_compose run -d --name "$container_name" "${runner_env[@]}" runner < /dev/null); then
     status=1
     return
   fi
