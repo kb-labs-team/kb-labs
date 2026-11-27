@@ -142,21 +142,43 @@ class DockerCLI:
 def _verdict(container: dict, matching_events: list[dict]) -> str:
     state = container["state"]
     name = container["name"].lstrip("/") or container["id"][:12]
-    if state.get("OOMKilled") is True:
-        return f"{name} killed by OOM (exit {state.get('ExitCode')})"
+    event_actions = {event.get("Action") for event in matching_events}
+    event_exit_code = _event_exit_code(matching_events)
+    state_exit_code = state.get("ExitCode")
+    # A terminal event may be newer than an inspect that still says running
+    # with its initial exit code. Prefer that event code for stale snapshots.
+    exit_code = (event_exit_code if state.get("Running") is True and event_exit_code is not None
+                 else state_exit_code if state_exit_code is not None else event_exit_code)
+    if state.get("OOMKilled") is True or "oom" in event_actions:
+        return f"{name} killed by OOM (exit {exit_code})"
     kill = next((event for event in reversed(matching_events) if event.get("Action") == "kill"), None)
     if kill is not None:
         signal = kill.get("Actor", {}).get("Attributes", {}).get("signal") or state.get("Error") or "signal recorded"
         return f"{name} killed by {signal}"
-    code = state.get("ExitCode")
-    if code not in (None, 0):
+    if exit_code not in (None, 0):
         stderr_lines = container["stderr"].strip().splitlines()
         stdout_lines = container["stdout"].strip().splitlines()
         reason_text = state.get("Error") or (stderr_lines[-1] if stderr_lines
                                                else stdout_lines[-1] if stdout_lines
                                                else "no container error output")
-        return f"{name} exited {code} after reason {reason_text}"
-    return f"{name} exited {code if code is not None else 'unknown'}"
+        return f"{name} exited {exit_code} after reason {reason_text}"
+    if "die" in event_actions and exit_code is not None:
+        return f"{name} exited {exit_code} after terminal event"
+    if state.get("Running") is True:
+        return f"{name} still running"
+    return f"{name} exited {exit_code if exit_code is not None else 'unknown'}"
+
+
+def _event_exit_code(events: list[dict]) -> int | None:
+    for event in reversed(events):
+        if event.get("Action") != "die":
+            continue
+        value = event.get("Actor", {}).get("Attributes", {}).get("exitCode")
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def collect_container_outcomes(backend: DockerBackend, container_ids: list[str], report_dir: str | Path,
@@ -164,15 +186,35 @@ def collect_container_outcomes(backend: DockerBackend, container_ids: list[str],
     report = Path(report_dir)
     report.mkdir(parents=True, exist_ok=True)
     inspected_containers = [backend.inspect(container_id) for container_id in container_ids]
-    identities = {str(inspected.get("Id") or requested)
-                  for requested, inspected in zip(container_ids, inspected_containers)}
-    events = [event for event in backend.events(since)
-              if event.get("Actor", {}).get("ID") in identities or event.get("id") in identities]
     containers = []
     for container_id, inspected in zip(container_ids, inspected_containers):
         identity = str(inspected.get("Id") or container_id)
         logs = backend.logs(identity)
-        metrics = backend.metrics(identity)
+        try:
+            metrics = backend.metrics(identity)
+        except RuntimeError:
+            # A container can stop after the initial inspect and before the
+            # live cgroup probe runs. Preserve the last sampled metrics in the
+            # caller's JSONL (when available), but don't turn that teardown
+            # race into a failed capture. A probe failure for a live container
+            # remains an error so genuine Docker/metrics failures stay visible.
+            final_inspect = backend.inspect(identity)
+            if final_inspect.get("State", {}).get("Running") is not False:
+                raise
+            inspected = final_inspect
+            # The initial logs may predate the exit output. Read again after
+            # the final inspect so failure diagnostics and verdicts describe
+            # the same terminal state.
+            logs = backend.logs(identity)
+            metrics = {"memoryCurrentBytes": None, "memoryPeakBytes": None,
+                       "freeDiskBytes": None,
+                       "observedAt": datetime.now(timezone.utc).isoformat(),
+                       "unavailable": "container exited before final metrics sampling"}
+        else:
+            final_inspect = backend.inspect(identity)
+            if final_inspect.get("State", {}).get("Running") is False:
+                inspected = final_inspect
+                logs = backend.logs(identity)
         samples_path = report / "container-metrics.jsonl"
         if samples_path.is_file():
             sample_rows = jsonl.read_jsonl(samples_path)
@@ -190,20 +232,43 @@ def collect_container_outcomes(backend: DockerBackend, container_ids: list[str],
         state = inspected.get("State")
         if not isinstance(state, dict):
             raise ValueError(f"docker inspect omitted State for container {identity}")
+        name = str(inspected.get("Name") or identity)
+        item = {"id": identity, "name": name,
+                "state": {key: state.get(key) for key in
+                          ("Running", "ExitCode", "OOMKilled", "Error", "FinishedAt")},
+                "stdout": logs["stdout"], "stderr": logs["stderr"],
+                "events": [], "metrics": metrics}
+        containers.append(item)
+    identities = {container["id"] for container in containers}
+    events = [event for event in backend.events(since)
+              if event.get("Actor", {}).get("ID") in identities or event.get("id") in identities]
+    for item in containers:
+        identity = item["id"]
         matching_events = [event for event in events
                            if event.get("Actor", {}).get("ID") == identity
                            or event.get("id") == identity]
-        name = str(inspected.get("Name") or identity)
-        item = {"id": identity, "name": name,
-                "state": {key: state.get(key) for key in ("ExitCode", "OOMKilled", "Error", "FinishedAt")},
-                "stdout": logs["stdout"], "stderr": logs["stderr"],
-                "events": matching_events, "metrics": metrics}
+        if item["state"].get("Running") is True and any(
+                event.get("Action") in {"oom", "die"} for event in matching_events):
+            # A terminal event can arrive just after the last inspect. Refresh
+            # both state and logs before computing the verdict or failure log.
+            final_inspect = backend.inspect(identity)
+            final_state = final_inspect.get("State")
+            if isinstance(final_state, dict):
+                item["state"] = {key: final_state.get(key) for key in
+                                  ("Running", "ExitCode", "OOMKilled", "Error", "FinishedAt")}
+            final_logs = backend.logs(identity)
+            item["stdout"] = final_logs["stdout"]
+            item["stderr"] = final_logs["stderr"]
+        item["events"] = matching_events
         item["verdict"] = _verdict(item, matching_events)
-        if state.get("ExitCode") not in (None, 0):
-            log_path = write_failure_log(report, name, logs)
+        event_exit_code = _event_exit_code(matching_events)
+        if (item["state"].get("ExitCode") not in (None, 0)
+                or event_exit_code not in (None, 0)
+                or "oom" in {event.get("Action") for event in matching_events}):
+            logs = {"stdout": item["stdout"], "stderr": item["stderr"]}
+            log_path = write_failure_log(report, item["name"], logs)
             item["logPath"] = str(log_path.relative_to(report))
             item["verdict"] += f"; Next: cat {log_path}"
-        containers.append(item)
     record = {"capturedAt": datetime.now(timezone.utc).isoformat(), "events": events,
               "containers": containers}
     (report / "container-outcomes.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
@@ -224,16 +289,15 @@ def monitor_container(backend: DockerBackend, container_id: str, report_dir: str
     report.mkdir(parents=True, exist_ok=True)
     while True:
         inspected = backend.inspect(container_id)
-        if inspected.get("State", {}).get("Running") is not True:
+        if inspected.get("State", {}).get("Running") is False:
             return
         identity = str(inspected.get("Id") or container_id)
         try:
             metrics = backend.metrics(identity)
         except RuntimeError:
             # The container may exit between inspect() and the metrics exec.
-            # Its final state is captured by teardown; only keep the monitor
-            # failure when a follow-up inspect confirms it is still running.
-            if backend.inspect(container_id).get("State", {}).get("Running") is not True:
+            # Only treat a confirmed stopped state as an expected teardown race.
+            if backend.inspect(container_id).get("State", {}).get("Running") is False:
                 return
             raise
         sample = {"containerId": identity, "metrics": metrics}
