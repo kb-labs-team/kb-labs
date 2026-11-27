@@ -13,6 +13,7 @@ import { PhaseProgressBar, type PhaseStatus } from '../shared/PhaseProgressBar';
 import { usePipelineModel } from '../../hooks/use-pipeline-graph';
 import { StatusDot } from '../pipeline/shared';
 import { ArtifactViewer } from '../artifacts/ArtifactViewer';
+import { resolveArtifactData } from '../artifacts/resolveArtifactData';
 
 // Runtime fields not yet in the schema — accessed via type assertion
 interface StepRunRuntime extends StepRun {
@@ -419,26 +420,43 @@ export function DashboardView({ run, onApprove }: DashboardViewProps) {
           </UITypographyText>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {completedSteps.map((step) => (
-              <div
-                key={step.id}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '8px 12px',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border-primary)',
-                  borderRadius: 6,
-                }}
-              >
-                <UIIcon name="CheckCircleOutlined" style={{ color: 'var(--success)', fontSize: 13 }} />
-                <UITypographyText className="typo-body">
-                  {step.spec?.summary ?? step.name}
-                </UITypographyText>
-                {step.durationMs && (
-                  <UITypographyText className="typo-caption text-tertiary" style={{ marginLeft: 'auto' }}>
-                    {formatDurationMs(step.durationMs)}
+              <div key={step.id}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    padding: '8px 12px',
+                    background: 'var(--bg-secondary)',
+                    border: '1px solid var(--border-primary)',
+                    borderRadius: 6,
+                  }}
+                >
+                  <UIIcon name="CheckCircleOutlined" style={{ color: 'var(--success)', fontSize: 13 }} />
+                  <UITypographyText className="typo-body">
+                    {step.spec?.summary ?? step.name}
                   </UITypographyText>
+                  {step.durationMs && (
+                    <UITypographyText className="typo-caption text-tertiary" style={{ marginLeft: 'auto' }}>
+                      {formatDurationMs(step.durationMs)}
+                    </UITypographyText>
+                  )}
+                </div>
+                {step.spec?.artifacts && step.outputs && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '12px 12px 4px 33px' }}>
+                    {Object.entries(step.spec.artifacts).map(([name, artifact]) => {
+                      const data = resolveArtifactData(artifact.source, step.outputs, step.spec?.id);
+                      if (data == null) { return null; }
+                      return (
+                        <div key={name}>
+                          <UITypographyText className="typo-label text-secondary" style={{ display: 'block', marginBottom: 6 }}>
+                            {artifact.label}
+                          </UITypographyText>
+                          <ArtifactViewer type={artifact.type} data={data} label={artifact.label} />
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             ))}

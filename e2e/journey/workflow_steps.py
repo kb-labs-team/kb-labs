@@ -595,7 +595,9 @@ def _write_workflows(project: Path) -> None:
         "inputs:\n  message:\n    type: string\n    required: true\n"
         "on:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
         "      - name: Echo supplied message\n        id: echo-message\n        uses: builtin:shell\n"
-        "        with:\n          command: 'echo ${{ inputs.message }}'\n",
+        "        with:\n          command: 'echo ${{ inputs.message }} && echo \"::kb-output::{\\\"commit\\\":\\\"studio-artifact-visible\\\"}\"'\n"
+        "        artifacts:\n          commit:\n            type: json\n            source: steps.echo-message.outputs.commit\n            label: Studio artifact commit\n"
+        "          all-outputs:\n            type: json\n            source: steps.echo-message.outputs\n            label: Studio artifact outputs\n",
         encoding="utf-8",
     )
     (workflows / "journey-fails.yml").write_text(
