@@ -358,7 +358,7 @@ async function loadPluginSettingsDefaults(
     }
     const validator = await resolvePluginSettingsValidator(manifest.settings.schema, plugin.packageRoot, pluginId);
     const data = manifest.settings.defaults ?? {};
-    const validation = validator.validate(data);
+    const validation = await validator.validate(data);
     if (!validation.valid) {
       throw new PluginSettingsSchemaLoadError(
         `Plugin "${pluginId}" declares invalid settings defaults: ${validation.cause}`,

@@ -15,5 +15,5 @@ export const artifactContractSchema = z.object({
   example: artifactExampleSchema.optional()
 });
 
-export const artifactsContractMapSchema = z.record(artifactContractSchema);
+export const artifactsContractMapSchema = z.record(z.string(), artifactContractSchema);
 

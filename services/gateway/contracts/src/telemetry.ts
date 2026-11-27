@@ -20,9 +20,9 @@ export const TelemetryEventSchema = z.object({
   /** ISO 8601 timestamp. Defaults to server ingest time if omitted. */
   timestamp: z.string().datetime().optional(),
   /** Free-form event data. No schema enforced — products decide what to send. */
-  payload: z.record(z.unknown()).optional(),
+  payload: z.record(z.string(), z.unknown()).optional(),
   /** Flat key-value tags for filtering/aggregation (e.g., { env: "prod", region: "eu" }) */
-  tags: z.record(z.string()).optional(),
+  tags: z.record(z.string(), z.string()).optional(),
 });
 
 export type TelemetryEvent = z.infer<typeof TelemetryEventSchema>;

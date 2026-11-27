@@ -11,9 +11,7 @@ import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { ReadinessState } from '../routes/readiness';
 import '@fastify/type-provider-typebox';
 // @fastify/swagger augments FastifySchema with `tags`/`hide`/etc. Previously
-// pulled in transitively via fastify-type-provider-zod@6's peer dependency
-// on @fastify/swagger; 4.0.2 (pinned for Zod v3 compat, see #270) has no
-// such peer, so the augmentation needs an explicit side-effect import here.
+// supplied by @fastify/swagger, so keep the explicit side-effect import here.
 import '@fastify/swagger';
 import type { EventHub } from '../events/hub';
 import type { IContextLogger } from '@kb-labs/core-platform';

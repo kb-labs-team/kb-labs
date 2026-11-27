@@ -34,7 +34,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "openai": "^4.104.0"
+    "openai": "~6.10.0"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

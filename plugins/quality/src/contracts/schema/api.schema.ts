@@ -19,7 +19,7 @@ export const restRouteContractSchema = z.object({
 
 export const restApiContractSchema = z.object({
   basePath: z.string().min(1),
-  routes: z.record(restRouteContractSchema)
+  routes: z.record(z.string(), restRouteContractSchema)
 });
 
 export const apiContractSchema = z.object({

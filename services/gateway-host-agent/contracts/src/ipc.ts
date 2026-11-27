@@ -9,7 +9,7 @@ export const IpcExecuteRequestSchema = z.object({
   type: z.literal('execute'),
   requestId: z.string(),
   command: z.string(),
-  params: z.record(z.unknown()).optional(),
+  params: z.record(z.string(), z.unknown()).optional(),
   stream: z.boolean().default(false),
 });
 export type IpcExecuteRequest = z.infer<typeof IpcExecuteRequestSchema>;

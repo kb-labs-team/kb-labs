@@ -81,7 +81,7 @@
   "dependencies": {
     "execa": "^9.5.3",
     "glob": "^14.0.6",
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "vitest": "^4.1.11"
   },

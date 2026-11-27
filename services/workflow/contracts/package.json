@@ -47,7 +47,7 @@
     "@kb-labs/plugin-contracts": "workspace:*",
     "@kb-labs/sdk": "workspace:*",
     "@kb-labs/workflow-constants": "workspace:*",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

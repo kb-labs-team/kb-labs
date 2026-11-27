@@ -16,5 +16,5 @@ export const workflowContractSchema = z.object({
   steps: z.array(workflowStepSchema).optional()
 });
 
-export const workflowContractMapSchema = z.record(workflowContractSchema);
+export const workflowContractMapSchema = z.record(z.string(), workflowContractSchema);
 

@@ -37,7 +37,7 @@ overrides:
   react-dom: ^19.0.0
   '@types/react': ^19.0.0
   '@types/react-dom': ^19.0.0
-  zod: ^3.25.76
+  zod: ^4.6.7
   '@fastify/reply-from': '>=12.6.2'
   '@fastify/static': '^10.1.9'
   # Request body replacement via async validation result collision (fixed in 5.12.2).

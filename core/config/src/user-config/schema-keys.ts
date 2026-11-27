@@ -75,33 +75,26 @@ export function suggestKey(key: string, candidates: readonly string[], maxDistan
   return best?.name;
 }
 
-/** Strip optional / nullable / default / brand / effects / lazy wrappers. */
+/** Unwrap the schema used to validate the input before defaults or transforms. */
 export function unwrapSchema(schema: ZodTypeAny): ZodTypeAny {
   let current = schema;
   for (let guard = 0; guard < 16; guard++) {
     if (
       current instanceof z.ZodOptional ||
       current instanceof z.ZodNullable ||
-      current instanceof z.ZodReadonly
+      current instanceof z.ZodReadonly ||
+      current instanceof z.ZodDefault ||
+      current instanceof z.ZodPrefault ||
+      current instanceof z.ZodLazy
     ) {
       current = current.unwrap() as ZodTypeAny;
-    } else if (current instanceof z.ZodDefault) {
-      current = current.removeDefault() as ZodTypeAny;
-    } else if (current instanceof z.ZodEffects) {
-      current = current.innerType() as ZodTypeAny;
-    } else if (current instanceof z.ZodBranded) {
-      current = current.unwrap() as ZodTypeAny;
-    } else if (current instanceof z.ZodLazy) {
-      current = current.schema as ZodTypeAny;
+    } else if (current instanceof z.ZodPipe) {
+      current = current.in as ZodTypeAny;
     } else {
       return current;
     }
   }
   return current;
-}
-
-function isClosedObject(schema: z.ZodObject<z.ZodRawShape>): boolean {
-  return schema._def.unknownKeys === 'strict';
 }
 
 /** Candidates for descending into `segment` from `schema` (unions fan out). */
@@ -160,16 +153,13 @@ export function resolveKeyPath(schema: ZodTypeAny, path: readonly string[]): Key
           matched = true;
           break;
         }
-        const catchall = option._def.catchall as ZodTypeAny;
+        const catchall = option.def.catchall as ZodTypeAny | undefined;
         if (!(catchall instanceof z.ZodNever)) {
           next = catchall;
           matched = true;
-        } else if (!isClosedObject(option)) {
-          matched = true;
-          next = undefined;
         }
       } else if (option instanceof z.ZodRecord) {
-        next = option.valueSchema as ZodTypeAny;
+        next = option.valueType as ZodTypeAny;
         matched = true;
       } else if (option instanceof z.ZodArray) {
         if (/^\d+$/.test(segment)) {
@@ -222,17 +212,17 @@ export interface FlatIssue {
   hint?: string;
 }
 
-type InvalidEnumIssue = Extract<z.ZodIssue, { code: 'invalid_enum_value' }>;
+type InvalidEnumIssue = Extract<z.ZodIssue, { code: 'invalid_value' }>;
 type ZodEnumIssueHintResolver = (issue: InvalidEnumIssue) => string | undefined;
 
-const zodEnumIssueHintResolvers = new WeakMap<readonly (string | number)[], ZodEnumIssueHintResolver>();
+const zodEnumIssueHintResolvers = new Map<string, ZodEnumIssueHintResolver>();
 
 /** Attach structured user guidance to invalid values from this exact enum options tuple. */
 export function registerZodEnumIssueHint(
   options: readonly string[],
   resolveHint: ZodEnumIssueHintResolver,
 ): void {
-  zodEnumIssueHintResolvers.set(options, resolveHint);
+  zodEnumIssueHintResolvers.set(JSON.stringify(options), resolveHint);
 }
 
 /**
@@ -246,18 +236,16 @@ export function flattenZodIssues(error: z.ZodError): FlatIssue[] {
   const visit = (issues: readonly z.ZodIssue[]): void => {
     for (const issue of issues) {
       if (issue.code === 'invalid_union') {
-        const deeper = issue.unionErrors
-          .map((branch) => branch.issues)
-          .find((branchIssues) => branchIssues.every((i) => i.path.length > issue.path.length));
+        const deeper = issue.errors.find((branch) => branch.length > 0 && branch.every((i) => i.path.length > 0));
         if (deeper) {
-          visit(deeper);
+          visit(deeper.map((entry) => ({ ...entry, path: [...issue.path, ...entry.path] })));
           continue;
         }
       }
       const hint = issue.code === 'custom' && typeof issue.params?.hint === 'string'
         ? issue.params.hint
-        : issue.code === 'invalid_enum_value'
-          ? zodEnumIssueHintResolvers.get(issue.options)?.(issue)
+        : issue.code === 'invalid_value'
+          ? zodEnumIssueHintResolvers.get(JSON.stringify(issue.values))?.(issue)
           : undefined;
       out.push({ path: issue.path.join('.'), message: issue.message, ...(hint ? { hint } : {}) });
     }

@@ -57,14 +57,14 @@
     "@kb-labs/workflow-constants": "workspace:*",
     "fastify": "^5.12.1",
     "fastify-plugin": "^5.0.1",
-    "fastify-type-provider-zod": "^4.0.2",
+    "fastify-type-provider-zod": "^6.1.0",
     "pino": "^9.0.0",
     "pino-pretty": "^10.2.3",
     "prom-client": "^15.1.3",
     "ulid": "^2.3.0",
     "ws": "^8.20.1",
     "yaml": "^2.8.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

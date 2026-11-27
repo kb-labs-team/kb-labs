@@ -41,7 +41,7 @@
     "@kb-labs/shared-daemon": "workspace:*",
     "@kb-labs/shared-http": "workspace:*",
     "fastify": "^5.12.1",
-    "fastify-type-provider-zod": "^4.0.2"
+    "fastify-type-provider-zod": "^6.1.0"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

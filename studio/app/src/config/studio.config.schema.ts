@@ -12,7 +12,7 @@ import { z } from 'zod';
  * Data source mode schema
  */
 const DataSourceModeSchema = z.enum(['mock', 'http'], {
-  errorMap: () => ({ message: 'dataSourceMode must be either "mock" or "http"' }),
+  error: 'dataSourceMode must be either "mock" or "http"',
 });
 
 /**
@@ -35,7 +35,7 @@ const EventsSchema = z.object({
   registryUrl: z.string().url().or(z.string().startsWith('/')),
   retryDelays: z.array(z.number().int().positive()).min(1),
   token: z.string().optional(),
-  headers: z.record(z.string()).optional(),
+  headers: z.record(z.string(), z.string()).optional(),
 });
 
 /**

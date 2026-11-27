@@ -22,7 +22,7 @@ export type MatchedBy = z.infer<typeof MatchedBySchema>;
 export const AgentWarningSchema = z.object({
   code: z.string(),
   message: z.string(),
-  details: z.record(z.unknown()).optional(),
+  details: z.record(z.string(), z.unknown()).optional(),
 });
 export type AgentWarning = z.infer<typeof AgentWarningSchema>;
 
