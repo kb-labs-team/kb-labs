@@ -47,6 +47,14 @@ else
   fail "default values render" "helm template failed unexpectedly"
 fi
 
+# ── state-daemon replacement stops the old writer before starting the new ─
+OUT="$(helm template t . --set image.tag=1.0.0 --set internalSecretSecretName=internal-secret --show-only templates/deployment.yaml 2>&1)"
+STATE_DEPLOYMENT="$(printf '%s\n' "$OUT" | awk '/name: t-state-daemon/{capture=1} capture && /^---$/{exit} capture{print}')"
+case "$STATE_DEPLOYMENT" in
+  *"strategy:"*"type: Recreate"*) pass "state-daemon rollout stops the old writer before replacement" ;;
+  *) fail "state-daemon rollout stops the old writer before replacement" "state-daemon Deployment does not use Recreate strategy" ;;
+esac
+
 # ── image.tag is required ───────────────────────────────────────────────
 OUT="$(helm template t . --set internalSecretSecretName=internal-secret 2>&1)" || true
 case "$OUT" in

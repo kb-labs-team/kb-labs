@@ -23,6 +23,8 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
+    "@kb-labs/adapters-service-transport-http": "workspace:*",
+    "@kb-labs/adapters-state-broker": "workspace:*",
     "@fastify/cookie": "^11.0.1",
     "@fastify/cors": "^10.0.1",
     "@fastify/http-proxy": "^11.4.4",
@@ -52,7 +54,6 @@
     "ws": "^8.20.1"
   },
   "devDependencies": {
-    "@kb-labs/adapters-service-transport-http": "workspace:*",
     "@kb-labs/devkit": "workspace:*",
     "@kb-labs/shared-testing-e2e": "workspace:*",
     "@types/bcryptjs": "^2.4.6",

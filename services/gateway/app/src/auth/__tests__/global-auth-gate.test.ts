@@ -401,11 +401,12 @@ describe('Gateway global auth gate', () => {
     expect(isPlatformPublicRoute('GET', '/health/auth')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/health/identity')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages')).toBe(true);
-    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg')).toBe(false);
     expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/resolve')).toBe(true);
     expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages/acme/pkg/1.2.3/tarball')).toBe(true);
-    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/resolve')).toBe(true);
-    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg/1.2.3/tarball')).toBe(true);
+    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/resolve')).toBe(false);
+    expect(isPlatformPublicRoute('GET', '/api/v1/projects/prj_demo/marketplace-registry/api/v1/packages/acme/pkg/1.2.3/tarball')).toBe(false);
+    expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/resolve/')).toBe(true);
     expect(isPlatformPublicRoute('POST', '/api/v1/marketplace-registry/api/v1/resolve')).toBe(false);
     expect(isPlatformPublicRoute('GET', '/api/v1/marketplace-registry/api/v1/packages/acme/pkg/versions')).toBe(false);
     expect(isPlatformPublicRoute('GET', '/api/v1/plugins/custom/health')).toBe(false);

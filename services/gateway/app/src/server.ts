@@ -9,6 +9,7 @@ import {
   logRequestCompleted,
   createServiceReadyResponse,
   registerOpenAPI,
+  redactHttpUrl,
 } from "@kb-labs/shared-http";
 import {
   logDiagnosticEvent,
@@ -269,7 +270,7 @@ export async function createServer(
       requestId,
       traceId,
       method: request.method,
-      url: request.url,
+      url: redactHttpUrl(request.url),
       operation: "http.request",
     });
     request.kbLogger.debug("HTTP request started");

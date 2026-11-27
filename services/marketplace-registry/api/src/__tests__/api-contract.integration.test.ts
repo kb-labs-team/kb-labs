@@ -183,6 +183,7 @@ describe('GET /api/v1/packages/:handle/:name (public)', () => {
   it('passes the optional forwarded namespace to canAccess for a private package', async () => {
     const app = Fastify({ logger: false });
     const registry = makeMockRegistry();
+    app.setErrorHandler((err: any, _req, reply) => reply.code(err.code === 'VERSION_NOT_FOUND' ? 404 : 500).send({ code: err.code }));
     const entry = {
       name: 'private-pkg', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
       visibility: 'private' as const, trust: 'untrusted' as const, allowlist: [], versions: [],
@@ -252,6 +253,7 @@ describe('public Registry resolution and tarball access', () => {
 
   it('hides an anonymous private tarball as VERSION_NOT_FOUND before reading or counting it', async () => {
     const app = Fastify({ logger: false });
+    app.setErrorHandler((err: any, _req, reply) => reply.code(err.code === 'VERSION_NOT_FOUND' ? 404 : 500).send({ code: err.code }));
     const registry = makeMockRegistry();
     registry.getEntry.mockResolvedValue({
       name: 'my-plugin', authorHandle: 'kirill', authorNamespaceId: 'ns-kirill',
@@ -260,6 +262,7 @@ describe('public Registry resolution and tarball access', () => {
       createdAt: '', updatedAt: '',
     });
     registry.canAccess.mockReturnValue(false);
+    registry.getTarball.mockRejectedValue(Object.assign(new Error('Version 1.0.0 not found'), { code: 'VERSION_NOT_FOUND' }));
     app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
     registerPackageRoutes(app, registry as any);
 
@@ -268,8 +271,7 @@ describe('public Registry resolution and tarball access', () => {
     });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
-    expect(registry.canAccess).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'private' }), null, null, '1.0.0');
-    expect(registry.getTarball).not.toHaveBeenCalled();
+    expect(registry.getTarball).toHaveBeenCalledWith('kirill', 'my-plugin', '1.0.0', { namespaceId: null, shareToken: null });
     expect(registry.incrementInstalls).not.toHaveBeenCalled();
     await app.close();
   });
@@ -285,6 +287,9 @@ describe('public Registry resolution and tarball access', () => {
       meta: { name: 'my-plugin', version: '1.0.0', identity: '@kirill/my-plugin' }, createdAt: '', updatedAt: '',
     });
     registry.canAccess.mockReturnValue(false);
+    registry.getTarball.mockImplementation(async (_handle, _name, version) => {
+      throw Object.assign(new Error(`Version ${version} not found`), { code: 'VERSION_NOT_FOUND' });
+    });
     const app = await buildApp(undefined, registry);
     const knownPrivate = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/1.0.0/tarball', headers: gatewayHeaders() });
     const hiddenVersion = await app.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/9.9.9/tarball', headers: gatewayHeaders() });
@@ -295,10 +300,13 @@ describe('public Registry resolution and tarball access', () => {
     expect(hiddenVersion.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
     expect(absentVersion.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
     expect(knownPrivate.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
-    expect(registry.getTarball).not.toHaveBeenCalled();
+    expect(registry.getTarball).toHaveBeenCalledWith('kirill', 'my-plugin', '1.0.0', { namespaceId: null, shareToken: null });
     await app.close();
 
     const publicRegistry = makeMockRegistry();
+    publicRegistry.getTarball.mockImplementation(async (_handle, _name, version) => {
+      throw Object.assign(new Error(`Version ${version} not found`), { code: 'VERSION_NOT_FOUND' });
+    });
     const publicApp = await buildApp(undefined, publicRegistry);
     const publicUnknown = await publicApp.inject({
       method: 'GET', url: '/api/v1/packages/kirill/my-plugin/9.9.9/tarball', headers: gatewayHeaders(),
@@ -313,6 +321,7 @@ describe('public Registry resolution and tarball access', () => {
     await publicApp.close();
 
     const ownerRegistry = makeMockRegistry();
+    ownerRegistry.getTarball.mockRejectedValue(Object.assign(new Error('Version 9.9.9 not found'), { code: 'VERSION_NOT_FOUND' }));
     const ownerApp = await buildApp({ namespaceId: 'ns-kirill' }, ownerRegistry);
     const ownerUnknown = await ownerApp.inject({ method: 'GET', url: '/api/v1/packages/kirill/my-plugin/9.9.9/tarball' });
     expect(ownerUnknown.statusCode).toBe(404);
@@ -323,6 +332,7 @@ describe('public Registry resolution and tarball access', () => {
   // case: S-268.21
   it('checks visibility of the requested tarball version before reading or counting it', async () => {
     const app = Fastify({ logger: false });
+    app.setErrorHandler((err: any, _req, reply) => reply.code(err.code === 'VERSION_NOT_FOUND' ? 404 : 500).send({ code: err.code }));
     const registry = makeMockRegistry();
     const baseEntry = await registry.getEntry('kirill', 'my-plugin');
     registry.getEntry.mockResolvedValue({
@@ -334,6 +344,10 @@ describe('public Registry resolution and tarball access', () => {
       ],
     });
     registry.canAccess.mockImplementation((_entry, _namespace, _token, version) => version !== '1.0.0');
+    registry.getTarball.mockImplementation(async (_handle, _name, version) => {
+      if (version !== '2.0.0') { throw Object.assign(new Error(`Version ${version} not found`), { code: 'VERSION_NOT_FOUND' }); }
+      return { tarball: Buffer.from('fake'), signature: undefined };
+    });
     app.addHook('onRequest', createRegistryAuthMiddleware(REGISTRY_INTERNAL_SECRET));
     registerPackageRoutes(app, registry as any);
 
@@ -342,8 +356,7 @@ describe('public Registry resolution and tarball access', () => {
     });
     expect(privateDownload.statusCode).toBe(404);
     expect(privateDownload.json()).toMatchObject({ code: 'VERSION_NOT_FOUND' });
-    expect(registry.canAccess).toHaveBeenCalledWith(expect.objectContaining({ visibility: 'public' }), null, null, '1.0.0');
-    expect(registry.getTarball).not.toHaveBeenCalled();
+    expect(registry.getTarball).toHaveBeenCalledWith('kirill', 'my-plugin', '1.0.0', { namespaceId: null, shareToken: null });
     expect(registry.incrementInstalls).not.toHaveBeenCalled();
     await app.close();
   });
