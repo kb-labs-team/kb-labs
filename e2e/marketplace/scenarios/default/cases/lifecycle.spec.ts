@@ -112,7 +112,7 @@ test('ML-04: POST /packages/update — responds without error', async ({ request
   })
   expect(update.status(), 'marketplace update capability is missing').not.toBe(404)
   // 200 = updated, 204 = already at latest, both are valid
-  expect([200, 204]).toContain(update.status())
+  expect([200, 204], `marketplace update failed: ${await update.text()}`).toContain(update.status())
 })
 
 // ML-05: uninstall package → no longer in listing

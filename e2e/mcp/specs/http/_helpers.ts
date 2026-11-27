@@ -19,6 +19,12 @@ export interface McpCallResult {
   isError?: boolean
 }
 
+// Project runtime MCP is mounted at the `/mcp` project route itself. The
+// standalone daemon keeps its historical `/api/v1/mcp` endpoint.
+const MCP_ENDPOINT = process.env.MCP_URL?.includes('/api/v1/projects/')
+  ? MCP
+  : `${MCP}/api/v1/mcp`
+
 /**
  * POST a JSON-RPC request to the MCP endpoint. The Streamable HTTP transport
  * answers a single non-streaming request with an SSE-framed body (or JSON),
@@ -29,7 +35,7 @@ export async function postMcp<T = unknown>(
   body: JsonRpcRequest,
   token?: string,
 ): Promise<{ status: number; result?: T; error?: unknown }> {
-  const res = await request.post(`${MCP}/api/v1/mcp`, {
+  const res = await request.post(MCP_ENDPOINT, {
     headers: {
       'Content-Type': 'application/json',
       // The SDK requires the client to accept both JSON and the SSE stream.

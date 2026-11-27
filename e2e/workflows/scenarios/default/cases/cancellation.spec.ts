@@ -1,5 +1,5 @@
+import { collectAuthenticatedSseEvents } from '../sse-auth.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { collectSseEvents } from '@kb-labs/shared-testing-e2e';
 import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -80,12 +80,13 @@ test('WC-03: SSE stream terminates after run is cancelled', async ({ request }) 
   await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/cancel`, { data: {} });
 
   // SSE stream must terminate (run is terminal = cancelled or already finished)
-  const events = await collectSseEvents(
+  const events = await collectAuthenticatedSseEvents(
+    request,
     `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`,
     { timeoutMs: 15_000 },
   );
 
-  const types = events.map((e) => e.event);
+  const types = events.map((e) => (e.json as { type?: string } | undefined)?.type ?? e.event);
   const hasTerminal = types.some((t) =>
     t === 'run.finished' || t === 'run.failed' || t === 'run.cancelled',
   );

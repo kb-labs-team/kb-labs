@@ -59,6 +59,9 @@ set -- \
   --adapters "$ADAPTERS" \
   --registry http://verdaccio:4873
 if [ -n "${KB_E2E_REGISTRY_UPSTREAM:-}" ]; then
+  KB_E2E_REGISTRY_PUBLIC_KEY=$(node -e 'process.stdout.write(Buffer.from(process.env.KB_E2E_REGISTRY_PUBLIC_KEY_B64 || "", "base64").toString("utf8"))')
+  [ -n "$KB_E2E_REGISTRY_PUBLIC_KEY" ] || { echo "ERROR: Registry signing public key is missing" >&2; exit 1; }
+  export KB_E2E_REGISTRY_PUBLIC_KEY
   kb-create plan --json "$@" > /tmp/kb-e2e-registry-plan.json
   node /registry-install-request.mjs /tmp/kb-e2e-registry-plan.json /tmp/kb-e2e-registry-request.json "$KB_E2E_REGISTRY_UPSTREAM"
   kb-create apply --index /release-index.json --input /tmp/kb-e2e-registry-request.json \

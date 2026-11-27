@@ -1,4 +1,4 @@
-import type { APIRequestContext } from '@playwright/test'
+import { request as playwrightRequest, type APIRequestContext } from '@playwright/test'
 import { GATEWAY } from './urls.js'
 
 const E2E_ADMIN_EMAIL = process.env['GATEWAY_BOOTSTRAP_ADMIN_EMAIL'] ?? 'admin@e2e.test'
@@ -44,16 +44,23 @@ export async function registerAgent(
   request: APIRequestContext,
   name = 'e2e-test-agent',
 ): Promise<AuthCredentials> {
-  await loginAdmin(request)
+  // Keep the admin cookie in a short-lived context. A shared Playwright
+  // request fixture would send that cookie alongside later machine Bearer
+  // tokens, and Gateway correctly gives the user cookie precedence.
+  const adminRequest = await playwrightRequest.newContext()
+  try {
+    await loginAdmin(adminRequest)
 
-  // Register the machine agent using the admin session cookies (sent automatically).
-  const regRes = await request.post(`${GATEWAY}/auth/register`, {
-    data: { name, capabilities: [] },
-  })
-  if (!regRes.ok()) {
-    throw new Error(`register failed: ${regRes.status()} ${await regRes.text()}`)
+    const regRes = await adminRequest.post(`${GATEWAY}/auth/register`, {
+      data: { name, capabilities: [] },
+    })
+    if (!regRes.ok()) {
+      throw new Error(`register failed: ${regRes.status()} ${await regRes.text()}`)
+    }
+    return unwrapGatewaySuccess<AuthCredentials>(await regRes.json())
+  } finally {
+    await adminRequest.dispose()
   }
-  return unwrapGatewaySuccess<AuthCredentials>(await regRes.json())
 }
 
 /** Exchange credentials for a JWT access token. */

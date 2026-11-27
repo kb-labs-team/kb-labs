@@ -1,5 +1,6 @@
+import { collectAuthenticatedSseEvents } from '../../sse-auth.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { collectSseEvents, assertNoSseDuplicates } from '@kb-labs/shared-testing-e2e';
+import { assertNoSseDuplicates } from '@kb-labs/shared-testing-e2e';
 import type { SseEvent } from '@kb-labs/shared-testing-e2e';
 import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
@@ -29,7 +30,7 @@ async function startRun(request: APIRequestContext): Promise<string> {
 
 test('SE-B01: burst — all events received in order without loss', async ({ request }) => {
   const runId = await startRun(request);
-  const events = await collectSseEvents(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`, {
+  const events = await collectAuthenticatedSseEvents(request, `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`, {
     timeoutMs: 30_000,
   });
 
@@ -43,7 +44,7 @@ test('SE-B01: burst — all events received in order without loss', async ({ req
 
 test('SE-B02: no duplicate events even after burst', async ({ request }) => {
   const runId = await startRun(request);
-  const events = await collectSseEvents(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`, {
+  const events = await collectAuthenticatedSseEvents(request, `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`, {
     timeoutMs: 30_000,
   });
 
@@ -54,7 +55,7 @@ test('SE-B03: stream does not hang after terminal event', async ({ request }) =>
   const runId = await startRun(request);
   const start = Date.now();
 
-  const events = await collectSseEvents(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`, {
+  const events = await collectAuthenticatedSseEvents(request, `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`, {
     timeoutMs: 30_000,
   });
 

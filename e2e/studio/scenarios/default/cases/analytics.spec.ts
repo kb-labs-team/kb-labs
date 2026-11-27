@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 import { errorCatalog } from '@kb-labs/core-platform/error-envelope'
+import { openInstalledStudio } from '../../installed-studio'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const analyticsStatsUnsupported = errorCatalog.codes.find(({ code }) => code === 'KB_ANALYTICS_STATS_UNSUPPORTED')
@@ -29,7 +30,7 @@ test('Analytics stats unsupported shows catalog guidance @S-121.8', async ({ pag
 })
 
 test('Analytics overview excludes raw adapter telemetry and retired pages stay absent @S-121.1 @S-121.7', async ({ page }) => {
-  await page.goto(`${GATEWAY}/analytics/overview`)
+  await openInstalledStudio(page, '/analytics/overview')
   await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
   await expect(page.getByText('LLM Usage', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Embeddings', { exact: true }).first()).toBeVisible()

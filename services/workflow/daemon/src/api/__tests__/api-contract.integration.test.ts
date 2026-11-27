@@ -247,6 +247,25 @@ describe('Workflow API Contract Integration', () => {
 
   describe('Runs', () => {
     // case: S-027.2
+    it('GET /api/v1/runs/:runId/events returns a typed 404 for a missing run', async () => {
+      engine.getRun.mockResolvedValueOnce(null as never);
+      const unsubscribe = vi.fn();
+      engine.subscribeToRunEvents.mockReturnValueOnce(unsubscribe);
+      const response = await app.inject({ method: 'GET', url: '/api/v1/runs/missing/events' });
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND' } });
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
+    it('GET /api/v1/runs/:runId/events releases the subscription when reading a run fails', async () => {
+      engine.getRun.mockRejectedValueOnce(new Error('snapshot read failed'));
+      const unsubscribe = vi.fn();
+      engine.subscribeToRunEvents.mockReturnValueOnce(unsubscribe);
+      const response = await app.inject({ method: 'GET', url: '/api/v1/runs/r1/events' });
+      expect(response.statusCode).toBe(500);
+      expect(unsubscribe).toHaveBeenCalledOnce();
+    });
+
     it('GET /api/v1/runs/:runId/events omits transitions already covered by its snapshot watermark', async () => {
       const listeners: Array<(event: { type: string; runId: string; sequence: number; jobId?: string; stepId?: string; payload?: unknown }) => void> = [];
       engine.subscribeToRunEvents.mockImplementation((_runId, listener) => {

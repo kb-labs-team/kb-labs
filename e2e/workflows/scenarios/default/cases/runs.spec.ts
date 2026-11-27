@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes'
 
 const projectId = process.env.KB_PROJECT_ID

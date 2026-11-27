@@ -47,6 +47,7 @@ const clientService = platformSuite ? `  platform:
       - ${JSON.stringify(gatewaySecretPath)}
     environment:
       KB_E2E_REGISTRY_UPSTREAM: ${JSON.stringify(registryUrl)}
+      KB_E2E_REGISTRY_PUBLIC_KEY_B64: ${JSON.stringify(Buffer.from(publicPem).toString('base64'))}
     depends_on:
       marketplace-registry:
         condition: service_started

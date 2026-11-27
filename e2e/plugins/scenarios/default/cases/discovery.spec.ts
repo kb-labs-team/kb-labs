@@ -1,11 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY, REST } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
+import { projectRest } from '@kb-labs/e2e-shared/project-rest.js'
 
 test('P-01: platform plugin registry contains expected plugins after boot', async ({ request }) => {
-  // Tests plugin discovery via REST (no auth required).
+  // Verify discovery after installing the fixtures into the registered project.
   // Gateway auth + /hosts list tested separately in gateway/auth.spec.ts.
-  const res = await request.get(`${REST}${REST_API_PREFIX}/plugins/registry`)
+  const res = await (await projectRest(request)).get('/plugins/registry')
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Response: { ok: true, data: { manifests: [{ pluginId, manifest: { id, name }, ... }] } }
@@ -19,7 +20,7 @@ test('P-01: platform plugin registry contains expected plugins after boot', asyn
 })
 
 test('P-02: rest-api /api/v1/routes lists registered routes', async ({ request }) => {
-  const res = await request.get(`${REST}${REST_API_PREFIX}/routes`)
+  const res = await (await projectRest(request)).get('/routes')
   expect(res.status()).toBe(200)
 })
 
@@ -44,7 +45,7 @@ test('P-03b: unknown gateway route returns 404 (not 500) with valid auth', async
 test('P-04: plugin commands appear in registered routes', async ({ request }) => {
   // Verifies that plugin infrastructure is wired into the platform by checking
   // the REST API routes listing — response is { schema, count, routes: [{url, method}], raw }
-  const res = await request.get(`${REST}${REST_API_PREFIX}/routes`)
+  const res = await (await projectRest(request)).get('/routes')
   expect(res.status()).toBe(200)
   const body = await res.json()
   // Response shape: { schema: 'kb.routes/1', count, routes: [{url, method}] }
@@ -58,7 +59,7 @@ test('P-04: plugin commands appear in registered routes', async ({ request }) =>
 })
 
 test('P-05: plugin manifest loads without errors', async ({ request }) => {
-  const res = await request.get(`${REST}${REST_API_PREFIX}/plugins/registry`)
+  const res = await (await projectRest(request)).get('/plugins/registry')
   expect(res.status()).toBe(200)
   const body = await res.json()
   const manifests: {

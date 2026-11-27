@@ -1,5 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { GATEWAY, WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
+import { connectToInstalledStudio, openInstalledStudio } from '../../installed-studio';
 
 const journeyEnabled = process.env.KB_STUDIO_FIRST_TIER_JOURNEY === '1';
 const accessMode = process.env.KB_ACCESS_MODE ?? 'local';
@@ -43,21 +44,10 @@ async function studioIsUp(
   }
 }
 
-async function workflowIsUp(
-  request: APIRequestContext,
-): Promise<boolean> {
-  try {
-    const res = await request.get(`${WORKFLOW}/health`, { timeout: 3000 });
-    return res.status() === 200;
-  } catch {
-    return false;
-  }
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 test('SW-01: built-in Studio serves the workflow runs page', async ({ page }) => {
-  await page.goto(`${GATEWAY}/p/workflows/runs`);
+  await openInstalledStudio(page, '/p/workflows/runs');
   await expect(page.getByRole('heading', { name: 'Workflow Runs', exact: true })).toBeVisible();
 });
 
@@ -84,10 +74,8 @@ test('SW-03: Studio SPA shell responds for /workflows/runs route', async ({ requ
 });
 
 test('SW-04: Workflow daemon API — /api/v1/runs used by runs list page', async ({ request }) => {
-  const up = await workflowIsUp(request);
-  expect(up, 'Workflow daemon is required by this journey').toBe(true);
-
-  const res = await request.get(`${WORKFLOW}/api/v1/runs`);
+  await connectToInstalledStudio(request);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const runs = body.data?.runs ?? body.data ?? body.runs;
@@ -95,10 +83,8 @@ test('SW-04: Workflow daemon API — /api/v1/runs used by runs list page', async
 });
 
 test('SW-05: Workflow daemon API — /api/v1/workflows used by definitions page', async ({ request }) => {
-  const up = await workflowIsUp(request);
-  expect(up, 'Workflow daemon is required by this journey').toBe(true);
-
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`);
+  await connectToInstalledStudio(request);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const workflows = body.data?.workflows ?? body.data ?? body.workflows;
@@ -106,13 +92,11 @@ test('SW-05: Workflow daemon API — /api/v1/workflows used by definitions page'
 });
 
 test('SW-06: Workflow daemon API — /api/v1/cron used by cron jobs page', async ({ request }) => {
-  const up = await workflowIsUp(request);
-  expect(up, 'Workflow daemon is required by this journey').toBe(true);
-
-  const res = await request.get(`${WORKFLOW}/api/v1/crons`);
+  await connectToInstalledStudio(request);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/crons`);
   expect(res.status()).toBe(200);
   const body = await res.json();
-  const crons = body.data?.crons ?? body.crons ?? body.data ?? [];
+  const crons = body.data?.crons ?? body.crons ?? body.data;
   expect(Array.isArray(crons)).toBe(true);
 });
 

@@ -3,7 +3,7 @@
  * Scenarios: 20, 21, 22, 23, 24
  */
 
-import { test, expect } from '@playwright/test'
+import { test, expect, type ConsoleMessage } from '@playwright/test'
 import {
   loginAsAdmin,
   loginAs,
@@ -23,8 +23,32 @@ async function fillChangePasswordForm(
   newPwd: string,
   confirm: string,
 ): Promise<void> {
-  await page.goto('/account/password')
-  await page.waitForSelector('input[id="pwd-current"]')
+  const routeFailures: { code?: string; correlationId?: string; stack?: string }[] = []
+  const captureFailure = (message: ConsoleMessage) => {
+    if (message.type() !== 'debug') return
+    const line = message.text()
+    if (!line.startsWith('{') || !line.includes('"category":"studio:error-boundary"')) return
+    const { code, correlationId, stack } = JSON.parse(line) as typeof routeFailures[number]
+    const stackFrames = stack?.split('\n').slice(1).filter(frame => /^\s*at /.test(frame))
+    const errorType = stack?.match(/^\w*Error\b/)?.[0]
+    const reactCode = stack?.match(/Minified React error #\d+/)?.[0]
+    const safeStack = [errorType, reactCode, ...(stackFrames ?? [])].filter(Boolean).join('\n')
+      .replace(/\?[^\s)]*/g, '[redacted]')
+    routeFailures.push({ code, correlationId, stack: safeStack })
+  }
+  page.on('console', captureFailure)
+  try {
+    await page.goto('/account/password')
+    await page.waitForSelector('input[id="pwd-current"]')
+  } catch (error) {
+    if (routeFailures.length) await test.info().attach('studio-route-failures', {
+      body: JSON.stringify(routeFailures, null, 2),
+      contentType: 'application/json',
+    })
+    throw error
+  } finally {
+    page.off('console', captureFailure)
+  }
   await page.fill('input[id="pwd-current"]', current)
   await page.fill('input[id="pwd-new"]', newPwd)
   await page.fill('input[id="pwd-confirm"]', confirm)

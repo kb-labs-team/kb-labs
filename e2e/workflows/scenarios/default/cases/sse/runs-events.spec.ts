@@ -1,7 +1,6 @@
+import { collectAuthenticatedSseEvents, expectAuthenticatedSseTerminates } from '../../sse-auth.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import {
-  collectSseEvents,
-  expectSseTerminates,
   assertNoSseDuplicates,
 } from '@kb-labs/shared-testing-e2e';
 import type { SseEvent } from '@kb-labs/shared-testing-e2e';
@@ -54,7 +53,7 @@ function eventsUrl(runId: string): string {
 test('SE-01: run.snapshot arrives first, terminal event closes stream', async ({ request }) => {
   const runId = await startRun(request);
   // Collect until stream closes naturally (terminal event triggers cleanup + raw.end())
-  const events = await collectSseEvents(eventsUrl(runId), { timeoutMs: 30_000 });
+  const events = await collectAuthenticatedSseEvents(request, eventsUrl(runId), { timeoutMs: 30_000 });
 
   expect(events.length).toBeGreaterThan(0);
   // First event must always be the snapshot
@@ -65,7 +64,7 @@ test('SE-01: run.snapshot arrives first, terminal event closes stream', async ({
 
 test('SE-02: no duplicate events in the stream', async ({ request }) => {
   const runId = await startRun(request);
-  const events = await collectSseEvents(eventsUrl(runId), { timeoutMs: 30_000 });
+  const events = await collectAuthenticatedSseEvents(request, eventsUrl(runId), { timeoutMs: 30_000 });
   assertNoSseDuplicates(events);
 });
 
@@ -79,17 +78,18 @@ test('SE-03: already-terminal run closes stream immediately (< 3s)', async ({ re
   ).toMatch(/success|completed|failed|cancelled/);
 
   // Reconnect — terminal run must close the new SSE connection quickly
-  await expectSseTerminates(eventsUrl(runId), { timeoutMs: 3_000 });
+  await expectAuthenticatedSseTerminates(request, eventsUrl(runId), { timeoutMs: 3_000 });
 });
 
 test('SE-04: invalid runId returns 404, not an SSE stream', async ({ request }) => {
   const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/nonexistent-run-id-xyz/events`);
   expect(res.status()).toBe(404);
+  expect((await res.json()).error.code).toBe('KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND');
 });
 
 test('SE-06: log.appended events include stepName in payload', async ({ request }) => {
   const runId = await startRun(request);
-  const events = await collectSseEvents(eventsUrl(runId), { timeoutMs: 30_000 });
+  const events = await collectAuthenticatedSseEvents(request, eventsUrl(runId), { timeoutMs: 30_000 });
 
   const logEvents = events.filter((e) => eventType(e) === 'log.appended');
 
@@ -109,8 +109,8 @@ test('SE-05: multiple simultaneous subscribers receive same events', async ({ re
   const url = eventsUrl(runId);
 
   const [eventsA, eventsB] = await Promise.all([
-    collectSseEvents(url, { timeoutMs: 30_000 }),
-    collectSseEvents(url, { timeoutMs: 30_000 }),
+    collectAuthenticatedSseEvents(request, url, { timeoutMs: 30_000 }),
+    collectAuthenticatedSseEvents(request, url, { timeoutMs: 30_000 }),
   ]);
 
   expect(eventsA.length).toBeGreaterThan(0);

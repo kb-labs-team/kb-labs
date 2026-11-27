@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
-import { registerAgent, issueToken } from '@kb-labs/e2e-shared/auth.js'
+import { registerAgent, issueToken, unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 
 async function registerHostForAgent(
   request: APIRequestContext,
@@ -28,7 +28,7 @@ test('GW-H-01: POST /hosts/register returns hostId and machineToken', async ({ r
     data: { name: 'e2e-host-reg', namespaceId, capabilities: [], workspacePaths: [] },
   })
   expect([200, 201]).toContain(res.status())
-  const body = await res.json()
+  const body = unwrapGatewaySuccess<{ hosts?: unknown[] }>(await res.json())
   const hostId: string = body.hostId ?? body.data?.hostId ?? body.id
   const machineToken: string = body.machineToken ?? body.data?.machineToken ?? body.token
   expect(hostId).toBeTruthy()
@@ -43,7 +43,7 @@ test('GW-H-02: GET /hosts with token returns array', async ({ request }) => {
   })
   expect(res.status()).toBe(200)
   const body = await res.json()
-  const list = body.data ?? body.hosts ?? body
+  const list = body.hosts ?? body
   expect(Array.isArray(list)).toBe(true)
 })
 

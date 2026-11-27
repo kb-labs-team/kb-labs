@@ -1,7 +1,6 @@
+import { collectAuthenticatedSseEvents, expectAuthenticatedSseTerminates } from '../../sse-auth.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import {
-  collectSseEvents,
-  expectSseTerminates,
   assertNoSseDuplicates,
 } from '@kb-labs/shared-testing-e2e';
 import type { SseEvent } from '@kb-labs/shared-testing-e2e';
@@ -56,10 +55,10 @@ test('SE-R01: reconnect does not duplicate live events', async ({ request }) => 
   const url = eventsUrl(runId);
 
   // First connection: collect for a short window then disconnect.
-  const firstBatch = await collectSseEvents(url, { timeoutMs: 3_000 });
+  const firstBatch = await collectAuthenticatedSseEvents(request, url, { timeoutMs: 3_000 });
 
   // Reconnect and collect until stream closes (run finishes).
-  const secondBatch = await collectSseEvents(url, { timeoutMs: 30_000 });
+  const secondBatch = await collectAuthenticatedSseEvents(request, url, { timeoutMs: 30_000 });
 
   assertNoSseDuplicates(secondBatch);
 
@@ -98,7 +97,7 @@ test('SE-R02: run.finished is not missed on reconnect to already-terminal run', 
   ).toMatch(/success|completed|failed|cancelled/);
 
   // Reconnect after the run is already terminal — stream must close immediately.
-  await expectSseTerminates(url, { timeoutMs: 3_000 });
+  await expectAuthenticatedSseTerminates(request, url, { timeoutMs: 3_000 });
 });
 
 test('SE-R03: rapid reconnect delivers run.finished without data loss', async ({ request }) => {
@@ -108,10 +107,10 @@ test('SE-R03: rapid reconnect delivers run.finished without data loss', async ({
   const url = eventsUrl(runId);
 
   // Simulate a connection drop with a very short timeout.
-  await collectSseEvents(url, { timeoutMs: 500 });
+  await collectAuthenticatedSseEvents(request, url, { timeoutMs: 500 });
 
   // Reconnect and collect until stream closes.
-  const events = await collectSseEvents(url, { timeoutMs: 30_000 });
+  const events = await collectAuthenticatedSseEvents(request, url, { timeoutMs: 30_000 });
 
   expect(events.some(isTerminal)).toBe(true);
 });

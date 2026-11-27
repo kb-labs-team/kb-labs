@@ -16,7 +16,7 @@
 
 import { test, expect } from '@playwright/test'
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
-import { getAccessToken, registerAgent, issueToken } from '@kb-labs/e2e-shared/auth.js'
+import { getAccessToken, registerAgent, issueToken, unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 
 // Whether the echo fixture plugin is installed in this environment.
 const ECHO_INSTALLED = !!process.env['WEBHOOK_ECHO_PLUGIN_INSTALLED']
@@ -48,7 +48,7 @@ test('WH-ADMIN-04: GET /api/v1/webhooks with valid token → 200 with webhooks a
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(res.status()).toBe(200)
-  const body = await res.json()
+  const body = unwrapGatewaySuccess<{ webhooks?: unknown[] }>(await res.json())
   expect(body).toHaveProperty('webhooks')
   expect(Array.isArray(body.webhooks)).toBe(true)
 })

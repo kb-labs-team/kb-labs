@@ -23,7 +23,7 @@ export function registerAggregatedDocsRoutes(
   const upstreamServiceIds = Object.values(config.upstreams).map((u) => u.serviceId);
 
   // Merged OpenAPI spec from all upstreams
-  app.get('/openapi-merged.json', { schema: { tags: ['Documentation'], summary: 'Merged OpenAPI document', querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { openapi: { type: 'string' }, swagger: { type: 'string' }, info: { type: 'object', properties: { title: { type: 'string' }, version: { type: 'string' } }, required: ['title', 'version'] }, paths: { type: 'object', additionalProperties: { type: 'object' } }, components: { type: 'object' } }, required: ['info', 'paths'] } } } }, async (_req, reply) => {
+  app.get('/openapi-merged.json', { config: { ux: 'raw' }, schema: { tags: ['Documentation'], summary: 'Merged OpenAPI document', querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { openapi: { type: 'string' }, swagger: { type: 'string' }, info: { type: 'object', properties: { title: { type: 'string' }, version: { type: 'string' } }, required: ['title', 'version'] }, paths: { type: 'object', additionalProperties: { type: 'object' } }, components: { type: 'object' } }, required: ['info', 'paths'] } } } }, async (_req, reply) => {
     // Try cache first
     if (cache) {
       try {

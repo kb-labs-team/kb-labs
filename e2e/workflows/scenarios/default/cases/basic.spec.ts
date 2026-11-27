@@ -71,7 +71,15 @@ test('W-03: e2e-hello workflow reaches completed within 30s', async ({ request }
   await expect.poll(
     () => pollRunStatus(request, runId),
     { timeout: 30_000, intervals: [1000, 2000, 3000] },
-  ).toMatch(/^(success|completed)$/)
+  ).toMatch(/^(success|completed|failed|cancelled|dlq)$/)
+
+  const detail = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
+  const body = await detail.json()
+  const run = body.data?.run ?? body.data ?? body
+  if (!/^(success|completed)$/.test(run.status ?? '')) {
+    const logs = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/logs`)
+    throw new Error(`e2e-hello terminated as ${run.status}: detail=${JSON.stringify(run)} logs=${await logs.text()}`)
+  }
 })
 
 test('W-04: e2e-fail workflow reaches failed status within 30s', async ({ request }) => {

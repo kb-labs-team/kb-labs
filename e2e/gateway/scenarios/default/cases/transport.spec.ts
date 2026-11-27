@@ -14,7 +14,7 @@
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { GATEWAY } from '@kb-labs/e2e-shared/urls.js';
+import { GATEWAY, REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js';
 import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 
@@ -41,7 +41,7 @@ async function parallel(
 test('TR-01: GET request proxied to REST upstream returns 200', async ({ request }) => {
   const token = await getAccessToken(request);
 
-  const res = await request.get(`${GATEWAY}/api/v1/health`, {
+  const res = await request.get(`${REST}${REST_API_PREFIX}/health`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -59,7 +59,7 @@ test('TR-02: POST with JSON body is forwarded to upstream and not rejected at tr
   // Use a known REST endpoint that accepts POST — not gateway-internal, actually proxied.
   // /api/v1/config/reload or any REST POST endpoint works; /api/v1/auth/token is gateway-owned.
   // We test via /api/v1/mind/search which accepts POST with JSON body.
-  const res = await request.post(`${GATEWAY}/api/v1/mind/search`, {
+  const res = await request.post(`${REST}${REST_API_PREFIX}/mind/search`, {
     headers: {
       Authorization: `Bearer ${token}`,
       'Content-Type': 'application/json',
@@ -77,7 +77,7 @@ test('TR-02: POST with JSON body is forwarded to upstream and not rejected at tr
 test('TR-03: upstream 404 is forwarded as 404, not swallowed as 502', async ({ request }) => {
   const token = await getAccessToken(request);
 
-  const res = await request.get(`${GATEWAY}/api/v1/definitely-does-not-exist-tr03`, {
+  const res = await request.get(`${REST}${REST_API_PREFIX}/definitely-does-not-exist-tr03`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -93,7 +93,7 @@ test('TR-04: 10 concurrent GET requests all succeed — connection pool stable',
   const statuses = await parallel(
     request,
     'GET',
-    `${GATEWAY}/api/v1/health`,
+    `${REST}${REST_API_PREFIX}/health`,
     10,
     { headers: { Authorization: `Bearer ${token}` } },
   );
@@ -112,7 +112,7 @@ test('TR-04: 10 concurrent GET requests all succeed — connection pool stable',
 test('TR-05: Content-Type header from upstream is forwarded to client', async ({ request }) => {
   const token = await getAccessToken(request);
 
-  const res = await request.get(`${GATEWAY}/api/v1/health`, {
+  const res = await request.get(`${REST}${REST_API_PREFIX}/health`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 
@@ -148,7 +148,7 @@ test('TR-07: large response body proxied without truncation', async ({ request }
 
   // Fetch a response from an endpoint that returns a reasonably large payload.
   // /api/v1/platform/config returns the full platform config — typically > 1KB.
-  const res = await request.get(`${GATEWAY}/api/v1/platform/config`, {
+  const res = await request.get(`${REST}${REST_API_PREFIX}/platform/config`, {
     headers: { Authorization: `Bearer ${token}` },
   });
 

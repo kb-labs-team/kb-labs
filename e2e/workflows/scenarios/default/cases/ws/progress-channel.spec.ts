@@ -1,6 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { withWs, expectWsMessage } from '@kb-labs/shared-testing-e2e';
-import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { GATEWAY, WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js';
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes';
 

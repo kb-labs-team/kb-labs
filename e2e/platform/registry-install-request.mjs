@@ -12,6 +12,7 @@ export function registryInstallRequest(envelope, upstream) {
   const request = structuredClone(plan.request);
   request.marketplaceSources ??= {};
   request.marketplaceSources.registryUrl = `${gateway}/api/v1/marketplace-registry`;
+  request.marketplaceSources.signingPublicKeyEnv = 'KB_E2E_REGISTRY_PUBLIC_KEY';
   request.gatewayUrl = gateway;
   request.secretInputs ??= [];
   if (!request.secretInputs.includes('gateway.internalSecret')) request.secretInputs.push('gateway.internalSecret');
