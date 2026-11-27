@@ -251,6 +251,19 @@ class PluginAuthorJourneyTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def _seed_installed_commit_fixture(self, journey):
+        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
+            "schema": "kb.marketplace/3",
+            "plugins": {"@kb-labs/commit": {
+                "enabled": True,
+                "version": "2.120.1",
+                "integrity": "sha256-fixture",
+                "source": "marketplace",
+                "package": "@kb-labs/commit",
+            }},
+        }))
+        journey.step("install Commit into the project for the route lifecycle", "marketplace", lambda: None)
+
     def _create_pnpm_extension_store_tree(self, active: Path) -> Path:
         pnpm = active / "node_modules/.pnpm"
         runtime = pnpm / "@kb-labs+core-runtime@candidate/node_modules/@kb-labs/core-runtime"
@@ -518,18 +531,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
     # case: S-014.1
     def test_commit_and_review_case_steps_are_claimed_from_fake_cli_responses(self):
-        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
-            "schema": "kb.marketplace/3",
-            "plugins": {"@kb-labs/commit": {
-                "enabled": True,
-                "version": "2.120.1",
-                "integrity": "sha256-fixture",
-                "source": "marketplace",
-                "package": "@kb-labs/commit",
-            }},
-        }))
         with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-secured:explore"}):
             journey = Journey("secured", "commit-case-fixture")
+            self._seed_installed_commit_fixture(journey)
             run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
                                   subprocess.run, self.env)
         result = journey.result()
@@ -596,19 +600,9 @@ class PluginAuthorJourneyTests(unittest.TestCase):
         self.assertEqual(claims, {"S-160.5": "PASS"})
 
     def test_commit_and_review_fixture_finishes_with_a_clean_worktree(self):
-        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
-            "schema": "kb.marketplace/3",
-            "plugins": {"@kb-labs/commit": {
-                "enabled": True,
-                "version": "2.120.1",
-                "integrity": "sha256-fixture",
-                "source": "marketplace",
-                "package": "@kb-labs/commit",
-            }},
-        }))
-
         with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
             journey = Journey("local", "commit-case-clean-worktree")
+            self._seed_installed_commit_fixture(journey)
             run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
                                   subprocess.run, self.env)
 
@@ -618,19 +612,10 @@ class PluginAuthorJourneyTests(unittest.TestCase):
 
     def test_commit_fixture_recovers_repository_without_head(self):
         (self.project / ".git").mkdir()
-        (self.project / ".kb/marketplace.lock").write_text(json.dumps({
-            "schema": "kb.marketplace/3",
-            "plugins": {"@kb-labs/commit": {
-                "enabled": True,
-                "version": "2.120.1",
-                "integrity": "sha256-fixture",
-                "source": "marketplace",
-                "package": "@kb-labs/commit",
-            }},
-        }))
 
         with patch.dict(os.environ, {"KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore"}):
             journey = Journey("local", "commit-case-headless-repository")
+            self._seed_installed_commit_fixture(journey)
             run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
                                   subprocess.run, self.env)
 
