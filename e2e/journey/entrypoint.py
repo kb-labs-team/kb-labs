@@ -68,6 +68,7 @@ def record_runner_failure(summary_path: str | Path, mode: str, error: BaseExcept
         "status": "FAIL",
         "duration_seconds": 0.0,
         "message": _failure_message(error),
+        "details": {"runnerFailure": phase},
     }
     target = Path(summary_path).with_name(f"service-{mode}.json")
     try:
