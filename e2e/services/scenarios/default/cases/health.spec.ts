@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, request as playwrightRequest } from '@playwright/test'
+import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
 import { GATEWAY, REST, MARKETPLACE_DIRECT, WORKFLOW, STATE, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
 
 const services = [
@@ -12,7 +13,14 @@ const services = [
 
 for (const svc of services) {
   test(`${svc.id}: ${svc.name} is healthy`, async ({ request }) => {
-    const res = await request.get(`${svc.url}${svc.path}`)
+    let authorization: string | undefined
+    if (svc.name === 'marketplace-registry') {
+      const registration = await playwrightRequest.newContext()
+      try { authorization = `Bearer ${await getAccessToken(registration)}` } finally { await registration.dispose() }
+    }
+    const res = await request.get(`${svc.url}${svc.path}`, {
+      headers: authorization ? { Authorization: authorization } : {},
+    })
     expect(res.status()).toBe(200)
     const body = await res.json()
     // REST API wraps in { ok, data }; others return status directly

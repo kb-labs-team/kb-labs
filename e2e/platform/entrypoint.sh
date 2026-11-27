@@ -48,17 +48,25 @@ ADAPTERS=$(jq -r '[.adapters[].id | select(. != "sqlite-stores")] | join(",")' /
 
 # Apply installs and starts the supervised host. The host starts the
 # per-project REST and workflow runtimes on demand.
-kb-create apply \
+set -- \
   --index /release-index.json \
   --platform-root "$PLATFORM_ROOT" \
   --project-root "$PLATFORM_ROOT" \
   --platform-channel stable \
   --service-profile default \
   --scenario custom --scenario-answers "$SCENARIO_ANSWERS" \
-  --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD \
   --plugins "$(jq -r '[.plugins[] | select(.default == true) | .id] | join(",")' /e2e-registry-manifest.json)" \
   --adapters "$ADAPTERS" \
   --registry http://verdaccio:4873
+if [ -n "${KB_E2E_REGISTRY_UPSTREAM:-}" ]; then
+  kb-create plan --json "$@" > /tmp/kb-e2e-registry-plan.json
+  node /registry-install-request.mjs /tmp/kb-e2e-registry-plan.json /tmp/kb-e2e-registry-request.json "$KB_E2E_REGISTRY_UPSTREAM"
+  kb-create apply --index /release-index.json --input /tmp/kb-e2e-registry-request.json \
+    --registry http://verdaccio:4873 \
+    --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD,gateway.internalSecret=GATEWAY_INTERNAL_SECRET
+else
+  kb-create apply "$@" --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD
+fi
 cd "$PLATFORM_ROOT"
 
 # Scaffold test workflows used by E2E suite

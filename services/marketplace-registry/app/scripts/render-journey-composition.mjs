@@ -15,6 +15,7 @@ function argument(name) {
 
 const outputRoot = argument('--output');
 const registryUrl = argument('--registry-url');
+const platformSuite = process.argv.includes('--platform-suite');
 if (!outputRoot || !registryUrl) {
   process.stderr.write('usage: render-journey-composition.mjs --output <directory> --registry-url <url>\n');
   process.exit(2);
@@ -39,46 +40,27 @@ const gatewaySecretPath = path.join(kbRoot, 'gateway-internal.env');
 await writeFile(gatewaySecretPath, `GATEWAY_INTERNAL_SECRET=${randomBytes(32).toString('hex')}\n`, { mode: 0o600 });
 await chmod(gatewaySecretPath, 0o600);
 
-const composeOverlay = `services:
-  runner:
+const profile = platformSuite ? '' : '    profiles: [marketplace-registry]\n';
+const network = platformSuite ? '' : '    networks: [journey]\n';
+const clientService = platformSuite ? `  platform:
+    env_file:
+      - ${JSON.stringify(gatewaySecretPath)}
+    environment:
+      KB_E2E_REGISTRY_UPSTREAM: ${JSON.stringify(registryUrl)}
+    depends_on:
+      marketplace-registry:
+        condition: service_started
+    volumes:
+      - ${JSON.stringify(`${path.join(root, 'e2e/platform/entrypoint.sh')}:/entrypoint.sh:ro`)}
+      - ${JSON.stringify(`${path.join(root, 'e2e/platform/registry-install-request.mjs')}:/registry-install-request.mjs:ro`)}
+` : `  runner:
     env_file:
       - ${JSON.stringify(gatewaySecretPath)}
     environment:
       KB_JOURNEY_MARKETPLACE_PUBLISH_URL: ${JSON.stringify(`${registryUrl}/api/v1`)}
       KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE: journey
-
-  marketplace-state:
-    profiles: [marketplace-registry]
-    image: kb-marketplace-state:journey
-    build:
-      context: ${JSON.stringify(root)}
-      dockerfile: services/state/daemon/Dockerfile
-    networks: [journey]
-
-  marketplace-registry:
-    profiles: [marketplace-registry]
-    image: kb-marketplace-registry:journey
-    build:
-      context: ${JSON.stringify(root)}
-      dockerfile: services/marketplace-registry/app/Dockerfile
-    depends_on:
-      marketplace-state:
-        condition: service_started
-    env_file:
-      - ${JSON.stringify(gatewaySecretPath)}
-      - ${JSON.stringify(path.join(kbRoot, 'registry.env'))}
-    environment:
-      KB_REGISTRY_HOST: 0.0.0.0
-      KB_REGISTRY_PORT: "5071"
-      # Registry metadata emits a Gateway-relative public tarball path; the
-      # Marketplace client resolves it against the configured Gateway source.
-      KB_REGISTRY_URL: /api/v1/marketplace-registry
-      KB_STATE_DAEMON_URL: http://marketplace-state:7777
-    volumes:
-      - ${JSON.stringify(`${configOverridePath}:/app/.kb/kb.config.override.json:ro`)}
-    networks: [journey]
-
-  marketplace-tamper:
+`;
+const tamperService = platformSuite ? '' : `  marketplace-tamper:
     profiles: [marketplace-registry]
     image: python:3.12-alpine
     command: ["python3", "/fixture/marketplace_tamper_proxy.py"]
@@ -91,6 +73,35 @@ const composeOverlay = `services:
         condition: service_started
     networks: [journey]
 `;
+const composeOverlay = `services:
+${clientService}
+  marketplace-state:
+${profile}    image: kb-marketplace-state:journey
+    build:
+      context: ${JSON.stringify(root)}
+      dockerfile: services/state/daemon/Dockerfile
+${network}
+  marketplace-registry:
+${profile}    image: kb-marketplace-registry:journey
+    build:
+      context: ${JSON.stringify(root)}
+      dockerfile: services/marketplace-registry/app/Dockerfile
+    depends_on:
+      marketplace-state:
+        condition: service_started
+    env_file:
+      - ${JSON.stringify(gatewaySecretPath)}
+      - ${JSON.stringify(path.join(kbRoot, 'registry.env'))}
+    environment:
+      KB_REGISTRY_HOST: 0.0.0.0
+      KB_REGISTRY_PORT: "5071"
+      # The Registry emits a Gateway-relative public tarball path.
+      KB_REGISTRY_URL: /api/v1/marketplace-registry
+      KB_STATE_DAEMON_URL: http://marketplace-state:7777
+    volumes:
+      - ${JSON.stringify(`${configOverridePath}:/app/.kb/kb.config.override.json:ro`)}
+${network}
+${tamperService}`;
 const composeOverlayPath = path.join(path.resolve(outputRoot), 'docker-compose.registry.yml');
 await writeFile(composeOverlayPath, composeOverlay, { mode: 0o600 });
 process.stdout.write(`${JSON.stringify({

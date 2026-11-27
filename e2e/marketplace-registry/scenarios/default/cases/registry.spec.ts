@@ -1,6 +1,6 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
-import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
+import { getAccessToken } from '../../../fixtures/identity.js'
 import { createTestTarball } from '../../../fixtures/create-test-tarball.js'
 
 // ── Registry lifecycle e2e ────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ function buildMeta(name: string, visibility: 'public' | 'private' = 'public'): s
 }
 
 async function publish(
-  request: Parameters<typeof getAccessToken>[0],
+  request: APIRequestContext,
   token: string,
   pkgName: string,
   visibility: 'public' | 'private' = 'public',
@@ -66,7 +66,7 @@ test('RG-A03: POST /api/v1/packages/publish returns 401 without auth', async ({ 
 })
 
 test('RG-A04: POST /publish returns 400 when X-Author-Handle missing', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const tarball = createTestTarball({ name: 'test', version: '1.0.0' })
   const res = await request.post(`${REGISTRY}/api/v1/packages/publish`, {
     headers: { Authorization: `Bearer ${token}` },
@@ -83,7 +83,7 @@ test('RG-A04: POST /publish returns 400 when X-Author-Handle missing', async ({ 
 // ── Publish lifecycle ─────────────────────────────────────────────────────────
 
 test('RG-P01: publish public package → appears in public listing', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-pub')
 
   const pub = await publish(request, token, pkgName, 'public')
@@ -97,7 +97,7 @@ test('RG-P01: publish public package → appears in public listing', async ({ re
 })
 
 test('RG-P02: publish private package → NOT in public listing', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-priv')
 
   const pub = await publish(request, token, pkgName, 'private')
@@ -109,7 +109,7 @@ test('RG-P02: publish private package → NOT in public listing', async ({ reque
 })
 
 test('RG-P03: publish same version twice → 409 Conflict', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-conflict')
 
   expect((await publish(request, token, pkgName)).status()).toBe(201)
@@ -117,7 +117,7 @@ test('RG-P03: publish same version twice → 409 Conflict', async ({ request }) 
 })
 
 test('RG-P04: download published tarball → binary content', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-dl')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -133,7 +133,7 @@ test('RG-P04: download published tarball → binary content', async ({ request }
 // ── Yank ──────────────────────────────────────────────────────────────────────
 
 test('RG-P05: yank version → tarball download returns 403', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-yank')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -151,7 +151,7 @@ test('RG-P05: yank version → tarball download returns 403', async ({ request }
 })
 
 test('RG-P06: yank without auth → 401', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-yank-noauth')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -166,7 +166,7 @@ test('RG-P06: yank without auth → 401', async ({ request }) => {
 // ── Deprecate ─────────────────────────────────────────────────────────────────
 
 test('RG-P07: deprecate package → removed from public listing', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-dep')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -191,7 +191,7 @@ test('RG-P07: deprecate package → removed from public listing', async ({ reque
 // ── My packages ───────────────────────────────────────────────────────────────
 
 test('RG-P08: GET /my/packages includes own private packages', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-my')
 
   expect((await publish(request, token, pkgName, 'private')).status()).toBe(201)
@@ -207,7 +207,7 @@ test('RG-P08: GET /my/packages includes own private packages', async ({ request 
 // ── Meta-only update ──────────────────────────────────────────────────────────
 
 test('RG-P10: PATCH /meta → updates description without new tarball', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-meta')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -228,7 +228,7 @@ test('RG-P10: PATCH /meta → updates description without new tarball', async ({
 })
 
 test('RG-P11: PATCH /meta without auth → 401', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-meta-noauth')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -243,7 +243,7 @@ test('RG-P11: PATCH /meta without auth → 401', async ({ request }) => {
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 test('RG-P09: stats.installs increments after tarball download', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const pkgName = uniquePkg('e2e-stats')
 
   expect((await publish(request, token, pkgName, 'public')).status()).toBe(201)
@@ -262,7 +262,7 @@ test('RG-P09: stats.installs increments after tarball download', async ({ reques
 // ── Search ────────────────────────────────────────────────────────────────────
 
 test('RG-Q01: GET /packages?q= matches by package name', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   // Use a rare prefix so search results are unambiguous
   const suffix = Date.now()
   const pkgName = `e2e-searchbyname-${suffix}`
@@ -276,7 +276,7 @@ test('RG-Q01: GET /packages?q= matches by package name', async ({ request }) => 
 })
 
 test('RG-Q02: GET /packages?q= matches by keyword', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const suffix = Date.now()
   const pkgName = `e2e-searchbykw-${suffix}`
   const keyword = `e2ekw-${suffix}`
@@ -302,7 +302,7 @@ test('RG-Q02: GET /packages?q= matches by keyword', async ({ request }) => {
 })
 
 test('RG-Q03: GET /packages?q= does not return private packages', async ({ request }) => {
-  const token = await getAccessToken(request)
+  const token = await getAccessToken()
   const suffix = Date.now()
   const pkgName = `e2e-searchpriv-${suffix}`
 
