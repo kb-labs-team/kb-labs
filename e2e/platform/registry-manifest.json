@@ -215,7 +215,7 @@
       "id": "@kb-labs/commit",
       "pkg": "@kb-labs/commit",
       "description": "AI commit generation",
-      "default": false
+      "default": true
     },
     {
       "id": "@kb-labs/release",
