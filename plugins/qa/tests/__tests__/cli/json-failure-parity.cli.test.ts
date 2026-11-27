@@ -72,7 +72,7 @@ beforeEach(() => {
     elapsed: '1s',
     ok: false,
     results: [{ Package: '@kb-labs/test', Task: 'build', OK: false, Cached: false, Elapsed: 1, ExitCode: 1, Stdout: '', Stderr: 'build failed', Error: 'build failed' }],
-    summary: { total: 1, passed: 0, failed: 1, cached: 0 },
+    summary: { total: 1, scheduled: 1, passed: 0, failed: 1, cached: 0, blocked: 0, notAffected: 0, skippedManual: 0, blockedTasks: [] },
   });
   mocks.loadBaseline.mockReturnValue({ check: {}, stats: {} });
   mocks.latestCheck.mockReturnValue({ raw: {} });

@@ -1,4 +1,4 @@
-import type { ShellAPI } from '@kb-labs/sdk';
+import { PluginError, type ShellAPI } from '@kb-labs/sdk';
 import type {
   DevkitRunOutput,
   DevkitCheckOutput,
@@ -29,7 +29,58 @@ export class DevkitAdapter {
 
   async run(tasks: string[]): Promise<DevkitRunOutput> {
     if (tasks.length === 0) {throw new Error('DevkitAdapter.run: tasks must not be empty');}
-    return this.invoke<DevkitRunOutput>(['run', ...tasks]);
+    const response = await this.execute(['run', ...tasks]);
+    const envelope = unwrapCliResponse(response.stdout, response.code, response.stderr, 'run');
+    const data = envelope.data;
+    if (!isRecord(data) || (data.results !== null && !Array.isArray(data.results)) || !isRecord(data.summary) || typeof data.elapsed !== 'string') {
+      throw new Error('kb-devkit run returned an invalid result payload: expected elapsed, results, and summary.');
+    }
+
+    // Go encodes a nil task slice as null when nothing runs.
+    const results = (data.results ?? []).map((value: unknown) => {
+      if (!isRecord(value) || typeof value.Package !== 'string' || typeof value.Task !== 'string' || typeof value.OK !== 'boolean') {
+        throw new Error('kb-devkit run returned an invalid task result.');
+      }
+      return {
+        Package: value.Package,
+        Task: value.Task,
+        OK: value.OK,
+        Cached: value.Cached === true,
+        Elapsed: typeof value.Elapsed === 'number' ? value.Elapsed : 0,
+        ExitCode: typeof value.ExitCode === 'number' ? value.ExitCode : (value.OK ? 0 : 1),
+        Stdout: typeof value.Stdout === 'string' ? value.Stdout : '',
+        Stderr: typeof value.Stderr === 'string' ? value.Stderr : '',
+        Error: typeof value.Error === 'string' ? value.Error : '',
+        ...(typeof value.logPath === 'string' ? { LogPath: value.logPath } : {}),
+        ...(typeof value.logError === 'string' ? { LogError: value.logError } : {}),
+        ...(typeof value.logDirectory === 'string' ? { LogDirectory: value.logDirectory } : {}),
+      };
+    });
+
+    const summary = data.summary;
+    const scheduled = numberOrZero(summary.scheduled);
+    const raw: DevkitRunOutput = {
+      elapsed: data.elapsed,
+      ok: envelope.ok,
+      results,
+      summary: {
+        scheduled,
+        total: scheduled,
+        passed: numberOrZero(summary.passed),
+        failed: numberOrZero(summary.failed),
+        cached: numberOrZero(summary.cached),
+        blocked: numberOrZero(summary.blocked),
+        notAffected: numberOrZero(summary.notAffected),
+        skippedManual: numberOrZero(summary.skippedManual),
+        blockedTasks: Array.isArray(summary.blockedTasks) ? summary.blockedTasks.filter(isBlockedTask) : [],
+      },
+    };
+
+    if (envelope.ok && tasks.includes('test') && !results.some((item) => item.Task === 'test')) {
+      throw new PluginError('kb-devkit run produced no test task results.', 'KB_RUNTIME_COMMAND_FAILED', undefined,
+        'Check the test task and package categories in devkit.yaml, then rerun `kb qa run`.');
+    }
+    return raw;
   }
 
   async check(): Promise<DevkitCheckOutput> {
@@ -64,25 +115,68 @@ export class DevkitAdapter {
   }
 
   private async invoke<T>(args: string[]): Promise<T> {
+    const response = await this.execute(args);
+    const envelope = unwrapCliResponse(response.stdout, response.code, response.stderr, args[0] ?? 'command');
+    const data = envelope.data;
+    if (!isRecord(data)) {
+      throw new Error(`kb-devkit ${args[0]} returned an invalid JSON payload.`);
+    }
+    return { ...data, ok: envelope.ok } as T;
+  }
+
+  private async execute(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
     const result = await this.shell.exec(this.bin, [...args, '--json'], {
       cwd: this.cwd,
       timeout: this.timeout,
       throwOnError: false,
     });
 
-    if (result.code !== 0 && !result.stdout.trim()) {
+    if (!result.stdout.trim()) {
       throw new Error(
         `kb-devkit ${args[0]} failed (exit ${result.code}): ${result.stderr.slice(0, 500)}`
       );
     }
 
-    try {
-      return JSON.parse(result.stdout) as T;
-    } catch {
-      throw new Error(
-        `kb-devkit ${args[0]} produced non-JSON output (exit ${result.code}). ` +
-        `stderr: ${result.stderr.slice(0, 300)}`
-      );
-    }
+    return result;
   }
+}
+
+function unwrapCliResponse(stdout: string, code: number, stderr: string, command: string): { ok: boolean; data: unknown } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout) as unknown;
+  } catch {
+    throw new Error(
+      `kb-devkit ${command} produced non-JSON output (exit ${code}). stderr: ${stderr.slice(0, 300)}`
+    );
+  }
+  if (!isRecord(parsed) || typeof parsed.ok !== 'boolean') {
+    throw new Error(`kb-devkit ${command} returned an invalid CliKit response.`);
+  }
+  if (parsed.ok !== (code === 0)) {
+    throw new Error(`kb-devkit ${command} returned ok:${parsed.ok} with exit ${code}; refusing to trust inconsistent output.`);
+  }
+  if (!parsed.ok && !('data' in parsed)) {
+    const error = isRecord(parsed.error) ? parsed.error : undefined;
+    const message = typeof error?.message === 'string' ? error.message : `kb-devkit ${command} failed (exit ${code}).`;
+    const hint = typeof error?.hint === 'string' ? error.hint : undefined;
+    throw new PluginError(message, 'KB_RUNTIME_COMMAND_FAILED', undefined, hint);
+  }
+  if (!('data' in parsed)) {
+    throw new Error(`kb-devkit ${command} response is missing data.`);
+  }
+  return { ok: parsed.ok, data: parsed.data };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function isBlockedTask(value: unknown): value is NonNullable<DevkitRunOutput['summary']['blockedTasks']>[number] {
+  return isRecord(value) && typeof value.package === 'string' && typeof value.task === 'string' &&
+    typeof value.blockedByPackage === 'string' && typeof value.blockedByTask === 'string';
 }

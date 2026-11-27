@@ -3,13 +3,17 @@ import { mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { SnapshotStore } from '../../src/core/snapshot/snapshot-store.js';
+import { QAHistoryResponseSchema } from '../../src/contracts/types/rest-api.js';
 import type { DevkitRunOutput, DevkitCheckOutput, DevkitStatsOutput, DevkitGateOutput } from '@kb-labs/qa/contracts';
 
 const makeRun = (ok = true): DevkitRunOutput => ({
   elapsed: '1s',
   ok,
   results: [{ Package: 'pkg-a', Task: 'build', OK: ok, Cached: false, Elapsed: 100, ExitCode: ok ? 0 : 1, Stdout: '', Stderr: '', Error: '' }],
-  summary: { total: 1, passed: ok ? 1 : 0, failed: ok ? 0 : 1, cached: 0 },
+  summary: {
+    total: 1, scheduled: 1, passed: ok ? 1 : 0, failed: ok ? 0 : 1, cached: 0,
+    blocked: 0, notAffected: 0, skippedManual: 0, blockedTasks: [],
+  },
 });
 
 const makeCheck = (ok = true): DevkitCheckOutput => ({
@@ -60,6 +64,15 @@ describe('SnapshotStore — run snapshots', () => {
     const history = store.loadRunHistory();
     expect(history).toHaveLength(1);
     expect(history[0]!.id).toBe(snap.id);
+  });
+
+  it('accepts saved run summaries that predate DevKit task accounting', () => {
+    const store = new SnapshotStore(rootDir);
+    const summary = { total: 1, passed: 1, failed: 0, cached: 0 };
+    store.saveRun({ ...makeRun(), summary }, ['build'], 500);
+    const response = { snapshots: store.loadRunHistory(), total: 1 };
+
+    expect(QAHistoryResponseSchema.parse(response)).toEqual(response);
   });
 
   it('trims run history to maxEntries', () => {

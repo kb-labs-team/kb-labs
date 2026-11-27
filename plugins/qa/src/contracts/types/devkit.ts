@@ -1,4 +1,4 @@
-// Raw JSON output shapes from kb-devkit CLI (--json flag)
+// QA's normalized output from the kb-devkit CLI (--json flag).
 
 // kb-devkit run <tasks> --json
 export interface DevkitRunResult {
@@ -11,6 +11,9 @@ export interface DevkitRunResult {
   Stdout: string;
   Stderr: string;
   Error: string;
+  LogPath?: string;
+  LogError?: string;
+  LogDirectory?: string;
 }
 
 export interface DevkitRunSummary {
@@ -18,6 +21,17 @@ export interface DevkitRunSummary {
   passed: number;
   failed: number;
   cached: number;
+  // Snapshots from earlier DevKit runs do not have task accounting fields.
+  scheduled?: number;
+  blocked?: number;
+  notAffected?: number;
+  skippedManual?: number;
+  blockedTasks?: Array<{
+    package: string;
+    task: string;
+    blockedByPackage: string;
+    blockedByTask: string;
+  }>;
 }
 
 export interface DevkitRunOutput {

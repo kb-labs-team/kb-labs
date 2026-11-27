@@ -27,6 +27,9 @@ export const DevkitRunResultSchema = z.object({
   Stdout: z.string(),
   Stderr: z.string(),
   Error: z.string(),
+  LogPath: z.string().optional(),
+  LogError: z.string().optional(),
+  LogDirectory: z.string().optional(),
 });
 
 export const DevkitRunOutputSchema = z.object({
@@ -34,10 +37,20 @@ export const DevkitRunOutputSchema = z.object({
   ok: z.boolean(),
   results: z.array(DevkitRunResultSchema),
   summary: z.object({
+    scheduled: z.number().optional(),
     total: z.number(),
     passed: z.number(),
     failed: z.number(),
     cached: z.number(),
+    blocked: z.number().optional(),
+    notAffected: z.number().optional(),
+    skippedManual: z.number().optional(),
+    blockedTasks: z.array(z.object({
+      package: z.string(),
+      task: z.string(),
+      blockedByPackage: z.string(),
+      blockedByTask: z.string(),
+    })).optional(),
   }),
 });
 
