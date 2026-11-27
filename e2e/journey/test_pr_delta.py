@@ -49,6 +49,15 @@ class PullRequestDeltaTests(unittest.TestCase):
         self.assertEqual(plan_claims(["e2e/docker-compose.yml"]), ["PC-001.2", "S-002.1", "S-010.1"])
         self.assertEqual(plan_claims(["e2e/docker-compose.platform.yml"]), [])
 
+    # case: S-262.24
+    def test_manual_legacy_specs_do_not_select_installed_claims(self):
+        legacy = "e2e/tests/specs/platform/plugins.spec.ts"
+        active = "e2e/shared/src/auth.ts"
+        self.assertEqual(plan_claims([legacy]), [])
+        self.assertEqual(plan_claims(["e2e/_global/ci.zone.json"]), [])
+        self.assertTrue(plan_claims([active]))
+        self.assertEqual(plan_claims([legacy, active]), plan_claims([active]))
+
     # case: S-262.21
     def test_requires_real_improvement_and_rejects_regressions_and_missing_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

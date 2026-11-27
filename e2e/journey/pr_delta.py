@@ -42,7 +42,8 @@ def plan_claims(paths: list[str]) -> list[str]:
     for path in paths:
         if path.endswith((".md", ".mdx")) or path in {"e2e/journey/scoreboard.py", "e2e/journey/pr_delta.py"}:
             continue
-        if path.startswith("tools/kb-devkit/"):
+        # The old Playwright package is excluded from active suites by DevKit.
+        if path.startswith(("tools/kb-devkit/", "e2e/tests/")) or path == "e2e/_global/ci.zone.json":
             continue
         if path in DOCKER_E2E_BOOTSTRAP or fnmatchcase(path, "e2e/journey/test_*.py"):
             continue

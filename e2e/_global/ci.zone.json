@@ -19,10 +19,9 @@
     "e2e/delivery/**",
     "e2e/deploy/config-override/**",
     "e2e/scripts/**",
-    "e2e/tests/**",
     "e2e/docker-compose*.yml",
     "scripts/ci/**",
     ".github/workflows/**"
   ],
-  "ignore": ["docs/**", "**/*.md", ".github/ISSUE_TEMPLATE/**"]
+  "ignore": ["docs/**", "**/*.md", ".github/ISSUE_TEMPLATE/**", "e2e/tests/**"]
 }
