@@ -8,7 +8,7 @@ const GATEWAY_WS = GATEWAY.replace(/^http/, 'ws');
 const projectId = process.env.KB_PROJECT_ID;
 
 async function startRun(request: APIRequestContext): Promise<string> {
-  const catalogRes = await request.get(`${WORKFLOW}/api/v1/workflows`);
+  const catalogRes = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`);
   const catalog = await catalogRes.json();
   const workflows: Array<{ id?: string; name?: string }> =
     catalog.data?.workflows ?? catalog.data ?? catalog.workflows ?? [];
@@ -16,7 +16,7 @@ async function startRun(request: APIRequestContext): Promise<string> {
   const id = wf?.id ?? wf?.name;
   if (!id) throw new Error('No workflow found in catalog');
 
-  const runRes = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(id)}/runs`, { data: {} });
+  const runRes = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(id)}/runs`, { data: {} });
   const body = await runRes.json();
   const runId: string = body.data?.runId ?? body.data?.id ?? body.runId;
   if (!runId) throw new Error(`Failed to start run: ${JSON.stringify(body)}`);

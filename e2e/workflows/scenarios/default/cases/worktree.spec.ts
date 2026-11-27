@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 /**
  * WWT — Worktree workspace isolation tests.
@@ -32,7 +32,7 @@ async function findWorkflow(
   request: APIRequestContext,
   name: string,
 ): Promise<{ id?: string; name?: string } | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   if (!res.ok()) return undefined
   const body = await res.json()
   const list: { id?: string; name?: string }[] = body.data?.workflows ?? body.data ?? body.workflows ?? []
@@ -44,7 +44,7 @@ async function startRun(
   workflowId: string,
 ): Promise<string | undefined> {
   const res = await request.post(
-    `${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
+    `${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(workflowId)}/runs`,
     { data: {} },
   )
   if (!res.ok()) return undefined
@@ -56,7 +56,7 @@ async function fetchRun(
   request: APIRequestContext,
   runId: string,
 ): Promise<RunData> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
   const body = await res.json()
   // API wraps run in { ok, data: { run: {...} } }
   return body.data?.run ?? body.data ?? body

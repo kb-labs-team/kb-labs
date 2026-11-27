@@ -292,6 +292,24 @@ jobs:
             sleep 5
           done
 
+      - name: Resolve installed project routes
+        run: |
+          projects=$(docker compose exec -T --workdir /workspace/kb-e2e platform kb project list --json)
+          project_id=$(printf '%s' "$projects" | jq -er '.data.projects[] | select(.path == "/workspace/kb-e2e") | .id')
+          if ! [[ "$project_id" =~ ^[A-Za-z0-9_-]+$ ]]; then
+            echo "Registered E2E project has an invalid route id" >&2
+            exit 1
+          fi
+          {
+            echo "KB_PROJECT_ID=$project_id"
+            echo "REST_URL=http://localhost:4000/api/v1/projects/$project_id/rest"
+            echo "WORKFLOW_URL=http://localhost:4000/api/v1/projects/$project_id/workflow"
+            echo "MCP_URL=http://localhost:4000/api/v1/projects/$project_id/mcp"
+            echo "STATE_URL=http://localhost:4000/api/v1/state"
+            echo "MARKETPLACE_URL=http://localhost:4000"
+            echo "MARKETPLACE_DIRECT_URL=http://localhost:5070"
+          } >> "$GITHUB_ENV"
+
       # ── Run E2E suite ────────────────────────────────────────────────────
 
       - name: Install plugin for Platform registry checks
@@ -304,12 +322,7 @@ jobs:
           ./tools/kb-devkit/kb-devkit run e2e --packages "${{ inputs.e2e-package }}"
         env:
           GATEWAY_URL:     http://localhost:4000
-          REST_URL:        http://localhost:5050
-          MARKETPLACE_URL: http://localhost:5070
           REGISTRY_URL:    http://localhost:5071
-          WORKFLOW_URL:    http://localhost:7778
-          STATE_URL:       http://localhost:7777
-          MCP_URL:         http://localhost:7779
           CI: "true"
           KB_DEBUG: "true"
           KB_DEV_BIN: ${{ github.workspace }}/tools/scripts/kb-dev-docker.sh

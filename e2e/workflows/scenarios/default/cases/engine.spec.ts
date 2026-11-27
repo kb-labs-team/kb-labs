@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // Workflow engine tests: execution lifecycle, stats, job tracking
 // Relies on e2e-hello and e2e-fail workflows scaffolded in .kb/workflows/
@@ -8,7 +8,7 @@ async function findWorkflow(
   request: APIRequestContext,
   name: string,
 ): Promise<{ id?: string; name?: string } | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   const body = await res.json()
   const list: { id?: string; name?: string }[] =
     body.data?.workflows ?? body.data ?? body.workflows ?? []
@@ -19,7 +19,7 @@ async function startRun(
   request: APIRequestContext,
   workflowId: string,
 ): Promise<string> {
-  const res = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} })
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} })
   expect([200, 201]).toContain(res.status())
   const body = await res.json()
   const runId = body.data?.runId ?? body.data?.id ?? body.runId
@@ -31,13 +31,13 @@ async function pollRunStatus(
   request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
   const body = await res.json()
   return body.data?.run?.status ?? body.data?.status ?? body.status
 }
 
 test('WF-01: workflow stats endpoint responds with counts', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/stats`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/stats`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const jobs = body.data?.jobs ?? body.jobs
@@ -45,7 +45,7 @@ test('WF-01: workflow stats endpoint responds with counts', async ({ request }) 
 })
 
 test('WF-02: workflow catalog is populated (e2e-hello is present)', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const workflows: { id?: string; name?: string }[] =
@@ -74,7 +74,7 @@ test('WF-04: runs list is accessible and includes recent run', async ({ request 
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: { id?: string; runId?: string }[] =
@@ -90,13 +90,13 @@ test('WF-05: stats running count increases during active run', async ({ request 
   expect(!wf, 'e2e-hello workflow not found').toBe(false)
 
   // Snapshot stats before starting a run
-  const beforeStats = await (await request.get(`${WORKFLOW}/api/v1/stats`)).json()
+  const beforeStats = await (await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/stats`)).json()
   const runsBefore: number = beforeStats.data?.runs?.total ?? beforeStats.runs?.total ?? 0
 
   await startRun(request, wf!.id ?? wf!.name!)
 
   // After creating a run, total count must be >= before
-  const afterStats = await (await request.get(`${WORKFLOW}/api/v1/stats`)).json()
+  const afterStats = await (await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/stats`)).json()
   const runsAfter: number = afterStats.data?.runs?.total ?? afterStats.runs?.total ?? 0
   expect(runsAfter).toBeGreaterThanOrEqual(runsBefore)
 })
@@ -113,7 +113,7 @@ test('WF-06: e2e-fail workflow ends with failed status', async ({ request }) => 
   ).toMatch(/failed|dlq/)
 
   // Verify run record contains error details
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
   const body = await res.json()
   const run = body.data?.run ?? body.data ?? body
   // Failed run must surface why it failed. A user-step failure now ends as
@@ -128,7 +128,7 @@ test('WF-06: e2e-fail workflow ends with failed status', async ({ request }) => 
 })
 
 test('WF-07: cron catalog endpoint is accessible', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/crons`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/crons`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const crons = body.data?.crons ?? body.data ?? body.crons ?? []

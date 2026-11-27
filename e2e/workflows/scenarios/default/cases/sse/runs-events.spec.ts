@@ -5,7 +5,7 @@ import {
   assertNoSseDuplicates,
 } from '@kb-labs/shared-testing-e2e';
 import type { SseEvent } from '@kb-labs/shared-testing-e2e';
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ function isTerminal(e: SseEvent): boolean {
 }
 
 async function startRun(request: APIRequestContext): Promise<string> {
-  const catalogRes = await request.get(`${WORKFLOW}/api/v1/workflows`);
+  const catalogRes = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`);
   const catalog = await catalogRes.json();
   const workflows: Array<{ id?: string; name?: string }> =
     catalog.data?.workflows ?? catalog.data ?? catalog.workflows ?? [];
@@ -29,7 +29,7 @@ async function startRun(request: APIRequestContext): Promise<string> {
   if (!wf?.id && !wf?.name) throw new Error('No workflow found in catalog');
 
   const id = wf.id ?? wf.name!;
-  const runRes = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(id)}/runs`, { data: {} });
+  const runRes = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(id)}/runs`, { data: {} });
   const body = await runRes.json();
   const runId: string = body.data?.runId ?? body.data?.id ?? body.runId;
   if (!runId) throw new Error(`Failed to start run: ${JSON.stringify(body)}`);
@@ -40,13 +40,13 @@ async function pollRunStatus(
   request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`);
   const body = await res.json();
   return body.data?.run?.status ?? body.data?.status ?? body.status;
 }
 
 function eventsUrl(runId: string): string {
-  return `${WORKFLOW}/api/v1/runs/${runId}/events`;
+  return `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`;
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -83,7 +83,7 @@ test('SE-03: already-terminal run closes stream immediately (< 3s)', async ({ re
 });
 
 test('SE-04: invalid runId returns 404, not an SSE stream', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/nonexistent-run-id-xyz/events`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/nonexistent-run-id-xyz/events`);
   expect(res.status()).toBe(404);
 });
 

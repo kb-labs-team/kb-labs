@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
 import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1/plugins/quality`
+const BASE = `${REST}${REST_API_PREFIX}/plugins/quality`
 
 test('QL-01: GET /health returns score and grade', async ({ request }) => {
   const res = await request.get(`${BASE}/health`)

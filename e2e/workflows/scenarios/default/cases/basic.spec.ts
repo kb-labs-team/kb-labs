@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // Workflow runs API: POST /api/v1/workflows/:id/runs → { data: { runId, status } }
 // Run status: GET /api/v1/runs/:runId → { data: { run: { id, status, ... } } }
@@ -8,7 +8,7 @@ async function findWorkflow(
   request: APIRequestContext,
   name: string,
 ): Promise<{ id?: string; name?: string } | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   const body = await res.json()
   const list: { id?: string; name?: string }[] =
     body.data?.workflows ?? body.data ?? body.workflows ?? []
@@ -20,7 +20,7 @@ async function startRun(
   workflowId: string,
   input: Record<string, unknown> = {},
 ): Promise<string> {
-  const res = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, {
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(workflowId)}/runs`, {
     data: input,
   })
   expect([200, 201]).toContain(res.status())
@@ -34,7 +34,7 @@ async function pollRunStatus(
   request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
   const body = await res.json()
   return body.data?.run?.status ?? body.data?.status ?? body.status
 }
@@ -47,7 +47,7 @@ test('W-01: create workflow run returns run ID', async ({ request }) => {
 
   const runId = await startRun(request, wf!.id ?? wf!.name!)
 
-  const statusRes = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+  const statusRes = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
   expect(statusRes.status()).toBe(200)
   const statusBody = await statusRes.json()
   expect(statusBody.data?.run ?? statusBody.data).toBeTruthy()

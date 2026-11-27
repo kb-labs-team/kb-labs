@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // CM-01: commit plugin is registered in platform
 test('CM-01: commit plugin registered in platform', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/plugins/registry`)
+  const res = await request.get(`${REST}${REST_API_PREFIX}/plugins/registry`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const manifests: { pluginId?: string; manifest?: { id?: string; name?: string } }[] =
@@ -19,7 +19,7 @@ test('CM-01: commit plugin registered in platform', async ({ request }) => {
 
 // CM-02: commit plugin manifest has commit command
 test('CM-02: commit plugin manifest has commit command', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/plugins/registry`)
+  const res = await request.get(`${REST}${REST_API_PREFIX}/plugins/registry`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const manifests: { pluginId?: string; manifest?: { id?: string; name?: string; commands?: unknown[] } }[] =

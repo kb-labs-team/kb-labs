@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // SC-01: scaffold lists available templates
 test('SC-01: scaffold lists available templates', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/scaffold/templates`)
+  const res = await request.get(`${REST}${REST_API_PREFIX}/scaffold/templates`)
   expect(res.status(), 'scaffold templates endpoint is missing from the required profile').toBe(200)
   expect(res.status()).toBe(200)
   const body = await res.json()
@@ -20,7 +20,7 @@ test('SC-01: scaffold lists available templates', async ({ request }) => {
 
 // SC-02: scaffold plugin template has required fields
 test('SC-02: scaffold plugin template has required structure', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/scaffold/templates`)
+  const res = await request.get(`${REST}${REST_API_PREFIX}/scaffold/templates`)
   expect(res.status(), 'scaffold templates endpoint is missing from the required profile').toBe(200)
   expect(res.status()).toBe(200)
   const body = await res.json()
@@ -39,7 +39,7 @@ test('SC-02: scaffold plugin template has required structure', async ({ request 
 
 // SC-03: scaffold run creates plugin files (if scaffold/run endpoint exists)
 test('SC-03: scaffold run creates plugin structure', async ({ request }) => {
-  const res = await request.post(`${REST}/api/v1/scaffold/run`, {
+  const res = await request.post(`${REST}${REST_API_PREFIX}/scaffold/run`, {
     data: {
       template: 'plugin',
       name: 'e2e-test-plugin',

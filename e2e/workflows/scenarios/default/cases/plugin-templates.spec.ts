@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // Workflow engine must discover and expose workflow templates
 // declared in plugin manifests under workflows.templates[].
@@ -10,7 +10,7 @@ import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
 //   full-release, hotfix, dry-run
 
 test('WFD-P01: plugin workflow templates appear in catalog', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   expect(res.status()).toBe(200)
 
   const body = await res.json()
@@ -29,7 +29,7 @@ test('WFD-P01: plugin workflow templates appear in catalog', async ({ request })
 })
 
 test('WFD-P02: plugin workflow template has source=plugin', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   expect(res.status()).toBe(200)
 
   const body = await res.json()
@@ -43,7 +43,7 @@ test('WFD-P02: plugin workflow template has source=plugin', async ({ request }) 
 })
 
 test('WFD-P03: plugin workflow template has description', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   expect(res.status()).toBe(200)
 
   const body = await res.json()
@@ -59,7 +59,7 @@ test('WFD-P03: plugin workflow template has description', async ({ request }) =>
 
 test('WFD-P04: plugin template is resolvable by ID', async ({ request }) => {
   const id = encodeURIComponent('plugin:@kb-labs/release/dry-run')
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows/${id}`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${id}`)
 
   // May return 200 or 404 if template is not installed — skip gracefully
   if (res.status() === 404) {

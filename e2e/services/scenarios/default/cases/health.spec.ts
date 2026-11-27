@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY, REST, MARKETPLACE, WORKFLOW, STATE, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, REST, MARKETPLACE_DIRECT, WORKFLOW, STATE, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
 
 const services = [
   { id: 'S-01', name: 'gateway',              url: GATEWAY,     path: '/health' },
   { id: 'S-02', name: 'rest-api',             url: REST,        path: '/health' },
-  { id: 'S-03', name: 'marketplace',          url: MARKETPLACE, path: '/health' },
+  { id: 'S-03', name: 'marketplace',          url: MARKETPLACE_DIRECT, path: '/health' },
   { id: 'S-04', name: 'workflow',             url: WORKFLOW,    path: '/health' },
   { id: 'S-05', name: 'state-daemon',         url: STATE,       path: '/health' },
   { id: 'S-06', name: 'marketplace-registry', url: REGISTRY,    path: '/health' },

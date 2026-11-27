@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // ── Observability describe ────────────────────────────────────────────────────
 
@@ -16,7 +16,7 @@ test('RA-01: GET /observability/describe returns service identity', async ({ req
 // ── Prometheus metrics ────────────────────────────────────────────────────────
 
 test('RA-02: GET /api/v1/metrics returns Prometheus exposition with process metrics', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/metrics`)
+  const res = await request.get(`${REST}${REST_API_PREFIX}/metrics`)
   expect(res.status()).toBe(200)
   expect(res.headers()['content-type']).toMatch(/text/)
   const text = await res.text()

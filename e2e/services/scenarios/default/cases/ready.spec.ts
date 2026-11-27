@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { REST, WORKFLOW, STATE, MARKETPLACE } from '@kb-labs/e2e-shared/urls.js'
+import { REST, WORKFLOW, STATE, MARKETPLACE_DIRECT } from '@kb-labs/e2e-shared/urls.js'
 
 // /ready is deeper than /health — verifies internal components are wired up
 
@@ -43,7 +43,7 @@ test('R-04: rest-api /ready — all plugin routes registered', async ({ request 
 
 // R-05: marketplace /ready — registry loaded
 test('R-05: marketplace /ready — registry loaded', async ({ request }) => {
-  const res = await request.get(`${MARKETPLACE}/ready`)
+  const res = await request.get(`${MARKETPLACE_DIRECT}/ready`)
   // Marketplace may not expose /ready — skip gracefully if so
   if (res.status() === 404) {
     test.skip(true, 'marketplace does not expose /ready endpoint')

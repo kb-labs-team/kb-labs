@@ -1,13 +1,13 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { collectSseEvents } from '@kb-labs/shared-testing-e2e';
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 async function findFirstWorkflow(
   request: APIRequestContext,
 ): Promise<{ id?: string; name?: string } | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`);
   const body = await res.json();
   const list: Array<{ id?: string; name?: string }> =
     body.data?.workflows ?? body.data ?? body.workflows ?? [];
@@ -18,7 +18,7 @@ async function startRun(
   request: APIRequestContext,
   workflowId: string,
 ): Promise<string> {
-  const res = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} });
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} });
   expect([200, 201]).toContain(res.status());
   const body = await res.json();
   const runId: string = body.data?.runId ?? body.data?.id ?? body.runId;
@@ -30,7 +30,7 @@ async function pollRunStatus(
   request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`);
   const body = await res.json();
   return body.data?.run?.status ?? body.data?.status ?? body.status;
 }
@@ -43,7 +43,7 @@ test('WC-01: cancel a running run — run transitions to cancelled or was alread
 
   const runId = await startRun(request, wf!.id ?? wf!.name!);
 
-  const cancelRes = await request.post(`${WORKFLOW}/api/v1/runs/${runId}/cancel`, { data: {} });
+  const cancelRes = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/cancel`, { data: {} });
   expect([200, 204, 409]).toContain(cancelRes.status());
 
   // After cancel, run must be in a terminal state
@@ -66,7 +66,7 @@ test('WC-02: cancel already-finished run returns graceful response (not 5xx)', a
   ).toMatch(/success|completed|failed|cancelled/);
 
   // Cancel an already-terminal run
-  const cancelRes = await request.post(`${WORKFLOW}/api/v1/runs/${runId}/cancel`, { data: {} });
+  const cancelRes = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/cancel`, { data: {} });
   expect(cancelRes.status()).toBeLessThan(500);
 });
 
@@ -77,11 +77,11 @@ test('WC-03: SSE stream terminates after run is cancelled', async ({ request }) 
   const runId = await startRun(request, wf!.id ?? wf!.name!);
 
   // Cancel immediately (may cancel while queued)
-  await request.post(`${WORKFLOW}/api/v1/runs/${runId}/cancel`, { data: {} });
+  await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/cancel`, { data: {} });
 
   // SSE stream must terminate (run is terminal = cancelled or already finished)
   const events = await collectSseEvents(
-    `${WORKFLOW}/api/v1/runs/${runId}/events`,
+    `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`,
     { timeoutMs: 15_000 },
   );
 
