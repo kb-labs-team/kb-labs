@@ -17,6 +17,7 @@ CASE_STEP = re.compile(r"^\|\s*((?:S|PC)-\d+\.\d+)\s*\|", re.MULTILINE)
 CLAIM_TAG = re.compile(r"@(S|PC)-(\d+\.\d+)")
 MODES = ("local", "secured")
 FAILURE_MAX_LENGTH = 180
+INVOCATION_REFERENCE = re.compile(r"invocations/calls\.jsonl:(\d+)\b")
 
 
 def _yaml_scalar(value: str) -> str:
@@ -166,11 +167,182 @@ def _status(claims: list[str], observed: dict[str, list[dict]], applicable_modes
     return "Unclaimed", []
 
 
-def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: dict) -> dict:
+def _step_details(step: dict) -> dict:
+    details = step.get("details")
+    return details if isinstance(details, dict) else {}
+
+
+def _step_requirements(step: dict) -> list[Dependency]:
+    requires = _step_details(step).get("requires")
+    return [Dependency.parse(item) for item in requires if isinstance(item, str)] if isinstance(requires, list) else []
+
+
+def _step_reason(step: dict) -> str:
+    error = _step_details(step).get("error")
+    if isinstance(error, dict) and isinstance(error.get("code"), str) and isinstance(error.get("message"), str):
+        reason = f"{error['code']}: {error['message']}"
+    else:
+        reason = step.get("message") or "failure message unavailable"
+    return " ".join(str(reason).split())
+
+
+def _invocation_hint(call: dict, code: str | None) -> str | None:
+    if not code or call.get("exit_code") in (None, 0):
+        return None
+    for channel in ("stdout", "stderr"):
+        try:
+            response = json.loads(call.get(channel) or "")
+        except (TypeError, ValueError):
+            continue
+        error = response.get("error") if isinstance(response, dict) else None
+        if isinstance(error, dict) and error.get("code") == code and isinstance(error.get("hint"), str):
+            return error["hint"]
+    return None
+
+
+def _recorded_blocker(step: dict, requirement: Dependency, parent: dict) -> bool:
+    failures = _step_details(step).get("prerequisiteFailures")
+    if not isinstance(failures, list):
+        state = re.match(r"blocked by state ([^:]+):", step.get("message") or "")
+        return state is None or (requirement.kind == "state" and state[1] == requirement.name)
+    prefixes = [str(requirement)]
+    if requirement.kind != "state":
+        prefixes.extend(f"{kind}:{parent.get('name')}" for kind in ("step", "flow"))
+    status = "FAIL" if requirement.kind == "state" else parent["status"]
+    markers = tuple(f"{prefix} ended {status}:" for prefix in prefixes)
+    return any(isinstance(failure, str) and failure.startswith(markers) for failure in failures)
+
+
+def _blocking_diagnostics(sources: dict[str, tuple[list[tuple[int, dict]], dict]],
+                          calls: dict[int, dict]) -> dict:
+    """Resolve blockers to recorded execution rows, keeping repeated claim IDs separate."""
+    steps = {}
+    by_id = defaultdict(list)
+    for source, (rows, _) in sources.items():
+        for index, step in rows:
+            key = (source, index)
+            steps[key] = step
+            step_id = step.get("stepId")
+            if isinstance(step_id, str):
+                by_id[step_id].append(key)
+
+    def owner(step_id: str, origin: str, before: int | None = None) -> tuple | None:
+        matches = by_id[step_id]
+        local = [key for key in matches if key[0] == origin]
+        candidates = local or matches
+        if len(candidates) != 1:
+            return None
+        key = candidates[0]
+        if before is not None and key[0] == origin and key[1] >= before:
+            return None
+        return key
+
+    def prerequisite(dependency: Dependency, source: str, index: int) -> tuple | None:
+        if dependency.kind != "state":
+            return owner(dependency.name, source, before=index)
+        local_states = sources[source][1]
+        records = ([(source, local_states[dependency.name])] if dependency.name in local_states
+                   else [(path, states[dependency.name]) for path, (_, states) in sources.items()
+                         if dependency.name in states])
+        if len(records) != 1:
+            return None
+        path, record = records[0]
+        if not isinstance(record, dict) or record.get("passed") is not False or not isinstance(record.get("step"), str):
+            return None
+        return owner(record["step"], path, before=index if source == path else None)
+
+    nodes = {}
+    roots = []
+    children = defaultdict(list)
+    for (source, index), step in steps.items():
+        status = step.get("status")
+        if status not in {"FAIL", "BLOCKED"}:
+            continue
+        details = _step_details(step)
+        error = details.get("error") if isinstance(details.get("error"), dict) else {}
+        hint = error.get("hint")
+        reference = details.get("invocation_evidence")
+        match = INVOCATION_REFERENCE.match(reference) if isinstance(reference, str) else None
+        invocation = None
+        if match:
+            call = calls.get(int(match[1]))
+            context_id = ",".join(step.get("cases", [])) or step.get("name")
+            if call and call.get("step_id") == context_id:
+                invocation = match[0]
+                hint = hint or _invocation_hint(call, error.get("code"))
+        key = f"{source}#{index}"
+        has_blocker = False
+        if status == "BLOCKED":
+            for requirement in dict.fromkeys(_step_requirements(step)):
+                parent = prerequisite(requirement, source, index)
+                if (not parent or steps[parent].get("status") not in {"FAIL", "BLOCKED"}
+                        or not _recorded_blocker(step, requirement, steps[parent])):
+                    continue
+                children[f"{parent[0]}#{parent[1]}"].append({"id": key, "requires": str(requirement)})
+                has_blocker = True
+        if not has_blocker:
+            roots.append(key)
+        nodes[key] = {"stepId": step.get("stepId"),
+                      "step": step.get("name", step.get("stepId", "unknown step")),
+                      "status": status, "reason": _step_reason(step), "claims": step.get("cases", []),
+                      "source": source, "row": index,
+                      "hint": " ".join(hint.split()) if isinstance(hint, str) else None,
+                      "invocation": invocation}
+    for key, node in nodes.items():
+        node["blocks"] = children.get(key, [])
+    return {"roots": roots, "nodes": nodes}
+
+
+def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: dict,
+                     partial: bool, requested_selection: set[str]) -> dict:
     """Rank failed journey steps by the claims reachable through their declared dependencies."""
     steps_by_file: dict[str, list[dict]] = {}
     states_by_file: dict[str, dict] = {}
+    diagnostic_sources = {}
+    invocation_references = set()
+    runner_failures = []
+    selected_claims = set()
+    selected_evidence: dict[str, list[dict]] = defaultdict(list)
+    if directory.is_dir():
+        for path in sorted(directory.glob("*.json")):
+            if path.name.startswith("case-scoreboard"):
+                continue
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            case_run = data.get("case_run", {})
+            file_mode = case_run.get("mode")
+            steps = data.get("steps", [])
+            if not isinstance(steps, list):
+                continue
+            mode_rows = [(index, step) for index, step in enumerate(steps, start=1)
+                         if isinstance(step, dict) and (step.get("mode") or file_mode) == mode]
+            if not mode_rows:
+                continue
+            states = data.get("states") if isinstance(data.get("states"), dict) else {}
+            selected = set(case_run.get("selection", []))
+            if bool(selected) == partial and (not requested_selection or selected == requested_selection):
+                diagnostic_sources[path.name] = (mode_rows, states)
+                if partial:
+                    selected_claims.update(case_run.get("selectedClaims", []))
+                    _journey_evidence(data, path, selected_evidence)
+                for index, step in mode_rows:
+                    details = _step_details(step)
+                    if (step.get("capability") == "journey.runner" and step.get("status") == "FAIL"
+                            and step.get("name") in ("journey selection metadata", "runner startup", "runner crash")):
+                        runner_failures.append(f"{path.name}#{index}")
+                    reference = details.get("invocation_evidence")
+                    match = INVOCATION_REFERENCE.match(reference) if isinstance(reference, str) else None
+                    if match:
+                        invocation_references.add(int(match[1]))
+            if not partial:
+                steps_by_file[path.name] = [step for _, step in mode_rows]
+                states_by_file[path.name] = states
     invocation_errors: dict[str, set[tuple[str, str, str | None]]] = defaultdict(set)
+    referenced_calls = {}
     unreadable_invocation_rows = []
     calls_path = directory / "invocations" / "calls.jsonl"
     if calls_path.is_file():
@@ -181,6 +353,8 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             call = row.value
             if not isinstance(call, dict):
                 continue
+            if row.line_number in invocation_references:
+                referenced_calls[row.line_number] = call
             step_ids = call.get("step_id")
             envelope = call.get("error_envelope")
             if not isinstance(step_ids, str) or not isinstance(envelope, dict):
@@ -193,27 +367,6 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
             identity = (code, area, stage if isinstance(stage, str) else None)
             for step_id in step_ids.split(","):
                 invocation_errors[step_id].add(identity)
-    if directory.is_dir():
-        for path in sorted(directory.glob("*.json")):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, UnicodeError, json.JSONDecodeError):
-                continue
-            if (not isinstance(data, dict)
-                    or data.get("schema") == "kb.journey-case-scoreboard/v2"
-                    or data.get("case_run", {}).get("selection")):
-                continue
-            file_mode = data.get("case_run", {}).get("mode")
-            steps = data.get("steps", [])
-            if not isinstance(steps, list):
-                continue
-            mode_steps = [step for step in steps if isinstance(step, dict)
-                          and (step.get("mode") == mode or file_mode == mode)]
-            if not mode_steps:
-                continue
-            steps_by_file[path.name] = mode_steps
-            states_by_file[path.name] = data.get("states", {}) if isinstance(data.get("states"), dict) else {}
-
     roots = []
     unresolved_owners = []
     unresolved_dependencies = []
@@ -223,110 +376,58 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
 
     allowed_claims = {claim for case in cases if case["status"] == "active" and mode in case["modes"]
                       for claim in case["claims"]}
-    steps_by_id: dict[str, list[tuple[str, dict]]] = defaultdict(list)
-    graph: dict[str, set[str]] = defaultdict(set)
-    for filename, steps in steps_by_file.items():
-        for step in steps:
-            step_id = step.get("stepId")
-            if isinstance(step_id, str):
-                steps_by_id[step_id].append((filename, step))
-                graph.setdefault(step_id, set())
-    state_owners: dict[str, set[str]] = defaultdict(set)
+    known_ids = {step["stepId"] for steps in steps_by_file.values() for step in steps
+                 if isinstance(step.get("stepId"), str)}
+    known_states = {state for states in states_by_file.values() for state in states}
     for filename, states in states_by_file.items():
         for state, value in states.items():
-            if isinstance(value, dict) and isinstance(value.get("step"), str):
-                owner_id = value["step"]
-                if owner_id in steps_by_id:
-                    state_owners[state].add(owner_id)
-                else:
-                    report_unresolved_owner(filename, state, owner_id)
+            if isinstance(value, dict) and isinstance(value.get("step"), str) and value["step"] not in known_ids:
+                report_unresolved_owner(filename, state, value["step"])
     for filename, steps in steps_by_file.items():
         for step in steps:
             step_id = step.get("stepId")
             if not isinstance(step_id, str):
                 continue
-            details = step.get("details") if isinstance(step.get("details"), dict) else {}
-            requirements = details.get("requires", [])
-            dependencies = [Dependency.parse(item) for item in requirements if isinstance(item, str)] \
-                if isinstance(requirements, list) else []
-            for dependency in dependencies:
-                if dependency.kind in {"step", "flow"} and dependency.name in steps_by_id:
-                    graph[step_id].add(dependency.name)
-                elif dependency.kind in {"step", "flow"}:
+            for dependency in _step_requirements(step):
+                if dependency.kind in {"step", "flow"} and dependency.name not in known_ids:
                     unresolved_dependencies.append({"source": filename, "stepId": step_id,
                                                     "requiredStepId": dependency.name})
-                elif dependency.kind == "state":
-                    owners = state_owners.get(dependency.name, set())
-                    if owners:
-                        graph[step_id].update(owners)
-                    elif not any(dependency.name in states for states in states_by_file.values()):
-                        report_unresolved_owner(filename, dependency.name, None)
-    reverse: dict[str, set[str]] = defaultdict(set)
-    for consumer, prerequisites in graph.items():
-        for prerequisite in prerequisites:
-            reverse[prerequisite].add(consumer)
+                elif dependency.kind == "state" and dependency.name not in known_states:
+                    report_unresolved_owner(filename, dependency.name, None)
     state_root_ids = {
         value.get("step")
         for states in states_by_file.values()
         for value in states.values()
         if isinstance(value, dict) and value.get("passed") is False and isinstance(value.get("step"), str)
     }
-    for filename, steps in steps_by_file.items():
-        for root_step in steps:
-            root_id = root_step.get("stepId")
-            if not isinstance(root_id, str):
-                continue
-            if root_step.get("status") != "FAIL":
-                continue
-            reached: set[str] = set()
-            # Reverse edges: find all blocked steps transitively depending on this failure.
-            pending = list(reverse.get(root_id, set()))
-            while pending:
-                current = pending.pop()
-                if current in reached:
-                    continue
+    diagnostics = _blocking_diagnostics(diagnostic_sources, referenced_calls)
+    nodes = diagnostics["nodes"]
+    for key, node in nodes.items():
+        root_id = node["stepId"]
+        if node["status"] != "FAIL" or not isinstance(root_id, str) or partial:
+            continue
+        reached = set()
+        pending = [key]
+        while pending:
+            current = pending.pop()
+            if current not in reached:
                 reached.add(current)
-                pending.extend(reverse.get(current, set()))
-            affected_claims = set(claim for claim in root_step.get("cases", [])
-                                  if isinstance(claim, str) and claim in allowed_claims)
-            blocked_cases = set()
-            for reached_name in reached:
-                for _, dependent in steps_by_id[reached_name]:
-                    if dependent.get("status") == "BLOCKED":
-                        for claim in dependent.get("cases", []):
-                            if isinstance(claim, str) and claim in allowed_claims:
-                                affected_claims.add(claim)
-            blocked_cases.update(claim.rsplit(".", 1)[0] for claim in affected_claims)
-            state_root = root_id in state_root_ids
-            details = root_step.get("details") if isinstance(root_step.get("details"), dict) else {}
-            error = details.get("error") if isinstance(details.get("error"), dict) else {}
-            error_code = error.get("code") if isinstance(error.get("code"), str) else None
-            error_message = error.get("message") if isinstance(error.get("message"), str) else None
-            recorded_message = root_step.get("message")
-            failure = (f"{error_code}: {error_message}"
-                       if error_code and error_message else
-                       recorded_message if isinstance(recorded_message, str) and recorded_message else
-                       "failure message unavailable")
-            failure = " ".join(failure.split())
-            failure = failure[:FAILURE_MAX_LENGTH]
-            if root_id.startswith("case:"):
-                invocation_step_ids = root_id.removeprefix("case:").split(",")
-            else:
-                invocation_step_ids = [root_id]
-            error_envelopes = {identity for step_id in invocation_step_ids
-                               for identity in invocation_errors.get(step_id, set())}
-            roots.append({"mode": mode, "source": filename, "stepId": root_id,
-                          "step": root_step.get("name", root_id),
-                          "failure": failure,
-                          "errorEnvelopes": error_envelopes,
-                          "layer": 0 if state_root else 1, "stateRoot": state_root,
-                          "unblockedClaims": len(affected_claims),
-                          "claims": sorted(affected_claims, key=claim_sort_key),
-                          "blockedStepIds": sorted(name for name in reached if any(
-                              step.get("status") == "BLOCKED" for _, step in steps_by_id[name])),
-                          "blockedStepCount": sum(any(step.get("status") == "BLOCKED"
-                                                      for _, step in steps_by_id[name]) for name in reached),
-                          "blockedCaseIds": sorted(blocked_cases)})
+                pending.extend(child["id"] for child in nodes[current]["blocks"])
+        affected_claims = {claim for step_key in reached for claim in nodes[step_key]["claims"] if claim in allowed_claims}
+        blocked_steps = sorted({nodes[step_key]["stepId"] for step_key in reached - {key}
+                                if isinstance(nodes[step_key]["stepId"], str)})
+        state_root = root_id in state_root_ids
+        invocation_ids = root_id.removeprefix("case:").split(",") if root_id.startswith("case:") else [root_id]
+        error_envelopes = {identity for step_id in invocation_ids
+                           for identity in invocation_errors.get(step_id, set())}
+        roots.append({"mode": mode, "source": node["source"], "stepId": root_id,
+                      "step": node["step"], "failure": node["reason"][:FAILURE_MAX_LENGTH],
+                      "errorEnvelopes": error_envelopes,
+                      "layer": 0 if state_root else 1, "stateRoot": state_root,
+                      "unblockedClaims": len(affected_claims),
+                      "claims": sorted(affected_claims, key=claim_sort_key),
+                      "blockedStepIds": blocked_steps, "blockedStepCount": len(blocked_steps),
+                      "blockedCaseIds": sorted({claim.rsplit(".", 1)[0] for claim in affected_claims})})
 
     deduplicated = {}
     for root in roots:
@@ -382,13 +483,27 @@ def _blocking_report(directory: Path, cases: list[dict], mode: str, evidence: di
                     for results in observed.values())
     fully_green = sum(_status(case["claims"], evidence, [mode])[0] == "Fully green"
                       for case in applicable)
-    return {"mode": mode, "blockingRoots": roots, "rootGroups": root_groups,
+    report = {"mode": mode, "blockingRoots": roots, "rootGroups": root_groups,
+            "blockingDiagnostics": diagnostics,
             "unreadableInvocationRows": unreadable_invocation_rows, "unclaimedCases": unclaimed,
             "unresolvedStateOwners": unresolved_owners,
             "unresolvedDependencies": unresolved_dependencies,
             "headline": {"activeCasesFullyGreen": {"count": fully_green, "total": len(applicable)},
                          "claimsPassing": {"count": passing, "total": len(claims)},
                          "claimsReachable": {"count": reachable, "total": len(claims)}}}
+    if runner_failures:
+        scope = claims & selected_claims if partial else claims
+        available = selected_evidence if partial else evidence.get(mode, {})
+        recorded = {claim: available[claim] for claim in sorted(scope & available.keys(), key=claim_sort_key)}
+        report["incompleteRun"] = {
+            "failureNodeIds": runner_failures,
+            "recordedClaims": recorded,
+            "unreportedClaims": sorted(scope - recorded.keys(), key=claim_sort_key),
+        }
+        diagnostic_log = "journey-diagnostics.log"
+        if (directory / diagnostic_log).is_file():
+            report["incompleteRun"]["diagnosticLog"] = diagnostic_log
+    return report
 
 def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str],
                     requested_selection: Iterable[str] = ()) -> dict:
@@ -399,7 +514,8 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str],
         path.name.startswith((f"service-{mode}", f"service-auth-{mode}", f"installer-case-{mode}",
                              f"platform-{mode}", f"studio-playwright-{mode}"))
         for path in directory.glob("*.json"))] if directory.is_dir() else []
-    partial_selections = list(requested_selection)
+    explicit_selection = set(requested_selection)
+    partial_selections = list(explicit_selection)
     if directory.is_dir():
         for path in sorted(directory.glob("*.json")):
             if path.name.startswith("case-scoreboard"):
@@ -435,7 +551,9 @@ def build_scoreboard(directory: Path, catalog: Path, modes: Iterable[str],
     release_cases = [case for case in cases
                      if case["status"] == "active" and case["release"]
                      and any(mode in case["modes"] for mode in gated_modes)]
-    mode_reports = {mode: _blocking_report(directory, cases, mode, evidence) for mode in modes}
+    mode_reports = {mode: _blocking_report(directory, cases, mode, evidence,
+                                           bool(partial_selections), explicit_selection)
+                    for mode in modes}
     result = {
         "schema": "kb.journey-case-scoreboard/v2",
         "modes": modes,

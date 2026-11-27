@@ -20,11 +20,12 @@ class RunnerCrashReportingTests(unittest.TestCase):
         home = root / "home"
         home.mkdir()
         runner = root / "injected_runner.py"
+        mode, claim = ("secured", "S-268.1") if selected else ("local", "S-010.8")
         runner.write_text(
             ("raise RuntimeError('injected early exception')\n" if crash_before_journey else
              "from service_steps import Journey\n"
-             "CASE_JOURNEY = Journey('local', 'crash-test')\n"
-             "CASE_JOURNEY.step('completed before crash', 'journey.test', lambda: None)\n")
+             f"CASE_JOURNEY = Journey({mode!r}, 'crash-test')\n"
+             f"CASE_JOURNEY.step('completed before crash', 'journey.test', lambda: None, cases=({claim!r},))\n")
             + ("def cleanup():\n    raise RuntimeError('injected cleanup failure')\n" if cleanup_failure else "")
             + "def main():\n"
             + "\n".join(f"    {line}" for line in body.splitlines())
@@ -72,6 +73,15 @@ class RunnerCrashReportingTests(unittest.TestCase):
             self.assertTrue(any(step["name"] == "runner crash" for step in report["steps"]))
             diagnostics = (root / "journey-diagnostics.log").read_text(encoding="utf-8")
             self.assertIn(reason, diagnostics)
+            scoreboard = json.loads((root / "case-scoreboard-local.json").read_text(encoding="utf-8"))
+            incomplete = scoreboard["incompleteRun"]
+            self.assertIn("S-010.8", incomplete["recordedClaims"])
+            self.assertNotIn("S-010.8", incomplete["unreportedClaims"])
+            self.assertIn("S-010.1", incomplete["unreportedClaims"])
+            failure_id, = incomplete["failureNodeIds"]
+            failure = scoreboard["blockingDiagnostics"]["nodes"][failure_id]
+            self.assertIn(reason, failure["reason"])
+            self.assertEqual(failure["source"], "service-local.json")
 
     def test_uncaught_exception_keeps_partial_steps_and_reason(self):
         temporary, root, result = self._run_runner("raise RuntimeError('injected exception')")
@@ -92,6 +102,25 @@ class RunnerCrashReportingTests(unittest.TestCase):
             target_case = next(case for case in scoreboard["cases"] if case["id"] == "S-268")
             self.assertEqual(target_case["status"], "Unclaimed")
             self.assertEqual(target_case["passingClaims"], [])
+            incomplete = scoreboard["incompleteRun"]
+            self.assertEqual(incomplete["recordedClaims"], {})
+            self.assertEqual(incomplete["unreportedClaims"], ["S-268.1", "S-268.2"])
+            failure_id, = incomplete["failureNodeIds"]
+            self.assertIn("injected early exception",
+                          scoreboard["blockingDiagnostics"]["nodes"][failure_id]["reason"])
+
+    def test_selected_sigterm_keeps_recorded_claim_and_only_reports_missing_selection(self):
+        temporary, root, result = self._run_runner(
+            "import os, signal\nos.kill(os.getpid(), signal.SIGTERM)", selected=True)
+        with temporary:
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            scoreboard = json.loads((root / "case-scoreboard-secured.json").read_text(encoding="utf-8"))
+            incomplete = scoreboard["incompleteRun"]
+            self.assertEqual(set(incomplete["recordedClaims"]), {"S-268.1"})
+            self.assertEqual(incomplete["unreportedClaims"], ["S-268.2"])
+            self.assertEqual(incomplete["diagnosticLog"], "journey-diagnostics.log")
+            failure_id, = incomplete["failureNodeIds"]
+            self.assertIn("SIGTERM", scoreboard["blockingDiagnostics"]["nodes"][failure_id]["reason"])
 
     def test_helper_system_exit_keeps_partial_steps_and_reason(self):
         temporary, root, result = self._run_runner("raise SystemExit(17)")

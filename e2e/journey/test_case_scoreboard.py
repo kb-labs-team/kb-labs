@@ -452,6 +452,140 @@ class CaseScoreboardTests(unittest.TestCase):
         self.assertIn("## Platform blocking pyramid", journey_summary)
         self.assertEqual(journey_summary.count("kb-journey-scoreboard:start"), 1)
 
+    # case: S-261.3
+    def test_writer_exposes_json_blocking_chain_and_recorded_recovery(self):
+        journey = Journey("local", "diagnostic-tree")
+        journey.step("install adapter", "install", lambda: "adapter failed")
+        journey.step("prepare update", "update", lambda: self.fail("blocked check ran"),
+                     requires=("step:install adapter",))
+        journey.step("verify update", "update", lambda: self.fail("blocked check ran"),
+                     cases=["S-001.2"], requires=("step:prepare update",))
+        journey.step("independent probe", "health", lambda: None)
+        journey.write_json(self.reports / "service-local.json")
+        raw = json.loads((self.reports / "service-local.json").read_text())
+        raw["steps"][0]["details"] = {
+            "error": {"code": "KB_MARKETPLACE_INSTALL_FAILED", "message": "adapter failed"},
+            "invocation_evidence": "invocations/calls.jsonl:1",
+        }
+        self.write_json("service-local.json", raw)
+        calls = self.reports / "invocations" / "calls.jsonl"
+        calls.parent.mkdir()
+        calls.write_text(json.dumps({
+            "step_id": "install adapter", "exit_code": 1,
+            "stdout": json.dumps({"error": {"code": "KB_MARKETPLACE_INSTALL_FAILED",
+                                           "hint": "Check the candidate registry and retry."}}),
+        }) + "\n", encoding="utf-8")
+        self.write_json("service-local-other.json", {"case_run": {"mode": "local"}, "steps": [
+            {"stepId": "flow:install adapter", "name": "independent install", "status": "PASS"},
+            {"stepId": "case:S-001.1", "name": "unresolved blocked probe", "status": "BLOCKED",
+             "message": "step:flow:install adapter passed; state:missing has not been registered",
+             "cases": ["S-001.1"],
+             "details": {"requires": ["step:flow:install adapter", "state:missing"],
+                         "prerequisiteFailures": ["state:missing has not been registered before unresolved blocked probe"]}},
+        ]})
+        (self.reports / "journey-summary.md").write_text("Existing journey rows\n", encoding="utf-8")
+        write_scoreboards(self.reports, self.catalog)
+
+        single = json.loads((self.reports / "case-scoreboard-local.json").read_text())
+        combined = json.loads((self.reports / "case-scoreboard.json").read_text())
+        diagnostics = single["blockingDiagnostics"]
+        self.assertEqual(set(diagnostics), {"roots", "nodes"})
+        self.assertEqual(diagnostics, combined["modeReports"]["local"]["blockingDiagnostics"])
+        self.assertNotIn("blockingDiagnostics", combined)
+        node_fields = {
+            "stepId", "step", "status", "reason", "claims", "source", "row", "hint", "invocation", "blocks",
+        }
+
+        root_id = "service-local.json#1"
+        prepare_id = "service-local.json#2"
+        verify_id = "service-local.json#3"
+        self.assertEqual(set(diagnostics["roots"]), {root_id, "service-local-other.json#2"})
+        unresolved_id = "service-local-other.json#2"
+        self.assertEqual(set(diagnostics["nodes"]), {root_id, prepare_id, verify_id, unresolved_id})
+        root = diagnostics["nodes"][root_id]
+        prepare = diagnostics["nodes"][prepare_id]
+        verify = diagnostics["nodes"][verify_id]
+        self.assertEqual(set(root), node_fields)
+        self.assertTrue(all(set(node) == node_fields for node in diagnostics["nodes"].values()))
+        self.assertEqual(root["status"], "FAIL")
+        self.assertEqual(root["reason"], "KB_MARKETPLACE_INSTALL_FAILED: adapter failed")
+        self.assertEqual(root["hint"], "Check the candidate registry and retry.")
+        self.assertEqual(root["invocation"], "invocations/calls.jsonl:1")
+        self.assertEqual(root["blocks"], [{"id": prepare_id, "requires": "step:flow:install adapter"}])
+        self.assertEqual(prepare["blocks"], [{"id": verify_id, "requires": "step:flow:prepare update"}])
+        self.assertEqual(verify["claims"], ["S-001.2"])
+        unresolved = diagnostics["nodes"][unresolved_id]
+        self.assertEqual(unresolved["status"], "BLOCKED")
+        self.assertEqual(unresolved["blocks"], [])
+        self.assertIn(unresolved_id, diagnostics["roots"])
+        self.assertTrue(all(diagnostics["nodes"][key]["status"] in {"FAIL", "BLOCKED"}
+                            for key in diagnostics["roots"]))
+        self.assertNotIn("blockedBy", root)
+
+        markdown = (self.reports / "case-scoreboard-local.md").read_text()
+        journey_summary = (self.reports / "journey-summary.md").read_text()
+        for rendered in (markdown, journey_summary):
+            self.assertNotIn("### Blocking diagnostics", rendered)
+            self.assertNotIn("Check the candidate registry and retry.", rendered)
+            self.assertNotIn("invocations/calls.jsonl:1", rendered)
+            self.assertNotIn("unresolved blocked probe", rendered)
+        self.assertIn("Existing journey rows", journey_summary)
+        self.assertEqual(raw["steps"][3]["status"], "PASS")
+
+    # case: S-261.3
+    def test_selected_diagnostics_exclude_full_evidence_and_resolve_failed_state(self):
+        selection = ["S-001.2"]
+        self.write_json("service-local.json", {
+            "case_run": {"mode": "local", "selection": selection},
+            "steps": [
+                {"stepId": "flow:start host", "name": "selected startup", "status": "FAIL",
+                 "message": "host failed"},
+                {"stepId": "case:S-001.2", "name": "probe project", "status": "BLOCKED", "cases": selection,
+                 "details": {"requires": ["state:host-running"]}},
+            ],
+            "states": {"host-running": {"passed": False, "step": "flow:start host"}},
+        })
+        self.write_json("service-local-old.json", {"case_run": {"mode": "local"}, "steps": [
+            {"stepId": "flow:start host", "name": "old startup", "status": "FAIL"},
+        ]})
+        self.write_json("service-local-other-selection.json", {
+            "case_run": {"mode": "local", "selection": ["S-001.1"]},
+            "steps": [{"stepId": "flow:start host", "name": "unrelated selection", "status": "FAIL"}],
+        })
+
+        report = build_scoreboard(self.reports, self.catalog, ["local"], selection)
+        diagnostics = report["blockingDiagnostics"]
+        self.assertEqual(diagnostics["roots"], ["service-local.json#1"])
+        self.assertEqual(set(diagnostics["nodes"]), {"service-local.json#1", "service-local.json#2"})
+        selected_start = diagnostics["nodes"]["service-local.json#1"]
+        selected_probe = diagnostics["nodes"]["service-local.json#2"]
+        self.assertEqual(selected_start["step"], "selected startup")
+        self.assertEqual(selected_start["blocks"], [{"id": "service-local.json#2", "requires": "state:host-running"}])
+        self.assertEqual(selected_probe["step"], "probe project")
+        self.assertFalse(any("old" in node["step"] or "unrelated" in node["step"]
+                             for node in diagnostics["nodes"].values()))
+        self.assertEqual(report["headline"]["claimsReachable"]["count"], 0)
+
+    # case: S-261.3
+    def test_ambiguous_producer_leaves_blocked_step_without_an_inferred_parent(self):
+        source = "service-local.json"
+        self.write_json(source, {"case_run": {"mode": "local"}, "steps": [
+            {"stepId": "case:S-001.1", "name": "first install", "status": "FAIL"},
+            {"stepId": "case:S-001.2", "name": "dependent check", "status": "BLOCKED",
+             "message": "install prerequisite failed", "cases": ["S-001.2"],
+             "details": {"requires": ["step:case:S-001.1"]}},
+            {"stepId": "case:S-001.1", "name": "another install", "status": "PASS"},
+        ]})
+
+        report = build_scoreboard(self.reports, self.catalog, ["local"])
+
+        diagnostics = report["blockingDiagnostics"]
+        blocked = diagnostics["nodes"]["service-local.json#2"]
+        self.assertEqual(blocked["blocks"], [])
+        self.assertEqual(set(diagnostics["roots"]), {"service-local.json#1", "service-local.json#2"})
+        self.assertEqual(report["blockingRoots"][0]["blockedStepIds"], [])
+        self.assertNotIn("dependent check", render_markdown(report))
+
     def test_writer_always_emits_both_mode_views_for_a_single_mode_run(self):
         self.write_json("service-local.json", {"case_run": {"mode": "local", "claims": []}, "steps": []})
         write_scoreboards(self.reports, self.catalog)
