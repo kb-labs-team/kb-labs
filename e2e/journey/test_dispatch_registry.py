@@ -1361,7 +1361,7 @@ class DispatchRegistryTests(unittest.TestCase):
                 self.assertIn("e2e/journey/service_runner.py", resolved["stepSources"])
                 self.assertIn("project MCP cross-project isolation", resolved["selectedOwningSteps"])
 
-    def test_s160_5_selection_includes_commit_fixture_preparation_only(self):
+    def test_s160_5_selection_includes_commit_install_and_fixture_prerequisites(self):
         root = Path(__file__).resolve().parents[2]
         declarations = _case_declarations("e2e/journey/plugin_author_steps.py", root)
         owner_line = next(
@@ -1379,9 +1379,14 @@ class DispatchRegistryTests(unittest.TestCase):
         resolved = selection_from_coverage(coverage, "S-160.5", mode="secured")
 
         self.assertEqual(resolved["runners"], ["service-secured:explore"])
-        self.assertEqual(resolved["prerequisiteSteps"], ["prepare Commit and Review case fixtures"])
+        self.assertEqual(resolved["prerequisiteSteps"], [
+            "install Commit into the project for the route lifecycle",
+            "install exact marketplace plugin into both scopes",
+            "prepare Commit and Review case fixtures",
+            "prepare clean scopes for the S-010 install",
+            "verify S-192 platform and project pins and route are absent before install",
+        ])
         self.assertNotIn("publish next-major Commit update fixture", resolved["prerequisiteSteps"])
-        self.assertNotIn("prepare clean scopes for the S-010 install", resolved["prerequisiteSteps"])
 
         marketplace_declarations = _case_declarations("e2e/journey/marketplace_steps.py", root)
         install_line = next(

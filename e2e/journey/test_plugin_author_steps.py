@@ -570,18 +570,23 @@ class PluginAuthorJourneyTests(unittest.TestCase):
             claims=frozenset({"S-160.5"}),
             owning_steps={"execute the installed Commit command through the secured project runtime":
                           ("S-160.5",)},
-            prerequisite_steps=frozenset({"prepare Commit and Review case fixtures"}),
+            prerequisite_steps=frozenset({
+                "install Commit into the project for the route lifecycle",
+                "prepare Commit and Review case fixtures",
+            }),
             prerequisite_flows=frozenset(),
             capabilities=frozenset({"commit-plugin"}),
             runner_selector="service-secured:explore",
             requested_runners="",
         )
         journey = Journey("secured", "selected-s160-fixture-prerequisite", selection=selection)
+        journey.step("install Commit into the project for the route lifecycle", "marketplace", lambda: None)
         with patch("plugin_author_steps.preflight_installed_plugin_command"):
             run_commit_case_steps(journey, self.project, self.kb, "http://verdaccio:4873",
                                   subprocess.run, self.env)
 
         statuses = {step.name: step.status for step in journey.steps}
+        self.assertEqual(statuses["install Commit into the project for the route lifecycle"], "PASS")
         self.assertEqual(statuses["prepare Commit and Review case fixtures"], "PASS", journey.result().steps)
         self.assertEqual(
             statuses["execute the installed Commit command through the secured project runtime"],

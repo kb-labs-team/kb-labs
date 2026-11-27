@@ -378,7 +378,8 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
             _git(["commit", "-m", "chore: initialize journey fixture"], project=project, env=env)
 
     prepared = journey.step("prepare Commit and Review case fixtures", "plugin-author",
-                            lambda: (install_plugins(), ensure_git_fixture(), None)[-1])
+                            lambda: (install_plugins(), ensure_git_fixture(), None)[-1],
+                            requires=("step:install Commit into the project for the route lifecycle",))
     if prepared.status != "PASS":
         cases = [f"S-014.{step}" for step in range(1, 4)]
         cases.extend(f"S-015.{step}" for step in range(1, 5))
