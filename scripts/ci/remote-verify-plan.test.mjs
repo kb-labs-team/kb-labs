@@ -44,23 +44,23 @@ test('candidate preserves its build package set and shards only packages with te
         '@kb-labs/e2e-shared',
         '@kb-labs/e2e-platform',
         '@kb-labs/e2e-llm-deterministic',
+        'kb-create',
         'kb-labs-web',
         'github.com/kb-labs/kb-runner',
       ],
       unitTestPackages: [
         '@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-shared',
-        '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic',
+        '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-create',
       ],
       internalToolPackages: [],
       skippedManualTasks: [{ package: 'github.com/kb-labs/kb-runner', task: 'test', reason: 'manual-only; run explicitly with --packages' }],
-      stagePackages: { 'kb-create-go-suite': ['kb-create'] },
       changedPathCount: 2,
       selectionReason: 'full: candidate selection',
     },
   }), 'candidate');
 
-  assert.deepEqual(selection.packages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-labs-web', 'github.com/kb-labs/kb-runner']);
-  assert.deepEqual(selection.unitTestPackages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic']);
+  assert.deepEqual(selection.packages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-plugins', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-create', 'kb-labs-web', 'github.com/kb-labs/kb-runner']);
+  assert.deepEqual(selection.unitTestPackages, ['@kb-labs/core-platform', '@kb-labs/commit', '@kb-labs/e2e-shared', '@kb-labs/e2e-platform', '@kb-labs/e2e-llm-deterministic', 'kb-create']);
   assert.deepEqual(selection.internalToolPackages, []);
   assert.deepEqual(selection.skippedManualTasks, [{ package: 'github.com/kb-labs/kb-runner', task: 'test', reason: 'manual-only; run explicitly with --packages' }]);
   const matrix = createTestMatrix(selection, profile.independentTestStages.candidate, profile.buildDependentTestStages.candidate, profile.packageTestStage, profile.maxParallel);
@@ -69,7 +69,7 @@ test('candidate preserves its build package set and shards only packages with te
   assert.ok(!unitTestPackages.includes('@kb-labs/e2e-plugins'));
   assert.ok(!unitTestPackages.includes('kb-labs-web'));
   assert.deepEqual(matrix.internalTool.include, []);
-  assert.ok(matrix.dependent.include.some((entry) => entry.stage === 'kb-create-go-suite' && entry.shard === 1 && entry.packages[0] === 'kb-create'));
+  assert.equal(matrix.dependent.include.filter(({ stage, packages = [] }) => stage === profile.packageTestStage && packages.includes('kb-create')).length, 1);
 });
 
 // case: S-262.7
@@ -78,7 +78,6 @@ test('unit-test shards include only affected packages with a registered test tas
     packages: ['@kb-labs/core-state-daemon', '@kb-labs/e2e-services'],
     unitTestPackages: ['@kb-labs/core-state-daemon'],
     internalToolPackages: [],
-    stagePackages: {},
   };
   const matrix = createTestMatrix(selection, [], [], profile.packageTestStage, profile.maxParallel);
 
@@ -95,7 +94,6 @@ test('affected selection requires a valid subset of packages that own test tasks
       packages: ['@kb-labs/core-state-daemon', '@kb-labs/e2e-services'],
       unitTestPackages: ['@kb-labs/core-state-daemon'],
       internalToolPackages: [],
-      stagePackages: {},
       changedPathCount: 1,
     },
   };
@@ -106,7 +104,7 @@ test('affected selection requires a valid subset of packages that own test tasks
 // case: S-262.7
 test('test matrix refuses an object selection that omits task-aware package ownership', () => {
   assert.throws(
-    () => createTestMatrix({ packages: ['@kb-labs/e2e-services'], internalToolPackages: [], stagePackages: {} }, [], [], profile.packageTestStage, profile.maxParallel),
+    () => createTestMatrix({ packages: ['@kb-labs/e2e-services'], internalToolPackages: [] }, [], [], profile.packageTestStage, profile.maxParallel),
     /unitTestPackages/,
   );
 });
@@ -119,7 +117,6 @@ test('stream plan gates an internal-tool change in its ordinary package test sha
       packages: ['github.com/kb-labs/kb-runner'],
       unitTestPackages: ['github.com/kb-labs/kb-runner'],
       internalToolPackages: ['github.com/kb-labs/kb-runner'],
-      stagePackages: {},
       changedPathCount: 1,
       selectionReason: 'changed internal tool',
     },
@@ -169,10 +166,10 @@ test('rejects unsuccessful or malformed affected-package output instead of widen
 
 // case: S-262.7
 test('rejects zero packages for a non-empty stream diff and for every candidate selection', () => {
-  const emptyChangedStream = JSON.stringify({ ok: true, data: { packages: [], unitTestPackages: [], internalToolPackages: [], stagePackages: {}, changedPathCount: 0 } });
-  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], unitTestPackages: [], internalToolPackages: [], skippedManualTasks: [], stagePackages: {}, changedPathCount: 0, selectionReason: '' });
+  const emptyChangedStream = JSON.stringify({ ok: true, data: { packages: [], unitTestPackages: [], internalToolPackages: [], changedPathCount: 0 } });
+  assert.deepEqual(parseAffectedSelection(emptyChangedStream, 'stream'), { packages: [], unitTestPackages: [], internalToolPackages: [], skippedManualTasks: [], changedPathCount: 0, selectionReason: '' });
   assert.throws(
-    () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], unitTestPackages: [], internalToolPackages: [], stagePackages: {}, changedPathCount: 3 } }), 'stream'),
+    () => parseAffectedSelection(JSON.stringify({ ok: true, data: { packages: [], unitTestPackages: [], internalToolPackages: [], changedPathCount: 3 } }), 'stream'),
     /KB_REMOTE_EMPTY_SELECTION/,
   );
   assert.throws(
@@ -189,7 +186,6 @@ test('carries the kb-devkit full-selection reason into prepare plan evidence', (
       packages: ['@kb-labs/core', '@kb-labs/cli'],
       unitTestPackages: ['@kb-labs/core', '@kb-labs/cli'],
       internalToolPackages: [],
-      stagePackages: {},
       changedPathCount: 2,
       selectionReason: 'full: unowned path tsconfig.base.json',
     },
@@ -199,7 +195,6 @@ test('carries the kb-devkit full-selection reason into prepare plan evidence', (
     unitTestPackages: ['@kb-labs/core', '@kb-labs/cli'],
     internalToolPackages: [],
     skippedManualTasks: [],
-    stagePackages: {},
     changedPathCount: 2,
     selectionReason: 'full: unowned path tsconfig.base.json',
   });

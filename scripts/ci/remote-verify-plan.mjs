@@ -2,7 +2,6 @@
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 
 const selectionCommand = 'node scripts/ci/resolve-remote-selection.mjs "$VERIFICATION_PROFILE" "$RUNNER_TEMP/affected-packages.json" ./tools/kb-devkit/kb-devkit';
-const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
 
 export function parseAffectedPackages(output) {
   let envelope;
@@ -25,7 +24,6 @@ export function parseAffectedSelection(output, profileName) {
   const unitTestPackages = envelope?.data?.unitTestPackages;
   const internalToolPackages = envelope?.data?.internalToolPackages;
   const skippedManualTasks = envelope?.data?.skippedManualTasks ?? [];
-  const stagePackages = envelope?.data?.stagePackages;
   const changedPathCount = envelope?.data?.changedPathCount;
   if (!Number.isSafeInteger(changedPathCount) || changedPathCount < 0) throw new Error(`kb-devkit affected selection is missing its changed-path count. Rerun the prepare selector: ${selectionCommand}.`);
   if (!Array.isArray(internalToolPackages) || internalToolPackages.some((name) => typeof name !== 'string' || !name) || new Set(internalToolPackages).size !== internalToolPackages.length || internalToolPackages.some((name) => !packages.includes(name))) {
@@ -37,18 +35,12 @@ export function parseAffectedSelection(output, profileName) {
   if (!Array.isArray(skippedManualTasks) || skippedManualTasks.some((task) => !task || typeof task.package !== 'string' || !task.package || typeof task.task !== 'string' || !task.task || typeof task.reason !== 'string' || !task.reason || !packages.includes(task.package))) {
     throw new Error(`kb-devkit affected selection returned an invalid skipped-manual task report. Rerun the prepare selector: ${selectionCommand}.`);
   }
-  if (!stagePackages || typeof stagePackages !== 'object' || Array.isArray(stagePackages)) throw new Error(`Remote package selection did not include its manifest-backed stage packages. Rerun the prepare selector: ${selectionCommand}.`);
-  for (const [stage, names] of Object.entries(stagePackages)) {
-    if (!profile.stages[stage] || profile.stages[stage].runner !== 'kb-devkit-test-package' || !Array.isArray(names) || names.length !== 1 || names.some((name) => typeof name !== 'string' || !name)) {
-      throw new Error(`Remote package selection contains invalid stage package data for ${stage}. Rerun the prepare selector: ${selectionCommand}.`);
-    }
-  }
   if (packages.length === 0 && profileName === 'stream' && changedPathCount > 0) {
     throw new Error(`KB_REMOTE_EMPTY_SELECTION: ${profileName} resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   }
   const selectionReason = envelope?.data?.selectionReason ?? '';
   if (typeof selectionReason !== 'string') throw new Error(`kb-devkit affected selection returned an invalid selection reason. Rerun the prepare selector: ${selectionCommand}.`);
-  if (profileName === 'candidate' && packages.length === 0 && Object.keys(stagePackages).length === 0) {
+  if (profileName === 'candidate' && packages.length === 0) {
     throw new Error(`KB_REMOTE_EMPTY_SELECTION: candidate resolved ${changedPathCount} changed path(s) to zero workspace packages. Check the base-ref input and registry, then rerun the prepare selector: ${selectionCommand}.`);
   }
   const internalSet = new Set(internalToolPackages);
@@ -57,19 +49,17 @@ export function parseAffectedSelection(output, profileName) {
     unitTestPackages: profileName === 'candidate' ? unitTestPackages.filter((name) => !internalSet.has(name)) : unitTestPackages,
     internalToolPackages: profileName === 'candidate' ? internalToolPackages : [],
     skippedManualTasks,
-    stagePackages,
     changedPathCount,
     selectionReason,
   };
 }
 
-export function createTestMatrix(packagesOrSelection, independentStages, buildDependentStages, packageTestStage, shardLimit, stagePackages = {}) {
+export function createTestMatrix(packagesOrSelection, independentStages, buildDependentStages, packageTestStage, shardLimit) {
   const selection = Array.isArray(packagesOrSelection)
-    ? { packages: packagesOrSelection, unitTestPackages: packagesOrSelection, internalToolPackages: [], skippedManualTasks: [], stagePackages }
+    ? { packages: packagesOrSelection, unitTestPackages: packagesOrSelection, internalToolPackages: [], skippedManualTasks: [] }
     : packagesOrSelection;
   const packages = selection.packages;
   const unitTestPackages = selection.unitTestPackages;
-  stagePackages = selection.stagePackages ?? stagePackages;
   if (!Number.isSafeInteger(shardLimit) || shardLimit < 1) throw new Error('Verification profile maxParallel must be a positive integer.');
   if (new Set(packages).size !== packages.length) throw new Error('Affected package selection contains a duplicate package.');
   if (!Array.isArray(unitTestPackages) || unitTestPackages.some((name) => !packages.includes(name)) || new Set(unitTestPackages).size !== unitTestPackages.length) {
@@ -84,11 +74,8 @@ export function createTestMatrix(packagesOrSelection, independentStages, buildDe
     packages: [],
   }));
   unitTestPackages.forEach((packageName, index) => packageShards[index % shardCount].packages.push(packageName));
-  const stageEntry = (stage) => stagePackages[stage]
-    ? { stage, shard: 1, packages: stagePackages[stage] }
-    : { stage };
-  const independent = { include: independentStages.map(stageEntry) };
-  const dependent = { include: [...buildDependentStages.map(stageEntry), ...packageShards] };
+  const independent = { include: independentStages.map((stage) => ({ stage })) };
+  const dependent = { include: [...buildDependentStages.map((stage) => ({ stage })), ...packageShards] };
   const internalShardCount = Math.min(selection.internalToolPackages.length, shardLimit);
   const internalTool = {
     include: Array.from({ length: internalShardCount }, (_, index) => ({ stage: 'internal-tool-tests', shard: index + 1, packages: [] })),
@@ -105,12 +92,12 @@ export function createTestMatrix(packagesOrSelection, independentStages, buildDe
 function main() {
   const [profileName, affectedPath, planPath, outputPath] = process.argv.slice(2);
   if (!profileName || !affectedPath || !planPath || !outputPath) throw new Error('Usage: node scripts/ci/remote-verify-plan.mjs <stream|candidate> <affected-json> <plan-json> <github-output>');
-  const { packages, unitTestPackages, internalToolPackages, skippedManualTasks, stagePackages, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
+  const { packages, unitTestPackages, internalToolPackages, skippedManualTasks, changedPathCount, selectionReason } = parseAffectedSelection(readFileSync(affectedPath, 'utf8'), profileName);
   const profile = JSON.parse(readFileSync(new URL('./verification-profile.json', import.meta.url), 'utf8'));
   const independentStages = profile.independentTestStages[profileName];
   const buildDependentStages = profile.buildDependentTestStages[profileName];
   if (!independentStages || !buildDependentStages) throw new Error(`Unknown verification profile ${profileName}; use stream or candidate.`);
-  const matrix = createTestMatrix({ packages, unitTestPackages, internalToolPackages, stagePackages }, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
+  const matrix = createTestMatrix({ packages, unitTestPackages, internalToolPackages }, independentStages, buildDependentStages, profile.packageTestStage, profile.maxParallel);
   writeFileSync(planPath, `${JSON.stringify(matrix)}\n`);
   const selection = JSON.parse(readFileSync(affectedPath, 'utf8')).data;
   appendFileSync(outputPath, `test_matrix=${JSON.stringify({ include: matrix.include })}\nindependent_matrix=${JSON.stringify(matrix.independent)}\nbuild_dependent_matrix=${JSON.stringify(matrix.dependent)}\ninternal_tool_matrix=${JSON.stringify(matrix.internalTool)}\ninternal_tool_packages=${internalToolPackages.join(',')}\nskipped_manual_tasks=${JSON.stringify(skippedManualTasks)}\nbuild_stage=${profile.buildStage}\npackages=${packages.join(',')}\nselected_packages=${JSON.stringify(packages)}\nselected_package_count=${packages.length}\nunit_test_packages=${unitTestPackages.join(',')}\nunit_test_package_count=${unitTestPackages.length}\nselection_mode=${selection.mode ?? 'full'}\nselection_base_sha=${selection.baseSha ?? ''}\nselection_reason=${selectionReason}\nmax_parallel=${profile.maxParallel}\nshard_timeout_minutes=${profile.shardTimeoutMinutes}\n`);

@@ -169,8 +169,7 @@ Not modified:
 ## References
 
 - [ADR-0017: E2E pipeline sharding and incremental caching](./0017-e2e-pipeline-sharding-and-caching.md)
-- [docs/ci-budget.md](../ci-budget.md)
-- [scripts/ci-status.sh](../../scripts/ci-status.sh)
+- [Current CI run and timing commands](../ci-cd.md#inspect-runs)
 - [GitHub Actions: paths-ignore](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#onpushpull_requestpull_request_targetpathspaths-ignore)
 - [GitHub Actions: concurrency](https://docs.github.com/en/actions/using-jobs/using-concurrency)
 

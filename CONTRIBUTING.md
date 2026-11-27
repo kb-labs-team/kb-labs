@@ -54,7 +54,7 @@ refactor(core): simplify config loading
 git push -u origin feat/your-feature
 ```
 
-Then open a Pull Request on GitHub. The PR template will guide you through the checklist.
+Open a Pull Request on GitHub and follow the PR template. The [CI reference](docs/ci-cd.md#stabilization-workflow) explains which checks to run and what evidence to include during stabilization.
 
 ## Project Structure
 

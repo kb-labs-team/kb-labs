@@ -3,6 +3,7 @@ package engine
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/kb-labs/devkit/internal/cache"
@@ -353,5 +354,33 @@ func TestExecutorDoesNotReplayCachedFailure(t *testing.T) {
 	}
 	if r := exec.Run(pkg, def, false, nil); !r.OK || !r.Cached {
 		t.Fatalf("third run: OK=%v Cached=%v, want a cached success", r.OK, r.Cached)
+	}
+}
+
+// case: S-321.1
+func TestExecutorReportsCommandThatNeverStartedAsFailure(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceRoot(t, root, []string{"packages/*"})
+	pkgDir := filepath.Join(root, "packages", "app")
+	writePkg(t, pkgDir, `{"name":"@kb/app"}`)
+	initTrackedFixture(t, root)
+
+	cacheRoot := filepath.Join(root, ".kb", "devkit")
+	store, err := cache.NewLocalStore(cacheRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executor := NewExecutor(store, cache.NewManifestStore(cacheRoot), cache.NewStateStore(cacheRoot), root, cacheRoot, false)
+	pkg := workspace.Package{Name: "@kb/app", Dir: pkgDir, Language: "typescript"}
+	def := TaskDef{Name: "build", Command: filepath.Join(pkgDir, "missing-build-tool"), Cache: true}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		result := executor.Run(pkg, def, false, nil)
+		if result.OK || result.Cached || result.ExitCode == 0 {
+			t.Fatalf("attempt %d result = %+v, want a fresh non-zero failure", attempt, result)
+		}
+		if !strings.Contains(result.Error, "command not found") {
+			t.Fatalf("attempt %d error = %q, want unavailable command diagnostic", attempt, result.Error)
+		}
 	}
 }
