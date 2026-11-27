@@ -69,8 +69,9 @@ test('RA-RD-06: GET /ready when 503 — ready is false with a non-empty reason',
     test.skip(true, 'Service is ready — 503 path not exercisable right now')
     return
   }
-  const data = decodeUxSuccessResult<ReadinessPayload>(await res.json())
-  expect(data.ready).toBe(false)
-  expect(data.status).not.toBe('ready')
-  expect(data.reason.length).toBeGreaterThan(0)
+  const body = await res.json()
+  expect(body).toMatchObject({ ok: false, error: {
+    code: 'KB_SERVICE_UNAVAILABLE',
+    details: { service: 'rest', status: expect.any(String) },
+  } })
 })

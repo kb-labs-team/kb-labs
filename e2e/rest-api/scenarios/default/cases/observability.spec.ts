@@ -40,7 +40,7 @@ test('RA-OB-04: GET /observability/health contains checks array with registry en
   expect(Array.isArray(data.checks)).toBe(true)
   const registryCheck = data.checks.find((c: { id: string }) => c.id === 'registry')
   expect(registryCheck).toBeDefined()
-  expect(['ok', 'warn', 'fail']).toContain(registryCheck.status)
+  expect(['ok', 'warn', 'error']).toContain(registryCheck.status)
 })
 
 test('RA-OB-05: GET /observability/health has state field', async ({ request }) => {

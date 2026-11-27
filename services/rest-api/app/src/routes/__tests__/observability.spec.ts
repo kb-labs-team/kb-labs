@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
+import { platform } from '@kb-labs/core-runtime';
+import { InMemoryCache } from '@kb-labs/core-platform/inmemory';
 
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerObservabilityRoutes } from '../observability';
@@ -39,6 +41,28 @@ describe('registerObservabilityRoutes', () => {
     await app.close();
     if (previousStateDaemonUrl === undefined) { delete process.env.KB_STATE_DAEMON_URL; }
     else { process.env.KB_STATE_DAEMON_URL = previousStateDaemonUrl; }
+  });
+
+  // case: S-203.1
+  it('returns a typed 503 when system metrics have no cache', async () => {
+    const response = await app.inject('/api/v1/observability/system-metrics');
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_SERVICE_UNAVAILABLE' } });
+  });
+
+  it('returns a typed 404 when the metrics cache contains no samples', async () => {
+    const metricsApp: ReturnType<typeof Fastify> = Fastify({ logger: false });
+    const cache = vi.spyOn(platform, 'cache', 'get').mockReturnValue(new InMemoryCache());
+    try {
+      registerEnvelopeMiddleware(metricsApp, BASE_CONFIG);
+      await registerObservabilityRoutes(metricsApp, BASE_CONFIG, undefined, platform);
+      const response = await metricsApp.inject('/api/v1/observability/system-metrics');
+      expect(response.statusCode).toBe(404);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'KB_RUNTIME_RESOURCE_NOT_FOUND' } });
+    } finally {
+      cache.mockRestore();
+      await metricsApp.close();
+    }
   });
 
   describe('GET /api/v1/observability/state-broker', () => {

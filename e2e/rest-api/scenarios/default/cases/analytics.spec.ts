@@ -49,19 +49,17 @@ test('RA-AN-05: GET /adapters/state/stats returns 200 or graceful degradation (n
   expect([200, 404, 501, 503]).toContain(res.status())
 })
 
-test('RA-AN-06: GET /observability/system-metrics returns 200 or 501', async ({ request }) => {
+test('RA-AN-06: GET /observability/system-metrics returns samples or a typed availability error', async ({ request }) => {
   const res = await request.get(`${BASE}/observability/system-metrics`)
-  expect([200, 404, 501, 503]).toContain(res.status())
+  const body = await res.json()
+  expect([200, 404, 503]).toContain(res.status())
   if (res.status() === 200) {
-    const body = await res.json()
-    const data = body.data ?? body
-    const hasSystemFields =
-      data.cpu !== undefined ||
-      data.memory !== undefined ||
-      data.cpuUsagePercent !== undefined ||
-      data.memUsagePercent !== undefined ||
-      data.metrics !== undefined
-    expect(hasSystemFields).toBe(true)
+    expect(body.data.instances.length).toBeGreaterThan(0)
+    expect(body.data.summary.totalInstances).toBe(body.data.instances.length)
+  } else {
+    expect(body).toMatchObject({ ok: false, error: {
+      code: res.status() === 404 ? 'KB_RUNTIME_RESOURCE_NOT_FOUND' : 'KB_SERVICE_UNAVAILABLE',
+    } })
   }
 })
 

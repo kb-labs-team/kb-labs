@@ -356,28 +356,6 @@ async function shellHandler(
       detached: true,
     });
 
-    if (ctx.onProcessStarted) {
-      const pid = proc.pid;
-      if (pid === undefined) {
-        throw new Error('Shell process started without an OS process id');
-      }
-      const identity = await captureProcessIdentity(pid);
-      if (identity) {
-        try {
-          await ctx.onProcessStarted(identity);
-        } catch (error) {
-          try {
-            process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
-          } catch (killError) {
-            if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
-              throw killError;
-            }
-          }
-          throw error;
-        }
-      }
-    }
-
     // Stream stdout/stderr line-by-line in real-time.
     // We consume the streams ourselves via 'data' events for live log streaming.
     // Because attaching a 'data' listener drains the stream, execa's result.stdout
@@ -432,6 +410,28 @@ async function shellHandler(
       stderrBuf = lines.pop() ?? '';
       for (const line of lines) {emitLine('stderr', line);}
     });
+
+    if (ctx.onProcessStarted) {
+      const pid = proc.pid;
+      if (pid === undefined) {
+        throw new Error('Shell process started without an OS process id');
+      }
+      const identity = await captureProcessIdentity(pid);
+      if (identity) {
+        try {
+          await ctx.onProcessStarted(identity);
+        } catch (error) {
+          try {
+            process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
+          } catch (killError) {
+            if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
+              throw killError;
+            }
+          }
+          throw error;
+        }
+      }
+    }
 
     // The execution boundary owns the deadline. This handler only terminates
     // its process group when that boundary signals cancellation.
