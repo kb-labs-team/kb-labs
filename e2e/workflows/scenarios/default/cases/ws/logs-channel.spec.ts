@@ -120,6 +120,6 @@ test('WS-L05: client disconnect does not leak — server handles cleanup', async
   }, await authHeaders(request));
 
   // Verify daemon is still healthy after forced disconnect
-  const health = await fetch(`${WORKFLOW}/health`);
-  expect(health.ok).toBe(true);
+  const health = await request.get(`${WORKFLOW}/health`);
+  expect(health.ok()).toBe(true);
 });
