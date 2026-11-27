@@ -24,6 +24,10 @@ DOCKER_E2E_BOOTSTRAP = {
     "e2e/docker-compose.oauth-ci.yml",
     "e2e/platform/entrypoint.sh",
 }
+NATIVE_INSTALLER_REPORT_FILES = {
+    "e2e/journey/native-macos-install.mjs",
+    "plugins/qa/tests/__tests__/cli/qa-coverage-show.cli.test.ts",
+}
 REPORT_PREFIXES = ("service-", "installer-case-", "platform-")
 DEVKIT_TASKS = re.compile(r"^tasks:\n(?:^[ #][^\n]*\n|^\n)*", re.MULTILINE)
 DEVKIT_COVERAGE_TASK = re.compile(r"^  test:coverage(?::go)?:\n(?:^ {4}[^\n]*\n|^\n)*", re.MULTILINE)
@@ -46,6 +50,9 @@ def plan_claims(paths: list[str]) -> list[str]:
         if path.startswith(("tools/kb-devkit/", "e2e/tests/")) or path == "e2e/_global/ci.zone.json":
             continue
         if path in DOCKER_E2E_BOOTSTRAP or fnmatchcase(path, "e2e/journey/test_*.py"):
+            continue
+        # Native report contracts are exercised by the macOS matrix and QA tests.
+        if path in NATIVE_INSTALLER_REPORT_FILES:
             continue
         scoped = {claim for scope in policy["scopes"] for claim in scope["claims"]
                   if any(fnmatchcase(path, pattern) for pattern in scope["paths"])}
