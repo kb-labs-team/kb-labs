@@ -329,6 +329,18 @@ jobs:
           case "$E2E_SUITE" in
             studio)
               docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/commit --scope platform
+              # The running REST API owns an in-memory registry snapshot. Restart
+              # the disposable platform so it discovers the newly installed fixture.
+              docker compose exec -T --workdir /workspace/kb-e2e platform kb-create restart --platform-root /workspace/kb-e2e
+              ready=0
+              for _ in $(seq 1 60); do
+                if curl -fsS http://localhost:4000/ready >/dev/null 2>&1; then ready=1; break; fi
+                sleep 5
+              done
+              if [ "$ready" != 1 ]; then
+                echo "Platform did not become ready after installing the Studio fixture" >&2
+                exit 1
+              fi
               ;;
             plugins)
               for plugin in @kb-labs/commit @kb-labs/review @kb-labs/quality; do

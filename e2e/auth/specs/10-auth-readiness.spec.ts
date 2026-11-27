@@ -54,6 +54,10 @@ test('AUTH-38: /health/auth is not served through the public proxy', async ({ re
   // 404 below cannot be blamed on a wrong URL.
   const control = await request.get(`${GATEWAY}/api/health`)
   expect(control.status()).toBe(200)
+  // The same proxy must reach the versioned API instead of serving Studio's SPA.
+  const projectList = await request.get(`${GATEWAY}/api/v1/projects`)
+  expect(projectList.status()).toBe(401)
+  expect((await projectList.json()).error.code).toBe('KB_AUTH_REQUIRED')
 
   const res = await request.get(`${GATEWAY}/api/health/auth`)
   expect(res.status()).toBe(404)

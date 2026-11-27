@@ -10,6 +10,7 @@ test('Registry request preserves the resolved plan and injects only the supporte
   } } };
   const result = registryInstallRequest(input, 'http://marketplace-registry:5071');
   assert.equal(result.marketplaceSources.registryUrl, 'http://127.0.0.1:4317/api/v1/marketplace-registry');
+  assert.equal(result.marketplaceSources.npmUrl, 'http://verdaccio:4873');
   assert.equal(result.marketplaceSources.signingPublicKeyEnv, 'KB_E2E_REGISTRY_PUBLIC_KEY');
   assert.equal(result.gatewayUrl, 'http://127.0.0.1:4317');
   assert.deepEqual(result.secretInputs, ['gateway.bootstrap.password', 'gateway.internalSecret']);

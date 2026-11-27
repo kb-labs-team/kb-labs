@@ -25,7 +25,6 @@ async function fillChangePasswordForm(
 ): Promise<void> {
   const routeFailures: { code?: string; correlationId?: string; stack?: string }[] = []
   const captureFailure = (message: ConsoleMessage) => {
-    if (message.type() !== 'debug') return
     const line = message.text()
     if (!line.startsWith('{') || !line.includes('"category":"studio:error-boundary"')) return
     const { code, correlationId, stack } = JSON.parse(line) as typeof routeFailures[number]
@@ -39,7 +38,10 @@ async function fillChangePasswordForm(
   page.on('console', captureFailure)
   try {
     await page.goto('/account/password')
-    await page.waitForSelector('input[id="pwd-current"]')
+    await page.fill('input[id="pwd-current"]', current)
+    await page.fill('input[id="pwd-new"]', newPwd)
+    await page.fill('input[id="pwd-confirm"]', confirm)
+    await page.click('button[type="submit"]')
   } catch (error) {
     if (routeFailures.length) await test.info().attach('studio-route-failures', {
       body: JSON.stringify(routeFailures, null, 2),
@@ -49,10 +51,6 @@ async function fillChangePasswordForm(
   } finally {
     page.off('console', captureFailure)
   }
-  await page.fill('input[id="pwd-current"]', current)
-  await page.fill('input[id="pwd-new"]', newPwd)
-  await page.fill('input[id="pwd-confirm"]', confirm)
-  await page.click('button[type="submit"]')
 }
 
 // ── 20. Happy: change password → other device signed out, current stays ────────

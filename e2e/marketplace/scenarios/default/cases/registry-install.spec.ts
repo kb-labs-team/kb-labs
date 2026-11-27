@@ -1,14 +1,14 @@
 import { test, expect } from '@playwright/test'
 import { MARKETPLACE, REGISTRY } from '@kb-labs/e2e-shared/urls.js'
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
-import { createTestTarball } from '../../../../marketplace-registry/fixtures/create-test-tarball.js'
+import { createTestTarball, testManifestIdentity } from '../../../../marketplace-registry/fixtures/create-test-tarball.js'
 
 // ── Marketplace install via KB Registry ───────────────────────────────────────
 // Requires: kb-dev start (gateway + marketplace :5070 + registry :5071 running)
 // Marketplace daemon must have marketplace.registry.url configured to point at
 // the local registry (:5071).
 //
-// MI-* = marketplace install with kb: spec
+// MI-* = marketplace install by the identity declared in the plugin manifest
 
 const REG_HANDLE = 'e2e-mi-author'
 const TEST_VERSION = '1.0.0'
@@ -32,7 +32,8 @@ async function publishToRegistry(
     { manifest: true },
   )
   const meta = JSON.stringify({
-    meta: { name: pkgName, version: TEST_VERSION, description: 'MI e2e test', keywords: ['e2e'] },
+    meta: { name: pkgName, identity: testManifestIdentity(pkgName), version: TEST_VERSION, description: 'MI e2e test', keywords: ['e2e'] },
+    primaryKind: 'plugin',
     visibility,
   })
   return request.post(`${REGISTRY}/api/v1/packages/publish`, {
@@ -49,9 +50,9 @@ function skipOnRegistryNotConfigured(status: number) {
   expect(status, 'marketplace registry request must not fail internally').not.toBe(500)
 }
 
-// ── Public kb: install ────────────────────────────────────────────────────────
+// ── Public Registry install ────────────────────────────────────────────────────────
 
-test('MI-01: install public kb: package via marketplace → 201', async ({ request }) => {
+test('MI-01: install public Registry package via marketplace → 201', async ({ request }) => {
   const token = await getAccessToken(request)
   const pkgName = uniquePkg('e2e-mi-pub')
 
@@ -59,7 +60,7 @@ test('MI-01: install public kb: package via marketplace → 201', async ({ reque
   expect(pub.status()).toBe(201)
 
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
-    data: { specs: [`kb:${REG_HANDLE}/${pkgName}`] },
+    data: { specs: [testManifestIdentity(pkgName)] },
     timeout: 30_000,
   })
   skipOnRegistryNotConfigured(install.status())
@@ -70,13 +71,13 @@ test('MI-01: install public kb: package via marketplace → 201', async ({ reque
   expect(list.status()).toBe(200)
   const body = await list.json()
   const packages: Array<{ name?: string; id?: string; spec?: string }> = body.entries ?? body.packages ?? []
-  const spec = `kb:${REG_HANDLE}/${pkgName}`
+  const spec = testManifestIdentity(pkgName)
   expect(packages.some(p => p.id === spec || p.spec === spec || p.name === pkgName)).toBe(true)
 })
 
-// ── Private kb: install (no token) ───────────────────────────────────────────
+// ── Private Registry install (no token) ───────────────────────────────────────────
 
-test('MI-02: install private kb: package without token → 403', async ({ request }) => {
+test('MI-02: install private Registry package without token → 403', async ({ request }) => {
   const token = await getAccessToken(request)
   const pkgName = uniquePkg('e2e-mi-priv')
 
@@ -84,7 +85,7 @@ test('MI-02: install private kb: package without token → 403', async ({ reques
   expect(pub.status()).toBe(201)
 
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
-    data: { specs: [`kb:${REG_HANDLE}/${pkgName}`] },
+    data: { specs: [testManifestIdentity(pkgName)] },
     timeout: 30_000,
   })
   skipOnRegistryNotConfigured(install.status())
@@ -92,9 +93,9 @@ test('MI-02: install private kb: package without token → 403', async ({ reques
   expect([401, 403, 404]).toContain(install.status())
 })
 
-// ── Private kb: install with share token ─────────────────────────────────────
+// ── Private Registry install with share token ─────────────────────────────────────
 
-test('MI-03: install private kb: package with share token → 201', async ({ request }) => {
+test('MI-03: install private Registry package with share token → 201', async ({ request }) => {
   const token = await getAccessToken(request)
   const pkgName = uniquePkg('e2e-mi-tok')
 
@@ -112,7 +113,7 @@ test('MI-03: install private kb: package with share token → 201', async ({ req
 
   // Install via marketplace with share token
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
-    data: { specs: [`kb:${REG_HANDLE}/${pkgName}`], token: shareToken },
+    data: { specs: [testManifestIdentity(pkgName)], token: shareToken },
     timeout: 30_000,
   })
   skipOnRegistryNotConfigured(install.status())
