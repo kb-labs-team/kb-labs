@@ -7,7 +7,14 @@ const baselinePath = 'scripts/ci/devkit-baseline.json';
 
 export function readDevkitFindings(envelope, workspace) {
   if (envelope?.ok === false && envelope.error?.code !== 'KB_DEVKIT_STANDARDS_VIOLATIONS') {
-    throw new Error(`DevKit execution failed (${envelope.error?.code ?? 'unknown error'})`);
+    const heading = `DevKit execution failed (${envelope.error?.code ?? 'unknown error'})`;
+    const failures = envelope.data?.checks;
+    const checkResults = Array.isArray(failures) ? failures.map(failure => ({
+      check: failure.check,
+      exitCode: failure.exitCodeKnown ? failure.exitCode : null,
+      rerunCommand: failure.rerunCommand,
+    })) : [];
+    throw new Error(checkResults.length ? `${heading}\n${JSON.stringify(checkResults)}` : heading);
   }
   const report = envelope?.data;
   if (typeof envelope?.ok !== 'boolean' || report?.ok !== envelope.ok ||
