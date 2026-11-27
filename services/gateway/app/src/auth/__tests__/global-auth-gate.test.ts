@@ -9,6 +9,7 @@ import { signAccessToken } from '@kb-labs/gateway-auth';
 import { AuthConfigSchema, GatewayConfigSchema, readForwardedIdentity, type GatewayConfig } from '@kb-labs/gateway-contracts';
 import { createAuthMiddleware, isDeclaredWebhookRoute, isPlatformPublicRoute } from '../middleware.js';
 import { createServer } from '../../server.js';
+import { HostRegistry } from '../../hosts/registry.js';
 import type { ProjectRouting } from '../../project-routing.js';
 
 function cache(): ICache {
@@ -42,6 +43,43 @@ describe('Gateway global auth gate', () => {
     lastUpstreamHeaders = undefined;
     lastUpstreamUrl = undefined;
     lastUpstreamIdentityKind = undefined;
+  });
+
+  // case: S-142.2, S-142.3
+  it('returns the registered host descriptors and preserves canonical failures', async () => {
+    const values = new Map<string, unknown>();
+    const hostCache = {
+      get: async (key: string) => values.get(key) ?? null,
+      set: async (key: string, value: unknown) => { values.set(key, value); },
+      delete: async (key: string) => { values.delete(key); },
+      clear: async () => { values.clear(); },
+    } as unknown as ICache;
+    const registry = new HostRegistry(hostCache);
+    const { descriptor } = await registry.register({ name: 'test-machine', namespaceId: 'tenant-1', capabilities: ['filesystem'], workspacePaths: [] });
+    const config: GatewayConfig = { port: 0, upstreams: {}, staticTokens: {}, auth: AuthConfigSchema.parse({ enabled: true }) };
+    const logger = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined, fatal: () => undefined, trace: () => undefined, child: () => logger } as unknown as ILogger;
+    const transport = { connectionInfo: () => ({ baseUrl: 'http://127.0.0.1:1' }) } as unknown as IServiceTransport;
+    const jwt = { secret: 'test-secret-at-least-32-chars-long!' };
+    app = await createServer(config, hostCache, logger, jwt, registry, transport);
+    const { token } = await signAccessToken({ hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: [] }, jwt);
+    const headers = { authorization: `Bearer ${token}` };
+    const detail = await app.inject({ method: 'GET', url: `/hosts/${descriptor.hostId}`, headers });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ ok: true, data: { hostId: descriptor.hostId, name: 'test-machine', namespaceId: 'tenant-1', capabilities: ['filesystem'], status: 'offline', lastSeen: expect.any(Number) } });
+    const list = await app.inject({ method: 'GET', url: '/hosts', headers });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({ ok: true, data: { hosts: [{ hostId: descriptor.hostId, name: 'test-machine', namespaceId: 'tenant-1', capabilities: ['filesystem'], status: 'offline', lastSeen: expect.any(Number) }] } });
+    const spec = await app.inject({ method: 'GET', url: '/openapi.json', headers });
+    expect(spec.statusCode).toBe(200);
+    const paths = spec.json().paths;
+    expect(paths['/hosts/{hostId}'].get.responses['200'].content['application/json'].schema.properties.hostId).toBeDefined();
+    expect(paths['/hosts'].get.responses['200'].content['application/json'].schema.properties.hosts).toBeDefined();
+    const anonymous = await app.inject({ method: 'GET', url: `/hosts/${descriptor.hostId}` });
+    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+    const missing = await app.inject({ method: 'GET', url: '/hosts/missing-host', headers });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/) } });
   });
 
   // case: S-268.1

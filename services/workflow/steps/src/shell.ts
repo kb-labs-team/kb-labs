@@ -362,17 +362,19 @@ async function shellHandler(
         throw new Error('Shell process started without an OS process id');
       }
       const identity = await captureProcessIdentity(pid);
-      try {
-        await ctx.onProcessStarted(identity);
-      } catch (error) {
+      if (identity) {
         try {
-          process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
-        } catch (killError) {
-          if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
-            throw killError;
+          await ctx.onProcessStarted(identity);
+        } catch (error) {
+          try {
+            process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
+          } catch (killError) {
+            if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
+              throw killError;
+            }
           }
+          throw error;
         }
-        throw error;
       }
     }
 

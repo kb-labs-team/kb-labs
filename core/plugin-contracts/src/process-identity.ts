@@ -11,7 +11,7 @@ async function readStartTime(pid: number): Promise<string> {
       const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
       return fields[19] ?? '';
     } catch (error) {
-      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') { return ''; }
+      if (error instanceof Error && 'code' in error && (error.code === 'ENOENT' || error.code === 'ESRCH')) { return ''; }
       throw error;
     }
   }
@@ -45,14 +45,14 @@ export function isProcessIdentity(value: unknown): value is ProcessIdentity {
     && typeof identity.startTime === 'string' && identity.startTime.length > 0;
 }
 
-/** Read the OS start-time token for a live process. */
-export async function captureProcessIdentity(pid: number): Promise<ProcessIdentity> {
+/** Read the OS start-time token for a live process, or return undefined if it already exited. */
+export async function captureProcessIdentity(pid: number): Promise<ProcessIdentity | undefined> {
   if (!Number.isSafeInteger(pid) || pid < 1) {
     throw new RangeError(`Invalid process id: ${pid}`);
   }
   const startTime = await readStartTime(pid);
   if (!startTime) {
-    throw new Error(`Process ${pid} exited before its identity could be captured`);
+    return undefined;
   }
   return { pid, startTime };
 }
