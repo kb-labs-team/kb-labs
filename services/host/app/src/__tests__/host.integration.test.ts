@@ -99,8 +99,28 @@ describe("kb-host (one process, real launchPlatform, in-memory adapters)", () =>
     ]);
     expect(ports.size).toBe(3);
     // The internal modules answer directly on loopback, so the map is real.
-    const direct = await fetch(`${marketplaceUrl}/health`);
-    expect(direct.status).toBe(200);
+    const before = Date.now();
+    const health = await fetch(`${marketplaceUrl}/health`);
+    const after = Date.now();
+    expect(health.status).toBe(200);
+    const healthBody = await health.json() as { status: string; service: string; ts: number };
+    expect(healthBody.status).toBe("ok");
+    expect(healthBody.service).toBe("marketplace");
+    expect(typeof healthBody.ts).toBe("number");
+    expect(healthBody.ts).toBeGreaterThanOrEqual(before - 5_000);
+    expect(healthBody.ts).toBeLessThanOrEqual(after + 5_000);
+
+    const ready = await fetch(`${marketplaceUrl}/ready`);
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toMatchObject({
+      ready: true,
+      components: { marketplaceService: { ready: true } },
+    });
+
+    const metrics = await fetch(`${marketplaceUrl}/metrics`);
+    expect(metrics.status).toBe(200);
+    expect(metrics.headers.get("content-type")).toContain("text/plain");
+    expect((await metrics.text()).length).toBeGreaterThan(0);
   });
 
   // case: S-120.1

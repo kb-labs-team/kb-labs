@@ -50,6 +50,7 @@ export class CacheEventBusAdapter implements IEventBus {
   private readonly cache: ICache;
   private readonly config: Required<CacheEventBusConfig>;
   private readonly subscriptions = new Map<string, Subscription>();
+  private publishSequence = 0;
 
   constructor(cache: ICache, config: CacheEventBusConfig = {}) {
     this.cache = cache;
@@ -65,7 +66,11 @@ export class CacheEventBusAdapter implements IEventBus {
    * Events are stored in a sorted set with timestamp as score.
    */
   async publish<T>(topic: string, event: T): Promise<void> {
+    // ZSETs sort equal scores by member. Prefix the serialized member with an
+    // adapter-local sequence so same-millisecond writes from this publisher
+    // retain call order instead of being ordered by the random event UUID.
     const storedEvent: StoredEvent<T> = {
+      sequence: String(++this.publishSequence).padStart(16, '0'),
       id: randomUUID(),
       topic,
       data: event,

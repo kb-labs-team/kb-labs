@@ -131,6 +131,84 @@ describe('PnpmInstaller registry tarball integrity', () => {
     expect(await fs.readFile(path.join(packageRoot, 'package.json'), 'utf8')).toContain('@kb-labs/demo');
   });
 
+  it('uses scoped artifact headers and refuses redirects for authenticated tarball downloads', async () => {
+    const { dir, pnpmPath } = await createInstallerFixture();
+    const packageDir = path.join(dir, 'package');
+    await fs.mkdir(packageDir);
+    await fs.writeFile(path.join(packageDir, 'package.json'), JSON.stringify({ name: '@kb-labs/demo', version: '1.2.3' }));
+    const archive = path.join(dir, 'package.tgz');
+    execFileSync('tar', ['-czf', archive, '-C', dir, 'package']);
+    const tarball = await fs.readFile(archive);
+    const expectedIntegrity = `sha512-${crypto.createHash('sha512').update(tarball).digest('base64')}`;
+    const shareToken = `kbrt_${crypto.randomBytes(16).toString('hex')}`;
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => new Response(tarball));
+    vi.stubGlobal('fetch', fetchMock);
+    const projectDir = path.join(dir, 'project');
+
+    await new PnpmInstaller({ pnpmPath }).install({
+      name: '@kb-labs/demo',
+      version: '1.2.3',
+      spec: 'https://registry.example.test/demo-entry-1.2.3.tgz',
+      expectedIntegrity,
+      artifactHeaders: { 'X-Share-Token': shareToken },
+      projectDir,
+      casDir: path.join(dir, 'store'),
+    });
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: { 'X-Share-Token': shareToken },
+      redirect: 'manual',
+    });
+    expect(await fs.readFile(path.join(projectDir, 'package.json'), 'utf8')).not.toContain(shareToken);
+    expect(await fs.readFile(path.join(projectDir, 'observed-spec.txt'), 'utf8')).not.toContain(shareToken);
+  });
+
+  it('does not follow an authenticated tarball redirect', async () => {
+    const { dir, pnpmPath } = await createInstallerFixture();
+    const expectedIntegrity = `sha512-${crypto.createHash('sha512').update(Buffer.from('archive')).digest('base64')}`;
+    const shareToken = `kbrt_${crypto.randomBytes(16).toString('hex')}`;
+    const tarballUrl = 'https://registry.example.test/demo-entry-1.2.3.tgz';
+    const redirectUrl = 'https://attacker.test/collect';
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response('', { status: 302, headers: { Location: redirectUrl } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    let caught: unknown;
+    try {
+      await new PnpmInstaller({ pnpmPath }).install({
+        name: '@kb-labs/demo',
+        version: '1.2.3',
+        spec: tarballUrl,
+        expectedIntegrity,
+        artifactHeaders: { 'X-Share-Token': shareToken },
+        projectDir: path.join(dir, 'project'),
+        casDir: path.join(dir, 'store'),
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toMatchObject({
+      code: 'KB_PLUGIN_INSTALL_FAILED',
+      envelope: {
+        code: 'KB_PLUGIN_INSTALL_FAILED',
+        message: 'Installing plugin @kb-labs/demo failed.',
+        hint: 'Check the network and registry, then retry.',
+      },
+    });
+    const publicError = JSON.stringify((caught as { envelope?: unknown }).envelope);
+    expect(publicError).not.toContain(shareToken);
+    expect(publicError).not.toContain(redirectUrl);
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBeInstanceOf(URL);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(tarballUrl);
+    expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
+      headers: { 'X-Share-Token': shareToken },
+      redirect: 'manual',
+    });
+  });
+
   it('rejects tarball bytes that do not match the registry integrity', async () => {
     const { dir, pnpmPath } = await createInstallerFixture();
     const expectedIntegrity = `sha512-${crypto.createHash('sha512').update('expected').digest('base64')}`;

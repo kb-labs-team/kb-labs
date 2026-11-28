@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 interface HealthPayload {
   schema: string
@@ -22,7 +22,7 @@ interface HealthPayload {
 }
 
 // Sprint 1 — Базовое здоровье сервера
-// Все эндпоинты публичны (auth живёт на gateway, не на rest-api).
+// REST handlers do not enforce auth themselves; project-scoped Gateway routes do.
 //
 // Envelope middleware wraps every successful JSON response in the UX result contract.
 

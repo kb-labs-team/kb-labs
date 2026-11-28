@@ -10,6 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import {
   loginAsAdmin,
   cookieMap,
@@ -210,7 +211,7 @@ test('AUTH-09: revoke session → revoked browser gets 401 on next refresh', asy
     const sessions2Res = await ctx2.request.get(`${GATEWAY}/api/auth/sessions`, {
       headers: { Cookie: cookieHeader2 },
     })
-    const sessions2Body = await sessions2Res.json() as { sessions: Array<{ familyId: string; isCurrent: boolean }> }
+    const sessions2Body = unwrapGatewaySuccess<{ sessions: Array<{ familyId: string; isCurrent: boolean }> }>(await sessions2Res.json())
     const sessions2 = sessions2Body.sessions ?? []
     // Find ctx2's own current session — that's the one we want to revoke
     // from the admin context (ctx1) to test that ctx2 gets 401 on refresh.

@@ -1,9 +1,11 @@
 import { test, expect } from '@playwright/test'
 import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path'
 import { errorCatalog } from '@kb-labs/core-platform/error-envelope'
+import { openInstalledStudio } from '../../installed-studio'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const analyticsStatsUnsupported = errorCatalog.codes.find(({ code }) => code === 'KB_ANALYTICS_STATS_UNSUPPORTED')
+const studioAccessMode = process.env.KB_ACCESS_MODE ?? 'local'
 
 test('Analytics stats unsupported shows catalog guidance @S-121.8', async ({ page }) => {
   test.skip(process.env.KB_STUDIO_FRESH_HOST_JOURNEY !== '1', 'Enabled by the fresh-host journey hook')
@@ -29,7 +31,7 @@ test('Analytics stats unsupported shows catalog guidance @S-121.8', async ({ pag
 })
 
 test('Analytics overview excludes raw adapter telemetry and retired pages stay absent @S-121.1 @S-121.7', async ({ page }) => {
-  await page.goto(`${GATEWAY}/analytics/overview`)
+  await openInstalledStudio(page, '/analytics/overview')
   await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
   await expect(page.getByText('LLM Usage', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Embeddings', { exact: true }).first()).toBeVisible()
@@ -113,12 +115,58 @@ test('Failed workflow is scoped to its registered project @S-122.1', async ({ pa
   const projectName = requireFixture('KB_STUDIO_DIAGNOSTIC_PROJECT')
   const runId = requireFixture('KB_STUDIO_DIAGNOSTIC_RUN_ID')
   const healthyRunId = requireFixture('KB_STUDIO_HEALTHY_PROJECT_RUN_ID')
+  const projectId = process.env.KB_STUDIO_PROJECT_ID
+  const projectBId = process.env.KB_STUDIO_PROJECT_B_ID
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify Project A').toBeTruthy()
+  expect(projectBId, 'KB_STUDIO_PROJECT_B_ID must identify Project B').toBeTruthy()
 
-  await page.goto(`${GATEWAY}/workflows/runs`)
-  await page.getByRole('combobox', { name: /project/i }).selectOption({ label: projectName })
-  const runRow = page.getByRole('row').filter({ hasText: runId })
-  await expect(runRow).toContainText('Failed')
-  await expect(page.getByRole('row').filter({ hasText: healthyRunId })).toHaveCount(0)
+  await page.addInitScript(id => localStorage.setItem('kb.workflow.projectId', id), projectId!)
+  await page.goto(`${GATEWAY}/`)
+  if (studioAccessMode === 'secured') {
+    await expect(page).toHaveURL(/\/login$/)
+    await page.getByLabel('Email').fill(process.env.KB_STUDIO_ADMIN_EMAIL!)
+    await page.getByLabel('Password').fill(process.env.KB_STUDIO_ADMIN_PASSWORD!)
+    await page.getByRole('button', { name: /sign in|log in/i }).click()
+    await expect(page).not.toHaveURL(/\/login$/)
+  }
+  const projectRunsResponse = page.waitForResponse(response => {
+    const url = new URL(response.url())
+    return response.request().method() === 'GET'
+      && url.pathname === projectServicePath(projectId!, 'workflow', 'runs')
+  })
+  await page.goto(`${GATEWAY}/p/workflows/runs`)
+  await expect(page.getByLabel('Workflow project')).toHaveValue(projectId!)
+  const response = await projectRunsResponse
+  expect(response.ok(), 'Project A workflow runs request must succeed').toBe(true)
+  const payload = await response.json() as {
+    data?: { runs?: Array<Record<string, unknown>> }
+  }
+  const runs = payload.data?.runs
+  expect(Array.isArray(runs), 'Project A response must contain its runs').toBe(true)
+  const failedRun = runs!.find(run => run.id === runId)
+  expect(failedRun, 'Project A response must contain the exact failed run').toBeDefined()
+  expect(failedRun!.status).toBe('failed')
+  expect(failedRun!.name).toBe('journey-fails')
+  expect(failedRun!.version).toBe('1.0.0')
+  expect(failedRun!.finishedAt).toEqual(expect.any(String))
+  expect(Number.isFinite(Date.parse(failedRun!.finishedAt as string))).toBe(true)
+  expect(runs!.some(run => run.id === healthyRunId)).toBe(false)
+
+  await page.getByRole('button', { name: 'Table', exact: true }).click()
+  await expect(page.getByRole('columnheader', { name: 'Finished At', exact: true })).toBeVisible()
+  const runRow = page.locator(`tr[data-row-key=${JSON.stringify(runId)}]`)
+  await expect(runRow).toHaveCount(1)
+  await expect(runRow).toBeVisible()
+  await expect(runRow).toContainText(runId.slice(0, 16))
+  await expect(runRow).toContainText(`${String(failedRun!.name)}@${String(failedRun!.version)}`)
+  await expect(runRow).toContainText('FAILED')
+  const finishedAt = runRow.locator('time')
+  await expect(finishedAt).toBeVisible()
+  await expect(finishedAt).toHaveAttribute('dateTime', failedRun!.finishedAt as string)
+  const browserFinishedAt = await page.evaluate(
+    value => new Date(value).toLocaleString(), failedRun!.finishedAt as string)
+  await expect(finishedAt).toHaveText(browserFinishedAt)
+  await expect(page.locator(`tr[data-row-key=${JSON.stringify(healthyRunId)}]`)).toHaveCount(0)
 })
 }
 

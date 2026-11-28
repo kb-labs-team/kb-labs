@@ -216,6 +216,80 @@ describe('S-252.2 — Marketplace share token redacted from Gateway request logs
   });
 });
 
+describe('S-323.1 — static REST proxy keeps internal adapter-call private', () => {
+  // case: S-323.1
+  it('removes Gateway internal identity secret only for the rewritten adapter-call route', async () => {
+    const previousSecret = process.env.GATEWAY_INTERNAL_SECRET;
+    process.env.GATEWAY_INTERNAL_SECRET = 'gateway-static-proxy-secret';
+    const received: Array<{ url: string; secret?: string }> = [];
+    const rest = createHttpServer((request, response) => {
+      const secret = request.headers['x-internal-secret'];
+      received.push({ url: request.url ?? '', secret: typeof secret === 'string' ? secret : undefined });
+      const allowed = secret === 'gateway-static-proxy-secret';
+      response.writeHead(allowed ? 200 : 403, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(allowed ? { ok: true } : { ok: false, error: { code: 'KB_AUTH_FORBIDDEN' } }));
+    });
+    await new Promise<void>((resolve) => { rest.listen(0, '127.0.0.1', resolve); });
+    const address = rest.address();
+    if (!address || typeof address === 'string') { throw new Error('Expected REST TCP listener'); }
+
+    const gateway = await createServer(
+      GatewayConfigSchema.parse({
+        access: { mode: 'local' },
+        upstreams: { rest: { serviceId: 'rest-api', prefix: '/api/v1/rest', rewritePrefix: '/api/v1' } },
+      }),
+      makeCache(),
+      makeLogger(),
+      jwtConfig,
+      undefined,
+      {
+        ...stubTransport,
+        connectionInfo: () => ({ baseUrl: `http://127.0.0.1:${address.port}` }),
+      },
+    );
+
+    try {
+      await gateway.listen({ port: 0, host: '127.0.0.1' });
+      const gatewayAddress = gateway.server.address();
+      if (!gatewayAddress || typeof gatewayAddress === 'string') { throw new Error('Expected Gateway TCP listener'); }
+      const requestGateway = (path: string, internalSecret?: string) => new Promise<number>((resolve, reject) => {
+        const request = httpRequest({
+          hostname: '127.0.0.1',
+          port: gatewayAddress.port,
+          method: 'POST',
+          path,
+          headers: { ...(internalSecret ? { 'x-internal-secret': internalSecret } : {}) },
+        }, (response) => {
+          response.resume();
+          response.on('end', () => resolve(response.statusCode ?? 0));
+        });
+        request.on('error', reject);
+        request.end('{}');
+      });
+
+      expect(await requestGateway('/api/v1/rest/internal/adapter-call')).toBe(403);
+      expect(await requestGateway('/api/v1/rest/internal/adapter-call', 'client-invalid-secret')).toBe(403);
+      expect(received.slice(0, 2)).toEqual([
+        { url: '/api/v1/internal/adapter-call', secret: undefined },
+        { url: '/api/v1/internal/adapter-call', secret: undefined },
+      ]);
+
+      expect(await requestGateway('/api/v1/rest/health')).toBe(200);
+      expect(received.at(-1)).toEqual({ url: '/api/v1/health', secret: 'gateway-static-proxy-secret' });
+    } finally {
+      await gateway.close();
+      await new Promise<void>((resolve, reject) => {
+        rest.close(error => {
+          if (error) { reject(error); }
+          else { resolve(); }
+        });
+      });
+      if (previousSecret === undefined) { delete process.env.GATEWAY_INTERNAL_SECRET; }
+      else { process.env.GATEWAY_INTERNAL_SECRET = previousSecret; }
+    }
+  });
+});
+
 // ── H12: CORS not wildcard ─────────────────────────────────────────────────────
 
 describe('H12 — CORS does not reflect arbitrary origin', () => {

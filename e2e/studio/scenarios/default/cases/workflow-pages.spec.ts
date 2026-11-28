@@ -1,12 +1,15 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { projectServicePath } from '@kb-labs/plugin-contracts/project-service-path';
+import { GATEWAY, WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
+import { connectToInstalledStudio, openInstalledStudio } from '../../installed-studio';
 
 const journeyEnabled = process.env.KB_STUDIO_FIRST_TIER_JOURNEY === '1';
 const accessMode = process.env.KB_ACCESS_MODE ?? 'local';
 const projectId = process.env.KB_STUDIO_PROJECT_ID;
 const projectBId = process.env.KB_STUDIO_PROJECT_B_ID;
-const healthyRunId = process.env.KB_STUDIO_HEALTHY_PROJECT_RUN_ID;
+const healthyRunId = process.env.KB_STUDIO_PROJECT_A_HEALTHY_RUN_ID;
 const failedRunId = process.env.KB_STUDIO_DIAGNOSTIC_RUN_ID;
+const emptyProjectBPhase = process.env.KB_STUDIO_EMPTY_PROJECT_B_PHASE === '1';
 
 async function openWorkflowRuns(page: import('@playwright/test').Page, selectedProjectId: string) {
   await page.addInitScript((id) => localStorage.setItem('kb.workflow.projectId', id), selectedProjectId);
@@ -43,21 +46,10 @@ async function studioIsUp(
   }
 }
 
-async function workflowIsUp(
-  request: APIRequestContext,
-): Promise<boolean> {
-  try {
-    const res = await request.get(`${WORKFLOW}/health`, { timeout: 3000 });
-    return res.status() === 200;
-  } catch {
-    return false;
-  }
-}
-
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 test('SW-01: built-in Studio serves the workflow runs page', async ({ page }) => {
-  await page.goto(`${GATEWAY}/p/workflows/runs`);
+  await openInstalledStudio(page, '/p/workflows/runs');
   await expect(page.getByRole('heading', { name: 'Workflow Runs', exact: true })).toBeVisible();
 });
 
@@ -84,10 +76,8 @@ test('SW-03: Studio SPA shell responds for /workflows/runs route', async ({ requ
 });
 
 test('SW-04: Workflow daemon API — /api/v1/runs used by runs list page', async ({ request }) => {
-  const up = await workflowIsUp(request);
-  expect(up, 'Workflow daemon is required by this journey').toBe(true);
-
-  const res = await request.get(`${WORKFLOW}/api/v1/runs`);
+  await connectToInstalledStudio(request);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const runs = body.data?.runs ?? body.data ?? body.runs;
@@ -95,10 +85,8 @@ test('SW-04: Workflow daemon API — /api/v1/runs used by runs list page', async
 });
 
 test('SW-05: Workflow daemon API — /api/v1/workflows used by definitions page', async ({ request }) => {
-  const up = await workflowIsUp(request);
-  expect(up, 'Workflow daemon is required by this journey').toBe(true);
-
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`);
+  await connectToInstalledStudio(request);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const workflows = body.data?.workflows ?? body.data ?? body.workflows;
@@ -106,13 +94,11 @@ test('SW-05: Workflow daemon API — /api/v1/workflows used by definitions page'
 });
 
 test('SW-06: Workflow daemon API — /api/v1/cron used by cron jobs page', async ({ request }) => {
-  const up = await workflowIsUp(request);
-  expect(up, 'Workflow daemon is required by this journey').toBe(true);
-
-  const res = await request.get(`${WORKFLOW}/api/v1/crons`);
+  await connectToInstalledStudio(request);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/crons`);
   expect(res.status()).toBe(200);
   const body = await res.json();
-  const crons = body.data?.crons ?? body.crons ?? body.data ?? [];
+  const crons = body.data?.crons ?? body.crons ?? body.data;
   expect(Array.isArray(crons)).toBe(true);
 });
 
@@ -126,12 +112,12 @@ test('selected project workflow history shows its successful and failed runs @S-
   await page.getByRole('button', { name: 'Table', exact: true }).click();
   await expect(page.getByText(healthyRunId!.slice(0, 16), { exact: false })).toBeVisible();
   await expect(page.getByText(failedRunId!.slice(0, 16), { exact: false })).toBeVisible();
-  await expect(page.getByText('journey-hello@1', { exact: true })).toBeVisible();
-  await expect(page.getByText('journey-fails@1', { exact: true })).toBeVisible();
+  await expect(page.getByText('journey-hello@1.0.0', { exact: true })).toBeVisible();
+  await expect(page.getByText('journey-fails@1.0.0', { exact: true })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Status', exact: true })).toBeVisible();
   await expect(page.getByRole('columnheader', { name: 'Started At', exact: true })).toBeVisible();
-  await expect(page.getByText('Done', { exact: true })).toBeVisible();
-  await expect(page.getByText('Failed', { exact: true })).toBeVisible();
+  await expect(page.getByText('SUCCESS', { exact: true })).toBeVisible();
+  await expect(page.getByText('FAILED', { exact: true })).toBeVisible();
 });
 
 test('workflow run details expose terminal status and captured step logs @S-021.2 @S-021.3 @S-021.4', async ({ page }) => {
@@ -159,13 +145,23 @@ test('workflow run details expose terminal status and captured step logs @S-021.
 });
 
 test('workflow history stays scoped when another selected project has no runs @S-021.5', async ({ page }) => {
-  test.skip(!journeyEnabled, 'Enabled by the installed Studio journey hook');
+  test.skip(!journeyEnabled || !emptyProjectBPhase,
+    'Runs before the selected second project receives its healthy workflow run');
+  expect(projectId, 'KB_STUDIO_PROJECT_ID must identify the registered workflow project').toBeTruthy();
   expect(projectBId, 'KB_STUDIO_PROJECT_B_ID must identify the empty workflow project').toBeTruthy();
   expect(healthyRunId, 'workflow journey must provide a successful run ID').toBeTruthy();
   expect(failedRunId, 'workflow journey must provide a failed run ID').toBeTruthy();
 
-  await openWorkflowRuns(page, projectBId!);
+  await openWorkflowRuns(page, projectId!);
+  await page.getByRole('button', { name: 'Table', exact: true }).click();
+  await expect(page.getByText(healthyRunId!.slice(0, 16), { exact: false })).toBeVisible();
+  await expect(page.getByText(failedRunId!.slice(0, 16), { exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Triage', exact: true }).click();
+  const projectBRunList = page.waitForResponse(response =>
+    response.url().includes(projectServicePath(projectBId!, 'workflow', 'runs')));
+  await page.getByLabel('Workflow project').selectOption(projectBId!);
+  expect((await projectBRunList).ok()).toBe(true);
   await expect(page.getByText('No runs found', { exact: true })).toBeVisible();
-  await expect(page.getByText(healthyRunId!.slice(0, 16), { exact: false })).toHaveCount(0);
-  await expect(page.getByText(failedRunId!.slice(0, 16), { exact: false })).toHaveCount(0);
+  await expect(page.getByText(`#${healthyRunId!.slice(-6)}`, { exact: true })).toHaveCount(0);
+  await expect(page.getByText(`#${failedRunId!.slice(-6)}`, { exact: true })).toHaveCount(0);
 });

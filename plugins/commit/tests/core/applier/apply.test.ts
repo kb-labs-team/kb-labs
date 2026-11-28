@@ -4,17 +4,22 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { simpleGit } from 'simple-git';
 import { applyCommitPlan } from '../../../src/core/applier/apply.js';
 import type { CommitPlan } from '@kb-labs/commit/contracts';
 
 describe('applyCommitPlan - scoped repositories', () => {
-  const testRoot = join(process.cwd(), '.test-apply-scoped');
-  const rootRepo = join(testRoot, 'kb-labs');
-  const nestedRepo = join(testRoot, 'kb-labs', 'kb-labs-commit-plugin');
+  let testRoot: string;
+  let rootRepo: string;
+  let nestedRepo: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-apply-scoped-'));
+    rootRepo = join(testRoot, 'kb-labs');
+    nestedRepo = join(testRoot, 'kb-labs', 'kb-labs-commit-plugin');
+
     // Create test directory structure
     await mkdir(join(nestedRepo, 'packages', 'commit-cli', 'src'), { recursive: true });
 
@@ -185,11 +190,15 @@ describe('applyCommitPlan - scoped repositories', () => {
 });
 
 describe('applyCommitPlan - path transformation edge cases', () => {
-  const testRoot = join(process.cwd(), '.test-apply-paths');
-  const _rootRepo = join(testRoot, 'kb-labs');
-  const nestedRepo = join(testRoot, 'kb-labs', 'kb-labs-setup-engine');
+  let testRoot: string;
+  let _rootRepo: string;
+  let nestedRepo: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-apply-paths-'));
+    _rootRepo = join(testRoot, 'kb-labs');
+    nestedRepo = join(testRoot, 'kb-labs', 'kb-labs-setup-engine');
+
     // Create nested structure
     await mkdir(join(nestedRepo, 'packages', 'setup-core', 'src'), { recursive: true });
 
@@ -248,10 +257,13 @@ describe('applyCommitPlan - path transformation edge cases', () => {
 });
 
 describe('applyCommitPlan - multiple commits', () => {
-  const testRoot = join(process.cwd(), '.test-apply-multi');
-  const repo = join(testRoot, 'repo');
+  let testRoot: string;
+  let repo: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-apply-multi-'));
+    repo = join(testRoot, 'repo');
+
     await mkdir(join(repo, 'src'), { recursive: true });
 
     const git = simpleGit(repo);
@@ -439,10 +451,13 @@ describe('applyCommitPlan - multiple commits', () => {
 });
 
 describe('applyCommitPlan - staging area isolation', () => {
-  const testRoot = join(process.cwd(), '.test-apply-staging');
-  const repo = join(testRoot, 'repo');
+  let testRoot: string;
+  let repo: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-apply-staging-'));
+    repo = join(testRoot, 'repo');
+
     await mkdir(join(repo, 'src'), { recursive: true });
 
     const git = simpleGit(repo);

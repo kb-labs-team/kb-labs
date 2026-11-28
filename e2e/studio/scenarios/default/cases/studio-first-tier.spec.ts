@@ -8,6 +8,7 @@ import { runKbCommand, runProcessSync } from '../../../kb-command'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const enabled = process.env.KB_STUDIO_FIRST_TIER_JOURNEY === '1'
+const emptyProjectPhase = process.env.KB_STUDIO_EMPTY_PROJECT_PHASE === '1'
 const accessMode = process.env.KB_ACCESS_MODE ?? 'local'
 
 async function signInIfSecured(page: import('@playwright/test').Page) {
@@ -25,7 +26,8 @@ async function signInIfSecured(page: import('@playwright/test').Page) {
 }
 
 test('dashboard opens on a fresh host with an empty project registry @S-120.1', async ({ page }) => {
-  test.skip(!enabled || accessMode !== 'local', 'Runs before project registration in the isolated local host fixture')
+  test.skip(!enabled || !emptyProjectPhase || accessMode !== 'local',
+    'Runs only in the isolated local empty-project phase before project registration')
 
   const projectsResponse = await page.request.get(`${GATEWAY}/api/v1/projects`)
   expect(projectsResponse.status()).toBe(200)
@@ -113,7 +115,7 @@ test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ p
   await expect(page.getByText('Healthy', { exact: true })).toBeVisible()
   await expect(page.getByText('Gateway is ready.', { exact: true })).toBeVisible()
   await expect(page.getByText('Gateway unavailable', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: /Projects$/ })).toBeVisible()
   const studioRegistryResponse = await page.request.get(`${GATEWAY}/api/v1/studio/registry`)
   expect(studioRegistryResponse.status()).toBe(200)
   const studioRegistry = await studioRegistryResponse.json() as {
@@ -133,15 +135,19 @@ test('dashboard frame and Gateway health response @S-120.8 @S-020.6', async ({ p
   expect(pluginRegistry.ok).toBe(true)
   expect(Array.isArray(pluginRegistry.data?.manifests)).toBe(true)
 
-  for (const [label, path, title] of [
-    ['Projects', '/projects', 'Projects'],
-    ['Analytics', '/analytics/overview', 'Analytics Overview'],
-    ['Observability', '/observability/logs', 'Logs'],
-  ]) {
-    await page.getByRole('link', { name: label, exact: true }).click()
-    await expect(page).toHaveURL(new RegExp(`${path.replaceAll('/', '\\/')}$`))
-    await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible()
-  }
+  await page.getByRole('menuitem', { name: /Projects$/ }).click()
+  await expect(page).toHaveURL(/\/projects$/)
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible()
+
+  await page.getByRole('menuitem', { name: /Analytics$/ }).click()
+  await page.getByRole('menuitem', { name: /Overview$/ }).click()
+  await expect(page).toHaveURL(/\/analytics\/overview$/)
+  await expect(page.getByRole('heading', { name: 'Analytics Overview', exact: true })).toBeVisible()
+
+  await page.getByRole('menuitem', { name: /Observability$/ }).click()
+  await page.getByRole('menuitem', { name: /Logs$/ }).click()
+  await expect(page).toHaveURL(/\/observability\/logs$/)
+  await expect(page.getByRole('heading', { name: 'Logs', exact: true })).toBeVisible()
 })
 
 test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.9', async ({ page }) => {
@@ -163,7 +169,7 @@ test('Marketplace distinguishes an unavailable catalog from an empty one @S-120.
   })
 
   await page.goto(`${GATEWAY}/`)
-  await page.getByRole('link', { name: 'Marketplace', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Marketplace$/ }).click()
   await expect(page.getByText('Marketplace unavailable', { exact: true })).toBeVisible()
   await expect(page.getByText('No extensions found', { exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Retry', exact: true }).click()
@@ -498,7 +504,7 @@ test('install Commit, inspect real changes, generate a plan, and uninstall it @S
   const afterUninstall = JSON.parse(readFileSync(lockFile, 'utf8')) as { plugins?: Record<string, unknown> }
   expect(afterUninstall.plugins?.['@kb-labs/commit']).toBeUndefined()
   await page.goto(`${GATEWAY}/`)
-  await expect(page.getByRole('link', { name: /commit/i })).toHaveCount(0)
+  await expect(page.getByRole('menuitem', { name: /Commit$/i })).toHaveCount(0)
   const pluginsResponse = await page.request.get(`${GATEWAY}/api/v1/plugins?projectId=${encodeURIComponent(projectId!)}`)
   const plugins = await pluginsResponse.json() as { data?: Array<{ id?: string }> }
   expect(plugins.data?.some(plugin => plugin.id === '@kb-labs/commit' || plugin.id === 'commit')).toBe(false)

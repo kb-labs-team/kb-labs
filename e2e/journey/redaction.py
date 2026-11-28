@@ -14,12 +14,13 @@ _SECRET_ARGUMENT_TEXT = re.compile(
     rf"(?i)(--{_SECRET_ARGUMENT_NAME}(?:=\s*|\s+))([^\s,;]+)"
 )
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?i)(\b[A-Z0-9_]*(?:PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s]+"
+    r"(?i)(\b[A-Z0-9_]*(?:PASSWORD|TOKEN|SECRET|API[_-]?KEY|PRIVATE[_-]?KEY)[A-Z0-9_]*\s*=\s*)[^\s&]+"
 )
 _SECRET_JSON_VALUE = re.compile(
     r'(?i)(["\']?(?:password|token|secret|apiKey|key)["\']?\s*:\s*)("(?:\\.|[^"\\])*"|\'[^\']*\'|[^,}\]\s]+)'
 )
 _SECRET_JSON_KEY = re.compile(r"(?i)(password|token|secret|apiKey|key)")
+_ONE_TIME_AUTH_PATH_TOKEN = re.compile(r"(?i)(/(?:activate|reset-password)/)[^/?#\s\"'<>]+")
 
 
 def is_secret_key(key: str) -> bool:
@@ -42,6 +43,7 @@ def redact_text(value: str, env: Mapping[str, str] | None = None,
     value = _SECRET_ASSIGNMENT.sub(r"\1[REDACTED]", value)
     value = _SECRET_JSON_VALUE.sub(r'\1"[REDACTED]"', value)
     value = _SECRET_ARGUMENT_TEXT.sub(r"\1[REDACTED]", value)
+    value = _ONE_TIME_AUTH_PATH_TOKEN.sub(r"\1[REDACTED]", value)
     return _redact_url_userinfo(value)
 
 

@@ -21,13 +21,26 @@ type PlanResponse struct {
 }
 
 func DecodeRequest(data []byte) (contracts.InstallRequest, error) {
-	// Accept the public JSON envelope emitted by older request frontends as
-	// well as the canonical request object. This preserves copy/paste input.
+	// Accept request envelopes and CLI plan output. A saved plan is only a
+	// convenient source of the original request; callers must resolve it again
+	// against the supplied release catalog before applying anything.
 	var envelope struct {
 		Request json.RawMessage `json:"request"`
+		OK      bool            `json:"ok"`
+		Data    struct {
+			Plan json.RawMessage `json:"plan"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(data, &envelope); err == nil && len(envelope.Request) != 0 {
 		data = envelope.Request
+	} else if err == nil && envelope.OK && len(envelope.Data.Plan) != 0 {
+		var plan struct {
+			Request json.RawMessage `json:"request"`
+		}
+		if err := json.Unmarshal(envelope.Data.Plan, &plan); err != nil || len(plan.Request) == 0 {
+			return contracts.InstallRequest{}, fmt.Errorf("decode saved plan request: missing plan.request")
+		}
+		data = plan.Request
 	}
 	var request contracts.InstallRequest
 	if err := json.Unmarshal(data, &request); err != nil {

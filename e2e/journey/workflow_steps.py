@@ -1076,6 +1076,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                 or success_detail.get("status") != "success"
                 or (success_detail.get("inputs") or {}).get("message") != "hello"):
             raise AssertionError(f"run did not complete with the submitted input: {success_detail!r}")
+        env["KB_STUDIO_PROJECT_A_HEALTHY_RUN_ID"] = successful_id
 
     journey.step("verify terminal status and submitted input", "workflow", inspect_success,
                  cases=["S-007.2", "S-056.1", "PC-002.5"],
@@ -1094,7 +1095,8 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
                               env=env, cwd=project)
         failed_id = _run_id(data)
 
-    journey.step("start failing workflow", "workflow", start_failure, cases=["S-029.1"])
+    journey.step("start failing workflow", "workflow", start_failure, cases=["S-029.1"],
+                 requires=("step:discover installed project workflow definitions",))
 
     failed_detail: dict = {}
 
@@ -1117,7 +1119,7 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
         env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = failed_id
 
     journey.step("inspect failed step and error", "workflow", inspect_failure,
-                 cases=["S-029.2"])
+                 cases=["S-029.2"], requires=("step:start failing workflow",))
 
     def inspect_failure_history() -> None:
         with invocation_context(step_id="S-009.4"):

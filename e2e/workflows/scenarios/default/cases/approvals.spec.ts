@@ -1,62 +1,24 @@
+import { listPendingApprovals, resolveApproval, startWorkflowRun } from '../approvals.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // Approval-step e2e tests.
 // Relies on e2e-approval workflow scaffolded in entrypoint.sh.
 // The workflow pauses at a builtin:approval step and resumes when resolved.
 
-async function startRun(
-  request: APIRequestContext,
-  workflowId: string,
-): Promise<string> {
-  const res = await request.post(
-    `${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
-    { data: {} },
-  );
-  expect([200, 201]).toContain(res.status());
-  const body = await res.json();
-  const runId: string = body.data?.runId ?? body.data?.id ?? body.runId;
-  expect(runId).toBeTruthy();
-  return runId;
-}
-
 async function pollRunStatus(
   request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`);
   const body = await res.json();
   return body.data?.run?.status ?? body.data?.status ?? body.status;
-}
-
-async function listPendingApprovals(
-  request: APIRequestContext,
-  runId: string,
-): Promise<Array<{ jobId: string; stepId: string; stepName: string }>> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}/approvals`);
-  expect(res.status()).toBe(200);
-  const body = await res.json();
-  return (body.data?.pending ?? []) as Array<{ jobId: string; stepId: string; stepName: string }>;
-}
-
-async function resolveApproval(
-  request: APIRequestContext,
-  runId: string,
-  jobId: string,
-  stepId: string,
-  action: 'approve' | 'reject',
-  comment?: string,
-): Promise<{ status: number; body: unknown }> {
-  const res = await request.post(`${WORKFLOW}/api/v1/runs/${runId}/approvals/resolve`, {
-    data: { jobId, stepId, action, comment },
-  });
-  return { status: res.status(), body: await res.json() };
 }
 
 test('WA-01: approval run pauses at waiting_approval, approve resumes to success', async ({ request }) => {
   test.setTimeout(60_000);
 
-  const runId = await startRun(request, 'e2e-approval');
+  const runId = await startWorkflowRun(request, 'e2e-approval');
 
   // Wait until the run reaches waiting_approval
   await expect
@@ -91,7 +53,7 @@ test('WA-01: approval run pauses at waiting_approval, approve resumes to success
 test('WA-02: approval run pauses, reject transitions run to failed/completed', async ({ request }) => {
   test.setTimeout(60_000);
 
-  const runId = await startRun(request, 'e2e-approval');
+  const runId = await startWorkflowRun(request, 'e2e-approval');
 
   // Wait for a pending approval to appear
   let pending: Array<{ jobId: string; stepId: string; stepName: string }> = [];
@@ -119,7 +81,7 @@ test('WA-02: approval run pauses, reject transitions run to failed/completed', a
 
 test('WA-03: GET approvals for run with no pending steps returns empty array', async ({ request }) => {
   // e2e-hello has no approval steps — pending should always be empty
-  const runId = await startRun(request, 'e2e-hello');
+  const runId = await startWorkflowRun(request, 'e2e-hello');
 
   const pending = await listPendingApprovals(request, runId);
   expect(Array.isArray(pending)).toBe(true);
@@ -127,12 +89,12 @@ test('WA-03: GET approvals for run with no pending steps returns empty array', a
 });
 
 test('WA-04: GET approvals for unknown run returns 404', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/nonexistent-run-xyz/approvals`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/nonexistent-run-xyz/approvals`);
   expect(res.status()).toBe(404);
 });
 
 test('WA-05: resolve approval for unknown run returns 404', async ({ request }) => {
-  const res = await request.post(`${WORKFLOW}/api/v1/runs/nonexistent-run-xyz/approvals/resolve`, {
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/nonexistent-run-xyz/approvals/resolve`, {
     data: { jobId: 'j1', stepId: 's1', action: 'approve' },
   });
   expect(res.status()).toBe(404);
@@ -140,9 +102,9 @@ test('WA-05: resolve approval for unknown run returns 404', async ({ request }) 
 
 test('WA-06: resolve approval with invalid action returns 400', async ({ request }) => {
   // Start a run just to get a valid runId (action validation should fire before run lookup)
-  const runId = await startRun(request, 'e2e-hello');
+  const runId = await startWorkflowRun(request, 'e2e-hello');
 
-  const res = await request.post(`${WORKFLOW}/api/v1/runs/${runId}/approvals/resolve`, {
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/approvals/resolve`, {
     data: { jobId: 'j1', stepId: 's1', action: 'skip' },
   });
   // 400 (validation) is expected; 404 is also acceptable (run finished before resolve)
@@ -152,7 +114,7 @@ test('WA-06: resolve approval with invalid action returns 400', async ({ request
 test('WA-07: resolve already-resolved approval returns 409', async ({ request }) => {
   test.setTimeout(60_000);
 
-  const runId = await startRun(request, 'e2e-approval');
+  const runId = await startWorkflowRun(request, 'e2e-approval');
 
   let pending: Array<{ jobId: string; stepId: string }> = [];
   await expect

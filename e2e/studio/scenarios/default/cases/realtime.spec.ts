@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
+import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
+import { GATEWAY, REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
 // SSE and WebSocket must be proxied correctly by gateway.
 // Common failure: proxy strips Upgrade/Connection headers or buffers SSE response.
@@ -29,23 +30,31 @@ test('RT-01: WebSocket upgrade succeeds through gateway (/hosts/connect)', async
   expect(wsError ?? '').not.toContain('ECONNREFUSED')
 })
 
-test('RT-02: SSE endpoint streams events (not buffered by proxy)', async ({ page }) => {
-  // Gateway must pass through Transfer-Encoding: chunked / Content-Type: text/event-stream
-  // A buffering proxy holds the whole response and delivers it at once (broken SSE)
-  const response = await page.request.get(`${GATEWAY}/api/v1/events`, {
-    headers: { Accept: 'text/event-stream' },
-    timeout: 5000,
-  }).catch(() => null)
+test('RT-02: SSE endpoint streams events (not buffered by proxy)', async ({ request }) => {
+  const headers: Record<string, string> = { Accept: 'text/event-stream' }
+  if (process.env.KB_PROJECT_ID) headers.Authorization = `Bearer ${await getAccessToken(request)}`
+  const abort = new AbortController()
+  const timeout = setTimeout(() => abort.abort(), 5000)
+  try {
+    const response = await fetch(`${REST}${REST_API_PREFIX}/events/registry`, { headers, signal: abort.signal })
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/event-stream')
+    expect(response.headers.has('content-length')).toBe(false)
+    expect(response.headers.get('cache-control')).toContain('no-cache')
 
-  expect(response, 'SSE events endpoint must be reachable in the configured service mode').not.toBeNull()
-  expect([200], 'SSE events endpoint must be available without a missing-route/auth response').toContain(response!.status())
-
-  expect(response!.status()).toBe(200)
-  expect(response!.headers()['content-type']).toContain('text/event-stream')
-  // Must NOT have content-length (that would mean buffered, not streaming)
-  expect(response!.headers()['content-length']).toBeUndefined()
-  // Must have cache-control: no-cache (required for SSE)
-  expect(response!.headers()['cache-control']).toContain('no-cache')
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let frames = ''
+    while (!frames.includes('event: registry\n')) {
+      const { done, value } = await reader.read()
+      if (done) break
+      frames += decoder.decode(value, { stream: true })
+    }
+    expect(frames).toContain('event: registry\n')
+  } finally {
+    clearTimeout(timeout)
+    abort.abort()
+  }
 })
 
 test('RT-03: gateway WS route is registered (not 404)', async ({ request }) => {

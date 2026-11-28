@@ -81,6 +81,8 @@ export interface InstallPackageRequest extends StoreEntryRef {
   usePlatformNpmrc?: boolean;
   /** Refuse a cold install unless the package source provided an explicit artifact spec. */
   requireExplicitSpec?: boolean;
+  /** Per-request headers used only for the verified direct artifact download, never persisted in the store. */
+  artifactHeaders?: Record<string, string>;
 }
 
 export interface PackageInstallResult {
@@ -101,6 +103,8 @@ export interface PackageInstallOptions {
   registryUrl?: string;
   /** Apply the installed platform's pnpm project config during this install. */
   usePlatformNpmrc?: boolean;
+  /** Per-request headers used only for the verified direct artifact download, never persisted in the store. */
+  artifactHeaders?: Record<string, string>;
   /** Directory of the synthetic pnpm project the package is installed into. */
   projectDir: string;
   /** Dedicated pnpm content-addressed store directory (never the user's default store). */

@@ -38,7 +38,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsup --config tsup.config.ts && pnpm run build:studio",
+    "build": "tsup --config tsup.config.ts && pnpm run build:templates && pnpm run build:studio",
     "build:templates": "cp -r src/workflows dist/",
     "build:studio": "rspack build --config rspack.studio.config.mjs",
     "clean": "rimraf dist",
@@ -89,7 +89,8 @@
     "pnpm": ">=9.0.0"
   },
   "kb": {
-    "manifest": "./dist/manifest.js"
+    "manifest": "./dist/manifest.js",
+    "requiredOutputs": ["./dist/workflows/templates/*.yaml"]
   },
   "peerDependencies": {
     "react": "^19.0.0",

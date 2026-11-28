@@ -147,10 +147,12 @@ def studio_playwright_output_directory(report: Path) -> Path:
 
 def run_studio_browser_step(command: list[str], env: dict[str, str], report: Path,
                             mode: str, shell_passed: bool, timeout: int = 180, *,
-                            cases: list[str] | None = None) -> tuple[bool, float, str]:
+                            cases: list[str] | None = None,
+                            project_claims_to_report: bool = True,
+                            step_name: str = "Studio fresh-host browser journey") -> tuple[bool, float, str]:
     if not shell_passed:
         message = "Playwright was not run because the Studio shell check failed"
-        _record_step(report, mode, "BLOCKED", 0.0, message)
+        _record_step(report, mode, "BLOCKED", 0.0, message, step_name=step_name)
         return False, 0.0, message
     preflight_error = _playwright_browser_preflight(env)
     if not preflight_error and mode == "secured":
@@ -166,7 +168,7 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
                 + "; complete the isolated admin and member setup before rerunning the secured journey"
             )
     if preflight_error:
-        _record_step(report, mode, "FAIL", 0.0, preflight_error)
+        _record_step(report, mode, "FAIL", 0.0, preflight_error, step_name=step_name)
         return False, 0.0, preflight_error
 
     output_dir = Path(env.get(
@@ -181,7 +183,7 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
         message = (f"Playwright output directory {output_dir} is not writable to the journey runner: "
                    f"{error.strerror or error.__class__.__name__}; make the run report directory writable "
                    "and rerun the journey.")
-        _record_step(report, mode, "FAIL", 0.0, message)
+        _record_step(report, mode, "FAIL", 0.0, message, step_name=step_name)
         return False, 0.0, message
 
     command = [*command, f"--output={output_dir}"]
@@ -191,7 +193,9 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
     output_lines: deque[str] = deque(maxlen=40)
     return_code: int | None = None
     invocation_error: str | None = None
-    log_path = report.with_name(f"studio-playwright-{mode}.log")
+    log_suffix = ("" if step_name == "Studio fresh-host browser journey" else
+                  "-" + re.sub(r"[^A-Za-z0-9]+", "-", step_name).strip("-").lower())
+    log_path = report.with_name(f"studio-playwright-{mode}{log_suffix}.log")
     try:
         write_report_text(log_path, "", env=env)
 
@@ -232,9 +236,68 @@ def run_studio_browser_step(command: list[str], env: dict[str, str], report: Pat
     if not passed and evidence:
         message += f"; invocation evidence: {evidence}"
 
-    _record_step(report, mode, "PASS" if passed else "FAIL", elapsed, message)
-    _record_playwright_case_claims(report, env.get("KB_STUDIO_PLAYWRIGHT_JSON", ""))
+    projection_ok = True
+    if project_claims_to_report:
+        try:
+            projection_ok = _record_playwright_case_claims(report, env.get("KB_STUDIO_PLAYWRIGHT_JSON", ""))
+        except Exception:
+            projection_ok = False
+    if not projection_ok and passed:
+        passed = False
+        message = "Playwright result could not be safely projected into the journey report"
+    _record_step(report, mode, "PASS" if passed else "FAIL", elapsed, message,
+                 step_name=step_name)
     return passed, elapsed, message
+
+
+def playwright_case_passed(json_report: str | Path, case_id: str) -> bool:
+    """Require every matching installed Playwright attempt to have an explicit PASS."""
+    try:
+        payload = json.loads(Path(json_report).read_text(encoding="utf-8"))
+        if not isinstance(payload, dict) or not isinstance(payload.get("suites"), list):
+            return False
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    marker = re.compile(r"@(S-\d{3}\.\d+)")
+    matched = []
+
+    def visit(suites: list[dict]) -> None:
+        for suite in suites:
+            if not isinstance(suite, dict):
+                raise ValueError("malformed Playwright suite")
+            specs = suite.get("specs", [])
+            children = suite.get("suites", [])
+            if not isinstance(specs, list) or not isinstance(children, list):
+                raise ValueError("malformed Playwright suite contents")
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    raise ValueError("malformed Playwright spec")
+                if case_id not in marker.findall(str(spec.get("title", ""))):
+                    continue
+                tests = spec.get("tests")
+                if not isinstance(tests, list) or not tests:
+                    matched.append(False)
+                    continue
+                all_passed = True
+                for test in tests:
+                    if not isinstance(test, dict):
+                        all_passed = False
+                        continue
+                    results = test.get("results")
+                    if not isinstance(results, list) or not results:
+                        all_passed = False
+                        continue
+                    for result in results:
+                        if not isinstance(result, dict) or result.get("status") != "passed":
+                            all_passed = False
+                matched.append(all_passed)
+            visit(children)
+
+    try:
+        visit(payload["suites"])
+    except (TypeError, ValueError):
+        return False
+    return bool(matched) and all(matched)
 
 
 def _output_excerpt(lines: deque[str]) -> str:
@@ -250,52 +313,90 @@ def _signal_process_group(process_id: int, signum: int) -> None:
         pass
 
 
-def _record_step(report: Path, mode: str, status: str, duration: float, message: str) -> None:
+def _record_step(report: Path, mode: str, status: str, duration: float, message: str, *,
+                 step_name: str = "Studio fresh-host browser journey") -> None:
     try:
         result = json.loads(report.read_text())
     except (OSError, json.JSONDecodeError):
         return
-    _append_step(result, mode, status, duration, message)
+    _append_step(result, mode, status, duration, message, name=step_name)
     write_report_json(report, result)
 
 
-def _record_playwright_case_claims(report: Path, json_report: str) -> None:
+def _record_playwright_case_claims(report: Path, json_report: str) -> bool:
     if not json_report:
-        return
+        return True
     try:
         payload = json.loads(Path(json_report).read_text(encoding="utf-8"))
         result = json.loads(report.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return
-    claims: dict[str, str] = {}
+        if not isinstance(payload, dict) or not isinstance(result, dict):
+            return False
+        suites = payload.get("suites")
+        if not isinstance(suites, list):
+            return False
 
-    def visit(suite: dict) -> None:
-        for spec in suite.get("specs", []):
-            title = str(spec.get("title", ""))
-            ids = re.findall(r"@(S-\d{3}\.\d+)", title)
-            tests = spec.get("tests", [])
-            statuses = [res.get("status") for test in tests for res in test.get("results", [])]
-            status = "PASS" if statuses and all(item == "passed" for item in statuses) else "FAIL"
-            for case_id in ids:
-                claims[case_id] = status
-        for child in suite.get("suites", []):
-            visit(child)
+        claims: dict[str, str] = {}
 
-    for suite in payload.get("suites", []):
-        visit(suite)
+        def visit(suite: dict) -> None:
+            specs = suite.get("specs", [])
+            children = suite.get("suites", [])
+            if not isinstance(specs, list) or not isinstance(children, list):
+                raise ValueError("malformed Playwright suite projection")
+            for spec in specs:
+                if not isinstance(spec, dict):
+                    raise ValueError("malformed Playwright spec projection")
+                title = str(spec.get("title", ""))
+                ids = re.findall(r"@(S-\d{3}\.\d+)", title)
+                tests = spec.get("tests", [])
+                if not isinstance(tests, list):
+                    raise ValueError("malformed Playwright test projection")
+                all_passed = bool(tests)
+                for test in tests:
+                    if not isinstance(test, dict):
+                        raise ValueError("malformed Playwright result projection")
+                    results = test.get("results")
+                    if not isinstance(results, list):
+                        raise ValueError("malformed Playwright test results")
+                    if not results:
+                        all_passed = False
+                        continue
+                    for result in results:
+                        if not isinstance(result, dict):
+                            raise ValueError("malformed Playwright attempt result")
+                        result_status = result.get("status")
+                        if result_status not in {"passed", "failed", "timedOut", "skipped", "interrupted"}:
+                            raise ValueError("unknown Playwright attempt status")
+                        if result_status != "passed":
+                            all_passed = False
+                status = "PASS" if all_passed else "FAIL"
+                for case_id in ids:
+                    claims[case_id] = "FAIL" if claims.get(case_id) == "FAIL" or status == "FAIL" else "PASS"
+            for child in children:
+                if not isinstance(child, dict):
+                    raise ValueError("malformed Playwright child-suite projection")
+                visit(child)
+
+        for suite in suites:
+            if not isinstance(suite, dict):
+                return False
+            visit(suite)
+    except Exception:
+        return False
     if not claims:
-        return
+        return True
     case_run = result.setdefault("case_run", {})
     existing = {item.get("claimId"): item for item in case_run.get("claims", []) if isinstance(item, dict)}
     existing.update({case_id: {"claimId": case_id, "kind": "journey", "status": status}
                      for case_id, status in claims.items()})
     case_run["claims"] = [existing[key] for key in sorted(existing)]
     write_report_json(report, result)
+    return True
 
 
-def _append_step(result: dict, mode: str, status: str, duration: float, message: str) -> None:
+def _append_step(result: dict, mode: str, status: str, duration: float, message: str, *,
+                 name: str = "Studio fresh-host browser journey") -> None:
     step = {
-        "name": "Studio fresh-host browser journey",
+        "name": name,
         "capability": "studio",
         "mode": mode,
         "status": status,

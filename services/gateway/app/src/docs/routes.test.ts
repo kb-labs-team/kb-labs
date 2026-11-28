@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import Fastify from 'fastify';
 import type { ICache, IServiceTransport } from '@kb-labs/core-platform';
+import { platform } from '@kb-labs/core-runtime';
 import type { GatewayConfig } from '@kb-labs/gateway-contracts';
+import { registerGatewayUxBoundary } from '../ux-boundary.js';
 import { registerAggregatedDocsRoutes } from './routes.js';
 
 function makeCache(): { cache: ICache; store: Map<string, unknown> } {
@@ -24,6 +26,7 @@ const config = {
 
 async function buildApp(transport: IServiceTransport, cache?: ICache) {
   const app = Fastify();
+  registerGatewayUxBoundary(app, platform.logger);
   // registerAggregatedDocsRoutes also registers @fastify/swagger-ui at
   // /docs-all, which requires @fastify/swagger already on the instance — in
   // production that's done by registerOpenAPI (shared/http) before this runs.
@@ -35,6 +38,28 @@ async function buildApp(transport: IServiceTransport, cache?: ICache) {
 }
 
 describe('GET /openapi-merged.json', () => {
+  // case: S-203.1
+  it('preserves the raw OpenAPI protocol document through the production Gateway UX boundary', async () => {
+    const transport: IServiceTransport = {
+      connectionInfo: () => undefined,
+      resolveProjectService: async () => undefined,
+      call: async () => ({
+        ok: true,
+        statusCode: 200,
+        payload: { openapi: '3.1.0', info: { title: 'service', version: '1.0.0' }, paths: {} },
+      }),
+      stream: async () => { throw new Error('not used'); },
+    };
+
+    const app = await buildApp(transport);
+    const response = await app.inject({ method: 'GET', url: '/openapi-merged.json' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ openapi: '3.1.0' });
+    expect(response.json()).not.toHaveProperty('ok');
+    await app.close();
+  });
+
   it('excludes a 503 "not ready" upstream from the merge instead of treating its error body as a spec', async () => {
     // Regression: IServiceTransport.call resolves (doesn't reject) on non-2xx —
     // a booting upstream's 503 error body was indistinguishable from a real

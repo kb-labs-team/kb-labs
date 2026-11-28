@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Writable } from 'node:stream';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { createServer as createHttpServer, type Server } from 'node:http';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { createErrorEnvelope, type ICache, type ILogger, type IServiceTransport } from '@kb-labs/core-platform';
@@ -9,6 +9,7 @@ import { signAccessToken } from '@kb-labs/gateway-auth';
 import { AuthConfigSchema, GatewayConfigSchema, readForwardedIdentity, type GatewayConfig } from '@kb-labs/gateway-contracts';
 import { createAuthMiddleware, isDeclaredWebhookRoute, isPlatformPublicRoute } from '../middleware.js';
 import { createServer } from '../../server.js';
+import { HostRegistry } from '../../hosts/registry.js';
 import type { ProjectRouting } from '../../project-routing.js';
 
 function cache(): ICache {
@@ -44,7 +45,44 @@ describe('Gateway global auth gate', () => {
     lastUpstreamIdentityKind = undefined;
   });
 
-  // case: S-268.1
+  // case: S-142.2, S-142.3
+  it('returns the registered host descriptors and preserves canonical failures', async () => {
+    const values = new Map<string, unknown>();
+    const hostCache = {
+      get: async (key: string) => values.get(key) ?? null,
+      set: async (key: string, value: unknown) => { values.set(key, value); },
+      delete: async (key: string) => { values.delete(key); },
+      clear: async () => { values.clear(); },
+    } as unknown as ICache;
+    const registry = new HostRegistry(hostCache);
+    const { descriptor } = await registry.register({ name: 'test-machine', namespaceId: 'tenant-1', capabilities: ['filesystem'], workspacePaths: [] });
+    const config: GatewayConfig = { port: 0, upstreams: {}, staticTokens: {}, auth: AuthConfigSchema.parse({ enabled: true }) };
+    const logger = { info: () => undefined, warn: () => undefined, error: () => undefined, debug: () => undefined, fatal: () => undefined, trace: () => undefined, child: () => logger } as unknown as ILogger;
+    const transport = { connectionInfo: () => ({ baseUrl: 'http://127.0.0.1:1' }) } as unknown as IServiceTransport;
+    const jwt = { secret: randomBytes(32).toString('hex') };
+    app = await createServer(config, hostCache, logger, jwt, registry, transport);
+    const { token } = await signAccessToken({ hostId: 'member-1', namespaceId: 'tenant-1', tier: 'pro', type: 'machine_access', permissions: [] }, jwt);
+    const headers = { authorization: `Bearer ${token}` };
+    const detail = await app.inject({ method: 'GET', url: `/hosts/${descriptor.hostId}`, headers });
+    expect(detail.statusCode).toBe(200);
+    expect(detail.json()).toMatchObject({ ok: true, data: { hostId: descriptor.hostId, name: 'test-machine', namespaceId: 'tenant-1', capabilities: ['filesystem'], status: 'offline', lastSeen: expect.any(Number) } });
+    const list = await app.inject({ method: 'GET', url: '/hosts', headers });
+    expect(list.statusCode).toBe(200);
+    expect(list.json()).toMatchObject({ ok: true, data: { hosts: [{ hostId: descriptor.hostId, name: 'test-machine', namespaceId: 'tenant-1', capabilities: ['filesystem'], status: 'offline', lastSeen: expect.any(Number) }] } });
+    const spec = await app.inject({ method: 'GET', url: '/openapi.json', headers });
+    expect(spec.statusCode).toBe(200);
+    const paths = spec.json().paths;
+    expect(paths['/hosts/{hostId}'].get.responses['200'].content['application/json'].schema.properties.hostId).toBeDefined();
+    expect(paths['/hosts'].get.responses['200'].content['application/json'].schema.properties.hosts).toBeDefined();
+    const anonymous = await app.inject({ method: 'GET', url: `/hosts/${descriptor.hostId}` });
+    expect(anonymous.statusCode).toBe(401);
+    expect(anonymous.json()).toMatchObject({ ok: false, error: { code: 'KB_AUTH_REQUIRED' } });
+    const missing = await app.inject({ method: 'GET', url: '/hosts/missing-host', headers });
+    expect(missing.statusCode).toBe(404);
+    expect(missing.json()).toMatchObject({ ok: false, error: { code: expect.stringMatching(/^KB_/) } });
+  });
+
+  // case: S-323.1
   it('enumerates gateway routes and proxies anonymous Registry reads with trusted headers only', async () => {
     let upstreamHits = 0;
     upstream = createHttpServer((request, response) => {
@@ -52,6 +90,18 @@ describe('Gateway global auth gate', () => {
       lastUpstreamHeaders = request.headers;
       lastUpstreamUrl = request.url;
       lastUpstreamIdentityKind = readForwardedIdentity(request.headers, 'gateway-internal-secret').kind;
+      if (request.url === '/api/v1/internal/adapter-call') {
+        const secretWasForwarded = request.headers['x-internal-secret'] === 'gateway-internal-secret';
+        response.writeHead(secretWasForwarded ? 200 : 403, { 'content-type': 'application/json' });
+        response.end(secretWasForwarded ? '{"ok":true}' : JSON.stringify({
+          ok: false,
+          error: createErrorEnvelope('KB_AUTH_FORBIDDEN', {
+            details: { permission: 'internal.adapter-call' },
+            correlationId: 'route-auth-test',
+          }),
+        }));
+        return;
+      }
       if (lastUpstreamIdentityKind !== 'service' && lastUpstreamIdentityKind !== 'identity') {
         response.writeHead(401, { 'content-type': 'application/json' });
         response.end('{"error":"gateway identity required"}');
@@ -161,6 +211,32 @@ describe('Gateway global auth gate', () => {
       'x-kb-auth-permissions': '["packages:read"]',
     });
 
+    for (const secretHeader of [undefined, 'client-invalid-secret']) {
+      const internalAdapterCall = await app.inject({
+        method: 'POST',
+        url: '/api/v1/projects/test-project/rest/internal/adapter-call',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': 'application/json',
+          ...(secretHeader ? { 'x-internal-secret': secretHeader } : {}),
+        },
+        payload: {
+          requestId: 'gateway-route-auth-test',
+          adapter: 'cache',
+          method: 'get',
+          args: ['gateway-route-auth-test'],
+          context: { namespaceId: 'test', hostId: 'test' },
+        },
+      });
+      expect(internalAdapterCall.statusCode, `client secret ${secretHeader ?? '<missing>'}`).toBe(403);
+      expect(lastUpstreamUrl).toBe('/api/v1/internal/adapter-call');
+      expect(lastUpstreamHeaders?.['x-internal-secret']).toBeUndefined();
+      expect(lastUpstreamHeaders).toMatchObject({
+        'x-kb-auth-user-id': 'member-1',
+        'x-kb-auth-namespace-id': 'tenant-1',
+      });
+    }
+
     const anonymousRegistryRead = await app.inject({
       method: 'GET',
       url: '/api/v1/marketplace-registry/api/v1/resolve?identity=%40acme%2Fwidget',
@@ -172,7 +248,7 @@ describe('Gateway global auth gate', () => {
       },
     });
     expect(anonymousRegistryRead.statusCode).toBe(200);
-    expect(upstreamHits).toBe(2);
+    expect(upstreamHits).toBe(4);
     expect(lastUpstreamHeaders).toMatchObject({ 'x-internal-secret': 'gateway-internal-secret' });
     expect(lastUpstreamHeaders?.['x-kb-auth-user-id']).toBeUndefined();
     expect(lastUpstreamHeaders?.['x-kb-auth-namespace-id']).toBeUndefined();
@@ -195,7 +271,7 @@ describe('Gateway global auth gate', () => {
       method: 'POST', url: '/api/v1/marketplace-registry/api/v1/packages/publish',
     });
     expect(anonymousPublish.statusCode).toBe(401);
-    expect(upstreamHits).toBe(3);
+    expect(upstreamHits).toBe(5);
   });
 
   it('rejects invalid bearer tokens with the same envelope and does not allow webhook plugin routes implicitly', async () => {

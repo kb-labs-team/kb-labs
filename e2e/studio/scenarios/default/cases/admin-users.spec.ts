@@ -125,7 +125,7 @@ test('tenant admin manages users, roles, and invites @S-106.1 @S-106.2 @S-106.3 
     await page.getByLabel('Confirm password').fill('JourneyInvitePass123!')
     await page.getByRole('button', { name: 'Activate account' }).click()
     await expect(page).toHaveURL(`${GATEWAY}/`)
-    await expect(page.getByRole('link', { name: 'Projects' })).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: /Projects$/ })).toBeVisible()
   })
 
   await test.step('[S-107.3] reject a consumed invite without establishing another session', async () => {

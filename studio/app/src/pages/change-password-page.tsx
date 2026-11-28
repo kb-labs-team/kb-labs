@@ -11,13 +11,14 @@
  */
 
 import * as React from 'react';
+import { normalizeStudioFailure } from '@kb-labs/studio-federation';
 import { authClient } from '../auth/shared-client.js';
 
 export function ChangePasswordPage() {
   const [current, setCurrent] = React.useState('');
   const [newPwd, setNewPwd] = React.useState('');
   const [confirm, setConfirm] = React.useState('');
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<{ message: string; hint?: string } | null>(null);
   const [success, setSuccess] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
 
@@ -27,12 +28,12 @@ export function ChangePasswordPage() {
     setSuccess(false);
 
     if (newPwd.length < 8) {
-      setError('New password must be at least 8 characters');
+      setError({ message: 'New password must be at least 8 characters' });
       return;
     }
 
     if (newPwd !== confirm) {
-      setError('Passwords do not match');
+      setError({ message: 'Passwords do not match' });
       return;
     }
 
@@ -48,8 +49,13 @@ export function ChangePasswordPage() {
       setNewPwd('');
       setConfirm('');
     } catch (err: unknown) {
-      const body = (err as { body?: { error?: string } }).body;
-      setError(body?.error ?? 'Password change failed. Please try again.');
+      const body = (err as { body?: { error?: unknown } })?.body;
+      const legacyMessage = typeof body?.error === 'string' ? body.error : undefined;
+      const failure = normalizeStudioFailure(body);
+      setError({
+        message: legacyMessage ?? failure.message,
+        ...(!legacyMessage && failure.hint ? { hint: failure.hint } : {}),
+      });
     } finally {
       setLoading(false);
     }
@@ -129,7 +135,8 @@ export function ChangePasswordPage() {
 
         {error && (
           <p role="alert" style={{ color: 'var(--color-error, #ff4d4f)', marginBottom: '1rem', fontSize: '0.875rem' }}>
-            {error}
+            {error.message}
+            {error.hint && <><br />{error.hint}</>}
           </p>
         )}
 

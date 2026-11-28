@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
-import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 import { projectWorkflowRoute } from '@kb-labs/workflow-contracts/routes'
 
 const projectId = process.env.KB_PROJECT_ID
@@ -23,7 +23,7 @@ type RunEntry = { id?: string; runId?: string; status?: string }
 async function getFirstWorkflow(
   request: APIRequestContext,
 ): Promise<WorkflowEntry | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/workflows`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`)
   if (!res.ok()) return undefined
   const body = await res.json()
   const list: WorkflowEntry[] = body.data?.workflows ?? body.data ?? body.workflows ?? []
@@ -37,7 +37,7 @@ async function startRun(
   request: APIRequestContext,
   workflowId: string,
 ): Promise<string | undefined> {
-  const res = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} })
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(workflowId)}/runs`, { data: {} })
   if (!res.ok()) return undefined
   const body = await res.json()
   return body.data?.runId ?? body.data?.id ?? body.runId ?? body.id
@@ -46,7 +46,7 @@ async function startRun(
 // ── WR-01: GET /runs lists runs (even empty) ─────────────────────────────────
 
 test('WR-01: GET /runs — returns a runs array', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: unknown[] = body.data?.runs ?? body.data ?? body.runs ?? (Array.isArray(body) ? body : [])
@@ -56,7 +56,7 @@ test('WR-01: GET /runs — returns a runs array', async ({ request }) => {
 // ── WR-02: GET /runs supports status filter ─────────────────────────────────
 
 test('WR-02: GET /runs?status=success — returns only success runs', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs?status=success`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs?status=success`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: RunEntry[] = body.data?.runs ?? body.data ?? body.runs ?? []
@@ -86,7 +86,7 @@ test('WR-04: GET /runs/:runId — returns run detail', async ({ request }) => {
   const runId = await startRun(request, wf!.id ?? wf!.name!)
   expect(runId, 'workflow run creation is required for detail lookup').toBeTruthy()
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const run = body.data?.run ?? body.data ?? body
@@ -105,7 +105,7 @@ test('WR-05: run reaches terminal state within 30s', async ({ request }) => {
 
   await expect.poll(
     async () => {
-      const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`)
+      const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`)
       const body = await res.json()
       return body.data?.run?.status ?? body.data?.status ?? body.status
     },
@@ -124,7 +124,7 @@ test('WR-06: POST cancel — accepted for a running or pending run', async ({ re
 
   // Cancel immediately while run may still be pending/running.
   // Route is POST /api/v1/runs/:runId/cancel (no /workflows prefix despite the contracts constant).
-  const cancel = await request.post(`${WORKFLOW}/api/v1/runs/${runId}/cancel`)
+  const cancel = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/cancel`)
   // 200 = cancelled, 409 = already terminal (completed before we could cancel) — both valid
   expect([200, 409]).toContain(cancel.status())
 
@@ -138,7 +138,7 @@ test('WR-06: POST cancel — accepted for a running or pending run', async ({ re
 // ── WR-07: GET /jobs — lists jobs associated with runs ───────────────────────
 
 test('WR-07: GET /jobs — returns a jobs array', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/jobs`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const jobs: unknown[] = body.data?.jobs ?? body.data ?? body.jobs ?? (Array.isArray(body) ? body : [])
@@ -159,13 +159,13 @@ test('WR-08: built-in workflow route GET /runs responds 200', async ({ request }
 
 // ── WR-09: built-in workflow REST API — start a run ─────────────────────────
 
-test('WR-09: built-in workflow route POST /workflows/:id/run returns runId', async ({ request }) => {
+test('WR-09: built-in workflow route POST /workflows/:id/runs returns runId', async ({ request }) => {
   expect(projectId, 'KB_PROJECT_ID must identify the registered workflow project').toBeTruthy()
   const wf = await getFirstWorkflow(request)
   expect(!wf, 'no workflows in catalog').toBe(false)
 
   const id = wf!.id ?? wf!.name!
-  const res = await request.post(`${GATEWAY}${projectWorkflowRoute(projectId!, `workflows/${encodeURIComponent(id)}/run`)}`)
+  const res = await request.post(`${GATEWAY}${projectWorkflowRoute(projectId!, `workflows/${encodeURIComponent(id)}/runs`)}`)
   expect(res.status() === 404, 'built-in workflow REST route is missing').toBe(false)
   expect([200, 201]).toContain(res.status())
   const body = await res.json()
@@ -178,7 +178,7 @@ test('WR-09: built-in workflow route POST /workflows/:id/run returns runId', asy
 // to show the latest run without requiring a run ID.
 
 test('WR-10: GET /runs?limit=1 — returns at most one run', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs?limit=1`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs?limit=1`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: RunEntry[] = body.data?.runs ?? body.data ?? body.runs ?? (Array.isArray(body) ? body : [])
@@ -195,7 +195,7 @@ test('WR-11: GET /runs?limit=1 — returns latest run after a new one is started
   const runId = await startRun(request, wf!.id ?? wf!.name!)
   expect(runId, 'workflow run creation is required for latest-run lookup').toBeTruthy()
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs?limit=1`)
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs?limit=1`)
   expect(res.status()).toBe(200)
   const body = await res.json()
   const runs: RunEntry[] = body.data?.runs ?? body.data ?? body.runs ?? (Array.isArray(body) ? body : [])

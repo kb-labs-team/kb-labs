@@ -1,5 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY, REST } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
+import { connectToInstalledStudio, openInstalledStudio } from '../../installed-studio'
 
 /**
  * Studio app e2e tests.
@@ -39,23 +41,16 @@ test('SA-02: MF manifest — valid JSON with remotes map', async ({ request }) =
 
 // SA-03: built-in workflow route resolves in the Studio application.
 test('SA-03: built-in workflow runs page loads', async ({ page }) => {
-  await page.goto(`${GATEWAY}/p/workflows/runs`)
+  await openInstalledStudio(page, '/p/workflows/runs')
   await expect(page.getByRole('heading', { name: 'Workflow Runs', exact: true })).toBeVisible()
 })
 
-// SA-04: REST /api/v1/status — used by studio to determine backend readiness
-test('SA-04: REST /api/v1/status responds for studio health bar', async ({ request }) => {
-  const res = await request.get(`${REST}/api/v1/status`)
-  // 404 = not exposed — fall back to /health
-  if (res.status() === 404) {
-    const health = await request.get(`${REST}/health`)
-    expect(health.status()).toBe(200)
-    return
-  }
+test('SA-04: the project REST health endpoint responds', async ({ request }) => {
+  await connectToInstalledStudio(request)
+  const res = await request.get(`${REST}${REST_API_PREFIX}/health`)
   expect(res.status()).toBe(200)
-  const body = await res.json()
-  const status = body.data?.status ?? body.status ?? body.data?.ok
-  expect(status).toBeTruthy()
+  const body = unwrapGatewaySuccess<{ status: string }>(await res.json())
+  expect(body.status).toEqual(expect.any(String))
 })
 
 // SA-05: static assets under /assets/ are cacheable (Cache-Control header)

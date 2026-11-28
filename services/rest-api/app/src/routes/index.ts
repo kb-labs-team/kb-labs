@@ -72,7 +72,7 @@ export async function registerRoutes(
   };
 
   const registryLoaded =
-    initialSnapshot.plugins.length > 0 && !initialSnapshot.partial && !initialSnapshot.stale;
+    !initialSnapshot.partial && !initialSnapshot.stale;
 
   const readiness: ReadinessState = {
     cliApiInitialized: true,

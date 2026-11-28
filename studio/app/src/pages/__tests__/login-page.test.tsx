@@ -31,11 +31,7 @@ function mockFetchProviders(loginResult: 'ok' | 'fail') {
   return mockFetchWithProviders(PROVIDERS_RESPONSE);
 }
 
-// Generic provider-list stub: serves the given providers from
-// GET /api/auth/providers, 404 for anything else. Mirrors the REAL gateway
-// contract, which wraps the list as `{ providers: [...] }` (gateway
-// user-routes GET /auth/providers) — not a bare array. Keeping the mock
-// faithful to that shape is what catches the parse mismatch the OAuth E2E hit.
+// Generic unwrapped provider-list stub retained for local/development servers.
 function mockFetchWithProviders(providers: Array<{ id: string; kind: string }>) {
   return vi.fn((url: string) => {
     if (url.includes('/api/auth/providers')) {
@@ -43,6 +39,23 @@ function mockFetchWithProviders(providers: Array<{ id: string; kind: string }>) 
         ok: true,
         status: 200,
         json: () => Promise.resolve({ providers }),
+      });
+    }
+    return Promise.resolve({
+      ok: false,
+      status: 404,
+      json: () => Promise.resolve({}),
+    });
+  });
+}
+
+function mockFetchWithGatewayEnvelope(providers: Array<{ id: string; kind: string }>) {
+  return vi.fn((url: string) => {
+    if (url.includes('/api/auth/providers')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ ok: true, data: { providers } }),
       });
     }
     return Promise.resolve({
@@ -190,6 +203,20 @@ describe('LoginPage', () => {
     const link = await screen.findByRole('link', { name: /continue with corp/i });
     // The link points the browser at the gateway start endpoint, which issues
     // a 302 to the upstream IdP. A plain anchor is enough — no JS navigation.
+    expect(link.getAttribute('href')).toBe('/api/auth/oauth/corp/start');
+  });
+
+  it('renders redirect providers from the Gateway success envelope', async () => {
+    vi.stubGlobal(
+      'fetch',
+      mockFetchWithGatewayEnvelope([
+        { id: 'email-password', kind: 'password' },
+        { id: 'corp', kind: 'redirect' },
+      ]),
+    );
+    renderLoginPage(LoginPage, makeAnonymousAuth(vi.fn()));
+
+    const link = await screen.findByRole('link', { name: /continue with corp/i });
     expect(link.getAttribute('href')).toBe('/api/auth/oauth/corp/start');
   });
 

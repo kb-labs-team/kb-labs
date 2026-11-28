@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from studio_steps import (
     create_studio_environment,
     create_studio_member,
+    playwright_case_passed,
     record_studio_browser_step,
     run_studio_browser_step,
     _record_playwright_case_claims,
@@ -46,6 +47,35 @@ def fake_playwright_executable(browsers_path: Path) -> Path:
 
 
 class StudioJourneyTests(unittest.TestCase):
+    def test_playwright_case_pass_requires_an_executed_matching_passing_spec(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "playwright.json"
+            report.write_text(json.dumps({"suites": [{"specs": [{
+                "title": "workflow history @S-021.5",
+                "tests": [{"results": [{"status": "passed"}]}],
+            }]}]}))
+            self.assertTrue(playwright_case_passed(report, "S-021.5"))
+            self.assertFalse(playwright_case_passed(report, "S-021.1"))
+            report.write_text(json.dumps({"suites": [{"specs": [{
+                "title": "workflow history @S-021.5",
+                "tests": [{"results": [{"status": "skipped"}]}],
+            }]}]}))
+            self.assertFalse(playwright_case_passed(report, "S-021.5"))
+            report.write_text(json.dumps({"suites": [{"specs": [
+                {"title": "workflow history @S-021.5", "tests": [{"results": [{"status": "passed"}]}]},
+                {"title": "duplicate workflow history @S-021.5", "tests": [{"results": [{"status": "failed"}]}]},
+            ]}]}))
+            self.assertFalse(playwright_case_passed(report, "S-021.5"))
+            for tests in (
+                [{"results": [{"status": "passed"}, None]}],
+                [{"results": [{"status": "passed"}]}, {"results": []}],
+            ):
+                report.write_text(json.dumps({"suites": [{"specs": [{
+                    "title": "workflow history @S-021.5",
+                    "tests": tests,
+                }]}]}))
+                self.assertFalse(playwright_case_passed(report, "S-021.5"))
+
     def test_runner_playwright_version_comes_from_studio_source_manifest(self):
         repository = Path(__file__).parents[2]
         studio_manifest = json.loads((repository / "e2e/studio/package.json").read_text())
@@ -308,13 +338,16 @@ class StudioJourneyTests(unittest.TestCase):
     def test_failed_studio_shell_blocks_playwright(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "service-local.json"
+            private_json = Path(directory) / "private-playwright.json"
             report.write_text(json.dumps({"status": "FAIL", "steps": []}))
-            with patch("invocations.subprocess.run") as run:
+            with patch("studio_steps.run_streaming_command") as run:
                 passed, elapsed, message = run_studio_browser_step(
-                    ["playwright"], {}, report, "local", False)
+                    ["playwright"], {"KB_STUDIO_PLAYWRIGHT_JSON": str(private_json)},
+                    report, "local", False)
+                run.assert_not_called()
+                self.assertFalse(private_json.exists())
             saved = json.loads(report.read_text())
 
-        run.assert_not_called()
         self.assertFalse(passed)
         self.assertEqual(elapsed, 0.0)
         self.assertIn("shell check failed", message)
@@ -336,6 +369,99 @@ class StudioJourneyTests(unittest.TestCase):
         self.assertEqual(saved["case_run"]["claims"], [
             {"claimId": "S-055.2", "kind": "journey", "status": "PASS"},
         ])
+
+    def test_playwright_projection_excludes_raw_errors_attachments_and_stdio(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "service-local.json"
+            playwright = Path(directory) / "playwright.json"
+            report.write_text(json.dumps({"case_run": {"claims": []}}))
+            playwright.write_text(json.dumps({"suites": [{"specs": [{
+                "title": "Workflow history @S-021.1",
+                "tests": [{"results": [{
+                    "status": "passed",
+                    "error": {"message": "fixture-secret-error"},
+                    "attachments": [{"name": "trace", "body": "fixture-secret-attachment"}],
+                    "stdout": [{"text": "fixture-secret-stdout"}],
+                    "stderr": [{"text": "fixture-secret-stderr"}],
+                }]}],
+            }]}]}))
+
+            _record_playwright_case_claims(report, str(playwright))
+            saved = json.loads(report.read_text())
+
+        rendered = json.dumps(saved)
+        for private_value in ("fixture-secret-error", "fixture-secret-attachment",
+                              "fixture-secret-stdout", "fixture-secret-stderr"):
+            self.assertNotIn(private_value, rendered)
+        self.assertEqual(saved["case_run"]["claims"], [
+            {"claimId": "S-021.1", "kind": "journey", "status": "PASS"},
+        ])
+
+    def test_playwright_projection_fails_closed_for_malformed_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "service-local.json"
+            playwright = Path(directory) / "playwright.json"
+            report.write_text(json.dumps({"case_run": {"claims": []}}))
+            playwright.write_text(json.dumps({"suites": "not-an-array"}))
+
+            self.assertFalse(_record_playwright_case_claims(report, str(playwright)))
+
+    def test_playwright_projection_rejects_malformed_or_unexecuted_results(self):
+        result_sets = ([{"status": "passed"}, None],)
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "service-local.json"
+            playwright = Path(directory) / "playwright.json"
+            for results in result_sets:
+                report.write_text(json.dumps({"case_run": {"claims": []}}))
+                playwright.write_text(json.dumps({"suites": [{"specs": [{
+                    "title": "Workflow history @S-021.1",
+                    "tests": [{"results": results}],
+                }]}]}))
+
+                self.assertFalse(_record_playwright_case_claims(report, str(playwright)))
+                self.assertEqual(json.loads(report.read_text()), {"case_run": {"claims": []}})
+
+            report.write_text(json.dumps({"case_run": {"claims": []}}))
+            playwright.write_text(json.dumps({"suites": [{"specs": [{
+                "title": "Workflow history @S-021.1",
+                "tests": [
+                    {"results": [{"status": "passed"}]},
+                    {"results": []},
+                ],
+            }]}]}))
+            self.assertTrue(_record_playwright_case_claims(report, str(playwright)))
+            self.assertEqual(json.loads(report.read_text())["case_run"]["claims"], [
+                {"claimId": "S-021.1", "kind": "journey", "status": "FAIL"},
+            ])
+
+    def test_early_studio_owner_can_validate_private_json_before_service_report_exists(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            browsers_path = root / "browsers"
+            executable = fake_playwright_executable(browsers_path)
+            report = root / "service-local.json"
+            playwright = root / "private-playwright.json"
+            output_dir = root / "private-results"
+            playwright.write_text(json.dumps({"suites": [{"specs": [{
+                "title": "Empty project @S-120.1",
+                "tests": [{"results": [{"status": "passed"}]}],
+            }]}]}))
+            env = {
+                "PLAYWRIGHT_BROWSERS_PATH": str(browsers_path),
+                "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(output_dir),
+                "KB_STUDIO_PLAYWRIGHT_JSON": str(playwright),
+            }
+            completed = subprocess.CompletedProcess(["playwright"], 0, "", "")
+            with patch("studio_steps.run_harness_command", return_value=subprocess.CompletedProcess(
+                    [], 0, str(executable), "")), \
+                    patch("studio_steps.run_streaming_command", return_value=(completed, 0.0)):
+                passed, _elapsed, message = run_studio_browser_step(
+                    ["playwright", "test"], env, report, "local", True,
+                    project_claims_to_report=False)
+
+            self.assertTrue(passed, message)
+            self.assertTrue(playwright_case_passed(playwright, "S-120.1"))
+            self.assertFalse(report.exists())
 
 
 if __name__ == "__main__":

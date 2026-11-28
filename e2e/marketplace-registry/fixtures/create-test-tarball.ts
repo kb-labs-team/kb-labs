@@ -41,12 +41,17 @@ export function createTestTarball(
   return gzipSync(Buffer.concat(blocks))
 }
 
+/** Identity used in a fixture manifest for a package name. */
+export function testManifestIdentity(name: string): string {
+  return name.startsWith('@') ? name : `@e2e/${name}`
+}
+
 /** Minimal valid ManifestV3 derived from the package metadata. */
 function defaultManifest(pkgJson: Record<string, unknown>): Record<string, unknown> {
   const name = typeof pkgJson.name === 'string' ? pkgJson.name : 'test'
   const version = typeof pkgJson.version === 'string' ? pkgJson.version : '1.0.0'
   // Manifest id must be @scope/name; scope unscoped package names under @e2e.
-  const id = name.startsWith('@') ? name : `@e2e/${name}`
+  const id = testManifestIdentity(name)
   return {
     schema: 'kb.plugin/3',
     id,

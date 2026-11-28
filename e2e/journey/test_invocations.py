@@ -4,11 +4,14 @@ import json
 import io
 import ast
 import os
+import shutil
+import secrets
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import invocations
 import redaction
 import jsonl
+import journey_resources
 
 
 class HarnessProbeTest(unittest.TestCase):
@@ -33,6 +37,51 @@ class HarnessProbeTest(unittest.TestCase):
             with self.subTest(error=type(error).__name__), \
                  patch.object(invocations.subprocess, "run", side_effect=error):
                 self.assertIsNone(invocations.probe_harness_command(["node", "--version"], timeout=5))
+
+
+class PlatformRegistryPlanStageTests(unittest.TestCase):
+    def test_staged_plan_script_runs_go_cli_boundary_with_runner_resource_layout(self):
+        source_root = Path(__file__).resolve().parents[2]
+        with tempfile.TemporaryDirectory(prefix="platform-registry-plan-stage-") as temporary:
+            install_root = Path(temporary) / "opt" / "kb-journey"
+            journey_dir = install_root / "e2e" / "journey"
+            journey_dir.mkdir(parents=True)
+            for module in ("invocations.py", "journey_values.py", "redaction.py", "jsonl.py",
+                           "journey_resources.py", "platform_registry_plan.py"):
+                shutil.copyfile(source_root / "e2e" / "journey" / module, journey_dir / module)
+
+            tool_entrypoints = [resource.source for resource in journey_resources.RUNNER_IMAGE_RESOURCES
+                                if resource.source.startswith("tools/") and resource.source.endswith("/main.go")]
+            resources = (*tool_entrypoints, "core/platform/src/error-envelope/errors.catalog.json")
+            for source in resources:
+                destination = install_root / source
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source_root / source, destination)
+
+            fake_bin = Path(temporary) / "bin"
+            fake_bin.mkdir()
+            kb_create = fake_bin / "kb-create"
+            kb_create.write_text(
+                "#!/bin/sh\nprintf '%s\\n' '{\"ok\":true,\"data\":{\"plan\":{}}}'\n",
+                encoding="utf-8",
+            )
+            kb_create.chmod(0o755)
+            output = Path(temporary) / "plan.json"
+            env = os.environ.copy()
+            env["PATH"] = f"{fake_bin}:{env.get('PATH', '')}"
+            env["PYTHONPATH"] = str(journey_dir)
+            result = subprocess.run(
+                [sys.executable, str(journey_dir / "platform_registry_plan.py"), str(output), "--json"],
+                cwd=temporary, env=env, capture_output=True, text=True, check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {
+                "ok": True, "data": {"plan": {}},
+            })
+            dockerfile = (source_root / "e2e" / "platform" / "Dockerfile").read_text(encoding="utf-8")
+            for source in resources:
+                self.assertIn(f"COPY {source} /opt/kb-journey/{source}", dockerfile)
 
 
 def secret_environment_write_violations(source_text: str, filename: str = "<source>") -> list[str]:
@@ -130,6 +179,33 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertNotIn("redis-password", rendered)
         self.assertNotIn("encoded%3Asecret", rendered)
         self.assertEqual(rendered.count("[REDACTED]@"), 2)
+
+    def test_one_time_auth_url_tokens_are_redacted_in_retained_evidence(self):
+        message = (
+            "activation https://studio.example/activate/one-time-activation-secret?next=%2Fprojects "
+            "reset http://studio.example/reset-password/one-time-reset-secret#form"
+        )
+        rendered = redaction.redact_text(message)
+        self.assertNotIn("one-time-activation-secret", rendered)
+        self.assertNotIn("one-time-reset-secret", rendered)
+        self.assertIn("/activate/[REDACTED]?next=%2Fprojects", rendered)
+        self.assertIn("/reset-password/[REDACTED]#form", rendered)
+
+        with tempfile.TemporaryDirectory(prefix="journey-auth-url-redaction-") as temp:
+            root = Path(temp)
+            log = root / "playwright.log"
+            invocation_log = root / "invocations" / "calls.jsonl"
+            invocations.write_report_text(log, message)
+            with invocations.invocation_context(report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["playwright"], cwd=root, env={}, exit_code=1,
+                    stdout=message, duration_seconds=0.1,
+                )
+            retained = log.read_text() + invocation_log.read_text()
+        self.assertNotIn("one-time-activation-secret", retained)
+        self.assertNotIn("one-time-reset-secret", retained)
+        self.assertIn("/activate/[REDACTED]", retained)
+        self.assertIn("/reset-password/[REDACTED]", retained)
 
     def test_url_redaction_scales_for_large_single_line_logs(self):
         value = "x" * (128 * 1024)
@@ -422,6 +498,151 @@ class PtyInvocationTest(unittest.TestCase):
             status = 200
         invocations.open_http(lambda req, **kwargs: requests.append(req) or Response(), request, timeout=1)
         self.assertEqual(requests, [request])
+
+    def test_hermetic_share_install_timeout_redacts_token_from_step_and_invocation_evidence(self):
+        from hermetic_cli import run_hermetic_cli
+
+        with tempfile.TemporaryDirectory(prefix="journey-share-token-timeout-") as temp:
+            root = Path(temp)
+            token = f"kbrt_{secrets.token_hex(16)}"
+            env = {"KB_JOURNEY_MARKETPLACE_SHARE_TOKEN": token}
+
+            def timeout(argv, **_kwargs):
+                raise subprocess.TimeoutExpired(argv, 1, output=f"failed {token}")
+
+            command = ["kb", "marketplace", "install", "@owner/private@1.2.3",
+                       "--token", token, "--scope", "project", "--json"]
+            with invocations.invocation_context(step_id="S-252.2", report_root=root):
+                with self.assertRaises(RuntimeError) as failure:
+                    run_hermetic_cli(command, cwd=root, env=env, runner=timeout, redact_output=True)
+
+            self.assertNotIn(token, str(failure.exception))
+            evidence = (root / "invocations" / "calls.jsonl").read_text(encoding="utf-8")
+            self.assertNotIn(token, evidence)
+            self.assertIn("[REDACTED]", evidence)
+
+    def test_hermetic_share_install_rejects_token_persisted_in_server_extension_store(self):
+        from hermetic_cli import run_hermetic_cli
+
+        with tempfile.TemporaryDirectory(prefix="journey-share-token-store-") as temp:
+            root = Path(temp)
+            server_kb_home = root / "server-kb-home"
+            token = f"kbrt_{secrets.token_hex(16)}"
+
+            def persist_token(argv, **kwargs):
+                (server_kb_home / "store").mkdir(parents=True)
+                (server_kb_home / "store" / "leak.json").write_text(token, encoding="utf-8")
+                return subprocess.CompletedProcess(argv, 0, "{\"ok\":true,\"data\":{}}", "")
+
+            with self.assertRaisesRegex(RuntimeError, "persisted in project or extension-store files"):
+                run_hermetic_cli(["kb", "marketplace", "install"], cwd=root, env={},
+                                 runner=persist_token, forbid_secret_in_files=token,
+                                 server_kb_home=server_kb_home)
+
+    def test_share_metadata_query_redacts_token_but_keeps_version_in_invocation_evidence(self):
+        with tempfile.TemporaryDirectory(prefix="journey-share-metadata-query-") as temp:
+            root = Path(temp)
+            token = f"kbrt_{secrets.token_hex(16)}"
+            env = {"KB_JOURNEY_MARKETPLACE_SHARE_TOKEN": token}
+            request = urllib.request.Request(
+                "https://gateway.example.test/api/v1/registry/packages/owner/plugin?"
+                + urllib.parse.urlencode({"token": token, "version": "1.2.3"}))
+
+            class Response:
+                status = 200
+                headers = {}
+                def __enter__(self): return self
+                def __exit__(self, *_args): return False
+                def read(self): return b'{"versions":[{"version":"1.2.3"}]}'
+
+            with invocations.invocation_context(step_id="S-252.2", report_root=root):
+                status, body, _ = invocations.open_http(
+                    lambda _request, **_kwargs: Response(), request, timeout=1, env=env)
+            evidence = (root / "invocations" / "calls.jsonl").read_text(encoding="utf-8")
+            self.assertEqual(status, 200)
+            self.assertIn(b"1.2.3", body)
+            self.assertNotIn(token, evidence)
+            self.assertIn("version=1.2.3", evidence)
+            self.assertIn("[REDACTED]", evidence)
+
+    def test_sensitive_marketplace_cli_error_never_copies_token_code_message_or_hint_to_step(self):
+        from marketplace_steps import _sensitive_cli_error_code, _sensitive_cli_success_data
+
+        token = f"kbrt_{secrets.token_hex(16)}"
+        failure = subprocess.CompletedProcess(
+            ["kb", "marketplace", "install"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": token, "message": token, "hint": token,
+            }}), "",
+        )
+        self.assertEqual(_sensitive_cli_error_code(failure), token)
+        with self.assertRaises(RuntimeError) as step_failure:
+            _sensitive_cli_success_data(failure)
+        self.assertNotIn(token, str(step_failure.exception))
+        self.assertIn("details redacted", str(step_failure.exception))
+
+    def test_marketplace_server_kb_home_uses_platform_contract_unless_overridden(self):
+        from marketplace_steps import _marketplace_server_kb_home
+        from installed_fixture import layout_value
+
+        with tempfile.TemporaryDirectory(prefix="journey-marketplace-server-home-") as temp:
+            root = Path(temp)
+            platform = root / "installed-platform"
+            expected = (platform / layout_value("sharedStateDirectory")
+                        / layout_value("kbHomeDirectory")).resolve()
+            self.assertEqual(_marketplace_server_kb_home({
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform), "KB_HOME": " ",
+            }), expected)
+            override = root / "service-kb-home"
+            self.assertEqual(_marketplace_server_kb_home({
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform), "KB_HOME": str(override),
+            }), override.resolve())
+
+    def test_hermetic_consumer_registers_project_in_its_own_home_with_installed_kb(self):
+        from hermetic_cli import run_hermetic_cli
+
+        with tempfile.TemporaryDirectory(prefix="journey-hermetic-project-registration-") as temp:
+            root = Path(temp)
+            project = root / "consumer-project"
+            project.mkdir()
+            server_kb_home = root / "server-kb-home"
+            invocations_seen = []
+
+            def configure(home, **_kwargs):
+                kb_home = Path(home) / ".kb"
+                kb_home.mkdir()
+                return {"HOME": str(home), "KB_HOME": str(kb_home),
+                        "KB_PLATFORM_ROOT": str(Path(home) / "platform")}
+
+            def run(argv, **kwargs):
+                invocations_seen.append((argv, kwargs.get("env", {}).copy()))
+                if argv[1:3] == ["project", "add"]:
+                    payload = {"ok": True, "data": {"project": {
+                        "id": "project-hermetic", "path": str(project.resolve()),
+                    }}}
+                else:
+                    entry = server_kb_home / "store" / "entries" / "@fixture+plugin@1.2.3"
+                    (entry / "node_modules" / "@fixture" / "plugin").mkdir(parents=True)
+                    (entry / "entry.json").write_text(json.dumps({
+                        "name": "@fixture/plugin", "version": "1.2.3",
+                    }), encoding="utf-8")
+                    payload = {"ok": True, "data": {"installed": []}}
+                return subprocess.CompletedProcess(argv, 0, json.dumps(payload), "")
+
+            with patch("hermetic_cli.configure_hermetic_cli_fixture", side_effect=configure):
+                result = run_hermetic_cli(["kb", "marketplace", "install", "--json"],
+                                          cwd=project, env={}, runner=run, project_root=project,
+                                          register_project=True,
+                                          require_extension_store_entry=("@fixture/plugin", "1.2.3"),
+                                          server_kb_home=server_kb_home)
+
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual([call[0][0:3] for call in invocations_seen], [
+                ["kb", "project", "add"], ["kb", "marketplace", "install"],
+            ])
+            registered_home = Path(invocations_seen[0][1]["KB_HOME"])
+            self.assertEqual(registered_home, Path(invocations_seen[1][1]["KB_HOME"]))
+            self.assertNotEqual(registered_home, project / ".kb")
 
     def test_missing_project_state_is_rejected_before_url_is_built(self):
         from project_service_path import project_service_path

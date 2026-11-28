@@ -175,6 +175,36 @@ describe('MarketplaceService', () => {
   // ── install ──────────────────────────────────────────────────────────
 
   describe('install', () => {
+    // case: S-268.24
+    it('rejects the unsupported kb: Registry CLI prefix before contacting sources', async () => {
+      const registryResolve = vi.fn(async () => ({ status: 'not-found-unowned' as const }));
+      const npmResolve = vi.fn(async () => ({ status: 'not-found-unowned' as const }));
+      const createSource = (kind: 'registry' | 'npm', resolveIdentity: MarketplaceSource['resolveIdentity']): MarketplaceSource => ({
+        kind,
+        resolveIdentity,
+        async resolve() { throw new Error('identity resolver should reject the spec first'); },
+        async install() { throw new Error('identity resolver should reject the spec first'); },
+        async remove() {},
+        async commitInstall() {},
+        async rollbackInstall() {},
+      });
+      const service = makeMarketplaceService({
+        platformRoot: tmpDir,
+        sources: [createSource('registry', registryResolve), createSource('npm', npmResolve)],
+      });
+
+      await expect(service.install({ scope: 'platform' }, ['kb:no-slash-here']))
+        .rejects.toMatchObject({ envelope: {
+          code: 'KB_RUNTIME_INPUT_INVALID',
+          details: { field: 'specs' },
+          message: expect.stringContaining('kb:'),
+          hint: expect.stringContaining('@scope/name'),
+        } });
+      expect(registryResolve).not.toHaveBeenCalled();
+      expect(npmResolve).not.toHaveBeenCalled();
+      expect(await fs.readdir(tmpDir)).toEqual([]);
+    });
+
     // case: S-268.14
     it('installs the npm artifact under the same identity recorded in the Marketplace lock', async () => {
       const sourceDir = path.join(marketplaceServiceTestWorkspaceRoot, 'plugins/commit');
@@ -550,6 +580,57 @@ describe('MarketplaceService', () => {
       expect(sourceInstall).not.toHaveBeenCalled();
       expect(storeResolve).toHaveBeenCalledOnce();
       expect(result.installed[0]?.primaryKind).toBe('plugin');
+    });
+
+    it('forwards per-request Registry artifact headers to the extension store', async () => {
+      const packageId = '@kb-labs/shared-token-plugin';
+      const { dir, integrity } = await createPluginDir(tmpDir, 'shared-token-plugin', packageId);
+      const artifactUrl = 'https://registry.fixture.test/packages/author/plugin/1.0.0.tgz';
+      const token = `kbrt_${crypto.randomBytes(16).toString('hex')}`;
+      const createSource = (shareToken?: string): PackageSource => Object.assign(
+        createMockSource(new Map([[packageId, { dir, version: '1.0.0', integrity }]])),
+        {
+          getArtifactRequestHeaders: vi.fn(() => shareToken ? { 'X-Share-Token': shareToken } : {}),
+          ...(shareToken ? {} : { withShareToken: (nextToken: string) => createSource(nextToken) }),
+          resolve: async (spec: string): Promise<ResolvedPackage> => ({
+            id: spec,
+            version: '1.0.0',
+            integrity,
+            source: 'marketplace',
+            primaryKind: 'plugin',
+            downloadUrl: artifactUrl,
+          }),
+        },
+      );
+      const storeResolve = vi.fn(async () => ({
+        entry: {
+          schema: 'kb.store-entry/1' as const,
+          name: packageId,
+          version: '1.0.0',
+          kind: 'plugin' as const,
+          integrity,
+          installedAt: new Date().toISOString(),
+        },
+        packageRoot: dir,
+        entryDir: path.join(tmpDir, 'store', 'entries', 'shared-token-plugin'),
+      }));
+      const store: IExtensionStore = {
+        root: path.join(tmpDir, 'store'),
+        casDir: path.join(tmpDir, 'store', 'cas'),
+        entriesDir: path.join(tmpDir, 'store', 'entries'),
+        async lookup() { return undefined; },
+        resolve: storeResolve,
+        async listEntries() { return []; },
+      };
+      const source = asMarketplaceSource(createSource(), 'registry');
+      const service = makeMarketplaceService({ platformRoot: tmpDir, sources: [source], extensionStore: store });
+
+      await service.install({ scope: 'platform' }, [packageId], { shareToken: token });
+
+      expect(storeResolve).toHaveBeenCalledWith(expect.objectContaining({
+        spec: artifactUrl,
+        artifactHeaders: { 'X-Share-Token': token },
+      }));
     });
 
     // case: S-300.1

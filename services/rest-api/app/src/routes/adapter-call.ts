@@ -164,7 +164,7 @@ function createAdapterRegistry(): AdapterRegistry {
 // ── Route registration ──
 
 export async function registerAdapterCallRoutes(
-  server: FastifyInstance,
+  server: Pick<FastifyInstance, 'post'>,
 ): Promise<void> {
   const registry = createAdapterRegistry();
   const internalSecret = process.env.GATEWAY_INTERNAL_SECRET;

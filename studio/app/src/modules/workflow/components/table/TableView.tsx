@@ -86,6 +86,17 @@ export function TableView({ runs, loading, onRunClick }: TableViewProps) {
         ),
       },
       {
+        title: 'Finished At',
+        dataIndex: 'finishedAt',
+        key: 'finishedAt',
+        width: 200,
+        render: (value?: string) => (
+          <UITypographyText className="typo-caption">
+            {value ? <time dateTime={value}>{formatDate(value)}</time> : '-'}
+          </UITypographyText>
+        ),
+      },
+      {
         title: 'Duration',
         key: 'duration',
         width: 100,
@@ -103,7 +114,7 @@ export function TableView({ runs, loading, onRunClick }: TableViewProps) {
       columns={columns}
       dataSource={runs}
       loading={loading}
-      scroll={{ x: 960 }}
+      scroll={{ x: 1160 }}
       pagination={{ pageSize: 20 }}
       onRow={(record) => ({
         style: { cursor: 'pointer' },

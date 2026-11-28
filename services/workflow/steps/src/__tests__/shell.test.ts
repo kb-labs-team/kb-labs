@@ -446,6 +446,19 @@ describe('shellHandler — execution-boundary cancellation', () => {
     }
   }, 5000)
 
+  it('streams short command stdout while process identity is being recorded', async () => {
+    const { ctx, cleanup } = makeShellTestContext()
+    Object.defineProperty(ctx, 'onProcessStarted', { value: async () => {
+      await new Promise<void>(resolve => { setTimeout(resolve, 200) })
+    } })
+    try {
+      const result = await shellModule.execute(ctx, { command: 'sleep 0.05; echo "after approval"' })
+      expect(result.stdout).toContain('after approval')
+      expect(ctx.api.events.emit).toHaveBeenCalledWith('log.line', expect.objectContaining({ stream: 'stdout', line: 'after approval' }))
+      expect(ctx.api.events.emit).toHaveBeenCalledTimes(1)
+    } finally { cleanup() }
+  })
+
   it('keeps successful stderr diagnostics at warn level', async () => {
     const { ctx, cleanup } = makeShellTestContext()
     try {

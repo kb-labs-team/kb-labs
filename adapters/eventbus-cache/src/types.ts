@@ -29,6 +29,8 @@ export interface CacheEventBusConfig {
  * Stored event structure in cache.
  */
 export interface StoredEvent<T = unknown> {
+  /** Adapter-local ordering key for events written with an equal timestamp. */
+  sequence?: string;
   /** Unique event ID */
   id: string;
   /** Event topic */

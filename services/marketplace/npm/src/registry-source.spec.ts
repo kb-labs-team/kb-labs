@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { RegistryPackageSource } from './registry-source.js';
 
 describe('RegistryPackageSource', () => {
@@ -18,6 +18,19 @@ describe('RegistryPackageSource', () => {
       .resolveIdentity('@kb-labs/test');
 
     expect(resolved).toMatchObject({ status: 'found', package: { id: '@kb-labs/test', version: '1.0.0', primaryKind: 'plugin' } });
+  });
+
+  it('provides share-token headers only for artifacts on its configured Registry origin', () => {
+    const source = new RegistryPackageSource({ registryUrl: 'https://registry.test/api/v1/marketplace-registry', signingPublicKey: 'test-key' });
+    const shareToken = `kbrt_${randomBytes(16).toString('hex')}`;
+    const sharedSource = source.withShareToken(shareToken);
+
+    expect(sharedSource.getArtifactRequestHeaders(
+      'https://registry.test/api/v1/marketplace-registry/api/v1/packages/author/plugin/1.0.0/tarball',
+    )).toEqual({ 'X-Share-Token': shareToken });
+    expect(() => sharedSource.getArtifactRequestHeaders('https://attacker.test/plugin.tgz')).toThrow(
+      'Registry tarball URL must use the configured source origin',
+    );
   });
 
   // case: S-268.1

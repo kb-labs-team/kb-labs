@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { GATEWAY, WORKFLOW } from '@kb-labs/e2e-shared/urls.js'
+import { GATEWAY, REST, REST_API_PREFIX, WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
 
 // Cross-service tests: verify that gateway auth integrates correctly with upstream services.
@@ -9,7 +9,7 @@ test('XS-01: authenticated request passes through gateway to REST upstream', asy
   const token = await getAccessToken(request)
 
   // Platform config is proxied through gateway — requires valid token
-  const res = await request.get(`${GATEWAY}/api/v1/platform/config`, {
+  const res = await request.get(`${REST}${REST_API_PREFIX}/platform/config`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   // Must not be 401 — auth passed, upstream responded
@@ -29,7 +29,7 @@ test('XS-03: gateway routes requests to correct upstream (workflow)', async ({ r
   const token = await getAccessToken(request)
 
   // Workflow catalog is served by workflow daemon, proxied via gateway
-  const res = await request.get(`${GATEWAY}/api/v1/workflows`, {
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   // May be 200 (proxied) or 404/401 (not exposed via gateway) — must not be 502

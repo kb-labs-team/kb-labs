@@ -4,15 +4,19 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { join } from 'node:path';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { getGitStatus, hasChanges, getAllChangedFiles } from '../../../src/core/analyzer/git-status.js';
 import { simpleGit } from 'simple-git';
 
 describe('getGitStatus', () => {
-  const testRoot = join(process.cwd(), '.test-git-status');
-  const repoDir = join(testRoot, 'repo');
+  let testRoot: string;
+  let repoDir: string;
 
   beforeEach(async () => {
+    testRoot = await mkdtemp(join(tmpdir(), 'kb-commit-git-status-'));
+    repoDir = join(testRoot, 'repo');
+
     await mkdir(repoDir, { recursive: true });
 
     const git = simpleGit(repoDir);
@@ -95,9 +99,11 @@ describe('hasChanges', () => {
 });
 
 describe('getGitStatus runtime state filtering', () => {
-  const repo = join(process.cwd(), '.test-commit-runtime-state');
+  let repo: string;
 
   beforeEach(async () => {
+    repo = await mkdtemp(join(tmpdir(), 'kb-commit-commit-runtime-state-'));
+
     await mkdir(repo, { recursive: true });
     await simpleGit(repo).init();
   });

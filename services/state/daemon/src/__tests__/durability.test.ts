@@ -9,6 +9,79 @@ import { describe, expect, it } from 'vitest';
 import { AppendOnlyJournalStateBroker } from '../backends/append-only-journal.js';
 
 describe('StateBroker durability', () => {
+  it('applies concurrent sorted-set mutations atomically before and after replay', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-zset-atomic-'));
+    try {
+      const first = await AppendOnlyJournalStateBroker.open(root);
+      await Promise.all([
+        first.zadd('queue', 1, 'first'),
+        first.zadd('queue', 2, 'second'),
+        first.zadd('queue', 3, 'third'),
+      ]);
+      expect(await first.zrangebyscore('queue', 0, 10)).toEqual(['first', 'second', 'third']);
+      await Promise.all([
+        first.zrem('queue', 'second'),
+        first.zadd('queue', 4, 'fourth'),
+      ]);
+      expect(await first.zrangebyscore('queue', 0, 10)).toEqual(['first', 'third', 'fourth']);
+      await first.stop();
+
+      const replayed = await AppendOnlyJournalStateBroker.open(root);
+      expect(await replayed.zrangebyscore('queue', 0, 10)).toEqual(['first', 'third', 'fourth']);
+      await Promise.all([
+        replayed.zadd('queue', 5, 'fifth'),
+        replayed.zrem('queue', 'third'),
+      ]);
+      expect(await replayed.zrangebyscore('queue', 0, 10)).toEqual(['first', 'fourth', 'fifth']);
+      await replayed.stop();
+
+      const replayedAgain = await AppendOnlyJournalStateBroker.open(root);
+      expect(await replayedAgain.zrangebyscore('queue', 0, 10)).toEqual(['first', 'fourth', 'fifth']);
+      await replayedAgain.stop();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps the journal queue usable after a sorted-set preparation error', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-queue-recovery-'));
+    try {
+      const broker = await AppendOnlyJournalStateBroker.open(root);
+      await broker.set('malformed-zset', 'not a sorted set', 60_000);
+      await expect(broker.zadd('malformed-zset', 1, 'member')).rejects.toThrow();
+      await expect(broker.set('after-error', 'persisted', 60_000)).resolves.toBeUndefined();
+      await broker.stop();
+
+      const replayed = await AppendOnlyJournalStateBroker.open(root);
+      await expect(replayed.get('after-error')).resolves.toBe('persisted');
+      await replayed.stop();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('propagates journal I/O failure and rejects later writes without losing the original error', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-io-failure-'));
+    const stateDirectory = path.join(root, 'state-broker');
+    try {
+      const broker = await AppendOnlyJournalStateBroker.open(root);
+      await rm(stateDirectory, { recursive: true, force: true });
+      let appendFailure: unknown;
+      try {
+        await broker.set('first', 'value', 60_000);
+      } catch (error) {
+        appendFailure = error;
+      }
+      expect(appendFailure).toBeInstanceOf(Error);
+
+      await mkdir(stateDirectory, { recursive: true });
+      await expect(broker.set('second', 'value', 60_000)).rejects.toBe(appendFailure);
+      await broker.stop();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('restores a resolved value after the broker is recreated', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'kb-state-broker-roundtrip-'));
     try {

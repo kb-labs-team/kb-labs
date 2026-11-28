@@ -48,17 +48,31 @@ ADAPTERS=$(jq -r '[.adapters[].id | select(. != "sqlite-stores")] | join(",")' /
 
 # Apply installs and starts the supervised host. The host starts the
 # per-project REST and workflow runtimes on demand.
-kb-create apply \
+set -- \
   --index /release-index.json \
   --platform-root "$PLATFORM_ROOT" \
   --project-root "$PLATFORM_ROOT" \
   --platform-channel stable \
   --service-profile default \
   --scenario custom --scenario-answers "$SCENARIO_ANSWERS" \
-  --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD \
   --plugins "$(jq -r '[.plugins[] | select(.default == true) | .id] | join(",")' /e2e-registry-manifest.json)" \
   --adapters "$ADAPTERS" \
   --registry http://verdaccio:4873
+if [ -n "${KB_E2E_REGISTRY_UPSTREAM:-}" ]; then
+  KB_E2E_REGISTRY_PUBLIC_KEY=$(node -e 'process.stdout.write(Buffer.from(process.env.KB_E2E_REGISTRY_PUBLIC_KEY_B64 || "", "base64").toString("utf8"))')
+  [ -n "$KB_E2E_REGISTRY_PUBLIC_KEY" ] || { echo "ERROR: Registry signing public key is missing" >&2; exit 1; }
+  export KB_E2E_REGISTRY_PUBLIC_KEY
+  python3 /opt/kb-journey/e2e/journey/platform_registry_plan.py /tmp/kb-e2e-registry-initial-plan.json "$@"
+  node /registry-install-config.mjs /tmp/kb-e2e-registry-initial-plan.json /tmp/kb-e2e-registry-config.json "$KB_E2E_REGISTRY_UPSTREAM"
+  python3 /opt/kb-journey/e2e/journey/platform_registry_plan.py /tmp/kb-e2e-registry-plan.json \
+    --index /release-index.json --registry http://verdaccio:4873 \
+    --input /tmp/kb-e2e-registry-initial-plan.json --config /tmp/kb-e2e-registry-config.json
+  kb-create apply --index /release-index.json --input /tmp/kb-e2e-registry-plan.json --config /tmp/kb-e2e-registry-config.json \
+    --registry http://verdaccio:4873 \
+    --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD,gateway.internalSecret=GATEWAY_INTERNAL_SECRET
+else
+  kb-create apply "$@" --secret-env gateway.bootstrap.password=GATEWAY_BOOTSTRAP_ADMIN_PASSWORD
+fi
 cd "$PLATFORM_ROOT"
 
 # Scaffold test workflows used by E2E suite

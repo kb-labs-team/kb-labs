@@ -10,14 +10,18 @@ import { listTools, postMcp } from './_helpers.js'
 // so any valid identity sees the full catalog; these specs assert the
 // authenticated-vs-anonymous boundary, which is the live, observable contract.
 
-test('A-01: no token → 401', async ({ request }) => {
-  const response = await postMcp(request, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
-  expect(response.status).toBe(401)
-})
+test.describe('without a saved session', () => {
+  test.use({ storageState: { cookies: [], origins: [] } })
 
-test('A-02: invalid token → 401', async ({ request }) => {
-  const response = await postMcp(request, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, 'not-a-real-jwt')
-  expect(response.status).toBe(401)
+  test('A-01: no token → 401', async ({ request }) => {
+    const response = await postMcp(request, { jsonrpc: '2.0', id: 1, method: 'tools/list' })
+    expect(response.status).toBe(401)
+  })
+
+  test('A-02: invalid token → 401', async ({ request }) => {
+    const response = await postMcp(request, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, 'not-a-real-jwt')
+    expect(response.status).toBe(401)
+  })
 })
 
 test('A-03: valid token → non-empty catalog', async ({ request }) => {

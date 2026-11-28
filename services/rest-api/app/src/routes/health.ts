@@ -1,3 +1,5 @@
+import { createErrorEnvelope } from '@kb-labs/core-platform';
+import { createUxFailureResult } from '@kb-labs/core-platform/ux-result';
 import { withUxErrorResponses } from './route-schema.js';
 /**
  * @module @kb-labs/rest-api-app/routes/health
@@ -113,7 +115,7 @@ export async function registerHealthRoutes(
   }
 
   for (const path of readyPaths) {
-    fastify.get(path, { config: { ux: 'raw' }, schema: {
+    fastify.get(path, { schema: {
       querystring: { type: 'object', additionalProperties: false },
       response: withUxErrorResponses({ 200: {
         type: 'object', properties: {
@@ -125,7 +127,7 @@ export async function registerHealthRoutes(
             redis: { type: 'object', properties: { enabled: { type: 'boolean' }, healthy: { type: 'boolean' }, states: { type: 'object' } }, required: ['enabled', 'healthy', 'states'], additionalProperties: false },
           }, required: ['cliApi', 'registry', 'plugins', 'redis'], additionalProperties: true },
         }, required: ['schema', 'ts', 'ready', 'status', 'reason', 'components'], additionalProperties: false,
-      }, 503: { type: 'object', properties: { schema: { const: 'kb.ready/1' }, ts: { type: 'string', format: 'date-time' }, ready: { const: false }, status: { const: 'initializing' }, reason: { type: 'string' }, components: { type: 'object', additionalProperties: true } }, required: ['schema', 'ts', 'ready', 'status', 'reason', 'components'], additionalProperties: false } }),
+      } }),
     } }, async (_request, reply) => {
       const eventHub = fastify.kbEventHub;
       const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(registry);
@@ -134,7 +136,6 @@ export async function registerHealthRoutes(
       readiness.registryStale = registryStale;
 
       const response = buildReadinessResponse(readiness);
-      const statusCode = response.ready ? 200 : 503;
       updateServiceHealthStatus(response.ready ? 'healthy' : 'degraded');
 
       eventHub?.publish({
@@ -154,7 +155,13 @@ export async function registerHealthRoutes(
         pluginsFailed: metricsCollector.getLastPluginMountSnapshot()?.failed ?? 0,
       });
 
-      return reply.code(statusCode).send(response);
+      if (!response.ready) {
+        return reply.code(503).send(createUxFailureResult(createErrorEnvelope('KB_SERVICE_UNAVAILABLE', {
+          message: 'The REST service is initializing.',
+          details: { service: 'rest', status: response.reason },
+        })));
+      }
+      return reply.send(response);
     });
   }
 
@@ -331,7 +338,7 @@ function evaluateRegistryState(registry: IEntityRegistry): {
 } {
   const snapshot = registry.snapshot();
   return {
-    registryLoaded: snapshot.plugins.length > 0 && !snapshot.partial && !snapshot.stale,
+    registryLoaded: !snapshot.partial && !snapshot.stale,
     registryPartial: snapshot.partial,
     registryStale: snapshot.stale,
   };

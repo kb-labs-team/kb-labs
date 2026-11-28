@@ -14,6 +14,7 @@ import re
 import shutil
 from copy import deepcopy
 from pathlib import Path
+from urllib.parse import urlsplit
 from unittest.mock import patch
 
 import jsonl
@@ -31,6 +32,8 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   run_platform_cli, run_secondary_root_gateway_isolation_step,
                                   run_stable_layout_contract_refusal_step,
                                   run_gateway_allocation_step, run_port_conflict_step,
+                                  external_transport_config, secondary_install_request_file,
+                                  verify_request_file_gateway_input,
                                   assert_root_offset, run_json_install_project_step,
                                   installer_primary_host_guard, run_fixture_group,
                                   run_uninstall_decline_step, run_missing_project_request_steps, _service_ids_match,
@@ -39,6 +42,7 @@ from installer_case_steps import (_add_installed_manifest_requirement, _data, _s
                                   assert_gateway_index_diagnosis, verify_installation_spellings,
                                   add_installed_host_stop_case_step)
 from installer_case_steps import verify_package_manager_failure_diagnostic
+from service_port_assertions import service_transport_ports, service_transport_urls
 from installer_case_steps import read_gateway_index_refusal
 from installer_case_steps import (verify_primary_installation_spellings,
                                   verify_stable_installation_spellings)
@@ -47,6 +51,95 @@ from installer_case_steps import (assert_immutable_publish_conflict,
                                   assert_provenance_mismatch_refusal)
 from invocations import PtyCommandTimeout, decode_ux_error_result, read_kb_create_cli_result
 from journey_resources import active_platform_root, case_catalog_root
+
+
+class RequestPlanConfigRoundTripTests(unittest.TestCase):
+    # case: PC-001.20
+    def test_installed_request_plan_config_apply_recalculates_tampered_fields(self):
+        with tempfile.TemporaryDirectory(prefix="pc001-plan-config-") as directory:
+            parent = Path(directory)
+            stable_index = parent / "stable-index.json"
+            update_index = parent / "update-index.json"
+            stable_index.write_text("{}", encoding="utf-8")
+            update_index.write_text("{}", encoding="utf-8")
+            observed = {"apply": False, "update": False}
+
+            def command(args, **_kwargs):
+                if args[1] == "plan" and "--input" in args:
+                    input_path = Path(args[args.index("--input") + 1])
+                    if input_path.name == "invalid-request.json":
+                        return subprocess.CompletedProcess(args, 2, json.dumps({"ok": False, "error": {
+                            "code": "KB_INSTALL_INPUT_REQUIRED", "message": "invalid Gateway", "hint": ""}}), "")
+                    request = json.loads(input_path.read_text(encoding="utf-8"))
+                    config_path = Path(args[args.index("--config") + 1])
+                    config = json.loads(config_path.read_text(encoding="utf-8"))
+                    request["marketplaceSources"] = config["marketplaceSources"]
+                    request.setdefault("values", {}).update({key: json.dumps(value, separators=(",", ":"))
+                                                              for key, value in config.get("values", {}).items()})
+                    gateway_url = request["gatewayUrl"]
+                    envelope = {"ok": True, "data": {"plan": {
+                        "request": request,
+                        "host": {"healthUrl": gateway_url + "/health"},
+                        "serviceGraph": {"services": [{"id": "gateway", "port": int(gateway_url.rsplit(":", 1)[1])}]},
+                        "artifacts": [{"package": "@kb/platform"}],
+                        "configPatches": [{"path": "/platform/adapterOptions", "json": "{}"}],
+                    }}}
+                    return subprocess.CompletedProcess(args, 0, json.dumps(envelope), "")
+
+                if args[1] == "apply":
+                    plan_path = Path(args[args.index("--input") + 1])
+                    config_path = Path(args[args.index("--config") + 1])
+                    self.assertEqual(args[args.index("--registry") + 1], "http://verdaccio:4873")
+                    self.assertEqual(json.loads(config_path.read_text(encoding="utf-8"))["values"],
+                                     {"gateway.access.mode": "local"})
+                    plan = json.loads(plan_path.read_text(encoding="utf-8"))["data"]["plan"]
+                    self.assertEqual(plan["host"]["healthUrl"], "http://127.0.0.1:1/health")
+                    self.assertEqual(plan["configPatches"][0]["path"], str(plan_path.parent / "outside-config.json"))
+                    self.assertEqual(plan["artifacts"][0]["package"], "attacker-controlled-package")
+                    request = plan["request"]
+                    gateway_url = request["gatewayUrl"]
+                    install_root = Path(request["platformRoot"])
+                    receipt = {"plan": {"request": request, "serviceGraph": {
+                        "services": [{"id": "gateway", "port": int(gateway_url.rsplit(":", 1)[1])}]}},
+                        "verification": {"hostHealthUrl": gateway_url + "/health"}}
+                    install_root.mkdir(parents=True, exist_ok=True)
+                    (install_root / ".kb/v2").mkdir(parents=True, exist_ok=True)
+                    (install_root / ".kb/v2/receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+                    (install_root / "config.jsonc").write_text(json.dumps({
+                        "gateway": {"access": {"mode": "local"}},
+                        "platform": {"adapterOptions": {"serviceTransport": {"services": {
+                            "gateway": {"url": gateway_url},
+                        }}}},
+                        "marketplace": {"sources": [{"kind": "npm", "url": "http://verdaccio:4873"}]},
+                    }), encoding="utf-8")
+                    observed["root"] = install_root
+                    observed["apply"] = True
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "operation": "apply", "receipt": receipt, "logPath": str(parent / "apply.log")}}), "")
+
+                if args[1] == "status":
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "running": True, "reachable": True}}), "")
+
+                if args[1] == "update":
+                    receipt_path = observed["root"] / ".kb/v2/receipt.json"
+                    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+                    receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+                    observed["update"] = True
+                    return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
+                        "operation": "update"}}), "")
+
+                self.fail(f"unexpected kb-create invocation: {args}")
+
+            with patch("installer_case_steps.active_platform_root", side_effect=lambda value: Path(value)), \
+                    patch("installer_case_steps.layout_value", return_value="config.jsonc"), \
+                    patch("installer_case_steps.cleanup_installer_fixture_root"):
+                verify_request_file_gateway_input(
+                    launcher="kb-create", stable_index=stable_index, update_index=update_index,
+                    registry="http://verdaccio:4873", run_command=command)
+
+            self.assertTrue(observed["apply"])
+            self.assertTrue(observed["update"])
 from service_steps import Journey
 from installed_fixture import layout_value
 
@@ -229,6 +322,38 @@ def journey_layout_path_violations(journey_root: Path, layout: dict, owner_modul
 
 
 class InstallerCaseStepsTest(unittest.TestCase):
+    def test_secondary_install_request_preserves_config_and_changes_only_root_inputs(self):
+        with tempfile.TemporaryDirectory(prefix="journey-secondary-request-") as temp:
+            root = Path(temp)
+            secondary_plan = {"request": {"gatewayUrl": "http://127.0.0.1:4100",
+                                           "serviceTransportURLs": {"marketplace-registry":
+                                               "https://registry.example.test:5071/api"},
+                                           "values": {"access.mode": '"secured"'}}}
+            automatic_root = root / "root-b"
+            project_root = root / "project-b"
+            with secondary_install_request_file(secondary_plan, automatic_root, project_root) as request_path:
+                request = json.loads(request_path.read_text())
+                self.assertEqual(request["platformRoot"], str(automatic_root))
+                self.assertEqual(request["projectRoot"], str(project_root))
+                self.assertEqual(request["gatewayUrl"], "http://127.0.0.1:4100")
+                self.assertEqual(request["values"], {"access.mode": '"secured"'})
+                self.assertEqual(request["serviceTransportURLs"],
+                                 {"marketplace-registry": "https://registry.example.test:5071/api"})
+                self.assertEqual(request_path.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(request_path.exists())
+
+    def test_external_transport_config_preserves_full_custom_endpoint(self):
+        plan = {"serviceGraph": {"services": [{"id": "gateway", "port": 4000}]},
+                "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                    "serviceTransport": {"services": {
+                        "gateway": {"url": "http://127.0.0.1:4000"},
+                        "marketplace-registry": {"url": "https://external.example.test:48000/upstream"},
+                    }},
+                })}]}
+        config = external_transport_config(plan)
+        self.assertEqual(config["serviceTransportURLs"],
+                         {"marketplace-registry": "https://external.example.test:48000/upstream"})
+
     def test_package_manager_failure_diagnostic_requires_exit_and_safe_transcript(self):
         with tempfile.TemporaryDirectory(prefix="journey-pnpm-failure-") as temporary:
             home = Path(temporary)
@@ -1009,11 +1134,59 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     }},
                 })}]}
         assert_root_offset(plan, {"gateway": 4000, "marketplace": 5070},
-                           {"gateway": 4000, "marketplace": 5070}, 100, "secondary root")
+                           {"gateway": "http://127.0.0.1:4000",
+                            "marketplace": "http://127.0.0.1:5070"}, 100, "secondary root")
         plan["serviceGraph"]["services"][1]["port"] = 5270
         with self.assertRaisesRegex(RuntimeError, "service ports"):
             assert_root_offset(plan, {"gateway": 4000, "marketplace": 5070},
-                               {"gateway": 4000, "marketplace": 5070}, 100, "secondary root")
+                               {"gateway": "http://127.0.0.1:4000",
+                                "marketplace": "http://127.0.0.1:5070"}, 100, "secondary root")
+
+    def test_root_offset_preserves_external_transport_urls(self):
+        plan = {"serviceGraph": {"services": [{"id": "gateway", "port": 4100},
+                                               {"id": "marketplace", "port": 5170}]},
+                "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
+                    "serviceTransport": {"services": {
+                        "gateway": {"url": "http://127.0.0.1:4100"},
+                        "marketplace": {"url": "http://127.0.0.1:5170"},
+                        "marketplace-registry": {"url": "http://127.0.0.1:5071"},
+                    }},
+                })}]}
+        base_ports = {"gateway": 4000, "marketplace": 5070}
+        base_transport = {"gateway": "http://127.0.0.1:4000",
+                          "marketplace": "http://127.0.0.1:5070",
+                          "marketplace-registry": "https://registry.example.test:5071/api"}
+
+        plan["configPatches"][0]["json"] = json.dumps({"serviceTransport": {"services": {
+            "gateway": {"url": "http://127.0.0.1:4100"},
+            "marketplace": {"url": "http://127.0.0.1:5170"},
+            "marketplace-registry": {"url": "https://registry.example.test:5071/api"},
+        }}})
+
+        assert_root_offset(plan, base_ports, base_transport, 100, "secondary root")
+
+        plan["configPatches"].append({
+            "path": "/platform/adapterOptions/serviceTransport/services/marketplace-registry/url",
+            "json": '"https://changed.example.test:5071/api"',
+        })
+        with self.assertRaisesRegex(RuntimeError, "external service transport"):
+            assert_root_offset(plan, base_ports, base_transport, 100, "secondary root")
+
+    def test_service_transport_urls_include_nested_plan_overrides(self):
+        plan = {"configPatches": [
+            {"path": "/platform/adapterOptions", "json": json.dumps({"serviceTransport": {"services": {
+                "gateway": {"url": "http://127.0.0.1:4000"},
+                "marketplace-registry": {"url": "https://registry.example.test:5071/api"},
+            }}})},
+            {"path": "/platform/adapterOptions/serviceTransport/services/marketplace-registry/url",
+             "json": '"https://override.example.test:5071/api"'},
+        ]}
+        self.assertEqual(service_transport_urls(plan)["marketplace-registry"],
+                         "https://override.example.test:5071/api")
+
+    def test_service_transport_ports_rejects_missing_transport_config(self):
+        with self.assertRaisesRegex(RuntimeError, "omitted service transport URLs"):
+            service_transport_ports({"serviceGraph": {"services": [{"id": "gateway", "port": 4000}]}})
 
     # case: PC-001.13, PC-001.14, PC-001.15
     def test_lifecycle_port_assertion_rejects_service_or_transport_drift(self):
@@ -1764,22 +1937,28 @@ class InstallerCaseStepsTest(unittest.TestCase):
                 (root / ".kb/v2").mkdir(parents=True)
                 (root / ".kb/v2/receipt.json").write_text(json.dumps({
                     "verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
-                    "plan": {"serviceGraph": {"services": [
+                    "plan": {"request": {"platformRoot": str(root), "gatewayUrl": f"http://127.0.0.1:{port}",
+                                            "serviceTransportURLs": {"marketplace-registry": "http://127.0.0.1:5071"}},
+                             "serviceGraph": {"services": [
                         {"id": "gateway", "port": port}, {"id": "marketplace", "port": service_port},
                     ]}, "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
                         "serviceTransport": {"services": {
                             "gateway": {"url": f"http://127.0.0.1:{port}"},
                             "marketplace": {"url": f"http://127.0.0.1:{service_port}"},
+                            "marketplace-registry": {"url": "http://127.0.0.1:5071"},
                         }},
                     })}]},
                 }))
             for root in (primary, automatic):
                 move_test_platform_into_container(root)
             calls = []
+            install_requests = []
 
             def run_command(args):
                 calls.append(args)
                 command = args[1]
+                if command == "install":
+                    install_requests.append(json.loads(Path(args[args.index("--input") + 1]).read_text()))
                 if command == "status":
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {
                         "host": {"state": "running"},
@@ -1790,34 +1969,48 @@ class InstallerCaseStepsTest(unittest.TestCase):
                     return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": {}}), "")
                 if command == "plan":
                     root = Path(args[args.index("--platform-root") + 1])
-                    port = 4300 if root.name == "root-d" else 4100
-                    payload = {"plan": {"request": {"gatewayUrl": f"http://127.0.0.1:{port}"},
+                    port = int(args[args.index("--gateway-url") + 1].rsplit(":", 1)[1]) if "--gateway-url" in args else (
+                        4300 if root.name == "root-d" else 4100)
+                    plan_request = {"platformRoot": str(root), "gatewayUrl": f"http://127.0.0.1:{port}"}
+                    external_url = None
+                    if "--config" in args:
+                        config = json.loads(Path(args[args.index("--config") + 1]).read_text())
+                        plan_request["serviceTransportURLs"] = config.get("serviceTransportURLs", {})
+                        external_url = plan_request["serviceTransportURLs"].get("marketplace-registry")
+                    services = {
+                        "gateway": {"url": f"http://127.0.0.1:{port}"},
+                        "marketplace": {"url": f"http://127.0.0.1:{port + 1070}"},
+                    }
+                    if external_url:
+                        services["marketplace-registry"] = {"url": external_url}
+                    payload = {"plan": {"request": plan_request,
                                         "host": {"healthUrl": f"http://127.0.0.1:{port}/health"},
                                         "serviceGraph": {"services": [
                                             {"id": "gateway", "port": port},
                                             {"id": "marketplace", "port": port + 1070},
                                         ]}, "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
-                                            "serviceTransport": {"services": {
-                                                "gateway": {"url": f"http://127.0.0.1:{port}"},
-                                                "marketplace": {"url": f"http://127.0.0.1:{port + 1070}"},
-                                            }},
+                                            "serviceTransport": {"services": services},
                                         })}]}}
                     return subprocess.CompletedProcess(args, 0,
                         json.dumps({"ok": True, "data": payload}), "")
                 root = Path(args[args.index("--platform-root") + 1])
-                gateway = args[args.index("--gateway-url") + 1]
-                port = gateway.rsplit(":", 1)[1]
+                request = json.loads(Path(args[args.index("--input") + 1]).read_text())
+                port = urlsplit(request["gatewayUrl"]).port
                 active = create_test_install_container(root)
                 (active / ".kb/v2").mkdir(parents=True)
+                services = {
+                    "gateway": {"url": f"http://127.0.0.1:{port}"},
+                    "marketplace": {"url": f"http://127.0.0.1:{int(port) + 1070}"},
+                }
+                for service_id, url in request.get("serviceTransportURLs", {}).items():
+                    services[service_id] = {"url": url}
                 receipt = {"verification": {"hostHealthUrl": f"http://127.0.0.1:{port}/health"},
-                           "plan": {"serviceGraph": {"services": [
+                           "plan": {"request": request,
+                             "serviceGraph": {"services": [
                                {"id": "gateway", "port": int(port)},
                                {"id": "marketplace", "port": int(port) + 1070},
                            ]}, "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
-                               "serviceTransport": {"services": {
-                                   "gateway": {"url": f"http://127.0.0.1:{port}"},
-                                   "marketplace": {"url": f"http://127.0.0.1:{int(port) + 1070}"},
-                               }},
+                               "serviceTransport": {"services": services},
                            })}]}}
                 (active / ".kb/v2/receipt.json").write_text(json.dumps(receipt))
                 payload = {"receipt": receipt, "shim": {"linked": False, "owner": str(primary.resolve())}}
@@ -1834,11 +2027,14 @@ class InstallerCaseStepsTest(unittest.TestCase):
 
         self.assertEqual(journey.steps[0].cases, ["PC-001.10", "PC-001.16"])
         self.assertEqual(journey.steps[0].status, "PASS", journey.steps[0].message)
-        self.assertEqual([call[1] for call in calls], ["stop", "install", "plan", "plan", "status", "stop"])
+        self.assertEqual([call[1] for call in calls], ["stop", "plan", "install", "plan", "plan", "status", "stop"])
         self.assertEqual(calls[1][calls[1].index("--gateway-url") + 1], "http://127.0.0.1:4200")
-        self.assertEqual(calls[1][calls[1].index("--project-root") + 1],
+        self.assertEqual(calls[2][calls[2].index("--project-root") + 1],
                          str(explicit.parent / "pc001-explicit-gateway-project"))
-        self.assertEqual(calls[2][calls[2].index("--platform-root") + 1], str(explicit.parent / "root-d"))
+        self.assertEqual(install_requests[0]["gatewayUrl"], "http://127.0.0.1:4200")
+        self.assertEqual(install_requests[0]["serviceTransportURLs"],
+                         {"marketplace-registry": "http://127.0.0.1:5071"})
+        self.assertEqual(calls[3][calls[3].index("--platform-root") + 1], str(explicit.parent / "root-d"))
 
     def test_port_conflict_claim_binds_the_gateway_port_from_the_plan(self):
         with tempfile.TemporaryDirectory(prefix="journey-port-conflict-") as temp:

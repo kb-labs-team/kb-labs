@@ -22,6 +22,7 @@ WORKDIR /src
 COPY e2e/packages /src/packages
 COPY e2e/platform/registry-manifest.json /src/registry-manifest.json
 COPY e2e/platform/prepare-release-index.mjs /src/prepare-release-index.mjs
+COPY e2e/platform/prepare-release-index-config.mjs /src/prepare-release-index-config.mjs
 COPY e2e/platform/release-index-package-stage.mjs /src/release-index-package-stage.mjs
 COPY e2e/platform/release-provenance.mjs /src/release-provenance.mjs
 COPY e2e/platform/journey-update-packages.mjs /src/journey-update-packages.mjs
@@ -58,7 +59,7 @@ RUN cp /out/binaries/kb-create-release-index /usr/local/bin/kb-create-release-in
 FROM node:24-bookworm
 
 RUN apt-get update -qq && \
-    apt-get install -y -qq curl ca-certificates git jq && \
+    apt-get install -y -qq curl ca-certificates git jq python3 && \
     npm install -g pnpm@11.4.0 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
@@ -73,7 +74,23 @@ COPY --from=release-index-builder /out/release-index.json /release-index.json
 
 # Manifest that points kb-create at the local Verdaccio registry
 COPY e2e/platform/registry-manifest.json /e2e-registry-manifest.json
+COPY e2e/platform/registry-install-config.mjs /registry-install-config.mjs
 
+COPY e2e/journey/invocations.py e2e/journey/journey_values.py e2e/journey/redaction.py e2e/journey/jsonl.py e2e/journey/journey_resources.py e2e/journey/platform_registry_plan.py /opt/kb-journey/e2e/journey/
+COPY core/platform/src/error-envelope/errors.catalog.json /opt/kb-journey/core/platform/src/error-envelope/errors.catalog.json
+COPY tools/clikit/diag/gen/main.go /opt/kb-journey/tools/clikit/diag/gen/main.go
+COPY tools/kb-create/main.go /opt/kb-journey/tools/kb-create/main.go
+COPY tools/kb-create/v2/testsupport/wizard-pty/main.go /opt/kb-journey/tools/kb-create/v2/testsupport/wizard-pty/main.go
+COPY tools/kb-create/v2/testsupport/identity-supervisor/main.go /opt/kb-journey/tools/kb-create/v2/testsupport/identity-supervisor/main.go
+COPY tools/kb-create/v2/internal/fakehost/main.go /opt/kb-journey/tools/kb-create/v2/internal/fakehost/main.go
+COPY tools/kb-create/v2/cmd/gen-gateway-bootstrap/main.go /opt/kb-journey/tools/kb-create/v2/cmd/gen-gateway-bootstrap/main.go
+COPY tools/kb-create/v2/cmd/kb-create-release-index/main.go /opt/kb-journey/tools/kb-create/v2/cmd/kb-create-release-index/main.go
+COPY tools/kb-create/v2/cmd/kb-create-v2/main.go /opt/kb-journey/tools/kb-create/v2/cmd/kb-create-v2/main.go
+COPY tools/kb-deploy/main.go /opt/kb-journey/tools/kb-deploy/main.go
+COPY tools/kb-devkit/main.go /opt/kb-journey/tools/kb-devkit/main.go
+COPY tools/kb-env/main.go /opt/kb-journey/tools/kb-env/main.go
+COPY tools/kb-dev/main.go /opt/kb-journey/tools/kb-dev/main.go
+COPY tools/kb-monitor/main.go /opt/kb-journey/tools/kb-monitor/main.go
 COPY e2e/platform/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

@@ -356,32 +356,16 @@ async function shellHandler(
       detached: true,
     });
 
-    if (ctx.onProcessStarted) {
-      const pid = proc.pid;
+    let processIdentity: Awaited<ReturnType<typeof captureProcessIdentity>> | undefined;
+    const pid = proc.pid;
+    if (ctx.onProcessStarted && process.platform === 'linux') {
       if (pid === undefined) {
         throw new Error('Shell process started without an OS process id');
       }
-      let identity: Awaited<ReturnType<typeof captureProcessIdentity>>;
-      if (process.platform === 'linux') {
-        // Do not yield between spawn and reading /proc. Node/libuv reaps child
-        // PIDs from the event loop, so this synchronous capture preserves the
-        // original identity even when the command exits immediately.
-        identity = captureProcessIdentitySync(pid);
-      } else {
-        identity = await captureProcessIdentity(pid);
-      }
-      try {
-        await ctx.onProcessStarted(identity);
-      } catch (error) {
-        try {
-          process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
-        } catch (killError) {
-          if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
-            throw killError;
-          }
-        }
-        throw error;
-      }
+      // Do not yield between spawn and reading /proc. Node/libuv reaps child
+      // PIDs from the event loop, so this synchronous capture preserves the
+      // original identity even when the command exits immediately.
+      processIdentity = captureProcessIdentitySync(pid);
     }
 
     // Stream stdout/stderr line-by-line in real-time.
@@ -438,6 +422,29 @@ async function shellHandler(
       stderrBuf = lines.pop() ?? '';
       for (const line of lines) {emitLine('stderr', line);}
     });
+
+    if (ctx.onProcessStarted) {
+      if (pid === undefined) {
+        throw new Error('Shell process started without an OS process id');
+      }
+      if (process.platform !== 'linux') {
+        processIdentity = await captureProcessIdentity(pid);
+      }
+      if (processIdentity) {
+        try {
+          await ctx.onProcessStarted(processIdentity);
+        } catch (error) {
+          try {
+            process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');
+          } catch (killError) {
+            if (!(killError instanceof Error) || !('code' in killError) || killError.code !== 'ESRCH') {
+              throw killError;
+            }
+          }
+          throw error;
+        }
+      }
+    }
 
     // The execution boundary owns the deadline. This handler only terminates
     // its process group when that boundary signals cancellation.

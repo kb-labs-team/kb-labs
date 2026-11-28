@@ -2,7 +2,8 @@
  * E2E WebSocket tests — spins up a real Fastify server on a random port.
  * Tests the full handshake path: auth → hello → connected → heartbeat → ack → close.
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+import { AdaptiveBuffer } from '@kb-labs/gateway-core';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 import fastifyCors from '@fastify/cors';
@@ -16,6 +17,8 @@ import { createWsHandler } from '../hosts/ws-handler.js';
 import type { ILogger } from '@kb-labs/core-platform';
 
 // Minimal jwtConfig for tests — JWT auth is disabled (empty secret forces fallback to cache tokens)
+afterEach(() => vi.restoreAllMocks());
+
 const testJwtConfig: JwtConfig = { secret: 'test-secret-do-not-use' };
 
 // ── In-memory ICache ─────────────────────────────────────────────────────────
@@ -177,7 +180,12 @@ describe('WebSocket: full handshake', () => {
     ws.close(1000);
   }, 8000);
 
-  it('heartbeat gets ack response', async () => {
+  // case: S-203.29
+  it('heartbeat gets ack response while buffered calls are being flushed', async () => {
+    vi.spyOn(AdaptiveBuffer.prototype, 'flush').mockImplementation(async () => {
+      await new Promise(resolve => { setTimeout(resolve, 300); });
+      return [];
+    });
     const { machineToken } = await registerHost('e2e-host-2');
     const ws = connectWs(machineToken);
 

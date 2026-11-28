@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { resolveRuntimeStatePath } from '@kb-labs/sdk/adapters';
 import { getCommitStoragePath, getCurrentPlanPath, loadPlan } from '../../../src/core/storage/plan-storage.js';
 
@@ -15,7 +16,7 @@ describe('commit plan storage location', () => {
   });
 
   it('does not load a stale plan from the legacy project-local path', async () => {
-    const project = join(process.cwd(), `.test-legacy-commit-storage-${process.pid}`);
+    const project = await mkdtemp(join(tmpdir(), 'kb-commit-legacy-storage-'));
     const legacyPlan = join(project, '.kb/commit/plans/root/current/plan.json');
     await mkdir(dirname(legacyPlan), { recursive: true });
     await writeFile(legacyPlan, '{"schemaVersion":"1.0"}');

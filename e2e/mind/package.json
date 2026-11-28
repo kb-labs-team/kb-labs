@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e": "kb-labs-e2e-runner"
+    "e2e": "if [ \"${MIND_BENCH_REAL:-}\" = 1 ]; then kb-labs-e2e-runner; else playwright test; fi"
   },
   "devDependencies": {
     "@kb-labs/core-platform": "workspace:*",

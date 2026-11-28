@@ -20,6 +20,7 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
   private journalRecords = 0;
   private corrupted = false;
   private lockOwned = false;
+  private journalWriteFailure: unknown;
 
   private constructor(dataRoot: string, cleanupIntervalMs: number) {
     super(cleanupIntervalMs);
@@ -84,6 +85,19 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
       await this.compactIfNeeded();
       return true;
     });
+  }
+
+  override async zadd(key: string, score: number, member: string): Promise<void> {
+    await this.mutateSortedSet(key, (entries) => {
+      const next = entries.filter((entry) => entry.member !== member);
+      next.push({ score, member });
+      next.sort((left, right) => left.score - right.score || left.member.localeCompare(right.member));
+      return next;
+    });
+  }
+
+  override async zrem(key: string, member: string): Promise<void> {
+    await this.mutateSortedSet(key, (entries) => entries.filter((entry) => entry.member !== member));
   }
 
   override async stop(): Promise<void> {
@@ -195,28 +209,54 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
 
   private enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = this.writeQueue.then(operation);
-    this.writeQueue = result.then(() => undefined);
+    // Keep ordering after logical operation failures. append() separately latches
+    // I/O failures so later writes reject instead of extending an uncertain journal.
+    this.writeQueue = result.then(() => undefined, () => undefined);
     return result;
   }
 
+  private async mutateSortedSet(
+    key: string,
+    update: (entries: Array<{ score: number; member: string }>) => Array<{ score: number; member: string }>,
+  ): Promise<void> {
+    await this.enqueue(async () => {
+      const entries = (await super.get<Array<{ score: number; member: string }>>(key)) ?? [];
+      const next = update(entries);
+      const expiresAt = Date.now() + DEFAULT_TTL_MS;
+      await this.append({ version: 1, operation: 'set', key, value: next, expiresAt });
+      // This mutation already runs inside writeQueue; bypass the public set override.
+      await super.set(key, next, Math.max(0, expiresAt - Date.now()));
+      await this.compactIfNeeded();
+    });
+  }
+
   private async append(record: JournalRecord): Promise<void> {
+    const line = `${JSON.stringify(record)}\n`;
+    if (this.journalWriteFailure !== undefined) {
+      throw this.journalWriteFailure;
+    }
     let created = false;
     let handle;
     try {
-      handle = await open(this.journalPath, 'wx');
-      created = true;
+      try {
+        handle = await open(this.journalPath, 'wx');
+        created = true;
+      } catch (error) {
+        if (!isAlreadyExists(error)) {throw error;}
+        handle = await open(this.journalPath, 'a');
+      }
+      try {
+        await handle.writeFile(line, 'utf8');
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (created) {await syncDirectoryChain(path.dirname(this.journalPath));}
+      this.journalRecords++;
     } catch (error) {
-      if (!isAlreadyExists(error)) {throw error;}
-      handle = await open(this.journalPath, 'a');
+      this.journalWriteFailure = error;
+      throw error;
     }
-    try {
-      await handle.writeFile(`${JSON.stringify(record)}\n`, 'utf8');
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    if (created) {await syncDirectoryChain(path.dirname(this.journalPath));}
-    this.journalRecords++;
   }
 
   private async replay(): Promise<void> {

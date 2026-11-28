@@ -29,8 +29,7 @@ from typing import Callable, Union
 from urllib.parse import urlsplit, urlunsplit
 
 from studio_steps import (create_studio_access_tokens, create_studio_environment,
-                          create_studio_member, run_studio_browser_step,
-                          studio_playwright_output_directory)
+                          create_studio_member, playwright_case_passed, run_studio_browser_step)
 from studio_fixture_steps import prepare_studio_fixtures
 from platform_update_steps import run_platform_update_steps
 from bootstrap_secret_steps import (register_install_password_absence_step,
@@ -157,36 +156,39 @@ def registry_gateway_url_from_plan(plan_data: dict) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
-def registry_install_request(plan_data: dict, *, gateway_url: str, registry_upstream: str) -> dict:
-    """Add the Registry Gateway route to the actual install request, before host/plugin startup."""
+def read_apply_result(result: CompletedProcess) -> tuple[dict, dict]:
+    """Read apply's one UX envelope without falling back to install JSONL parsing."""
+    envelope = read_ux_cli_result(result)
+    payload = decode_ux_success_result(envelope)
+    if not isinstance(payload, dict):
+        raise ValueError("kb-create apply result data must be an object")
+    return envelope, payload
+
+
+def registry_install_config(plan_data: dict, *, registry_upstream: str, npm_url: str = REGISTRY) -> dict:
+    """Build the typed Registry route config from the resolved Gateway topology."""
     plan = plan_data.get("plan", {})
-    request = plan.get("request")
-    if not isinstance(request, dict):
+    if not isinstance(plan.get("request"), dict):
         raise ValueError("install plan omitted its normalized request")
-    request = json.loads(json.dumps(request))
-    sources = request.setdefault("marketplaceSources", {})
-    sources["registryUrl"] = f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
-    request["gatewayUrl"] = gateway_url
-    secret_inputs = request.setdefault("secretInputs", [])
-    if "gateway.internalSecret" not in secret_inputs:
-        secret_inputs.append("gateway.internalSecret")
-    values = request.setdefault("values", {})
-    values["gateway.marketplaceRegistryRoute"] = json.dumps({
-        "serviceId": "marketplace-registry",
-        "prefix": "/api/v1/marketplace-registry",
-        "rewritePrefix": "",
-    }, separators=(",", ":"))
-    patches = plan.get("configPatches", [])
-    adapter_options = next((patch.get("json") for patch in patches
-                            if patch.get("path") == "/platform/adapterOptions"), None)
-    if not isinstance(adapter_options, str):
-        raise ValueError("install plan omitted platform.adapterOptions")
-    options = json.loads(adapter_options)
-    transport = options.setdefault("serviceTransport", {})
-    services = transport.setdefault("services", {})
-    services["marketplace-registry"] = {"url": registry_upstream}
-    values["platform.adapterOptions"] = json.dumps(options, separators=(",", ":"))
-    return request
+    gateway_url = registry_gateway_url_from_plan(plan_data)
+    config = {
+        "marketplaceSources": {
+            "registryUrl": f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry",
+            "signingPublicKeyEnv": "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+            "registryTokenEnv": "KB_JOURNEY_MARKETPLACE_TOKEN",
+            "npmUrl": npm_url,
+        },
+        "serviceTransportURLs": {"marketplace-registry": registry_upstream},
+        "secretInputs": ["gateway.internalSecret"],
+        "values": {
+            "gateway.marketplaceRegistryRoute": {
+                "serviceId": "marketplace-registry",
+                "prefix": "/api/v1/marketplace-registry",
+                "rewritePrefix": "",
+            },
+        },
+    }
+    return config
 
 
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
@@ -394,6 +396,10 @@ def outer_selection_groups() -> dict[str, dict]:
         spec["cases"] = tuple(sorted(set(spec.get("cases", ())) | set(resolved["cases"])))
         spec["steps"] = tuple(sorted(set(spec.get("steps", ())) | set(resolved["steps"])))
         groups[group] = spec
+    workflow_spec = dict(groups.get("workflow", {}))
+    workflow_spec["steps"] = tuple(sorted(
+        set(workflow_spec.get("steps", ())) | {"install plugin cron fixture"}))
+    groups["workflow"] = workflow_spec
     fixture_specs = fixture_group_declarations(
         ISOLATED_FIXTURE_GROUPS,
         CASE_JOURNEY.runner_selector if CASE_JOURNEY is not None else "",
@@ -744,6 +750,23 @@ def fail(message: str):
     global FIRST_FAILURE
     if not FIRST_FAILURE:
         FIRST_FAILURE = message
+
+
+def record_studio_browser_outcome(passed: bool, message: str | None) -> str | None:
+    if passed:
+        return None
+    detail = message or "Studio browser journey failed without a diagnostic"
+    fail(f"Studio browser journey: {detail}")
+    return detail
+
+
+def studio_browser_case_outcome(verdict: dict, case_id: str) -> str | None:
+    if verdict.get("ran") is not True:
+        return f"BLOCKED: Studio browser suite did not produce evidence for {case_id}"
+    case_results = verdict.get("case_results")
+    if not isinstance(case_results, dict) or case_results.get(case_id) is not True:
+        return f"{case_id} did not report an executed Playwright PASS"
+    return None
 
 
 def write_journey_diagnostic(message: str, *, env=None) -> None:
@@ -1589,7 +1612,8 @@ def _main(*, update_variant_runner=None):
             preview_args[1] = "plan"
             preview, _ = run(preview_args, env=env, timeout=120)
             try:
-                preview_data = decode_ux_success_result(read_kb_create_cli_result("plan", preview))
+                preview_envelope = read_kb_create_cli_result("plan", preview)
+                preview_data = decode_ux_success_result(preview_envelope)
                 gateway_url = registry_gateway_url_from_plan(preview_data)
             except (json.JSONDecodeError, AttributeError, TypeError):
                 gateway_url = None
@@ -1601,41 +1625,57 @@ def _main(*, update_variant_runner=None):
                 return finalize_run(False)
             registry_upstream = env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"]
             try:
-                request = registry_install_request(
-                    preview_data, gateway_url=gateway_url, registry_upstream=registry_upstream)
+                config = registry_install_config(preview_data, registry_upstream=registry_upstream)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                fail(f"Registry journey could not prepare the install-time Gateway route: {error}")
+                fail(f"Registry journey could not prepare the declarative install config: {error}")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
-            request_path = HOME / "registry-install-request.json"
-            request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
-            request_path.chmod(0o600)
-            args = [launcher, "install", "--json", "--index",
-                    str(HOME / ".local/share/kb-create/release-index.json"),
-                    "--input", str(request_path), "--registry", REGISTRY,
+            index_path = HOME / ".local/share/kb-create/release-index.json"
+            initial_plan_path = HOME / "registry-install-initial-plan.json"
+            config_path = HOME / "registry-install-config.json"
+            plan_path = HOME / "registry-install-plan.json"
+            initial_plan_path.write_text(json.dumps(preview_envelope, indent=2) + "\n", encoding="utf-8")
+            config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+            initial_plan_path.chmod(0o600)
+            config_path.chmod(0o600)
+            plan_args = [launcher, "plan", "--json", "--index", str(index_path),
+                         "--input", str(initial_plan_path), "--config", str(config_path),
+                         "--registry", REGISTRY]
+            final_plan, _ = run(plan_args, env=env, timeout=120)
+            if final_plan.returncode != 0:
+                fail(f"Registry journey could not resolve the final configured plan: {' '.join(final_plan.stdout.split())[-500:]}")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            final_plan_envelope = read_kb_create_cli_result("plan", final_plan)
+            decode_ux_success_result(final_plan_envelope)
+            plan_path.write_text(json.dumps(final_plan_envelope, indent=2) + "\n", encoding="utf-8")
+            plan_path.chmod(0o600)
+            args = [launcher, "apply", "--json", "--index", str(index_path),
+                    "--input", str(plan_path), "--config", str(config_path), "--registry", REGISTRY,
                     "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
         if operation == "install":
             with invocation_context(step_id="PC-001.2", report_root=CLEAN_INSTALL_ATTEMPT_ROOT):
                 result, elapsed = run(args, env=env, timeout=1200)
         else:
             result, elapsed = run(args, env=env, timeout=1200)
+        executed_operation = str(args[1]) if len(args) > 1 else operation
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
             try:
-                payload = decode_ux_success_result(read_kb_create_cli_result("apply", result))
+                payload = decode_ux_success_result(read_ux_cli_result(result))
                 root = payload.get("plan", {}).get("request", {}).get("platformRoot", "")
-            except json.JSONDecodeError:
+            except ValueError:
                 root = ""
             passed = result.returncode == 0 and Path(root).is_absolute() and root == str(PLATFORM.resolve())
             if not passed:
                 fail(f"relative platform root: expected a successful plan with an absolute normalized root; {' '.join(result.stdout.split())[-500:]}")
             return finalize_run(passed)
-        if handle_json_install_failure(operation, result):
+        if handle_json_install_failure(executed_operation, result):
             return finalize_run(False)
         if not require(result, step=f"kb-create {operation} --json"):
             cleanup_partial_install(outer_graph, env, launcher)
             return finalize_run(False)
-        if operation == "install":
+        if executed_operation == "install":
             try:
                 records = read_ux_cli_stream(result)
             except json.JSONDecodeError:
@@ -1701,16 +1741,44 @@ def _main(*, update_variant_runner=None):
             payload = {}
         else:
             try:
-                envelope = read_kb_create_cli_result(operation, result)
-            except json.JSONDecodeError:
+                if executed_operation == "apply":
+                    envelope, payload = read_apply_result(result)
+                else:
+                    envelope = read_kb_create_cli_result(executed_operation, result)
+                    payload = envelope.get("data") if isinstance(envelope, dict) else None
+            except ValueError:
                 fail(f"kb-create {operation} --json: output was not valid JSON")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
-            payload = envelope.get("data") if isinstance(envelope, dict) else None
             if envelope.get("ok") is not True or not isinstance(payload, dict):
                 fail(f"kb-create {operation} --json: result did not contain a success data object")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
+            if operation == "install" and executed_operation == "apply":
+                receipt = payload.get("receipt", {})
+                install_plan = receipt.get("plan", {}) if isinstance(receipt, dict) else {}
+                install_marketplace_ok = requested_commit_marketplace_install_satisfied(receipt)
+                install_plan_summary_ok = (isinstance(install_plan, dict)
+                                           and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
+                                           and bool(install_plan.get("artifacts")))
+                install_ok = result.returncode == 0 and install_plan_summary_ok
+                if VARIANT.endswith("secured"):
+                    credential = payload.get("firstAdmin")
+                    if isinstance(credential, dict):
+                        password = credential.get("password", "")
+                        store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", password,
+                                            "installed first-admin password")
+                        first_admin_shown_once = first_admin_credential_disclosed_once(
+                            credential, result.stdout)
+                        if first_admin_shown_once:
+                            env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
+                    if not first_admin_shown_once:
+                        fail("secured apply did not return firstAdmin credentials with state=disclosed")
+                    else:
+                        register_install_password_absence_step(
+                            CASE_JOURNEY, PLATFORM,
+                            (("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
+                             ("bin", BIN)), password)
         if operation == "plan":
             plan_payload = payload.get("plan", {})
             plan_ok = (result.returncode == 0
@@ -1720,7 +1788,7 @@ def _main(*, update_variant_runner=None):
                        "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"],
                        requires=("step:launcher version",),
                        runners=("agent-input:commit", "agent-relative:commit"))
-        elif operation == "install":
+        elif operation == "install" and executed_operation == "install":
             if FRONT_DOOR == "agent":
                 record_case("agent JSON install", install_ok,
                             "agent install stream omitted progress or terminal success", cases=["S-203.10"],
@@ -1742,10 +1810,10 @@ def _main(*, update_variant_runner=None):
                     cleanup_partial_install(outer_graph, env, launcher)
                     return finalize_run(False)
                 try:
-                    read_kb_create_cli_result("apply", result)
+                    read_apply_result(result)
                     if result.returncode != 0:
                         fail("kb-create apply --input: result did not report ok=true")
-                except json.JSONDecodeError:
+                except ValueError:
                     fail("kb-create apply --input: output was not one JSON document")
 
     outer_graph.flow("installed platform bootstrap", "install", "platform.install", lambda: None,
@@ -1840,18 +1908,32 @@ def _main(*, update_variant_runner=None):
             "GATEWAY_URL": "http://127.0.0.1:4000",
             "KB_ACCESS_MODE": "local",
             "KB_STUDIO_FIRST_TIER_JOURNEY": "1",
+            "KB_STUDIO_EMPTY_PROJECT_PHASE": "1",
         }
         report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
         service_report = report.with_name("service-local.json")
 
         def run_browser_check() -> str | None:
-            with invocation_context(step_id="S-120.1"):
-                passed, elapsed, message = run_studio_browser_step([
-                    "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
-                    "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
-                ], studio_env, service_report, "local", True, cases=["S-120.1"], timeout=180)
-            TIMES["Studio empty project browser journey"] = elapsed
-            return None if passed else message
+            with tempfile.TemporaryDirectory(prefix="kb-studio-empty-project-", dir="/tmp") as private_dir:
+                phase_json = Path(private_dir) / "playwright.json"
+                phase_env = {
+                    **studio_env,
+                    "KB_STUDIO_PLAYWRIGHT_JSON": str(phase_json),
+                    "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(Path(private_dir) / "results"),
+                }
+                with invocation_context(step_id="S-120.1"):
+                    passed, elapsed, message = run_studio_browser_step([
+                        "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                        "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
+                    ], phase_env, service_report, "local", True, cases=["S-120.1"], timeout=180,
+                        project_claims_to_report=False,
+                        step_name="Studio empty project registry phase")
+                TIMES["Studio empty project browser journey"] = elapsed
+                if not passed:
+                    return message
+                if not playwright_case_passed(phase_json, "S-120.1"):
+                    return "S-120.1 empty-project phase did not report an executed Playwright PASS"
+                return None
 
         def project_cli(args: list[str]) -> CompletedProcess[str]:
             result, _ = run(kb_command(args, executable=str(BIN / "kb")),
@@ -1864,6 +1946,14 @@ def _main(*, update_variant_runner=None):
         CASE_JOURNEY.step(
             "Studio dashboard with empty project registry", "studio",
             run_empty_project_studio_case, cases=["S-120.1"],
+            selection_requires=(
+                "step:Studio shell", "step:install plugin cron fixture",
+                "step:inspect failed step and error",
+                "step:verify terminal status and submitted input",
+                "step:Studio project attachment isolation with empty Project A",
+                "step:Studio workflow history with empty Project B",
+                "step:Studio late browser verdict",
+            ),
             runners=("service-local:explore",),
         )
     else:
@@ -2586,54 +2676,6 @@ def _main(*, update_variant_runner=None):
         # if its runtime lookup fails.
         workflow_result = workflow_journey.result()
         merge_workflow_result(service_report, workflow_result.__dict__)
-        if isinstance(project_b_handoff, ProjectBRootValid):
-            project_b_fixture_root = project_b_handoff.root
-            prepare_workflow_fixtures(project_b_fixture_root)
-            definitions_deadline = time.monotonic() + 30
-            healthy_workflow_ready = False
-            while time.monotonic() < definitions_deadline:
-                with invocation_context(step_id="journey.setup"):
-                    definitions_result, _ = run(kb_login_shell(["workflow", "defs", "list", "--json"]),
-                                                env=service_env, cwd=project_b_fixture_root, timeout=90)
-                try:
-                    definitions_data = decode_ux_success_result(
-                        read_ux_cli_result(definitions_result))
-                    healthy_workflow_ready = isinstance(definitions_data, list) and any(
-                        isinstance(item, dict) and item.get("id") == "journey-hello" for item in definitions_data)
-                except json.JSONDecodeError:
-                    healthy_workflow_ready = False
-                if healthy_workflow_ready:
-                    break
-                time.sleep(1)
-            healthy_result = None
-            if healthy_workflow_ready:
-                with invocation_context(step_id="journey.setup"):
-                    healthy_result, _ = run(
-                        kb_login_shell(["workflow", "run", "--workflow-id=journey-hello",
-                                        '--input={"message":"studio-healthy-project"}', "--json"]),
-                        env=service_env, cwd=project_b_fixture_root, timeout=120)
-            try:
-                healthy_data = (decode_ux_success_result(
-                    read_ux_cli_result(healthy_result)) if healthy_result else {})
-                healthy_run_id = healthy_data.get("runId", "") if isinstance(healthy_data, dict) else ""
-            except json.JSONDecodeError:
-                healthy_run_id = ""
-            if healthy_result is not None and healthy_result.returncode == 0 and isinstance(healthy_run_id, str) and healthy_run_id:
-                healthy_deadline = time.monotonic() + 180
-                while time.monotonic() < healthy_deadline:
-                    with invocation_context(step_id="journey.setup"):
-                        viewed, _ = run(kb_login_shell(["workflow", "runs", "view", healthy_run_id, "--json=all"]),
-                                        env=service_env,
-                                        cwd=project_b_fixture_root, timeout=90)
-                    try:
-                        detail = _healthy_workflow_run_detail(viewed) or {}
-                    except json.JSONDecodeError:
-                        detail = {}
-                    if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
-                        if detail.get("status") == "success":
-                            service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
-                        break
-                    time.sleep(2)
         if workflow_result.status != "PASS":
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}
@@ -2642,6 +2684,8 @@ def _main(*, update_variant_runner=None):
                         if mode == "secured" else [])
 
         run_studio_browser_group = reject_unprepared_studio_flow
+        studio_browser_verdict = {"ran": False, "message": None, "case_results": {}}
+        studio_late_browser_required = False
         if isinstance(project_b_handoff, ProjectBRootValid) and (
                 not outer_graph.selection_active or "studio" in outer_graph.selected_groups):
             project_state = outer_graph.states.get("project-registered")
@@ -2658,8 +2702,13 @@ def _main(*, update_variant_runner=None):
                     project_root=str(PROJECT),
                     kb_bin=str(BIN / "kb"),
                 )
-                studio_env["KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR"] = str(
-                    studio_playwright_output_directory(service_report))
+                studio_env.pop("KB_STUDIO_HEALTHY_PROJECT_RUN_ID", None)
+                studio_late_browser_required = (
+                    not CASE_JOURNEY.selection_active
+                    or "Studio late browser verdict" in CASE_JOURNEY.prerequisite_steps
+                    or bool({"S-106.1", "S-106.2", "S-106.3", "S-106.4", "S-106.5", "S-106.6",
+                             "S-107.1", "S-107.2", "S-107.3"} & CASE_JOURNEY.selected_claims)
+                )
                 for key in ("KB_STUDIO_OAUTH_JOURNEY", "KB_STUDIO_OIDC_PROVIDER_ID",
                             "KB_STUDIO_OIDC_PROVIDER_NAME", "KB_STUDIO_OIDC_EMAIL"):
                     studio_env.pop(key, None)
@@ -2699,22 +2748,12 @@ def _main(*, update_variant_runner=None):
                 else:
                     fail(f"Studio schedule journey could not list project A crons: {project_a_cron_error}")
                 project_b_root = project_b_handoff.root
-                (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
-                (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
-                (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
-                    "name: studio-b-workflow\nversion: 1.0.0\non:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
-                    "      - name: Log B\n        id: log-b\n        uses: builtin:shell\n        with:\n          command: 'echo studio-b'\n",
-                    encoding="utf-8")
-                (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
-                    "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
                 studio_env.update({
                     "KB_STUDIO_CRON_PROJECT_ROOT": str(PROJECT),
                     "KB_STUDIO_CRON_ID": cron_id,
                     "KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS": ",".join(project_a_plugin_cron_ids),
                     "KB_STUDIO_PROJECT_A_USER_CRON_IDS": ",".join(project_a_user_cron_ids),
                     "KB_STUDIO_PROJECT_B_ID": project_b_handoff.project_id,
-                    "KB_STUDIO_PROJECT_B_CRON_ID": "studio-b",
-                    "KB_STUDIO_PLAYWRIGHT_JSON": str(service_report.with_name(f"studio-playwright-{mode}.json")),
                     "KB_STUDIO_PROJECT_A_NAME": project_name,
                     "KB_STUDIO_PROJECT_B_NAME": project_b_root.name,
                 })
@@ -2727,10 +2766,15 @@ def _main(*, update_variant_runner=None):
                     ))
                 except (RuntimeError, OSError, TimeoutExpired) as error:
                     fail(f"Studio fixture setup: {error}")
-                if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID") and service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
+                if service_env.get("KB_STUDIO_DIAGNOSTIC_RUN_ID"):
                     studio_env["KB_STUDIO_DIAGNOSTIC_PROJECT"] = project_name
                     studio_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"] = service_env["KB_STUDIO_DIAGNOSTIC_RUN_ID"]
-                    studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"]
+                if service_env.get("KB_STUDIO_HEALTHY_PROJECT_RUN_ID"):
+                    studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = service_env[
+                        "KB_STUDIO_HEALTHY_PROJECT_RUN_ID"]
+                if service_env.get("KB_STUDIO_PROJECT_A_HEALTHY_RUN_ID"):
+                    studio_env["KB_STUDIO_PROJECT_A_HEALTHY_RUN_ID"] = service_env[
+                        "KB_STUDIO_PROJECT_A_HEALTHY_RUN_ID"]
                 if studio_fixture_file.is_file():
                     analytics_fixture = json.loads(studio_fixture_file.read_text())
                     analytics_fields = {
@@ -2790,16 +2834,220 @@ def _main(*, update_variant_runner=None):
                             )
                     except (KeyError, RuntimeError, urllib.error.URLError, ValueError) as error:
                         fail(f"Studio secured member setup: {error}")
-                def run_studio_browser_group(studio_cases: tuple[str, ...]) -> str | None:
-                    studio_claims = ",".join([*studio_cases, *oauth_claims])
-                    with invocation_context(step_id=studio_claims):
-                        studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
+
+                def run_studio_phase(phase: str, grep: str, cases: list[str], *,
+                                     extra_env: dict[str, str] | None = None) -> tuple[bool, str]:
+                    with tempfile.TemporaryDirectory(prefix=f"kb-studio-{phase}-", dir="/tmp") as private_dir:
+                        phase_json = Path(private_dir) / "playwright.json"
+                        phase_env = {
+                            **studio_env,
+                            "KB_STUDIO_PLAYWRIGHT_JSON": str(phase_json),
+                            "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(Path(private_dir) / "results"),
+                            **(extra_env or {}),
+                        }
+                        passed, elapsed, message = run_studio_browser_step([
                             "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
                             "--config=/opt/kb-studio-playwright/playwright.config.mjs",
-                        ], studio_env, service_report, mode, studio_shell_passed,
-                            cases=list(studio_cases), timeout=660)
-                    TIMES["Studio browser journey"] = studio_elapsed
-                    return None if studio_passed else studio_message
+                            "--grep", grep,
+                        ], phase_env, service_report, mode, studio_shell_passed,
+                            cases=cases, timeout=240, step_name=f"Studio {phase} browser phase")
+                        TIMES[f"Studio {phase} browser phase"] = elapsed
+                        claims_passed = all(playwright_case_passed(phase_json, case_id) for case_id in cases)
+                        if passed and not claims_passed:
+                            return False, f"Studio {phase} browser phase did not report every expected case as PASS"
+                        return passed, message
+
+                def studio_fixture_state_error() -> str | None:
+                    for state_name in ("workflow-ready", "fixtures-installed", "adapter-defaults"):
+                        state = outer_graph.states.get(state_name)
+                        if state is None or state.get("passed") is not True:
+                            evidence = state.get("evidence", "state not established") if state else "state missing"
+                            return f"Studio phase requires {state_name}: {evidence}"
+                    return None
+
+                def run_empty_plugin_attachment_phase() -> str | None:
+                    if state_error := studio_fixture_state_error():
+                        return f"BLOCKED: {state_error}"
+                    passed, message = run_studio_phase(
+                        "empty-plugin-attachments", r"@S-046\.(1|2|3)",
+                        ["S-046.1", "S-046.2", "S-046.3"])
+                    return None if passed else record_studio_browser_outcome(False, message)
+
+                def run_empty_project_b_history_phase() -> str | None:
+                    if state_error := studio_fixture_state_error():
+                        return f"BLOCKED: {state_error}"
+                    runs_result, _ = run(
+                        kb_login_shell(["workflow", "runs", "list", "--json"]),
+                        env=service_env, cwd=project_b_root, timeout=90)
+                    try:
+                        runs = decode_ux_success_result(read_ux_cli_result(runs_result))
+                    except (ValueError, json.JSONDecodeError) as error:
+                        return f"Project B empty-history preflight failed to decode workflow runs: {error}"
+                    if runs_result.returncode != 0 or not isinstance(runs, list) or runs:
+                        return "Project B must have no workflow runs before the empty-history browser phase"
+                    phase_passed, message = run_studio_phase(
+                        "empty-project-b-history", r"@S-021\.5", ["S-021.5"],
+                        extra_env={"KB_STUDIO_EMPTY_PROJECT_B_PHASE": "1"})
+                    if not phase_passed:
+                        return record_studio_browser_outcome(False, message)
+                    return None
+
+                # First prove the real empty-attachment and empty-history states.
+                # Only then restore Steward and add Project B's run/cron fixtures.
+                # The late suite excludes just the cases already measured in these phases.
+                if (not CASE_JOURNEY.selection_active
+                        or "Studio project attachment isolation with empty Project A"
+                        in CASE_JOURNEY.prerequisite_steps
+                        or bool({"S-046.1", "S-046.2", "S-046.3"}
+                                & CASE_JOURNEY.selected_claims)):
+                    attachment_phase = CASE_JOURNEY.step(
+                        "Studio project attachment isolation with empty Project A",
+                        "studio", run_empty_plugin_attachment_phase,
+                        cases=["S-046.1", "S-046.2", "S-046.3"],
+                        requires=("state:host-running", "state:project-registered"),
+                        selection_requires=("step:Studio shell", "step:install plugin cron fixture"),
+                        runners=("service-local:explore", "service-secured:explore"),
+                    )
+                if (not CASE_JOURNEY.selection_active
+                        or "Studio workflow history with empty Project B" in CASE_JOURNEY.prerequisite_steps
+                        or "S-021.5" in CASE_JOURNEY.selected_claims):
+                    CASE_JOURNEY.step(
+                        "Studio workflow history with empty Project B",
+                        "studio", run_empty_project_b_history_phase, cases=["S-021.5"],
+                        requires=("state:host-running", "state:project-registered"),
+                        selection_requires=(
+                            "step:Studio project attachment isolation with empty Project A",
+                            "step:verify terminal status and submitted input",
+                            "step:inspect failed step and error",
+                            "step:install plugin cron fixture",
+                        ),
+                        runners=("service-local:explore", "service-secured:explore"),
+                    )
+
+                if studio_late_browser_required:
+                    steward_install, _ = run(
+                        kb_command(["marketplace", "install", "@kb-labs/steward", "--json"]),
+                        env=service_env, cwd=PROJECT, timeout=180)
+                    try:
+                        steward_payload = decode_ux_success_result(read_ux_cli_result(steward_install))
+                    except ValueError as error:
+                        steward_payload = {}
+                        steward_error = str(error)
+                    else:
+                        steward_error = ""
+                    if (steward_install.returncode != 0 or not isinstance(steward_payload, dict)
+                            or not any(isinstance(item, dict) and item.get("id") == "@kb-labs/steward"
+                                       for item in steward_payload.get("installed", []))):
+                        fail(f"Studio schedule fixture could not restore @kb-labs/steward: "
+                             f"{steward_error or 'plugin was not installed'}")
+                    else:
+                        restart_shared_host(outer_graph, launcher, env, "Studio schedule fixture restoration")
+                        crons_result, _ = run(kb_login_shell(["workflow", "crons", "list", "--json"]),
+                                              env=studio_env, cwd=PROJECT, timeout=90)
+                        try:
+                            crons = decode_ux_success_result(read_ux_cli_result(crons_result))["crons"]
+                            project_a_plugin_cron_ids = [str(cron["id"]) for cron in crons
+                                                         if isinstance(cron, dict) and cron.get("source") == "plugin"]
+                        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+                            project_a_plugin_cron_ids = []
+                            fail(f"Studio schedule fixture could not verify plugin cron after restore: {error}")
+                        if not project_a_plugin_cron_ids:
+                            fail("Studio schedule fixture restored @kb-labs/steward without a plugin cron")
+                        studio_env["KB_STUDIO_PROJECT_A_PLUGIN_CRON_IDS"] = ",".join(project_a_plugin_cron_ids)
+
+                    (project_b_root / ".kb" / "workflows").mkdir(parents=True, exist_ok=True)
+                    (project_b_root / ".kb" / "crons").mkdir(parents=True, exist_ok=True)
+                    (project_b_root / ".kb" / "workflows" / "studio-b-workflow.yml").write_text(
+                        "name: studio-b-workflow\nversion: 1.0.0\non:\n  manual: true\njobs:\n  smoke:\n    runsOn: local\n    steps:\n"
+                        "      - name: Log B\n        id: log-b\n        uses: builtin:shell\n        with:\n          command: 'echo studio-b'\n",
+                        encoding="utf-8")
+                    (project_b_root / ".kb" / "crons" / "studio-b.yml").write_text(
+                        "schedule: '0 0 * * *'\nworkflow: studio-b-workflow\nenabled: true\n", encoding="utf-8")
+                    prepare_workflow_fixtures(project_b_root)
+                    definitions_deadline = time.monotonic() + 30
+                    healthy_workflow_ready = False
+                    while time.monotonic() < definitions_deadline:
+                        definitions_result, _ = run(kb_login_shell(["workflow", "defs", "list", "--json"]),
+                                                    env=service_env, cwd=project_b_root, timeout=90)
+                        try:
+                            definitions_data = decode_ux_success_result(read_ux_cli_result(definitions_result))
+                            healthy_workflow_ready = isinstance(definitions_data, list) and any(
+                                isinstance(item, dict) and item.get("id") == "journey-hello"
+                                for item in definitions_data)
+                        except (ValueError, json.JSONDecodeError):
+                            healthy_workflow_ready = False
+                        if healthy_workflow_ready:
+                            break
+                        time.sleep(1)
+                    healthy_result = None
+                    if healthy_workflow_ready:
+                        healthy_result, _ = run(
+                            kb_login_shell(["workflow", "run", "--workflow-id=journey-hello",
+                                            '--input={"message":"studio-healthy-project"}', "--json"]),
+                            env=service_env, cwd=project_b_root, timeout=120)
+                    try:
+                        healthy_data = (decode_ux_success_result(read_ux_cli_result(healthy_result))
+                                        if healthy_result else {})
+                        healthy_run_id = healthy_data.get("runId", "") if isinstance(healthy_data, dict) else ""
+                    except (ValueError, json.JSONDecodeError):
+                        healthy_run_id = ""
+                    if (healthy_result is None or healthy_result.returncode != 0
+                            or not isinstance(healthy_run_id, str) or not healthy_run_id):
+                        fail("Studio Project B did not produce a real healthy workflow run after the empty-history phase")
+                    else:
+                        healthy_deadline = time.monotonic() + 180
+                        healthy_passed = False
+                        while time.monotonic() < healthy_deadline:
+                            viewed, _ = run(kb_login_shell(["workflow", "runs", "view", healthy_run_id, "--json=all"]),
+                                            env=service_env, cwd=project_b_root, timeout=90)
+                            try:
+                                detail = _healthy_workflow_run_detail(viewed) or {}
+                            except (ValueError, json.JSONDecodeError):
+                                detail = {}
+                            if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
+                                healthy_passed = detail.get("status") == "success"
+                                break
+                            time.sleep(2)
+                        if healthy_passed:
+                            service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
+                            studio_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
+                        else:
+                            fail("Studio Project B healthy workflow run did not reach success")
+                    studio_env["KB_STUDIO_PROJECT_B_CRON_ID"] = "studio-b"
+                    studio_env.pop("KB_STUDIO_EMPTY_PROJECT_PHASE", None)
+                    studio_env.pop("KB_STUDIO_EMPTY_PROJECT_B_PHASE", None)
+                def run_studio_browser_group(studio_cases: tuple[str, ...]) -> str | None:
+                    browser_claims = ([*studio_cases] if mode == "secured" else []) + ["S-122.1"]
+                    studio_claims = ",".join([*browser_claims, *oauth_claims])
+                    with tempfile.TemporaryDirectory(prefix=f"kb-studio-browser-{mode}-", dir="/tmp") as private_dir:
+                        suite_json = Path(private_dir) / "playwright.json"
+                        browser_env = {
+                            **studio_env,
+                            "KB_STUDIO_PLAYWRIGHT_JSON": str(suite_json),
+                            "KB_STUDIO_PLAYWRIGHT_OUTPUT_DIR": str(Path(private_dir) / "results"),
+                        }
+                        with invocation_context(step_id=studio_claims):
+                            studio_passed, studio_elapsed, studio_message = run_studio_browser_step([
+                                "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                                "--config=/opt/kb-studio-playwright/playwright.config.mjs",
+                                "--grep-invert", r"@S-120\.1|@S-021\.5|@S-046\.(1|2|3)",
+                            ], browser_env, service_report, mode, studio_shell_passed,
+                                cases=browser_claims, timeout=660)
+                        TIMES["Studio browser journey"] = studio_elapsed
+                        browser_case_results = {
+                            case_id: playwright_case_passed(suite_json, case_id)
+                            for case_id in browser_claims
+                        }
+                        studio_browser_verdict["case_results"] = browser_case_results
+                        studio_browser_verdict["ran"] = suite_json.is_file()
+                        if studio_passed and not all(browser_case_results.values()):
+                            studio_passed = False
+                            studio_message = (
+                                "Studio Playwright exited successfully without PASS for every selected "
+                                "case and the installed Project B analytics scope case")
+                    outcome = record_studio_browser_outcome(studio_passed, studio_message)
+                    studio_browser_verdict["message"] = outcome
+                    return outcome
         else:
             run_studio_browser_group = lambda _studio_cases: reject_unprepared_studio_flow()
         if project_b_handoff is None:
@@ -2811,13 +3059,51 @@ def _main(*, update_variant_runner=None):
                 project_b_handoff.diagnostic, sort_keys=True)
         else:
             studio_case_action = run_studio_browser_group
-        outer_graph.flow(
-            "Studio browser journey", "studio", "studio", None,
-            cases=[
-                "S-106.1", "S-106.2", "S-106.3", "S-106.4", "S-106.5", "S-106.6",
-                "S-107.1", "S-107.2", "S-107.3",
-            ], runners=("service-local:explore", "service-secured:explore"),
-            case_action=studio_case_action,
+        if studio_late_browser_required:
+            outer_graph.flow(
+                "Studio browser journey", "studio", "studio", None,
+                cases=[
+                    "S-106.1", "S-106.2", "S-106.3", "S-106.4", "S-106.5", "S-106.6",
+                    "S-107.1", "S-107.2", "S-107.3",
+                ], runners=("service-secured:explore",),
+                selection_requires=(
+                    "step:Studio shell", "step:install plugin cron fixture",
+                    "step:inspect failed step and error",
+                    "step:verify terminal status and submitted input",
+                    "step:Studio project attachment isolation with empty Project A",
+                    "step:Studio workflow history with empty Project B",
+                    "step:Studio late browser verdict",
+                ),
+                case_action=studio_case_action,
+            )
+        else:
+            outer_graph.skip_unselected("Studio browser journey", "studio")
+        capture_case_failure()
+        def late_browser_verdict() -> str | None:
+            if not studio_browser_verdict["ran"]:
+                return studio_browser_verdict["message"] or "BLOCKED: Studio browser suite did not produce a verdict"
+            return studio_browser_verdict["message"]
+
+        CASE_JOURNEY.step(
+            "Studio late browser verdict", "studio", late_browser_verdict,
+            requires=("state:host-running", "state:project-registered"),
+            selection_requires=(
+                "step:Studio shell", "step:install plugin cron fixture",
+                "step:inspect failed step and error",
+                "step:verify terminal status and submitted input",
+                "step:Studio project attachment isolation with empty Project A",
+                "step:Studio workflow history with empty Project B",
+            ),
+            runners=("service-local:explore", "service-secured:explore"),
+        )
+        capture_case_failure()
+
+        CASE_JOURNEY.step(
+            "Studio workflow run list shows project scope and completion time",
+            "studio", lambda: studio_browser_case_outcome(studio_browser_verdict, "S-122.1"),
+            cases=["S-122.1"],
+            selection_requires=("step:Studio late browser verdict",),
+            runners=("service-local:explore", "service-secured:explore"),
         )
         capture_case_failure()
     update_variants_selected = outer_graph.group_selected("update-variants")

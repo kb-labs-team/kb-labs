@@ -45,6 +45,9 @@ import {
   summarizeWorkflowInput,
 } from "@kb-labs/workflow-runtime";
 
+const LIVE_LOG_PUBLICATION_DRAIN_TIMEOUT_MS = 2_000;
+const MAX_QUEUED_LIVE_LOG_PUBLICATIONS = 256;
+
 interface StepSpecRaw {
   name: string;
   run?: string;
@@ -898,75 +901,144 @@ export async function createWorkflowWorker(
             },
           };
 
+          // Publish live logs serially and drain within a bound before persisting
+          // the step result. The event bus may still impose its own delivery order.
+          const liveLogQueue: Array<Parameters<WorkflowEngine['publishLog']>[3]> = [];
+          let liveLogDrain: Promise<void> | null = null;
+          let acceptLiveLogPublications = true;
+          let warnedLiveLogOverflow = false;
+          const startLiveLogDrain = (): Promise<void> => {
+            if (liveLogDrain) {
+              return liveLogDrain;
+            }
+            const drain = (async () => {
+              while (acceptLiveLogPublications && liveLogQueue.length > 0) {
+                const entry = liveLogQueue.shift()!;
+                try {
+                  await engine.publishLog(run.id, job.id, step.id, entry, step.name);
+                } catch (error) {
+                  safeStepLogger.warn('Failed to publish live workflow log event', {
+                    runId: run.id,
+                    jobId: job.id,
+                    stepId: step.id,
+                    error: error instanceof Error ? error.message : String(error),
+                  });
+                }
+              }
+            })();
+            const trackedDrain = drain.finally(() => {
+              if (liveLogDrain === trackedDrain) {
+                liveLogDrain = null;
+              }
+              if (acceptLiveLogPublications && liveLogQueue.length > 0) {
+                void startLiveLogDrain();
+              }
+            });
+            liveLogDrain = trackedDrain;
+            return trackedDrain;
+          };
+          const queueLiveLogPublication = (entry: Parameters<WorkflowEngine['publishLog']>[3]) => {
+            if (!acceptLiveLogPublications) {
+              return;
+            }
+            const outstanding = liveLogQueue.length + (liveLogDrain ? 1 : 0);
+            if (outstanding >= MAX_QUEUED_LIVE_LOG_PUBLICATIONS) {
+              if (!warnedLiveLogOverflow) {
+                warnedLiveLogOverflow = true;
+                safeStepLogger.warn('Live workflow log publication queue is full; dropping further log events', {
+                  runId: run.id,
+                  jobId: job.id,
+                  stepId: step.id,
+                  maxQueued: MAX_QUEUED_LIVE_LOG_PUBLICATIONS,
+                });
+              }
+              return;
+            }
+            liveLogQueue.push(entry);
+            void startLiveLogDrain();
+          };
+
           // Delegate execution to the execution plane.
           // The platform handles provisioning (workspace, environment, cleanup) transparently.
-          const result = await runner.execute({
-            spec: interpolatedSpec as StepSpec,
-            context: {
-              runId: run.id,
-              jobId: job.id,
-              stepId: step.id,
-              attempt: 1,
-              env: stepEnvironment,
-              secrets: stepSecrets,
-              logger: {
-                debug: (message: string, meta?: Record<string, unknown>) =>
-                  safeStepLogger.debug(message, meta),
-                info: (message: string, meta?: Record<string, unknown>) =>
-                  safeStepLogger.info(message, meta),
-                warn: (message: string, meta?: Record<string, unknown>) =>
-                  safeStepLogger.warn(message, meta),
-                error: (message: string, meta?: Record<string, unknown>) =>
-                  safeStepLogger.error(message, undefined, meta),
+          let result: Awaited<ReturnType<typeof runner.execute>>;
+          try {
+            result = await runner.execute({
+              spec: interpolatedSpec as StepSpec,
+              context: {
+                runId: run.id,
+                jobId: job.id,
+                stepId: step.id,
+                attempt: 1,
+                env: stepEnvironment,
+                secrets: stepSecrets,
+                logger: {
+                  debug: (message: string, meta?: Record<string, unknown>) =>
+                    safeStepLogger.debug(message, meta),
+                  info: (message: string, meta?: Record<string, unknown>) =>
+                    safeStepLogger.info(message, meta),
+                  warn: (message: string, meta?: Record<string, unknown>) =>
+                    safeStepLogger.warn(message, meta),
+                  error: (message: string, meta?: Record<string, unknown>) =>
+                    safeStepLogger.error(message, undefined, meta),
+                },
+                trace: {
+                  traceId: run.id,
+                  spanId: stepExecutionId,
+                  parentSpanId: job.id,
+                },
+                // The redacting step logger is the plugin logger base, with runId/jobId/stepId context.
+                // See: services/workflow/docs/adr/0019-log-stream-separation.md
+                loggerOverride: safeStepLogger,
+                onProcessStarted: async (identity) => {
+                  await engine.getStateStore().updateStep(run.id, job.id, step.id, (draft) => {
+                    draft.processIdentity = identity;
+                  });
+                },
+                // ui/shell log entries: persist to SQLite with workflow context + publish for SSE.
+                // See: services/workflow/docs/adr/0019-log-stream-separation.md
+                onLog: (entry) => {
+                  safeStepLogger.info(entry.message, {
+                    stream: entry.stream,
+                    lineNo: entry.lineNo,
+                    logSource: entry.stream === "stderr" ? "stderr" : "stdout",
+                  });
+                  queueLiveLogPublication(entry);
+                },
+                // ctx.logger.* entries: stepLogger base already wrote to SQLite. Only publish for SSE.
+                // See: services/workflow/docs/adr/0019-log-stream-separation.md
+                onLoggerLog: (entry) => {
+                  queueLiveLogPublication(entry);
+                },
               },
-              trace: {
-                traceId: run.id,
-                spanId: stepExecutionId,
-                parentSpanId: job.id,
-              },
-              // The redacting step logger is the plugin logger base, with runId/jobId/stepId context.
-              // See: services/workflow/docs/adr/0019-log-stream-separation.md
-              loggerOverride: safeStepLogger,
-              onProcessStarted: async (identity) => {
-                await engine.getStateStore().updateStep(run.id, job.id, step.id, (draft) => {
-                  draft.processIdentity = identity;
-                });
-              },
-              // ui/shell log entries: persist to SQLite with workflow context + publish for SSE.
-              // See: services/workflow/docs/adr/0019-log-stream-separation.md
-              onLog: (entry) => {
-                safeStepLogger.info(entry.message, {
-                  stream: entry.stream,
-                  lineNo: entry.lineNo,
-                  logSource: entry.stream === "stderr" ? "stderr" : "stdout",
-                });
-                void engine.publishLog(
-                  run.id,
-                  job.id,
-                  step.id,
-                  entry,
-                  step.name,
-                );
-              },
-              // ctx.logger.* entries: stepLogger base already wrote to SQLite. Only publish for SSE.
-              // See: services/workflow/docs/adr/0019-log-stream-separation.md
-              onLoggerLog: (entry) => {
-                void engine.publishLog(
-                  run.id,
-                  job.id,
-                  step.id,
-                  entry,
-                  step.name,
-                );
-              },
-            },
-            // Scripts (.kb/workflows/scripts/*.sh) live in the project root, not the worktree.
-            // Use workspaceRoot as cwd so relative paths like `bash .kb/workflows/scripts/...`
-            // resolve correctly. Scripts that need to operate inside the worktree cd into
-            // KB_WORKSPACE_ROOT themselves (agent scripts, git operations).
-            workspace: workspaceRoot,
-            target,
-          });
+              // Scripts (.kb/workflows/scripts/*.sh) live in the project root, not the worktree.
+              // Use workspaceRoot as cwd so relative paths like `bash .kb/workflows/scripts/...`
+              // resolve correctly. Scripts that need to operate inside the worktree cd into
+              // KB_WORKSPACE_ROOT themselves (agent scripts, git operations).
+              workspace: workspaceRoot,
+              target,
+            });
+          } finally {
+            let drainTimeout: ReturnType<typeof setTimeout> | undefined;
+            const drainTimedOut = await Promise.race([
+              (liveLogDrain ?? Promise.resolve()).then(() => false),
+              new Promise<boolean>((resolve) => {
+                drainTimeout = setTimeout(() => resolve(true), LIVE_LOG_PUBLICATION_DRAIN_TIMEOUT_MS);
+              }),
+            ]);
+            if (drainTimeout) {
+              clearTimeout(drainTimeout);
+            }
+            if (drainTimedOut) {
+              acceptLiveLogPublications = false;
+              liveLogQueue.length = 0;
+              safeStepLogger.warn('Live workflow log publication did not drain before step completion', {
+                runId: run.id,
+                jobId: job.id,
+                stepId: step.id,
+                timeoutMs: LIVE_LOG_PUBLICATION_DRAIN_TIMEOUT_MS,
+              });
+            }
+          }
 
           if (result.status === "failed") {
             const stepDurationMs = Date.now() - stepStartTime;

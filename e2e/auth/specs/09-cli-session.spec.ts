@@ -10,6 +10,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import {
   loginAsAdminCli,
   loginAsAdmin,
@@ -26,7 +27,7 @@ test('AUTH-34: /auth/login/cli returns tokens in the body and sets no cookies', 
   })
 
   expect(res.status()).toBe(200)
-  const body = await res.json() as { accessToken: string; refreshToken: string; expiresIn: number }
+  const body = unwrapGatewaySuccess<{ accessToken: string; refreshToken: string; expiresIn: number }>(await res.json())
   expect(body.accessToken).toBeTruthy()
   expect(body.refreshToken).toBeTruthy()
   expect(body.expiresIn).toBeGreaterThan(0)
@@ -42,7 +43,7 @@ test('AUTH-35: /auth/login/cli with wrong password — 401, same shape as /auth/
     headers: { 'Content-Type': 'application/json' },
   })
   expect(res.status()).toBe(401)
-  expect(await res.json()).toMatchObject({ error: 'invalid_credentials' })
+  expect(await res.json()).toMatchObject({ error: { code: 'KB_AUTH_INVALID_CREDENTIALS' } })
 })
 
 test('AUTH-36: /auth/refresh/cli round-trip issues a new working token pair', async ({ request }) => {
@@ -53,7 +54,7 @@ test('AUTH-36: /auth/refresh/cli round-trip issues a new working token pair', as
     headers: { 'Content-Type': 'application/json' },
   })
   expect(refreshRes.status()).toBe(200)
-  const body = await refreshRes.json() as { accessToken: string; refreshToken: string }
+  const body = unwrapGatewaySuccess<{ accessToken: string; refreshToken: string }>(await refreshRes.json())
   expect(body.accessToken).toBeTruthy()
   expect(refreshRes.headers()['set-cookie']).toBeUndefined()
 
@@ -88,7 +89,7 @@ test('AUTH-37: a machine Bearer token is never mistaken for a CLI user session',
     data: { clientId, clientSecret },
   })
   expect(tokenRes.ok()).toBe(true)
-  const { accessToken: machineToken } = (await tokenRes.json()) as { accessToken: string }
+    const { accessToken: machineToken } = unwrapGatewaySuccess<{ accessToken: string }>(await tokenRes.json())
 
   // A freshly-registered machine client has no permissions embedded — it
   // must get 403 (not 200) when it tries to register another client.

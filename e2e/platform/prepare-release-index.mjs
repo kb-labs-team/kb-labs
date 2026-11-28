@@ -12,6 +12,7 @@ import { deriveCandidateVersion, prepareJourneyUpdatePackages } from './journey-
 import { invokePackageProvenanceOwner } from 'kb-create/scripts/package-provenance.mjs';
 import { stablePlatformVersion } from './release-index-version.mjs';
 import { prepareReleaseProvenance } from './release-provenance.mjs';
+import { platformAdapterOptions } from './prepare-release-index-config.mjs';
 import { readPlatformReleaseConfig, releaseArtifactPackageNames, shippedPlatformPackageSet } from 'kb-create/scripts/platform-release-config.mjs';
 
 const args = process.argv.slice(2);
@@ -72,15 +73,7 @@ writeFileSync(join(stage, 'manifest.json'), `${JSON.stringify([...packages.value
 const provenanceManifest = writeProvenanceManifest(stage, sourceRevision);
 
 const adapterConfig = JSON.stringify(releaseConfig.adapters);
-const adapterOptions = JSON.stringify({
-  ...releaseConfig.adapterOptions,
-  serviceTransport: {
-    ...releaseConfig.adapterOptions.serviceTransport,
-    services: Object.fromEntries((registryManifest.services ?? [])
-      .filter(({ id, port }) => id && port)
-      .map(({ id, port }) => [id, { url: `http://127.0.0.1:${port}` }])),
-  },
-});
+const adapterOptions = JSON.stringify(platformAdapterOptions(releaseConfig, registryManifest));
 const platformRequires = releaseConfig.platformRequires.join(',');
 // Built-in platform members ship with the platform release. Other plugins are
 // published separately and selected by the marketplace.

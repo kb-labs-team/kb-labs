@@ -114,7 +114,14 @@ describe('ChangePasswordPage', () => {
       Promise.resolve({
         ok: false,
         status: 400,
-        json: () => Promise.resolve({ error: 'invalid_current_password' }),
+        json: () => Promise.resolve({
+          ok: false,
+          error: {
+            code: 'KB_AUTH_INVALID_CURRENT_PASSWORD',
+            message: 'Current password is incorrect',
+            hint: 'Check the current password and retry the password change.',
+          },
+        }),
       }),
     ));
 
@@ -125,8 +132,10 @@ describe('ChangePasswordPage', () => {
       fireEvent.submit(screen.getByRole('form', { name: /change password form/i }));
     });
 
-    await waitFor(() =>
-      expect(screen.getByText(/invalid_current_password/i)).toBeDefined(),
-    );
+    await waitFor(() => {
+      const alert = screen.getByRole('alert');
+      expect(alert.textContent).toContain('Current password is incorrect');
+      expect(alert.textContent).toContain('Check the current password and retry the password change.');
+    });
   });
 });
