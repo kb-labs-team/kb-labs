@@ -169,13 +169,16 @@ def workflow_child_recovered(mode: str, key: tuple[str, str], before: SelectionE
 
 def legacy_s120_non_owner_recovered(mode: str, key: tuple[str, str], before: SelectionEvidence,
                                     after: SelectionEvidence) -> bool:
-    """Recognize the S-120 ownership migration without dropping owner evidence."""
+    """Recognize the configured ownership migration without dropping owner evidence."""
     step, claim = key
-    if mode != "local" or (step, claim) != ("Studio dashboard with empty project registry", "S-120.1"):
+    migration = read_json(CLAIM_MAP).get("legacyS120OwnershipMigration", {})
+    if mode != migration.get("mode") or (step, claim) != (migration.get("step"), migration.get("claim")):
         return False
 
-    owner = "service-local:explore"
-    non_owner = "agent:commit"
+    owner = migration.get("owner")
+    non_owner = migration.get("nonOwner")
+    if not isinstance(owner, str) or not isinstance(non_owner, str):
+        return False
 
     def report_name(selector: str) -> str | None:
         spec = RUNNERS.get(selector)

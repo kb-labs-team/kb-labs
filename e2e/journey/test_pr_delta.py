@@ -214,7 +214,7 @@ class PullRequestDeltaTests(unittest.TestCase):
                 summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, [claim])
                 self.assertEqual(passed, expected, summary)
 
-    # case: S-120.1
+    # case: S-262.21
     def test_s120_owner_migration_requires_exact_non_owner_skip_and_owner_pass(self):
         claim = "S-120.1"
         step = "Studio dashboard with empty project registry"
