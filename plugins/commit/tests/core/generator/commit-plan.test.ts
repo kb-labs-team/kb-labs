@@ -11,15 +11,18 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { join } from 'node:path';
-import { mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { simpleGit } from 'simple-git';
 import { createTestContext, mockLLM } from '@kb-labs/sdk/testing';
 import { generateCommitPlan } from '../../../src/core/generator/commit-plan.js';
 
 describe('generateCommitPlan - LLM gating', () => {
-  const repoDir = join(process.cwd(), '.test-commit-plan-llm-gating');
+  let repoDir: string;
 
   beforeEach(async () => {
+    repoDir = await mkdtemp(join(tmpdir(), 'kb-commit-commit-plan-llm-gating-'));
+
     await mkdir(repoDir, { recursive: true });
     const git = simpleGit(repoDir);
     await git.init();

@@ -111,6 +111,25 @@ describe('RegistryService.publish', () => {
     await expect(svc.resolveIdentity('@other/unknown')).resolves.toEqual({ status: 'not-found-unowned' });
   });
 
+  // case: S-268.21
+  it('signs private releases for an owner or share token without granting anonymous access', async () => {
+    const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+    const svc = makeService({ signingPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString() });
+    await svc.publish(SMALL_TARBALL, { ...makePkg(), visibility: 'private' }, 'author', 'owner');
+    const entry = await svc.getEntry('author', 'my-plugin');
+    expect(entry && svc.getVisibleEntry(entry, null)).toBeNull();
+    const share = await svc.createShareToken('author', 'my-plugin');
+    const shared = await svc.resolveShareToken(share.token);
+    const ownerResult = await svc.resolveIdentity('@test/my-plugin', 'owner');
+    const sharedResult = await svc.resolveIdentity('@test/my-plugin', null, shared);
+    if (ownerResult.status !== 'found' || sharedResult.status !== 'found') { throw new Error('private package did not resolve'); }
+    expect(sharedResult.package.signature).toEqual(ownerResult.package.signature);
+    const signature = ownerResult.package.signature;
+    expect(signature?.algorithm).toBe('ed25519');
+    const payload = Buffer.from(JSON.stringify({ integrity: ownerResult.package.integrity, pkg: 'author/my-plugin@1.0.0' }));
+    expect(cryptoVerify(null, payload, publicKey, Buffer.from(signature!.value, 'base64'))).toBe(true);
+  });
+
   it('resolves an anonymous short identity to its public package when a private package shares the name', async () => {
     const svc = makeService();
     await svc.publish(SMALL_TARBALL, makePkg({ name: 'widget', identity: '@public/widget' }), 'public-author', 'ns-public');
@@ -290,6 +309,39 @@ describe('RegistryService.publish', () => {
     await expect(svc.resolveIdentity('@history/new', 'ns-history')).resolves.toMatchObject({
       status: 'found', package: { version: '2.0.0' },
     });
+  });
+
+  // case: S-268.25
+  it('skips legacy records without identity metadata during identity resolution', async () => {
+    const storage = createMemoryStorage();
+    const svc = new RegistryService({
+      storage, cache: createMemoryCache(), logger: noopLogger,
+      baseUrl: 'http://localhost:5071', siteUrl: 'https://kblabs.ru',
+    });
+    await svc.publish(SMALL_TARBALL, makePkg({ name: 'healthy-package', identity: '@healthy/package' }),
+      'healthy-author', 'ns-healthy');
+    await storage.write('marketplace-registry/packages/legacy-author/legacy-package/meta.json', Buffer.from(JSON.stringify({
+      name: 'legacy-package',
+      authorHandle: 'legacy-author',
+      authorNamespaceId: 'ns-legacy',
+      primaryKind: 'plugin',
+      visibility: 'private',
+      trust: 'untrusted',
+      allowlist: [],
+      versions: [{ version: '1.0.0', publishedAt: '2024-01-01T00:00:00.000Z', integrity: 'sha256-legacy' }],
+      deprecated: false,
+      featured: false,
+      badges: [],
+      tags: [],
+      meta: { name: 'legacy-package', version: '1.0.0' },
+      createdAt: '2024-01-01T00:00:00.000Z',
+      updatedAt: '2024-01-01T00:00:00.000Z',
+    })));
+
+    await expect(svc.resolveIdentity('@healthy/package')).resolves.toMatchObject({
+      status: 'found', package: { id: 'healthy-package', version: '1.0.0' },
+    });
+    await expect(svc.resolveIdentity('@unknown/package')).resolves.toEqual({ status: 'not-found-unowned' });
   });
 
   // case: S-268.21

@@ -1052,19 +1052,19 @@ export const manifest = {
     templates: [
       {
         id: 'full-release',
-        path: './workflows/templates/full-release.yaml',
+        path: './dist/workflows/templates/full-release.yaml',
         describe: 'Full release cycle: plan → checks → build → pack → approve → publish → git',
         tags: ['release', 'full'],
       },
       {
         id: 'hotfix',
-        path: './workflows/templates/hotfix.yaml',
+        path: './dist/workflows/templates/hotfix.yaml',
         describe: 'Quick hotfix: plan → approve → publish → git (patch bump, no checks)',
         tags: ['release', 'hotfix'],
       },
       {
         id: 'dry-run',
-        path: './workflows/templates/dry-run.yaml',
+        path: './dist/workflows/templates/dry-run.yaml',
         describe: 'Preview release: plan, checks, pack, changelog — no publish or git ops',
         tags: ['release', 'dry-run'],
       },

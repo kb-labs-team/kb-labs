@@ -53,6 +53,61 @@ compatibility policy. Use `kb-create plan --help` to see the supported request
 flags. `--secret-env requirement.id=ENV` passes a secret by environment
 variable reference; the secret value is not written into the request or
 receipt.
+For a service transport override, use `serviceTransportURLs` keyed by a
+service ID declared in the selected platform manifest. The resolver emits a
+URL-only override at that service's transport endpoint; the config does not
+replace `platform.adapterOptions` or accept arbitrary paths. The Gateway URL
+is derived from `gatewayUrl` and cannot be overridden through this field.
+
+For a reviewed, repeatable plan, pass a separate declarative config to both
+commands. Config values use requirement IDs from the selected release catalog;
+they do not accept arbitrary config paths or patch operations. Use the typed
+`marketplaceSources` fields for Registry and npm URLs and environment-variable
+references. For secret options nested inside a config value, use exactly the
+`${ENV_NAME}` reference declared by that artifact's manifest.
+
+`request.json`:
+
+```json
+{
+  "schema": "kb.create/v2",
+  "platform": { "channel": "stable" },
+  "platformRoot": "/srv/kb-platform",
+  "gatewayUrl": "http://127.0.0.1:45100"
+}
+```
+
+`install-config.json`:
+
+```json
+{
+  "marketplaceSources": {
+    "registryUrl": "https://registry.example.test/api/v1/marketplace-registry",
+    "signingPublicKeyEnv": "KB_REGISTRY_PUBLIC_KEY",
+    "registryTokenEnv": "KB_REGISTRY_TOKEN",
+    "npmUrl": "https://registry.npmjs.org"
+  },
+  "values": {
+    "gateway.access.mode": "local"
+  }
+}
+```
+
+Write and review the normalized plan, then apply that output with the same
+config and release index:
+
+```bash
+kb-create plan --index release-index.json --input request.json \
+  --config install-config.json --json > plan.json
+kb-create apply --index release-index.json --input plan.json \
+  --config install-config.json --json
+```
+
+When `apply` reads a saved CLI plan, it uses only `plan.request` and resolves
+the plan again against the supplied release index. Derived artifacts, config
+patches, and paths in the saved JSON are not treated as instructions. Secret
+values remain in the environment or secret store; requests and config files
+contain references only.
 
 ## Verify and maintain the installation
 

@@ -10,10 +10,12 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import tarfile
 import time
-from urllib.parse import urlencode, urlsplit, urlunsplit
+from datetime import datetime, timedelta, timezone
+from urllib.parse import quote, urlencode, urlsplit, urlunsplit
 import urllib.request
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -66,6 +68,18 @@ def _installed_gateway_url(env: dict[str, str]) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
 
 
+def _marketplace_server_kb_home(env: dict[str, str]) -> Path:
+    """Use the running server's explicit KB_HOME or its contract-owned installed home."""
+    override = env.get("KB_HOME", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    platform_root = env.get("KB_JOURNEY_PLATFORM_ROOT")
+    if not platform_root:
+        raise RuntimeError("Marketplace share fixture has no server KB_HOME or installed platform root")
+    return (Path(platform_root).expanduser().resolve()
+            / layout_value("sharedStateDirectory") / layout_value("kbHomeDirectory"))
+
+
 def marketplace_platform_config_path(platform_root: Path) -> Path:
     """Resolve the installed config through the active version's shared-state link."""
     return active_platform_root(platform_root) / layout_value(
@@ -101,14 +115,15 @@ def _publish_fixture_command(workspace_root: str | Path, package_path: str) -> l
 
 
 def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dict[str, str],
-                               runner: CommandRunner) -> CompletedProcess[str]:
+                               runner: CommandRunner, *, private: bool = False) -> CompletedProcess[str]:
     registry_url = env.get("KB_JOURNEY_MARKETPLACE_PUBLISH_URL")
     author_handle = env.get("KB_JOURNEY_MARKETPLACE_AUTHOR_HANDLE")
     if not registry_url or not author_handle:
         raise RuntimeError("journey Registry publish configuration is missing; enable the marketplace-registry lane")
-    workspace_cli = workspace_root / "cli" / "bin" / "dist" / "bin.js"
     publish = _publish_fixture_command(workspace_root, package_path)
-    command = ["node", str(workspace_cli), *publish]
+    if private:
+        publish.insert(-1, "--private")
+    command = kb_command(publish)
     publish_env = dict(env)
     publish_env["KB_REGISTRY_URL"] = env.get("KB_REGISTRY_URL", registry_url)
     publish_env["KB_REGISTRY_AUTHOR_HANDLE"] = author_handle
@@ -128,6 +143,70 @@ def _publish_workspace_fixture(workspace_root: Path, package_path: str, env: dic
         installed_platform_root=active_platform_root(Path(journey_platform_root)),
         gateway_login=gateway_login,
     )
+
+
+def _register_marketplace_recipient(env: dict[str, str]) -> tuple[str, str]:
+    """Create an isolated machine identity in its own Gateway namespace for a secured share recipient."""
+    gateway_url = _installed_gateway_url(env)
+    email = env.get("KB_JOURNEY_ADMIN_EMAIL", "")
+    password = env.get("KB_JOURNEY_ADMIN_PASSWORD", "")
+    if not email or not password:
+        raise RuntimeError("secured Marketplace share fixture needs bootstrap administrator credentials")
+    store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", password, "Marketplace share fixture admin password")
+
+    def post(path: str, payload: dict, access_token: str = "") -> dict:
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if access_token:
+            headers["Authorization"] = f"Bearer {access_token}"
+        request = urllib.request.Request(
+            f"{gateway_url}{path}", data=json.dumps(payload).encode(), headers=headers, method="POST")
+        status, raw, _ = open_http(urllib.request.urlopen, request, timeout=30,
+                                   env=env, redact_output=True)
+        if status not in {200, 201}:
+            raise RuntimeError(f"Marketplace share identity setup {path} returned HTTP {status}")
+        envelope = read_ux_http_result(raw, status)
+        value = decode_ux_success_result(envelope)
+        if not isinstance(value, dict):
+            raise RuntimeError(f"Marketplace share identity setup {path} returned invalid data")
+        return value
+
+    login = post("/auth/login/cli", {"email": email, "password": password})
+    access_token = login.get("accessToken") or login.get("token")
+    publisher_namespace = login.get("tenantId") or login.get("namespaceId")
+    if not isinstance(access_token, str) or not access_token:
+        raise RuntimeError("secured Marketplace admin login returned no access token")
+    if not isinstance(publisher_namespace, str) or not publisher_namespace:
+        raise RuntimeError("secured Marketplace admin login returned no Registry namespace")
+    store_report_secret(env, "KB_JOURNEY_MARKETPLACE_ADMIN_ACCESS_TOKEN", access_token,
+                        "Marketplace share fixture admin access token")
+    recipient = post("/auth/register", {
+        "name": f"journey-marketplace-recipient-{time.time_ns()}",
+    }, access_token)
+    client_id = recipient.get("clientId")
+    client_secret = recipient.get("clientSecret")
+    namespace_id = recipient.get("namespaceId")
+    if (not all(isinstance(value, str) and value for value in (client_id, client_secret, namespace_id))
+            or namespace_id == publisher_namespace):
+        raise RuntimeError("secured Marketplace recipient identity is incomplete or shares the publisher namespace")
+    store_report_secret(env, "KB_JOURNEY_MARKETPLACE_RECIPIENT_CLIENT_SECRET", client_secret,
+                        "Marketplace share recipient machine secret")
+    return client_id, client_secret
+
+
+def _prepare_marketplace_share_package(source: Path, target: Path) -> tuple[Path, str, str]:
+    """Create a unique, scoped package copy so the share flow never mutates workspace fixtures."""
+    if not source.is_dir() or not (source / "dist" / "manifest.json").is_file():
+        raise RuntimeError("Marketplace share fixture package is missing its compiled manifest")
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns("node_modules", ".kb"))
+    package_path = target / "package.json"
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    package_name = package.get("name")
+    version = f"1.0.0-journey.{time.time_ns()}"
+    if not isinstance(package_name, str) or not package_name.startswith("@"):
+        raise RuntimeError("Marketplace share fixture package identity is invalid")
+    package["version"] = version
+    package_path.write_text(json.dumps(package, indent=2) + "\n", encoding="utf-8")
+    return target, package_name, version
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str], runner: CommandRunner,
@@ -231,6 +310,32 @@ def _json(result: CompletedProcess[str], command: list[str]) -> dict:
     data = decode_ux_success_result(value)
     if not isinstance(data, dict):
         raise RuntimeError(f"`{' '.join(command)}` returned non-object UX data")
+    return data
+
+
+def _sensitive_cli_error_code(result: CompletedProcess[str]) -> str | None:
+    """Read only the typed error code; never carry message/hint text into a Journey step."""
+    try:
+        envelope = read_ux_cli_result(result)
+        if envelope.get("ok") is not False:
+            return None
+        failure = decode_ux_error_result(envelope)
+    except Exception:
+        return None
+    code = failure.get("code") if isinstance(failure, dict) else None
+    return code if isinstance(code, str) else None
+
+
+def _sensitive_cli_success_data(result: CompletedProcess[str]) -> dict:
+    """Parse a sensitive command's success result without exposing raw error text."""
+    if result.returncode != 0:
+        raise RuntimeError("Sensitive Marketplace CLI command failed; details redacted")
+    try:
+        data = decode_ux_success_result(read_ux_cli_result(result))
+    except Exception:
+        raise RuntimeError("Marketplace CLI install returned an invalid result; details redacted") from None
+    if not isinstance(data, dict):
+        raise RuntimeError("Marketplace CLI install returned non-object data; details redacted")
     return data
 
 
@@ -841,6 +946,160 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
     journey.step("publish and install Commit through Registry", "marketplace-fixtures", install_fixture,
                  role="lifecycle", runners=("service-marketplace-registry:local",
                                             "service-marketplace-registry:secured"))
+
+    def install_shared_private_package() -> None:
+        _assert_registry_gateway_config(base_env)
+        workspace = Path(base_env.get("KB_JOURNEY_WORKSPACE_ROOT", Path(__file__).resolve().parents[2]))
+        active_platform = active_platform_root(Path(base_env["KB_JOURNEY_PLATFORM_ROOT"]))
+        package_name = "@kb-labs/e2e-analytics-emitter"
+        fixture_root = workspace / "e2e" / "journey" / "fixtures" / "analytics-emitter"
+        recipient_credentials = None
+        if read_journey_selection(base_env).runner_selector.endswith(":secured"):
+            recipient_credentials = _register_marketplace_recipient(base_env)
+
+        with tempfile.TemporaryDirectory(prefix="kb-marketplace-share-") as fixture_directory:
+            share_package, expected_name, expected_version = _prepare_marketplace_share_package(
+                fixture_root, Path(fixture_directory) / "analytics-emitter")
+            if expected_name != package_name:
+                raise RuntimeError("Marketplace share fixture package identity changed")
+            published = _json(_publish_workspace_fixture(
+                workspace, str(share_package), base_env, runner, private=True),
+                ["hub", "publish", "<private-fixture>", "--private", "--json"])
+            handle = published.get("handle")
+            if (published.get("name") != package_name or published.get("version") != expected_version
+                    or published.get("visibility") != "private" or not isinstance(handle, str) or not handle):
+                raise RuntimeError("Marketplace share fixture was not published as the expected private package")
+
+            share_command = ["hub", "access", "add", f"kb:{handle}/{package_name}",
+                             "--link", "--ttl", "7", "--json"]
+            publisher_login = None
+            if read_journey_selection(base_env).runner_selector.endswith(":secured"):
+                publisher_login = (_installed_gateway_url(base_env),
+                                   base_env.get("KB_JOURNEY_ADMIN_EMAIL", ""),
+                                   base_env.get("KB_JOURNEY_ADMIN_PASSWORD", ""))
+            share_cli_command = kb_command(share_command)
+            share_result = run_hermetic_cli(
+                share_cli_command, cwd=project, env=base_env, runner=runner,
+                workspace_root=workspace, installed_platform_root=active_platform,
+                project_root=project, gateway_login=publisher_login, redact_output=True)
+            share_data = _sensitive_cli_success_data(share_result)
+            share_token = share_data.get("token")
+            expires_at = share_data.get("expiresAt")
+            if (not isinstance(share_token, str) or not re.fullmatch(r"kbrt_[0-9a-f]{32}", share_token)
+                    or not isinstance(expires_at, str)):
+                raise RuntimeError("Marketplace share command returned no valid temporary link")
+            try:
+                expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            except ValueError as error:
+                raise RuntimeError("Marketplace share command returned an invalid expiry") from error
+            now = datetime.now(timezone.utc)
+            if not now < expiry <= now + timedelta(days=7, minutes=1):
+                raise RuntimeError("Marketplace share link expiry is outside the requested seven-day window")
+            store_report_secret(base_env, "KB_JOURNEY_MARKETPLACE_SHARE_TOKEN", share_token,
+                                "Marketplace private package share token")
+            if recipient_credentials is not None:
+                registry_api = f"{_installed_gateway_url(base_env).rstrip('/')}/api/v1/marketplace-registry/api/v1"
+                package_path = (f"/packages/{quote(handle, safe='')}/{quote(package_name, safe='')}")
+                denied_query = urlencode({"version": expected_version})
+                denied_request = urllib.request.Request(
+                    f"{registry_api}{package_path}?{denied_query}", headers={"Accept": "application/json"})
+                denied_status, denied_body, _ = open_http(urllib.request.urlopen, denied_request,
+                                                          timeout=30, env=base_env)
+                try:
+                    denied_metadata = json.loads(denied_body)
+                except (json.JSONDecodeError, TypeError) as error:
+                    raise RuntimeError("Gateway Registry metadata request without token returned invalid JSON") from error
+                denied_versions = denied_metadata.get("versions") if isinstance(denied_metadata, dict) else None
+                if (denied_status != 200 or not isinstance(denied_versions, list)
+                        or any(isinstance(item, dict) and item.get("version") == expected_version
+                               for item in denied_versions)):
+                    raise RuntimeError("Registry exposed the exact private package version without a share token")
+                shared_query = urlencode({"token": share_token, "version": expected_version})
+                shared_request = urllib.request.Request(
+                    f"{registry_api}{package_path}?{shared_query}", headers={"Accept": "application/json"})
+                shared_status, shared_body, _ = open_http(urllib.request.urlopen, shared_request,
+                                                          timeout=30, env=base_env)
+                try:
+                    shared_metadata = json.loads(shared_body)
+                except (json.JSONDecodeError, TypeError) as error:
+                    raise RuntimeError("Gateway Registry metadata request returned invalid JSON") from error
+                visible_versions = shared_metadata.get("versions") if isinstance(shared_metadata, dict) else None
+                if (shared_status != 200 or not isinstance(visible_versions, list)
+                        or not any(isinstance(item, dict) and item.get("version") == expected_version
+                                   for item in visible_versions)):
+                    raise RuntimeError("share token did not reveal the exact private package metadata through Gateway")
+            lock_path = project / ".kb" / "marketplace.lock"
+            if lock_path.exists():
+                before = json.loads(lock_path.read_text(encoding="utf-8"))
+                before_plugins = before.get("plugins", {}) if isinstance(before, dict) else {}
+                if isinstance(before_plugins, dict) and package_name in before_plugins:
+                    raise RuntimeError("Marketplace share package unexpectedly existed in the consumer project before install")
+
+            consumer_env = dict(base_env)
+            gateway_machine_login = None
+            if recipient_credentials is not None:
+                consumer_env["KB_JOURNEY_HOME_LABEL"] = "marketplace-share-recipient"
+                gateway_machine_login = (_installed_gateway_url(base_env), *recipient_credentials)
+                denied_command = ["marketplace", "install", f"{package_name}@{expected_version}",
+                                  "--scope", "project", "--json"]
+                denied_result = run_hermetic_cli(
+                    kb_command(denied_command), cwd=project, env=consumer_env, runner=runner,
+                    workspace_root=workspace, installed_platform_root=active_platform,
+                    project_root=project, gateway_machine_login=gateway_machine_login,
+                    redact_output=True, register_project=True)
+                if denied_result.returncode == 0:
+                    raise RuntimeError("separate secured recipient installed the private exact version without a share token")
+                if _sensitive_cli_error_code(denied_result) != "KB_MARKETPLACE_AUTH_FAILED":
+                    raise RuntimeError("no-token private install did not return KB_MARKETPLACE_AUTH_FAILED")
+                existing_lock = project / ".kb" / "marketplace.lock"
+                if existing_lock.exists():
+                    before_lock = json.loads(existing_lock.read_text(encoding="utf-8"))
+                    before_plugins = before_lock.get("plugins", {}) if isinstance(before_lock, dict) else {}
+                    if isinstance(before_plugins, dict) and package_name in before_plugins:
+                        raise RuntimeError("no-token private install changed the consumer project lock")
+            else:
+                # The existing local Gateway profile maps every caller to namespace "local".
+                # Run the owner CLI smoke only; cross-namespace local authorization remains open debt.
+                consumer_env["KB_REGISTRY_AUTHOR_HANDLE"] = "journey-recipient"
+            install_command = ["marketplace", "install", f"{package_name}@{expected_version}",
+                               "--token", share_token, "--scope", "project", "--json"]
+            cli_command = kb_command(install_command)
+            try:
+                installed_result = run_hermetic_cli(
+                    cli_command, cwd=project, env=consumer_env, runner=runner,
+                    workspace_root=workspace, installed_platform_root=active_platform,
+                    project_root=project, gateway_machine_login=gateway_machine_login,
+                    redact_output=True, register_project=True,
+                    forbid_secret_in_files=share_token,
+                    require_extension_store_entry=(package_name, expected_version),
+                    server_kb_home=_marketplace_server_kb_home(base_env))
+            except (OSError, subprocess.TimeoutExpired):
+                raise RuntimeError("recipient CLI private package install timed out or failed; inspect redacted evidence") from None
+            result = _sensitive_cli_success_data(installed_result)
+            installed = result.get("installed")
+            if (result.get("scope") != "project" or not isinstance(installed, list)
+                    or not any(isinstance(item, dict) and item.get("id") == package_name
+                               and item.get("version") == expected_version and item.get("source") == "registry"
+                               and item.get("signatureStatus") == "verified" for item in installed)):
+                raise RuntimeError("recipient CLI did not install the shared private package from Registry")
+            lock_path = project / ".kb" / "marketplace.lock"
+            try:
+                lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise RuntimeError("recipient CLI did not write a readable project Marketplace lock") from error
+            lock_plugins = lock.get("plugins", {}) if isinstance(lock, dict) else {}
+            lock_entry = lock_plugins.get(package_name) if isinstance(lock_plugins, dict) else None
+            if (not isinstance(lock_entry, dict) or lock_entry.get("version") != expected_version
+                    or lock_entry.get("marketplaceSource") != "registry"
+                    or lock_entry.get("signatureStatus") != "verified"):
+                raise RuntimeError("recipient project lock does not prove the shared Registry package install")
+
+    journey.step("secured recipient installs private Registry package from share link", "marketplace-fixtures",
+                 install_shared_private_package, cases=["S-252.2"], role="lifecycle",
+                 runners=("service-marketplace-registry:secured",))
+    journey.step("local owner-profile share install smoke", "marketplace-fixtures",
+                 install_shared_private_package, role="lifecycle",
+                 runners=("service-marketplace-registry:local",))
 
     def assert_registry_provenance() -> None:
         entry = captured.get("entry")

@@ -184,8 +184,11 @@ func TestGatewayURLFlagProducesAPlanForTheDeclaredGateway(t *testing.T) {
 	gatewayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
-	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
-		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+	source.Platforms[0].Config = []catalog.ConfigRequirement{
+		{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
+			Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`},
+		{ID: "gateway.internalSecret", Secret: true, Env: "GATEWAY_INTERNAL_SECRET", Services: []string{"gateway"}},
+	}
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
@@ -248,6 +251,7 @@ func TestGatewayURLRequestFileProducesDerivedPlan(t *testing.T) {
 	}
 	platformRoot := filepath.Join(t.TempDir(), "platform")
 	requestPath := filepath.Join(t.TempDir(), "request.json")
+	configPath := filepath.Join(t.TempDir(), "config.json")
 	request := contracts.InstallRequest{
 		Schema:         contracts.RequestSchema,
 		Platform:       contracts.VersionSelector{Channel: contracts.ChannelStable},
@@ -262,11 +266,15 @@ func TestGatewayURLRequestFileProducesDerivedPlan(t *testing.T) {
 	if err := os.WriteFile(requestPath, encodedRequest, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	config := []byte(fmt.Sprintf(`{"marketplaceSources":{"registryUrl":%q,"signingPublicKeyEnv":"KB_REGISTRY_KEY","npmUrl":"http://verdaccio:4873"},"serviceTransportURLs":{"marketplace-registry":"http://registry:5071"}}`, gatewayURL+"/api/v1/marketplace-registry"))
+	if err := os.WriteFile(configPath, config, 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	source := testReleaseCatalog(t, "2.0.0")
 	source.Platforms[0].Profiles = map[string]contracts.ServiceGraph{"default": {PlatformVersion: "2.0.0", Services: []contracts.Service{{ID: "gateway", Port: 4000}}}}
 	source.Platforms[0].Config = []catalog.ConfigRequirement{{ID: "platform.adapterOptions", Path: "/platform/adapterOptions",
-		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"}}}}`}}
+		Default: `{"serviceTransport":{"services":{"gateway":{"url":"http://127.0.0.1:4000"},"marketplace-registry":{"url":"http://127.0.0.1:5071"}}}}`}}
 	release, err := sealTestCatalog(t, source)
 	if err != nil {
 		t.Fatal(err)
@@ -281,7 +289,7 @@ func TestGatewayURLRequestFileProducesDerivedPlan(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath, "--input", requestPath}, &stdout, &stderr)
+	code := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath, "--input", requestPath, "--config", configPath}, &stdout, &stderr)
 	if code.Code() != 0 {
 		t.Fatalf("request-file plan exit = %d: %s", code.Code(), stdout.String()+stderr.String())
 	}
@@ -295,11 +303,40 @@ func TestGatewayURLRequestFileProducesDerivedPlan(t *testing.T) {
 	}
 	plan := payload.Data.Plan
 	if plan.Request.GatewayURL != gatewayURL || plan.Host == nil || plan.Host.HealthURL != gatewayURL+"/health" ||
-		plan.ServiceGraph.Services[0].Port != port || plan.Request.MarketplaceSources != nil {
+		plan.ServiceGraph.Services[0].Port != port || plan.Request.MarketplaceSources == nil ||
+		plan.Request.MarketplaceSources.RegistryURL != gatewayURL+"/api/v1/marketplace-registry" ||
+		plan.Request.ServiceTransportURLs["marketplace-registry"] != "http://registry:5071" {
 		t.Fatalf("request-file Gateway input did not resolve as platform topology only: %#v", plan)
+	}
+	transportOverride := false
+	for _, patch := range plan.ConfigPatches {
+		if patch.Path == "/platform/adapterOptions/serviceTransport/services/marketplace-registry/url" && patch.JSON == `"http://registry:5071"` {
+			transportOverride = true
+		}
+	}
+	if !transportOverride {
+		t.Fatalf("plan omitted the typed service transport override: %#v", plan.ConfigPatches)
 	}
 	if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
 		t.Fatalf("planning a request file changed the install root (stat error %v)", err)
+	}
+	for name, invalidConfig := range map[string]string{
+		"unknown ID":                 `{"values":{"not.declared":"\"value\""}}`,
+		"secret data":                `{"values":{"gateway.internalSecret":"\"literal-secret\""}}`,
+		"unlisted transport service": `{"serviceTransportURLs":{"attacker-service":"http://127.0.0.1:5100"}}`,
+	} {
+		invalidPath := filepath.Join(t.TempDir(), "config.json")
+		if err := os.WriteFile(invalidPath, []byte(invalidConfig), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var invalidOut, invalidErr bytes.Buffer
+		invalidCode := clikitcommand.Execute(newRootCommand(), []string{"plan", "--json", "--index", indexPath, "--input", requestPath, "--config", invalidPath}, &invalidOut, &invalidErr)
+		if invalidCode.Code() == 0 {
+			t.Fatalf("plan accepted config with %s: %s", name, invalidOut.String()+invalidErr.String())
+		}
+		if _, err := os.Stat(platformRoot); !os.IsNotExist(err) {
+			t.Fatalf("invalid config with %s changed install root (stat error %v)", name, err)
+		}
 	}
 }
 

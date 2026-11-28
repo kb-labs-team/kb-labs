@@ -895,6 +895,7 @@ def run_command(argv: list[str], *, cwd: str | Path | None = None,
                 env: Mapping[str, str] | None = None, timeout: float = 300,
                 runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
                 monitor_process: Callable[[int], None] | None = None,
+                redact_output: bool = False,
                 **kwargs: Any) -> subprocess.CompletedProcess[str]:
     started = time.monotonic()
     if runner is None and monitor_process is not None:
@@ -929,7 +930,9 @@ def run_command(argv: list[str], *, cwd: str | Path | None = None,
     stdout = raw_stdout.decode(errors="replace") if isinstance(raw_stdout, bytes) else raw_stdout
     stderr = raw_stderr.decode(errors="replace") if isinstance(raw_stderr, bytes) else raw_stderr
     record_invocation(kind="command", argv=argv, cwd=cwd, env=env,
-                      exit_code=result.returncode, stdout=stdout, stderr=stderr,
+                      exit_code=result.returncode,
+                      stdout="[REDACTED]" if redact_output and stdout else stdout,
+                      stderr="[REDACTED]" if redact_output and stderr else stderr,
                       duration_seconds=time.monotonic() - started)
     return result
 
@@ -1303,7 +1306,8 @@ def start_background_command(argv: list[str], *, cwd: str | Path | None = None,
 
 
 def open_http(opener: Callable[..., Any], request: Any, *, timeout: float,
-              env: Mapping[str, str] | None = None) -> tuple[int, bytes, Mapping[str, str]]:
+              env: Mapping[str, str] | None = None,
+              redact_output: bool = False) -> tuple[int, bytes, Mapping[str, str]]:
     """Perform and record an HTTP request, including non-2xx responses."""
     started = time.monotonic()
     method = getattr(request, "method", None) or "GET"
@@ -1327,7 +1331,8 @@ def open_http(opener: Callable[..., Any], request: Any, *, timeout: float,
                           error=f"{error.__class__.__name__}: {error}")
         raise
     record_invocation(kind="http", argv=[method], cwd=Path.cwd(), env=env,
-                      exit_code=result[0], stdout=result[1].decode(errors="replace"),
+                      exit_code=result[0],
+                      stdout="[REDACTED]" if redact_output and result[1] else result[1].decode(errors="replace"),
                       duration_seconds=time.monotonic() - started, url=url,
                       request_body=request_body)
     return result

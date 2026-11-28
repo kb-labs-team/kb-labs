@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
-import { registerAgent, issueToken, getAccessToken } from '@kb-labs/e2e-shared/auth.js'
+import { registerAgent, issueToken, getAccessToken, unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 
 // Gateway auth applies to every route, including proxied upstreams
 // (/api/v1/*, /api/exec/*, etc.) — fixed in GHSA-75rf-rhxh-2p52. Auth hooks
@@ -75,7 +75,7 @@ test('GW-06: refresh token endpoint works and returns valid access token', async
     data: { refreshToken: first.refreshToken },
   })
   expect(res.status()).toBe(200)
-  const second = await res.json()
+  const second = unwrapGatewaySuccess<{ accessToken?: string }>(await res.json())
   // Verify a valid access token is returned (gateway may or may not rotate)
   expect(second.accessToken).toBeTruthy()
 })

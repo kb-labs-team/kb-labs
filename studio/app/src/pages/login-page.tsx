@@ -25,6 +25,7 @@
 import * as React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Building2, Lock } from 'lucide-react';
+import { decodeUxSuccessResult } from '@kb-labs/core-platform/ux-result';
 import {
   UIButton,
   UIForm,
@@ -82,12 +83,15 @@ export function LoginPage() {
       .then((res) => (res.ok ? res.json() : Promise.resolve([])))
       .then((data: unknown) => {
         // The gateway returns `{ providers: [...] }` (see gateway user-routes
-        // GET /auth/providers). Accept that canonical shape, and also tolerate
-        // a bare array for forward/backward compatibility.
-        const list = Array.isArray(data)
-          ? data
-          : Array.isArray((data as { providers?: unknown })?.providers)
-            ? (data as { providers: unknown[] }).providers
+        // GET /auth/providers), wrapped by the Gateway success boundary. Keep
+        // accepting the unwrapped route shape for development servers.
+        const payload = data && typeof data === 'object' && (data as { ok?: unknown }).ok === true
+          ? decodeUxSuccessResult<unknown>(data)
+          : data;
+        const list = Array.isArray(payload)
+          ? payload
+          : Array.isArray((payload as { providers?: unknown })?.providers)
+            ? (payload as { providers: unknown[] }).providers
             : [];
         setProviders(list as AuthProvider[]);
       })

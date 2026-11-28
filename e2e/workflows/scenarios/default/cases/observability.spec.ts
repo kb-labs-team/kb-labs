@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // Observability e2e tests.
 // Covers: short run ID resolution (OBS-001..003) and hasPendingApproval (OBS-004..005).
@@ -9,7 +9,7 @@ async function startRun(
   workflowId: string,
 ): Promise<string> {
   const res = await request.post(
-    `${WORKFLOW}/api/v1/workflows/${encodeURIComponent(workflowId)}/runs`,
+    `${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(workflowId)}/runs`,
     { data: {} },
   );
   expect([200, 201]).toContain(res.status());
@@ -25,7 +25,7 @@ test('OBS-E2E-01: GET /runs/:prefix — 8-char prefix resolves to full run', asy
   const runId = await startRun(request, 'e2e-hello');
   const prefix = runId.slice(0, 8);
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${prefix}`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${prefix}`);
   expect(res.status()).toBe(200);
 
   const body = await res.json();
@@ -42,7 +42,7 @@ test('OBS-E2E-02: GET /runs/:prefix/logs — resolves short ID', async ({ reques
   // Wait a moment so logs have a chance to appear
   await new Promise(r => setTimeout(r, 2000));
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${prefix}/logs`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${prefix}/logs`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   expect(body.ok).toBe(true);
@@ -55,7 +55,7 @@ test('OBS-E2E-03: POST /runs/:prefix/cancel — resolves short ID', async ({ req
   const prefix = runId.slice(0, 8);
 
   // Cancel immediately — run may already be terminal (409) or still running (200)
-  const res = await request.post(`${WORKFLOW}/api/v1/runs/${prefix}/cancel`);
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${prefix}/cancel`);
   expect([200, 409]).toContain(res.status());
   // Crucially: must not be 404 (which was the bug before the fix)
   expect(res.status()).not.toBe(404);
@@ -67,7 +67,7 @@ test('OBS-E2E-04: GET /runs — hasPendingApproval field present on each run', a
   // Ensure at least one run exists
   await startRun(request, 'e2e-hello');
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs?limit=5`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs?limit=5`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const runs: Array<{ hasPendingApproval?: unknown }> = body.data?.runs ?? body.data ?? body.runs ?? [];
@@ -83,7 +83,7 @@ test('OBS-E2E-04: GET /runs — hasPendingApproval field present on each run', a
 test('OBS-E2E-05: hasPendingApproval is false for e2e-hello run', async ({ request }) => {
   const runId = await startRun(request, 'e2e-hello');
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs?limit=50`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs?limit=50`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const runs: Array<{ id?: string; hasPendingApproval?: boolean }> = body.data?.runs ?? body.data ?? body.runs ?? [];
@@ -103,7 +103,7 @@ test('OBS-E2E-06: hasPendingApproval is true when run is waiting for approval', 
   // Wait until the approval step is reached
   await expect.poll(
     async () => {
-      const res = await request.get(`${WORKFLOW}/api/v1/runs?limit=50`);
+      const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs?limit=50`);
       const body = await res.json();
       const runs: Array<{ id?: string; hasPendingApproval?: boolean }> = body.data?.runs ?? [];
       return runs.find(r => r.id === runId)?.hasPendingApproval;
@@ -115,7 +115,7 @@ test('OBS-E2E-06: hasPendingApproval is true when run is waiting for approval', 
 // ── OBS-E2E-07: GET /runs/:unknown-id returns 404, not 500 ──────────────────
 
 test('OBS-E2E-07: GET /runs/:nonexistent — returns 404', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/00000000`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/00000000`);
   expect(res.status()).toBe(404);
 });
 
@@ -136,7 +136,7 @@ test('OBS-E2E-08: GET /runs/:id/logs — shell step stdout is durably queryable 
 
   await expect.poll(
     async () => {
-      const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
+      const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`);
       const body = await res.json();
       const run = body.data?.run ?? body.data;
       return run?.status;
@@ -144,13 +144,12 @@ test('OBS-E2E-08: GET /runs/:id/logs — shell step stdout is durably queryable 
     { timeout: 30_000, intervals: [1000, 2000, 3000] },
   ).toMatch(/^(success|completed)$/);
 
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}/logs`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/logs`);
   expect(res.status()).toBe(200);
   const body = await res.json();
-  const logs: Array<{ message?: string; context?: Record<string, unknown> }> = body.data?.logs ?? [];
-
-  const shellOutput = logs.find(
-    (l) => typeof l.context?.text === 'string' && (l.context!.text as string).includes('hello from e2e'),
-  );
-  expect(shellOutput, `expected a durable log entry carrying the shell step's stdout; got: ${JSON.stringify(logs)}`).toBeDefined();
+  expect(body.data?.logs).toContainEqual(expect.objectContaining({
+    stepName: 'Say hello',
+    stream: 'stdout',
+    message: 'hello from e2e',
+  }));
 });

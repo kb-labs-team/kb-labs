@@ -163,6 +163,14 @@ export class RegistryPackageSource implements MarketplaceSource {
     });
   }
 
+  getArtifactRequestHeaders(downloadUrl: string): Record<string, string> {
+    this.resolveDownloadUrl(downloadUrl, 'artifact');
+    const headers: Record<string, string> = {};
+    if (this.authToken) { headers['Authorization'] = `Bearer ${this.authToken}`; }
+    if (this.shareToken) { headers['X-Share-Token'] = this.shareToken; }
+    return headers;
+  }
+
   async remove(packageId: string, root: string): Promise<void> {
     await fs.rm(path.join(root, 'node_modules', packageId), { recursive: true, force: true });
   }

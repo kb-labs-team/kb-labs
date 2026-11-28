@@ -111,10 +111,10 @@ export async function registerObservabilityRoutes(
         if (!platform?.cache) {
           return reply.code(503).send({
             ok: false,
-            error: {
-              code: 'PLATFORM_CACHE_UNAVAILABLE',
-              message: 'Platform cache is not available',
-            },
+            error: createErrorEnvelope('KB_SERVICE_UNAVAILABLE', {
+              message: 'Platform cache is not available.',
+              details: { service: 'cache' },
+            }),
           });
         }
 
@@ -165,10 +165,10 @@ export async function registerObservabilityRoutes(
         if (allMetrics.length === 0) {
           return reply.code(404).send({
             ok: false,
-            error: {
-              code: 'NO_METRICS_FOUND',
-              message: 'No system metrics found. Metrics collector may not be running.',
-            },
+            error: createErrorEnvelope('KB_RUNTIME_RESOURCE_NOT_FOUND', {
+              message: 'No system metrics samples are available.',
+              details: { route: path },
+            }),
           });
         }
 

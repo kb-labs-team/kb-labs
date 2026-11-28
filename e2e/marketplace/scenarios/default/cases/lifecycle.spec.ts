@@ -98,8 +98,8 @@ test('ML-03: enable package → enabled flag restored in listing', async ({ requ
   expect(enableData.enabled).toBe(true)
 })
 
-// ML-04: update installed package — endpoint responds without error
-test('ML-04: POST /packages/update — responds without error', async ({ request }) => {
+// case: S-220.7 — HTTP boundary of the installed same-version update.
+test('ML-04: update to the installed version is refused with a typed diagnostic', async ({ request }) => {
   const install = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/install`, {
     data: { specs: [TEST_SPEC] },
     timeout: 60_000,
@@ -110,9 +110,17 @@ test('ML-04: POST /packages/update — responds without error', async ({ request
   const update = await request.post(`${MARKETPLACE}/api/v1/marketplace/packages/update`, {
     data: { packageIds: [TEST_SPEC] },
   })
-  expect(update.status(), 'marketplace update capability is missing').not.toBe(404)
-  // 200 = updated, 204 = already at latest, both are valid
-  expect([200, 204]).toContain(update.status())
+  expect(update.status(), await update.text()).toBe(409)
+  const result = await update.json()
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      code: 'KB_MARKETPLACE_VERSION_NOT_HIGHER',
+      correlationId: expect.any(String),
+      details: { installedVersion: expect.any(String), requestedVersion: expect.any(String) },
+    },
+  })
+  expect(result.error.details.requestedVersion).toBe(result.error.details.installedVersion)
 })
 
 // ML-05: uninstall package → no longer in listing

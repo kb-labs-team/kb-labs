@@ -30,6 +30,7 @@ type flagDefinition struct {
 var flagCatalog = map[string]flagDefinition{
 	"index":                               {Name: "index", Usage: "path to immutable release index JSON"},
 	"input":                               {Name: "input", Usage: "path to install request JSON"},
+	"config":                              {Name: "config", Usage: "path to declared install config JSON (manifest IDs only)"},
 	"project-root":                        {Name: "project-root", Usage: "project directory to register after installation"},
 	"platform-version":                    {Name: "platform-version", Usage: "exact platform version"},
 	"platform-channel":                    {Name: "platform-channel", Usage: "platform channel: stable, canary, experimental"},

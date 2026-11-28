@@ -1,11 +1,11 @@
+import { listPendingApprovals, resolveApproval, startWorkflowRun } from '../../approvals.js';
+import { collectAuthenticatedSseEvents, expectAuthenticatedSseTerminates, sseAuthHeaders } from '../../sse-auth.js';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import {
-  collectSseEvents,
-  expectSseTerminates,
-  assertNoSseDuplicates,
+  assertNoSseDuplicates, readSse,
 } from '@kb-labs/shared-testing-e2e';
 import type { SseEvent } from '@kb-labs/shared-testing-e2e';
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ function isTerminal(e: SseEvent): boolean {
 }
 
 async function startRun(request: APIRequestContext): Promise<string> {
-  const catalogRes = await request.get(`${WORKFLOW}/api/v1/workflows`);
+  const catalogRes = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows`);
   const catalog = await catalogRes.json();
   const workflows: Array<{ id?: string; name?: string }> =
     catalog.data?.workflows ?? catalog.data ?? catalog.workflows ?? [];
@@ -29,7 +29,7 @@ async function startRun(request: APIRequestContext): Promise<string> {
   if (!wf?.id && !wf?.name) throw new Error('No workflow found in catalog');
 
   const id = wf.id ?? wf.name!;
-  const runRes = await request.post(`${WORKFLOW}/api/v1/workflows/${encodeURIComponent(id)}/runs`, { data: {} });
+  const runRes = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/workflows/${encodeURIComponent(id)}/runs`, { data: {} });
   const body = await runRes.json();
   const runId: string = body.data?.runId ?? body.data?.id ?? body.runId;
   if (!runId) throw new Error(`Failed to start run: ${JSON.stringify(body)}`);
@@ -40,13 +40,13 @@ async function pollRunStatus(
   request: APIRequestContext,
   runId: string,
 ): Promise<string | undefined> {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/${runId}`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}`);
   const body = await res.json();
   return body.data?.run?.status ?? body.data?.status ?? body.status;
 }
 
 function eventsUrl(runId: string): string {
-  return `${WORKFLOW}/api/v1/runs/${runId}/events`;
+  return `${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/${runId}/events`;
 }
 
 // ── tests ─────────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ function eventsUrl(runId: string): string {
 test('SE-01: run.snapshot arrives first, terminal event closes stream', async ({ request }) => {
   const runId = await startRun(request);
   // Collect until stream closes naturally (terminal event triggers cleanup + raw.end())
-  const events = await collectSseEvents(eventsUrl(runId), { timeoutMs: 30_000 });
+  const events = await collectAuthenticatedSseEvents(request, eventsUrl(runId), { timeoutMs: 30_000 });
 
   expect(events.length).toBeGreaterThan(0);
   // First event must always be the snapshot
@@ -65,7 +65,7 @@ test('SE-01: run.snapshot arrives first, terminal event closes stream', async ({
 
 test('SE-02: no duplicate events in the stream', async ({ request }) => {
   const runId = await startRun(request);
-  const events = await collectSseEvents(eventsUrl(runId), { timeoutMs: 30_000 });
+  const events = await collectAuthenticatedSseEvents(request, eventsUrl(runId), { timeoutMs: 30_000 });
   assertNoSseDuplicates(events);
 });
 
@@ -79,29 +79,43 @@ test('SE-03: already-terminal run closes stream immediately (< 3s)', async ({ re
   ).toMatch(/success|completed|failed|cancelled/);
 
   // Reconnect — terminal run must close the new SSE connection quickly
-  await expectSseTerminates(eventsUrl(runId), { timeoutMs: 3_000 });
+  await expectAuthenticatedSseTerminates(request, eventsUrl(runId), { timeoutMs: 3_000 });
 });
 
 test('SE-04: invalid runId returns 404, not an SSE stream', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/runs/nonexistent-run-id-xyz/events`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/runs/nonexistent-run-id-xyz/events`);
   expect(res.status()).toBe(404);
+  expect((await res.json()).error.code).toBe('KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND');
 });
 
-test('SE-06: log.appended events include stepName in payload', async ({ request }) => {
-  const runId = await startRun(request);
-  const events = await collectSseEvents(eventsUrl(runId), { timeoutMs: 30_000 });
-
-  const logEvents = events.filter((e) => eventType(e) === 'log.appended');
-
-  // Workflow may produce zero log events if steps emit nothing — only assert when present
-  if (logEvents.length === 0) { return; }
-
-  // At least one log event must carry stepName (set by engine.publishLog)
-  const withStepName = logEvents.filter((e) => {
-    const payload = (e.json as Record<string, unknown> | undefined)?.payload as Record<string, unknown> | undefined;
-    return typeof payload?.stepName === 'string' && payload.stepName.length > 0;
-  });
-  expect(withStepName.length).toBeGreaterThan(0);
+test('SE-06 @S-027.7: a connected subscriber receives stdout from the step after approval', async ({ request }) => {
+  test.setTimeout(60_000);
+  const runId = await startWorkflowRun(request, 'e2e-approval');
+  let pending: Awaited<ReturnType<typeof listPendingApprovals>> = [];
+  await expect.poll(async () => {
+    pending = await listPendingApprovals(request, runId);
+    return pending.length;
+  }, { timeout: 20_000 }).toBe(1);
+  const { jobId, stepId } = pending[0]!;
+  const events: SseEvent[] = [];
+  const headers = await sseAuthHeaders(request);
+  for await (const event of readSse(eventsUrl(runId), { headers, timeoutMs: 30_000 })) {
+    events.push(event);
+    if (eventType(event) === 'run.snapshot') {
+      // Receiving the snapshot proves this connection is open before the shell can emit.
+      const approval = await resolveApproval(request, runId, jobId, stepId, 'approve');
+      expect(approval.status).toBe(200);
+    }
+  }
+  const stdoutIndex = events.findIndex((event) =>
+    eventType(event) === 'log.appended' &&
+    expect.objectContaining({ runId, payload: expect.objectContaining({
+      stepName: 'After gate', stream: 'stdout', message: 'after approval',
+    }) }).asymmetricMatch(event.json),
+  );
+  const terminalIndex = events.findIndex(isTerminal);
+  expect(stdoutIndex, 'stdout from After gate must be delivered').toBeGreaterThanOrEqual(0);
+  expect(terminalIndex, 'the stream must close with a terminal run event').toBeGreaterThan(stdoutIndex);
 });
 
 test('SE-05: multiple simultaneous subscribers receive same events', async ({ request }) => {
@@ -109,8 +123,8 @@ test('SE-05: multiple simultaneous subscribers receive same events', async ({ re
   const url = eventsUrl(runId);
 
   const [eventsA, eventsB] = await Promise.all([
-    collectSseEvents(url, { timeoutMs: 30_000 }),
-    collectSseEvents(url, { timeoutMs: 30_000 }),
+    collectAuthenticatedSseEvents(request, url, { timeoutMs: 30_000 }),
+    collectAuthenticatedSseEvents(request, url, { timeoutMs: 30_000 }),
   ]);
 
   expect(eventsA.length).toBeGreaterThan(0);

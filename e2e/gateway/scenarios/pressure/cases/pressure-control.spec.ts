@@ -1,10 +1,10 @@
 /**
  * E2E: HTTP pressure control via core ResourceBroker (ADR-0056).
  *
- * Configuration is applied by `kb-dev ensure --scenario` via
+ * Configuration is applied by the installed-platform scenario fixture via
  * `e2e/gateway/scenarios/pressure/overlay.jsonc`:
  *
- *   - perService.rest:      5 req/s    (resource `gateway:service:rest`)
+ *   - perService.marketplace: 5 req/s (resource `gateway:service:marketplace`)
  *   - perRoute /health:     3 req/s    (resource `gateway:route:health`)
  *   - perTenant:            30 req/min (resource `gateway:tenant:<namespaceId>`)
  *
@@ -15,7 +15,7 @@
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js';
-import { issueToken, getAccessToken } from '@kb-labs/e2e-shared/auth.js';
+import { issueToken, getAccessToken, registerAgent } from '@kb-labs/e2e-shared/auth.js';
 
 async function fireMany(
   request: APIRequestContext,
@@ -32,35 +32,9 @@ async function fireMany(
   return Promise.all(promises);
 }
 
-async function registerWithNamespace(
-  request: APIRequestContext,
-  namespaceId: string,
-  name: string,
-) {
-  // Login as bootstrap admin to get session cookies for /auth/register.
-  const loginRes = await request.post(`${GATEWAY}/auth/login`, {
-    data: {
-      email: process.env['GATEWAY_BOOTSTRAP_ADMIN_EMAIL'] ?? 'admin@e2e.test',
-      password: process.env['GATEWAY_BOOTSTRAP_ADMIN_PASSWORD'] ?? 'E2eBootstrapPass1!',
-      tenantId: process.env['GATEWAY_BOOTSTRAP_TENANT_ID'] ?? 'kblabs-cloud',
-    },
-  });
-  if (!loginRes.ok()) {
-    throw new Error(`admin login failed: ${loginRes.status()} ${await loginRes.text()}`);
-  }
-
-  const res = await request.post(`${GATEWAY}/auth/register`, {
-    data: { name, namespaceId, capabilities: [] },
-  });
-  if (!res.ok()) {
-    throw new Error(`register failed: ${res.status()} ${await res.text()}`);
-  }
-  return res.json();
-}
-
 test.describe('Gateway pressure control', () => {
   test.beforeAll(async () => {
-    // The runner applied the pressure overlay and restarted gateway before
+    // The runner applied pressure configuration and restarted the platform before
     // this hook fires; no per-spec env-var probe needed.
     // Brief settle so an upstream warmup request doesn't burn through the
     // RPS window of the first case.
@@ -68,17 +42,15 @@ test.describe('Gateway pressure control', () => {
   });
 
   test('GW-PC-01: per-service limit returns 429 once the RPS budget is exhausted', async ({ request }) => {
-    // /health is overridden separately (route layer); hit an actual rest-upstream path instead.
-    // Any path under `/api/v1` that REST responds to is fine; `/api/v1/health` works through proxy.
-    // /api/v1/* is a proxied route and requires auth since GHSA-75rf-rhxh-2p52 — pressure
-    // control runs before the auth check (see server.ts hook order), so the 429 count is
-    // unaffected, but requests that clear the RPS budget need a token to see 200 instead of 401.
+    // Marketplace is a host-generated static upstream in the installed topology.
+    // Use the same authenticated host route as the Marketplace E2E suite.
     const token = await getAccessToken(request);
     const headers = { Authorization: `Bearer ${token}` };
-    const results = await fireMany(request, `${GATEWAY}/api/v1/health`, 20, { headers });
+    const results = await fireMany(request, `${GATEWAY}/api/v1/marketplace/packages`, 20, { headers });
     const ok = results.filter(r => r.status === 200);
     const tooMany = results.filter(r => r.status === 429);
 
+    expect(ok.length).toBeGreaterThan(0);
     expect(ok.length).toBeLessThanOrEqual(5);
     expect(tooMany.length).toBeGreaterThanOrEqual(15);
     for (const r of tooMany) {
@@ -91,10 +63,10 @@ test.describe('Gateway pressure control', () => {
     const token = await getAccessToken(request);
     const headers = { Authorization: `Bearer ${token}` };
     // Burn through the limit first.
-    await fireMany(request, `${GATEWAY}/api/v1/health`, 20, { headers });
+    await fireMany(request, `${GATEWAY}/api/v1/marketplace/packages`, 20, { headers });
     // Then wait past the 1-second window and try again.
     await new Promise(resolve => setTimeout(resolve, 1200));
-    const after = await fireMany(request, `${GATEWAY}/api/v1/health`, 3, { headers });
+    const after = await fireMany(request, `${GATEWAY}/api/v1/marketplace/packages`, 3, { headers });
     expect(after.every(r => r.status === 200)).toBe(true);
   });
 
@@ -111,8 +83,11 @@ test.describe('Gateway pressure control', () => {
     // Wait past any leftover RPS pressure from prior tests.
     await new Promise(resolve => setTimeout(resolve, 1500));
 
-    const credsA = await registerWithNamespace(request, 'pc-tenant-a', 'pc-a');
-    const credsB = await registerWithNamespace(request, 'pc-tenant-b', 'pc-b');
+    const credsA = await registerAgent(request, 'pc-a');
+    const credsB = await registerAgent(request, 'pc-b');
+    expect(credsA.namespaceId).toBeTruthy();
+    expect(credsB.namespaceId).toBeTruthy();
+    expect(credsA.namespaceId).not.toBe(credsB.namespaceId);
     const tokenA = (await issueToken(request, credsA)).accessToken;
     const tokenB = (await issueToken(request, credsB)).accessToken;
 

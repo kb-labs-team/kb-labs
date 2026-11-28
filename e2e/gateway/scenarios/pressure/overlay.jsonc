@@ -1,16 +1,13 @@
 // Gateway HTTP pressure-control overlay (ADR-0056 + core-config ADR-0001).
 //
-// Applied by the e2e-runner via `kb-dev ensure --scenario`. The overlay
-// merges into the project `kb.config.json` and is read by gateway-app via
-// the overlay-aware `readMergedRawConfig`. After the gateway restart that
-// `--scenario` triggers, these limits become the effective config until
-// the next scenario or `--scenario default` removes the overlay.
+// The installed Gateway fixture applies these values using kb config set,
+// restarts the platform, and restores the original configuration on reset.
 {
   "gateway": {
     "pressure": {
       "enabled": true,
       "perService": {
-        "rest": { "requestsPerSecond": 5, "safetyMargin": 1 }
+        "marketplace": { "requestsPerSecond": 5, "safetyMargin": 1 }
       },
       "perRoute": [
         {

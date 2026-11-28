@@ -8,6 +8,7 @@ import {
   validateServiceObservabilityHealth,
 } from '@kb-labs/core-contracts';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import { registerEnvelopeMiddleware } from '../../middleware/envelope.js';
 import type { ReadinessState } from '../readiness';
 
 const BASE_CONFIG: RestApiConfig = {
@@ -147,7 +148,8 @@ describe('registerHealthRoutes', () => {
     await app.close();
   });
 
-  it('ready endpoint waits for registry load and mounted routes', async () => {
+  // case: S-203.1
+  it('reports readiness when discovery finishes with zero installed plugins', async () => {
     const { registerHealthRoutes } = await import('../health');
     const app = Fastify({ logger: false }) as unknown as FastifyInstance;
 
@@ -176,7 +178,7 @@ describe('registerHealthRoutes', () => {
     let snapshotRev = 0;
     let snapshotPartial = true;
     let snapshotStale = true;
-    let snapshotPlugins: Array<{ id: string }> = [];
+    const snapshotPlugins: Array<{ id: string }> = [];
 
     const cliApi = {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
@@ -194,35 +196,18 @@ describe('registerHealthRoutes', () => {
       })),
     } as unknown as IEntityRegistry;
 
+    registerEnvelopeMiddleware(app, BASE_CONFIG);
     await registerHealthRoutes(app, BASE_CONFIG, cliApi, readiness);
 
     const notReady = await app.inject({ method: 'GET', url: '/ready' });
     expect(notReady.statusCode).toBe(503);
-    expect(notReady.json()).toMatchObject({
-      schema: 'kb.ready/1',
-      ready: false,
-      status: 'initializing',
-      reason: 'registry_snapshot_stale',
-      components: {
-        cliApi: {
-          initialized: true,
-        },
-        registry: {
-          loaded: false,
-          partial: true,
-          stale: true,
-        },
-        plugins: {
-          mounted: false,
-          inProgress: true,
-        },
-      },
-    });
+    expect(notReady.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_SERVICE_UNAVAILABLE', details: { service: 'rest', status: 'registry_snapshot_stale' },
+    } });
 
     snapshotRev = 1;
     snapshotPartial = false;
     snapshotStale = false;
-    snapshotPlugins = [{ id: 'test' }];
     readiness.pluginRoutesMounted = true;
     readiness.pluginRouteErrors = 0;
     readiness.pluginRouteFailures = [];
@@ -233,7 +218,8 @@ describe('registerHealthRoutes', () => {
 
     const ready = await app.inject({ method: 'GET', url: '/ready' });
     expect(ready.statusCode).toBe(200);
-    expect(ready.json()).toMatchObject({
+    expect(ready.json().ok).toBe(true);
+    expect(ready.json().data).toMatchObject({
       schema: 'kb.ready/1',
       ready: true,
       status: 'ready',
@@ -314,18 +300,9 @@ describe('registerHealthRoutes', () => {
 
     const response = await app.inject({ method: 'GET', url: '/ready' });
     expect(response.statusCode).toBe(503);
-    expect(response.json()).toMatchObject({
-      schema: 'kb.ready/1',
-      ready: false,
-      status: 'initializing',
-      reason: 'redis_unavailable',
-      components: {
-        redis: {
-          enabled: true,
-          healthy: false,
-        },
-      },
-    });
+    expect(response.json()).toMatchObject({ ok: false, error: {
+      code: 'KB_SERVICE_UNAVAILABLE', details: { service: 'rest', status: 'redis_unavailable' },
+    } });
 
     await app.close();
   });

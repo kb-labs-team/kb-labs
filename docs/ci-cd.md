@@ -84,10 +84,10 @@ Run the focused local gate for changed packages, or select a small package set e
 
 ```bash
 scripts/local-gate.sh quick
-scripts/local-gate.sh quick --packages @kb-labs/extension-store
+scripts/local-gate.sh quick --packages @kb-labs/core-extension-store
 ```
 
-`quick` compares changes with `local/main`, then runs package type-checks and unit tests plus isolated-HOME Go tests for changed `tools/kb-create` packages. Use `--dry-run` to inspect package selection and commands.
+`quick` compares changes with the default remote-tracking branch (`origin/HEAD`, usually `origin/master`) when available, then runs package type-checks and unit tests plus isolated-HOME Go tests for changed `tools/kb-create` packages. If `origin/HEAD` is unset or dangling, it tries `origin/master`; standalone clones without an `origin` remote can fall back to `local/main`. Use `--dry-run` to inspect package selection and commands.
 
 The full sequence is available when the machine can support it:
 

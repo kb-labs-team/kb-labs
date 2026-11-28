@@ -9,6 +9,7 @@ import {
   releaseArtifactPackageNames,
 } from 'kb-create/scripts/platform-release-config.mjs';
 import registryManifest from './registry-manifest.json' with { type: 'json' };
+import { platformAdapterOptions } from './prepare-release-index-config.mjs';
 
 test('reads stable platform version from a sealed V2 release index', () => {
   const fixture = join(dirname(fileURLToPath(import.meta.url)), 'fixtures', 'release-index-v2.json');
@@ -22,6 +23,14 @@ test('sealed release index snapshot contains platform members and excludes devki
   const memberPackages = index.platforms.find(({ id }) => id === 'platform').members.map(({ package: packageName }) => packageName);
   assert.ok(memberPackages.length > 0);
   assert.equal(memberPackages.includes('@kb-labs/devkit'), false);
+});
+
+test('generated platform defaults trust an external Registry transport without adding a host service', () => {
+  const config = readPlatformReleaseConfig(join(dirname(fileURLToPath(import.meta.url)), '../../tools/kb-create/config/platform-release.jsonc'));
+  const options = platformAdapterOptions(config, registryManifest);
+  assert.deepEqual(options.serviceTransport.services['marketplace-registry'], { url: 'http://127.0.0.1:5071' });
+  assert.equal(registryManifest.services.some(({ id }) => id === 'marketplace-registry'), false);
+  assert.equal(registryManifest.services.some(({ id }) => id === 'gateway'), true);
 });
 
 test('release index config requirements target services in the default graph', () => {

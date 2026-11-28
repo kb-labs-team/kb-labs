@@ -166,6 +166,133 @@ describe('workflow worker lifecycle', () => {
     expect(call.workspace).toBe('/tmp/test-workspace');
   });
 
+  // case: S-027.7
+  it.each([
+    { name: 'drains live output before marking the step complete', hangs: false },
+    { name: 'bounds a live publication that never settles', hangs: true },
+  ])('$name', async ({ hangs }) => {
+    const runId = `run-live-log-${Date.now().toString(36)}`;
+    const jobId = `${runId}:job`;
+    const run = {
+      id: runId,
+      tenantId: 'default',
+      env: {},
+      metadata: {},
+      jobs: [{
+        id: jobId,
+        jobName: 'test-job',
+        status: 'queued' as JobRun['status'],
+        attempt: 0,
+        steps: [{
+          id: 'step-1',
+          name: 'After gate',
+          status: 'queued' as StepRun['status'],
+          spec: { name: 'After gate', uses: 'builtin:shell', with: { command: 'echo after approval' } },
+        }],
+      }],
+    } satisfies WorkerRunTestDouble;
+    const completion = createDeferred<void>();
+    const publishStarted = createDeferred<void>();
+    const allowPublish = createDeferred<void>();
+    const order: string[] = [];
+
+    let queueDrained = false;
+    const engine = {
+      async nextJob() {
+        if (queueDrained) {return null;}
+        queueDrained = true;
+        return {
+          id: `${runId}:queue`, runId, jobId, priority: 'normal' as const,
+          enqueuedAt: new Date().toISOString(), availableAt: Date.now(), jobName: 'test-job',
+        };
+      },
+      async getRun(requestedRunId: string): Promise<WorkflowRun | null> {
+        return requestedRunId === runId ? run as unknown as WorkflowRun : null;
+      },
+      async markJobStarted() { run.jobs[0]!.status = 'running'; },
+      async markJobCompleted(): Promise<WorkflowOperationResult> {
+        run.jobs[0]!.status = 'success';
+        completion.resolve();
+        return { ancillaryFailures: [] };
+      },
+      async markJobFailed(_r: string, _j: string, error: Error): Promise<WorkflowOperationResult> {
+        completion.reject(error);
+        return { ancillaryFailures: [] };
+      },
+      async markStepStarted() {},
+      async markStepCompleted() { order.push('step completed'); },
+      async markStepFailed() {},
+      async markJobInterrupted() {},
+      async publishLog() {
+        publishCallCount += 1;
+        publishStarted.resolve();
+        if (hangs) await allowPublish.promise;
+        await allowPublish.promise;
+        order.push('log published');
+      },
+      getStateStore: vi.fn(() => ({ updateStep: vi.fn(async () => {}) }) as unknown as StateStore),
+    } satisfies Partial<WorkflowEngine>;
+
+    let publishCallCount = 0;
+    const logger = mockLogger();
+    mockRunnerExecute.mockImplementationOnce(async (input) => {
+      const logCount = hangs ? 300 : 1;
+      for (let lineNo = 1; lineNo <= logCount; lineNo += 1) {
+        input.context.onLog?.({
+          level: 'info', message: 'after approval', stream: 'stdout', lineNo,
+          timestamp: new Date().toISOString(),
+        });
+      }
+      return { status: 'success', outputs: { stdout: 'after approval\n' } };
+    });
+
+    const executionBackend = createWorkflowExecutionBackendFixture();
+    const worker = await createWorkflowWorker({
+      projectId: 'prj_0000000000000001',
+      engine: engine as unknown as WorkflowEngine,
+      secretProvider: new EnvSecretProvider(),
+      cliApi: {} as IEntityRegistry,
+      logger,
+      workspaceRoot: '/tmp/test-workspace',
+      platform: {
+        executionBackend: executionBackend.backend,
+        hasExecutionBackend: true,
+        getAdapter: vi.fn().mockReturnValue(undefined),
+      },
+      concurrency: 1,
+    });
+
+    const workerRun = worker.start();
+    try {
+      await Promise.race([
+        publishStarted.promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('live log publish timeout')), 3000)),
+      ]);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(order).toEqual([]);
+
+      if (!hangs) allowPublish.resolve();
+      await Promise.race([
+        completion.promise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 5000)),
+      ]);
+      expect(order).toEqual(hangs ? ['step completed'] : ['log published', 'step completed']);
+      if (hangs) {
+        expect(publishCallCount).toBe(1);
+        expect(logger.messages.some((entry) => entry.msg.includes('queue is full') && entry.meta?.maxQueued === 256)).toBe(true);
+        expect(logger.messages.some((entry) => entry.msg.includes('did not drain before step completion'))).toBe(true);
+        allowPublish.resolve();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(publishCallCount).toBe(1);
+        expect(order).toEqual(['step completed', 'log published']);
+      }
+    } finally {
+      allowPublish.resolve();
+      await worker.stop();
+      await workerRun;
+    }
+  });
+
   // case: S-028.4, S-028.5
   it('projects parent values, preserves production logs, and redacts declared secret values', async () => {
     const sentinel = 'w01-worker-secret-should-not-escape';

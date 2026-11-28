@@ -307,7 +307,7 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     let onLiveEvent: (event: WorkflowEvent) => void = () => {};
     let idleTimer: ReturnType<typeof setTimeout> | null = null;
     let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
-    const cleanup = () => {
+    const cleanup = (endResponse = true) => {
       if (closed) {return;}
       closed = true;
       pendingEvents.length = 0;
@@ -317,10 +317,10 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
       }
       if (idleTimer) {clearTimeout(idleTimer);}
       if (keepAliveTimer) {clearInterval(keepAliveTimer);}
-      if (raw && !raw.writableEnded) {raw.end();}
+      if (endResponse && raw && !raw.writableEnded) {raw.end();}
     };
-    reply.raw.once('close', cleanup);
-    reply.raw.once('error', cleanup);
+    reply.raw.once('close', () => cleanup());
+    reply.raw.once('error', () => cleanup());
     const dispatchEvent = (event: WorkflowEvent) => {
       if (closed) {return;}
       if (snapshotSent) {
@@ -334,12 +334,12 @@ export function registerWorkflowsAPI(options: RegisterWorkflowsAPIOptions): void
     try {
       run = await observability.observeOperation('workflow.run.events', () => engine.getRun(runId));
     } catch (error) {
-      cleanup();
+      cleanup(false);
       throw error;
     }
     if (closed) {return;}
     if (!run) {
-      cleanup();
+      cleanup(false);
       return fail(reply, { code: 'KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND', message: `Workflow run ${runId} was not found.`, details: { runId } });
     }
 

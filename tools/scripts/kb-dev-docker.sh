@@ -63,4 +63,15 @@ for arg in "$@"; do
 done
 
 cd "$REPO_ROOT"
+# Gateway pressure changes the disposable installed platform configuration.
+if [[ "${E2E_SUITE:-}" == gateway && $# == 3 && "$1" == ensure && "$2" == --scenario ]]; then
+  case "${translated[2]}" in
+    default|"$CONTAINER_E2E/gateway/scenarios/default/scenario.yaml") scenario=default ;;
+    "$CONTAINER_E2E/gateway/scenarios/pressure/scenario.yaml") scenario=pressure ;;
+  esac
+  if [[ -n "${scenario:-}" ]]; then
+    exec docker compose exec -T -w "$CONTAINER_WORKDIR" "$TARGET" \
+      sh "$CONTAINER_E2E/gateway/scripts/installed-scenario.sh" "$scenario"
+  fi
+fi
 exec docker compose exec -T -w "$CONTAINER_WORKDIR" "$TARGET" kb-dev "${translated[@]}"

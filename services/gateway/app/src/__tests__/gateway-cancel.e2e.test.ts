@@ -18,7 +18,6 @@ import {
   type HttpClient,
 } from '@kb-labs/shared-testing-e2e';
 
-const NAMESPACE = 'ns-cancel-e2e';
 const controller = new KbDevController();
 let client: HttpClient;
 let GATEWAY = '';
@@ -88,13 +87,12 @@ function parseNdjson(body: string): Array<{ type: string; [k: string]: unknown }
 
 describe('Gateway execution cancel', () => {
   it('POST /api/v1/execute/:id/cancel → execution:done(exitCode=130)', async () => {
-    const { machineToken } = await registerHost(client, { name: 'cancel-http-host', namespaceId: NAMESPACE, capabilities: ['execution'] });
+    const { accessToken, namespaceId } = await registerAgent(client);
+    const { machineToken } = await registerHost(client, { name: 'cancel-http-host', namespaceId, capabilities: ['execution'] });
     const hostWs = await connectHostWs(machineToken);
 
     // Host never responds → execution stays in-flight until cancelled.
     hostWs.on('message', () => { /* swallow */ });
-
-    const { accessToken } = await registerAgent(client, { namespaceId: NAMESPACE });
 
     // Start streaming execution.
     const execFetch = fetch(`${GATEWAY}/api/v1/execute`, {
@@ -139,7 +137,7 @@ describe('Gateway execution cancel', () => {
   }, 20_000);
 
   it('POST /api/v1/execute/:id/cancel with nonexistent id → 4xx', async () => {
-    const { accessToken } = await registerAgent(client, { namespaceId: NAMESPACE });
+    const { accessToken } = await registerAgent(client);
     const res = await client.post(
       '/api/v1/execute/00000000-0000-0000-0000-000000000000/cancel',
       { reason: 'user' },

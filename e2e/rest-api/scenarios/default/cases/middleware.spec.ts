@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 // Envelope middleware wraps ALL responses: { ok: true, data: <payload>, meta: {...} }
 // This is a core server behaviour, not specific to any route.

@@ -27,6 +27,10 @@ export class InMemoryStateBroker implements StateBroker {
   }
 
   async get<T>(key: string): Promise<T | null> {
+    return this.read<T>(key);
+  }
+
+  private read<T>(key: string): T | null {
     const entry = this.store.get(key);
 
     if (!entry) {
@@ -46,6 +50,10 @@ export class InMemoryStateBroker implements StateBroker {
   }
 
   async set<T>(key: string, value: T, ttl = 300_000): Promise<void> {
+    this.write(key, value, ttl);
+  }
+
+  private write<T>(key: string, value: T, ttl = 300_000): void {
     const namespace = this.extractNamespace(key);
     const size = this.estimateSize(value);
 
@@ -86,11 +94,11 @@ export class InMemoryStateBroker implements StateBroker {
   }
 
   async zadd(key: string, score: number, member: string): Promise<void> {
-    const entries = (await this.get<Array<{ score: number; member: string }>>(key)) ?? [];
+    const entries = this.read<Array<{ score: number; member: string }>>(key) ?? [];
     const next = entries.filter((entry) => entry.member !== member);
     next.push({ score, member });
     next.sort((left, right) => left.score - right.score || left.member.localeCompare(right.member));
-    await this.set(key, next);
+    this.write(key, next);
   }
 
   async zrangebyscore(key: string, min: number, max: number): Promise<string[]> {
@@ -99,8 +107,8 @@ export class InMemoryStateBroker implements StateBroker {
   }
 
   async zrem(key: string, member: string): Promise<void> {
-    const entries = (await this.get<Array<{ score: number; member: string }>>(key)) ?? [];
-    await this.set(key, entries.filter((entry) => entry.member !== member));
+    const entries = this.read<Array<{ score: number; member: string }>>(key) ?? [];
+    this.write(key, entries.filter((entry) => entry.member !== member));
   }
 
   async getStats(): Promise<BrokerStats> {

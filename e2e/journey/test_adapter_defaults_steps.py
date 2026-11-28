@@ -196,6 +196,25 @@ class InstalledDefaultAdapterGapTests(unittest.TestCase):
 
 
 class AdapterDefaultJourneyTests(unittest.TestCase):
+    def test_project_state_uses_installed_host_state_home_when_kb_home_is_not_exported(self):
+        with tempfile.TemporaryDirectory(prefix="journey-adapter-installed-home-") as directory:
+            root = Path(directory)
+            platform_root = root / "kb-platform"
+            kb_home = platform_root / "state" / "home"
+            kb_home.mkdir(parents=True)
+            project = root / "project"
+            project.mkdir()
+            (kb_home / "projects.json").write_text(json.dumps({"projects": [
+                {"id": "prj_fixture", "path": str(project.resolve())},
+            ]}))
+
+            resolved = _project_state_dir(project, {
+                "HOME": str(root),
+                "KB_JOURNEY_PLATFORM_ROOT": str(platform_root),
+            })
+
+        self.assertEqual(resolved, (kb_home / "state" / "prj_fixture").resolve())
+
     # case: S-054.4
     def test_network_requirement_check_excludes_slots_that_require_configuration(self):
         rows = {

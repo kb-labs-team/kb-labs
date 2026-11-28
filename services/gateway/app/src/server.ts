@@ -20,7 +20,7 @@ import {
 import type { GatewayConfig } from "@kb-labs/gateway-contracts";
 import { resolveGatewayPressureConfig } from "@kb-labs/gateway-contracts";
 import type { ProjectServiceDeclaration } from "@kb-labs/plugin-contracts";
-import { HostRegistrationSchema } from "@kb-labs/gateway-contracts";
+import { HostDescriptorSchema, HostListResponseSchema, HostRegistrationSchema } from "@kb-labs/gateway-contracts";
 import {
   AuthService,
   type JwtConfig,
@@ -79,6 +79,7 @@ import {
 } from "./webhook/router.js";
 import {
   registerProjectRoutes,
+  rewriteStaticProxyRequestHeaders,
   type ProjectRouting,
 } from "./project-routing.js";
 import type { HostRoutes } from "./host-routes.js";
@@ -310,6 +311,18 @@ export async function createServer(
       prefix: upstream.prefix,
       rewritePrefix: upstream.rewritePrefix ?? upstream.prefix,
       disableCache: true,
+      replyOptions: {
+        rewriteRequestHeaders: (request, headers) => {
+          return rewriteStaticProxyRequestHeaders(
+            request.raw.url ?? request.url,
+            request.params as Record<string, string | undefined>,
+            upstream.prefix,
+            upstream.rewritePrefix ?? upstream.prefix,
+            conn.baseUrl,
+            headers,
+          );
+        },
+      },
       // Disable http-proxy WS for socket upstreams — the gateway dialer owns it.
       websocket: wsOverSocket ? false : (upstream.websocket ?? false),
       undici: {
@@ -801,7 +814,7 @@ export async function createServer(
     // List hosts (auth required)
     scope.get(
       "/hosts",
-      { schema: { tags: ["Hosts"], summary: "List registered hosts", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object', properties: { hosts: { type: 'array', items: { type: 'object' } } }, required: ['hosts'] }, 401: { type: 'object' } } } },
+      { serializerCompiler: ({ httpStatus }) => httpStatus === '200' ? (value) => JSON.stringify(HostListResponseSchema.parse(value)) : JSON.stringify, schema: { tags: ["Hosts"], summary: "List registered hosts", querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: HostListResponseSchema, 401: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
@@ -815,7 +828,7 @@ export async function createServer(
     // Get host by ID (auth required)
     scope.get<{ Params: { hostId: string } }>(
       "/hosts/:hostId",
-      { config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Hosts"], summary: "Get host by ID", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: { type: 'object' }, 401: { type: 'object' }, 404: { type: 'object' } } } },
+      { serializerCompiler: ({ httpStatus }) => httpStatus === '200' ? (value) => JSON.stringify(HostDescriptorSchema.parse(value)) : JSON.stringify, config: { uxFixture: { validResult: 'error-envelope' } }, schema: { tags: ["Hosts"], summary: "Get host by ID", params: { type: 'object', properties: { hostId: { type: 'string' } }, required: ['hostId'], additionalProperties: false }, querystring: { type: 'object', properties: {}, additionalProperties: false }, response: { 200: HostDescriptorSchema, 401: { type: 'object' }, 404: { type: 'object' } } } },
       async (request, reply) => {
         const auth = request.authContext;
         if (!auth) {
