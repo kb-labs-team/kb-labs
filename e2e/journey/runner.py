@@ -1139,6 +1139,18 @@ def run_workflow_with_host_boundary(graph: FlowGraph, *, env: dict[str, str], la
                              include_installed=False, include_version=False)
 
 
+def _healthy_workflow_run_detail(result: CompletedProcess[str]) -> dict[str, Any] | None:
+    """Read the optional health workflow, treating read-after-write misses as pending."""
+    envelope = read_ux_cli_result(result)
+    if envelope.get("ok") is False:
+        error = decode_ux_error_result(envelope)
+        if error.get("code") == "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND":
+            return None
+        raise ValueError(f"workflow health run lookup failed ({error['code']})")
+    detail = decode_ux_success_result(envelope)
+    return detail if isinstance(detail, dict) else None
+
+
 def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     receipt = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
     hidden_receipt = receipt.with_name("receipt.journey-hidden.json")
@@ -1302,8 +1314,7 @@ def _main(*, update_variant_runner=None):
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
-    # The entrypoint's crash handler runs outside this module's global namespace
-    # (runpy returns a separate dict), so publish the active install HOME there.
+    # Keep subprocesses and diagnostic probes aligned with the active installed HOME.
     os.environ["HOME"] = str(HOME)
     os.environ["KB_JOURNEY_HOME_LABEL"] = "main"
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
@@ -2474,6 +2485,11 @@ def _main(*, update_variant_runner=None):
             cases=[*workflow_claims, "S-007.5"], record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
+        # Persist completed workflow evidence before the optional health-run poll below.
+        # That poll exercises a separate project fixture and must not erase these rows
+        # if its runtime lookup fails.
+        workflow_result = workflow_journey.result()
+        merge_workflow_result(service_report, workflow_result.__dict__)
         if isinstance(project_b_handoff, ProjectBRootValid):
             project_b_fixture_root = project_b_handoff.root
             prepare_workflow_fixtures(project_b_fixture_root)
@@ -2514,7 +2530,7 @@ def _main(*, update_variant_runner=None):
                                         env=service_env,
                                         cwd=project_b_fixture_root, timeout=90)
                     try:
-                        detail = decode_ux_success_result(read_ux_cli_result(viewed))
+                        detail = _healthy_workflow_run_detail(viewed) or {}
                     except json.JSONDecodeError:
                         detail = {}
                     if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
@@ -2522,8 +2538,6 @@ def _main(*, update_variant_runner=None):
                             service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
                         break
                     time.sleep(2)
-        workflow_result = workflow_journey.result()
-        merge_workflow_result(service_report, workflow_result.__dict__)
         if workflow_result.status != "PASS":
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}

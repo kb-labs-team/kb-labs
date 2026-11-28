@@ -14,7 +14,8 @@ JOURNEY_DIR = Path(__file__).resolve().parent
 
 class RunnerCrashReportingTests(unittest.TestCase):
     def _run_runner(self, body: str, *, limit_output: bool = False, cleanup_failure: bool = False,
-                    selected: bool = False, crash_before_journey: bool = False):
+                    selected: bool = False, crash_before_journey: bool = False,
+                    initialize_journey_in_main: bool = False):
         temporary = tempfile.TemporaryDirectory(prefix="journey-crash-report-")
         root = Path(temporary.name)
         home = root / "home"
@@ -24,8 +25,9 @@ class RunnerCrashReportingTests(unittest.TestCase):
         runner.write_text(
             ("raise RuntimeError('injected early exception')\n" if crash_before_journey else
              "from service_steps import Journey\n"
-             f"CASE_JOURNEY = Journey({mode!r}, 'crash-test')\n"
-             f"CASE_JOURNEY.step('completed before crash', 'journey.test', lambda: None, cases=({claim!r},))\n")
+             + ("CASE_JOURNEY = None\n" if initialize_journey_in_main else
+                f"CASE_JOURNEY = Journey({mode!r}, 'crash-test')\n"
+                f"CASE_JOURNEY.step('completed before crash', 'journey.test', lambda: None, cases=({claim!r},))\n"))
             + ("def cleanup():\n    raise RuntimeError('injected cleanup failure')\n" if cleanup_failure else "")
             + "def main():\n"
             + "\n".join(f"    {line}" for line in body.splitlines())
@@ -86,6 +88,68 @@ class RunnerCrashReportingTests(unittest.TestCase):
     def test_uncaught_exception_keeps_partial_steps_and_reason(self):
         temporary, root, result = self._run_runner("raise RuntimeError('injected exception')")
         self._assert_failure_report(temporary, root, result, "injected exception")
+
+    def test_crash_merges_partial_steps_without_overwriting_existing_evidence(self):
+        temporary, root, result = self._run_runner(
+            "global CASE_JOURNEY\n"
+            "CASE_JOURNEY = Journey('local', 'merge-crash-test')\n"
+            "CASE_JOURNEY.step('completed before crash', 'journey.test', lambda: None, cases=('S-010.8',))\n"
+            "from pathlib import Path\n"
+            "from invocations import write_report_json\n"
+            "write_report_json(Path(__file__).with_name('service-local.json'), {"
+            "'status': 'PASS', 'steps': [{'name': 'persisted workflow step', 'status': 'PASS', "
+            "'cases': ['S-006.3']}], 'case_run': {'claims': [{'claimId': 'S-006.3', "
+            "'status': 'PASS'}]}})\n"
+            "raise RuntimeError('late injected exception')",
+            initialize_journey_in_main=True,
+        )
+        with temporary:
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            report = json.loads((root / "service-local.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(step["name"] == "persisted workflow step" for step in report["steps"]))
+            self.assertTrue(any(step["name"] == "completed before crash" for step in report["steps"]))
+            self.assertTrue(any(step["name"] == "runner crash" for step in report["steps"]))
+            claims = {item["claimId"]: item for item in report["case_run"]["claims"]}
+            self.assertEqual(claims["S-006.3"]["status"], "PASS")
+
+    def test_crash_redacts_secrets_from_private_runner_environments(self):
+        secret = "synthetic-private-runner-secret-8341"
+        temporary, root, result = self._run_runner(
+            "import os\n"
+            "global CASE_JOURNEY, ACTIVE_MAIN_ENV\n"
+            "CASE_JOURNEY = Journey('local', 'redaction-crash-test')\n"
+            f"CASE_JOURNEY.step('failed with private env', 'journey.test', lambda: 'step included {secret}', cases=('S-010.8',))\n"
+            "ACTIVE_MAIN_ENV = dict(os.environ)\n"
+            f"ACTIVE_MAIN_ENV['KB_JOURNEY_ADMIN_PASSWORD'] = {secret!r}\n"
+            f"raise RuntimeError('failure included {secret}')",
+            initialize_journey_in_main=True,
+            cleanup_failure=True,
+        )
+        with temporary:
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertNotIn(secret, result.stdout + result.stderr)
+            for report_name in ("service-local.json", "journey-diagnostics.log",
+                                "case-scoreboard-local.json"):
+                rendered = (root / report_name).read_text(encoding="utf-8")
+                self.assertNotIn(secret, rendered, report_name)
+                self.assertIn("[REDACTED]", rendered, report_name)
+            report = json.loads((root / "service-local.json").read_text(encoding="utf-8"))
+            names = [step["name"] for step in report["steps"]]
+            self.assertEqual(names.count("failed with private env"), 1)
+
+    def test_crash_reads_journey_created_inside_main(self):
+        temporary, root, result = self._run_runner(
+            "global CASE_JOURNEY\n"
+            "CASE_JOURNEY = Journey('local', 'reassigned-crash-test')\n"
+            "CASE_JOURNEY.step('completed after main assignment', 'journey.test', lambda: None, cases=('S-006.3',))\n"
+            "raise RuntimeError('crash after main assignment')",
+            initialize_journey_in_main=True,
+        )
+        with temporary:
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            report = json.loads((root / "service-local.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(step["name"] == "completed after main assignment" for step in report["steps"]))
+            self.assertTrue(any(step["name"] == "runner crash" for step in report["steps"]))
 
     def test_crash_before_journey_preserves_requested_claim_selection(self):
         temporary, root, result = self._run_runner(

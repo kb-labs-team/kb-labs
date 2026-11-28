@@ -24,9 +24,42 @@ from installer_case_steps import (commit_marketplace_install_record,
                                   first_admin_credential_disclosed_once,
                                   requested_commit_marketplace_install_satisfied)
 import runner
-from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
-                    registry_install_request)
+from runner import (REGISTRY, _healthy_workflow_run_detail, marketplace_install_flags,
+                    registry_gateway_url_from_plan, registry_install_request)
 import journey_resources
+
+
+class HealthyWorkflowRunLookupTests(unittest.TestCase):
+    def test_missing_run_is_treated_as_pending(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "runs", "view"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND",
+                "message": "Workflow run was not found.",
+            }}),
+            "",
+        )
+        self.assertIsNone(_healthy_workflow_run_detail(result))
+
+    def test_terminal_run_returns_payload(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "runs", "view"], 0,
+            json.dumps({"ok": True, "data": {"status": "success"}}),
+            "",
+        )
+        self.assertEqual(_healthy_workflow_run_detail(result), {"status": "success"})
+
+    def test_unexpected_error_is_not_reclassified_as_pending(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "runs", "view"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_RUNTIME_WORKFLOW_UNAVAILABLE",
+                "message": "Workflow service is unavailable.",
+            }}),
+            "",
+        )
+        with self.assertRaisesRegex(ValueError, "KB_RUNTIME_WORKFLOW_UNAVAILABLE"):
+            _healthy_workflow_run_detail(result)
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
