@@ -1155,10 +1155,13 @@ thread.join()
                     return subprocess.CompletedProcess(command, 7, "project show: secondary shim missing", ""), 0.0
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
             elif "project list" in " ".join(argv):
-                project_registry_events.append(f"list:{len(project_registry)}")
-                output = json.dumps({"ok": True, "data": {
-                    "projects": [item.copy() for item in project_registry]}})
-            elif "project remove" in " ".join(argv):
+                if mode == "local" and selection == "":
+                    project_registry_events.append(f"list:{len(project_registry)}")
+                    projects = [item.copy() for item in project_registry]
+                else:
+                    projects = [{"id": "prj_main"}]
+                output = json.dumps({"ok": True, "data": {"projects": projects}})
+            elif mode == "local" and selection == "" and "project remove" in " ".join(argv):
                 project_id = argv[argv.index("remove") + 1]
                 removed = next((item for item in project_registry if item["id"] == project_id), None)
                 if removed is None:
@@ -1166,7 +1169,7 @@ thread.join()
                 project_registry.remove(removed)
                 project_registry_events.append(f"remove:{project_id}")
                 output = json.dumps({"ok": True, "data": {"project": removed}})
-            elif "project add" in " ".join(argv):
+            elif mode == "local" and selection == "" and "project add" in " ".join(argv):
                 project_path = argv[argv.index("add") + 1]
                 project_name = argv[argv.index("--name") + 1]
                 restored = {"id": "prj_main", "path": project_path,
