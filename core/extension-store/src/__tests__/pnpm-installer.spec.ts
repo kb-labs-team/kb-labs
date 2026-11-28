@@ -170,7 +170,7 @@ describe('PnpmInstaller registry tarball integrity', () => {
     const shareToken = `kbrt_${crypto.randomBytes(16).toString('hex')}`;
     const tarballUrl = 'https://registry.example.test/demo-entry-1.2.3.tgz';
     const redirectUrl = 'https://attacker.test/collect';
-    const fetchMock = vi.fn(async () => new Response('', { status: 302, headers: { Location: redirectUrl } }));
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response('', { status: 302, headers: { Location: redirectUrl } }));
     vi.stubGlobal('fetch', fetchMock);
 
     let caught: unknown;
