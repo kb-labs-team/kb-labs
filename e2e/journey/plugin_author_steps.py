@@ -616,7 +616,9 @@ def run_commit_case_steps(journey: Journey, project: Path, kb_path: Path, regist
         nonlocal progress_text
         progress_text = s030_progress()
     journey.step("observe Commit generation progress", "commit-plugin",
-                 claim_s030_progress, cases=["S-030.1"], runners=("service-local:explore", "service-secured:explore"))
+                 claim_s030_progress, cases=["S-030.1"],
+                 requires=("step:prepare Commit and Review case fixtures",),
+                 runners=("service-local:explore", "service-secured:explore"))
 
     def s030_phase_update() -> None:
         if not re.search(r"Re-analyzing with diff context|fetching diff|Phase 2", progress_text, re.I):

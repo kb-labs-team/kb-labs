@@ -134,6 +134,27 @@ class UninstallShimResultTest(unittest.TestCase):
 
 
 class ServiceJourneyTests(unittest.TestCase):
+    def test_s030_progress_claim_selects_commit_review_fixture_prerequisite(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/plugin_author_steps.py"
+        from select_from_cases import _case_declarations, selection_from_coverage
+
+        declarations = _case_declarations(source, root)
+        line = next((line for line, declaration in declarations.items()
+                     if "S-030.1" in (declaration.get("cases") or ())), None)
+        self.assertIsNotNone(line, f"S-030.1 has no owning declaration in {source}")
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                selection = selection_from_coverage([{
+                    "mode": mode,
+                    "cases": [{"id": "S-030", "status": "active", "release": True,
+                               "steps": [{"stepId": "S-030.1", "claims": [{
+                                   "kind": "journey", "source": source, "line": line,
+                               }]}]}],
+                }], "S-030.1", mode=mode)
+                self.assertIn("prepare Commit and Review case fixtures",
+                              selection["prerequisiteSteps"])
+
     def test_commit_claims_select_only_the_marketplace_lifecycle_owner(self):
         root = Path(__file__).resolve().parents[2]
         cases = ("S-160.3", "S-160.5", "S-030.1")
