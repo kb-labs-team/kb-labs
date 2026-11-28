@@ -232,7 +232,9 @@ export class AppendOnlyJournalStateBroker extends InMemoryStateBroker {
 
   private async append(record: JournalRecord): Promise<void> {
     const line = `${JSON.stringify(record)}\n`;
-    if (this.journalWriteFailure !== undefined) throw this.journalWriteFailure;
+    if (this.journalWriteFailure !== undefined) {
+      throw this.journalWriteFailure;
+    }
     let created = false;
     let handle;
     try {

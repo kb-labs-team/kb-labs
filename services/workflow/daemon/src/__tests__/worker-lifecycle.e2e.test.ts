@@ -226,7 +226,9 @@ describe('workflow worker lifecycle', () => {
       async publishLog() {
         publishCallCount += 1;
         publishStarted.resolve();
-        if (hangs) await allowPublish.promise;
+        if (hangs) {
+          await allowPublish.promise;
+        }
         await allowPublish.promise;
         order.push('log published');
       },
@@ -271,7 +273,9 @@ describe('workflow worker lifecycle', () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(order).toEqual([]);
 
-      if (!hangs) allowPublish.resolve();
+      if (!hangs) {
+        allowPublish.resolve();
+      }
       await Promise.race([
         completion.promise,
         new Promise((_, reject) => setTimeout(() => reject(new Error('worker completion timeout')), 5000)),

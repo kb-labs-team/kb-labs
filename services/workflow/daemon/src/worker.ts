@@ -908,7 +908,9 @@ export async function createWorkflowWorker(
           let acceptLiveLogPublications = true;
           let warnedLiveLogOverflow = false;
           const startLiveLogDrain = (): Promise<void> => {
-            if (liveLogDrain) return liveLogDrain;
+            if (liveLogDrain) {
+              return liveLogDrain;
+            }
             const drain = (async () => {
               while (acceptLiveLogPublications && liveLogQueue.length > 0) {
                 const entry = liveLogQueue.shift()!;
@@ -925,14 +927,20 @@ export async function createWorkflowWorker(
               }
             })();
             const trackedDrain = drain.finally(() => {
-              if (liveLogDrain === trackedDrain) liveLogDrain = null;
-              if (acceptLiveLogPublications && liveLogQueue.length > 0) void startLiveLogDrain();
+              if (liveLogDrain === trackedDrain) {
+                liveLogDrain = null;
+              }
+              if (acceptLiveLogPublications && liveLogQueue.length > 0) {
+                void startLiveLogDrain();
+              }
             });
             liveLogDrain = trackedDrain;
             return trackedDrain;
           };
           const queueLiveLogPublication = (entry: Parameters<WorkflowEngine['publishLog']>[3]) => {
-            if (!acceptLiveLogPublications) return;
+            if (!acceptLiveLogPublications) {
+              return;
+            }
             const outstanding = liveLogQueue.length + (liveLogDrain ? 1 : 0);
             if (outstanding >= MAX_QUEUED_LIVE_LOG_PUBLICATIONS) {
               if (!warnedLiveLogOverflow) {
@@ -1017,7 +1025,9 @@ export async function createWorkflowWorker(
                 drainTimeout = setTimeout(() => resolve(true), LIVE_LOG_PUBLICATION_DRAIN_TIMEOUT_MS);
               }),
             ]);
-            if (drainTimeout) clearTimeout(drainTimeout);
+            if (drainTimeout) {
+              clearTimeout(drainTimeout);
+            }
             if (drainTimedOut) {
               acceptLiveLogPublications = false;
               liveLogQueue.length = 0;
