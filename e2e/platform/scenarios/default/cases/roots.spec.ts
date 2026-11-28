@@ -4,8 +4,7 @@ import { loginAdmin } from '@kb-labs/e2e-shared/auth.js'
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
 
 const analyticsPluginId = '@kb-labs/e2e-analytics-emitter'
-const platformPluginRoot = `/workspace/kb-e2e/current/node_modules/${analyticsPluginId}`
-const platformPluginSource = `node_modules/${analyticsPluginId}`
+const platformPluginRoot = `/workspace/kb-e2e/state/home/store/entries/@kb-labs+e2e-analytics-emitter@1.0.0/node_modules/${analyticsPluginId}`
 const projectPath = '/workspace/kb-e2e-root-proof'
 const projectPluginPath = 'plugins/e2e-analytics-emitter'
 
@@ -63,7 +62,7 @@ test('ROOT-03: project-local plugin overrides the platform Marketplace copy', as
   const platformRest = await projectRest(request)
   await expectRegistryEntry(platformRest, [{
     pluginRoot: platformPluginRoot,
-    source: { kind: 'marketplace', path: platformPluginSource },
+    source: { kind: 'marketplace', path: platformPluginRoot },
   }])
 
   await unregisterProjectAtPath(request, projectPath)

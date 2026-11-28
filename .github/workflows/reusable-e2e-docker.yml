@@ -295,8 +295,8 @@ jobs:
             fi
             if [ "$i" = "${{ inputs.health-steps }}" ] ||
               [ -n "$(docker compose ps --all --status exited --quiet platform)" ]; then
-              echo "Platform failed to start — dumping logs"
-              docker compose logs platform | tail -100
+              echo "Platform failed to start — emitting allowlisted log summary"
+              docker compose logs --no-color platform 2>/dev/null | tail -c 1048576 | python3 e2e/scripts/summarize_safe_log.py --stdin --source platform-startup
               exit 1
             fi
             sleep 5
@@ -351,7 +351,20 @@ jobs:
               docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/release --scope project
               ;;
             platform)
-              docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/e2e-analytics-emitter@1.0.0 --scope project
+              docker compose exec -T --workdir /workspace/kb-e2e platform kb marketplace install @kb-labs/e2e-analytics-emitter@1.0.0 --scope platform
+              docker compose exec -T platform sh /workspace/e2e-host/platform/prepare-root-proof.sh
+              # The running REST API owns an in-memory registry snapshot. Restart
+              # the disposable platform so it discovers the newly installed fixture.
+              docker compose exec -T --workdir /workspace/kb-e2e platform kb-create restart --platform-root /workspace/kb-e2e
+              ready=0
+              for _ in $(seq 1 60); do
+                if curl -fsS http://localhost:4000/ready >/dev/null 2>&1; then ready=1; break; fi
+                sleep 5
+              done
+              if [ "$ready" != 1 ]; then
+                echo "Platform did not become ready after installing the ROOT-03 fixture" >&2
+                exit 1
+              fi
               ;;
           esac
 
@@ -367,41 +380,34 @@ jobs:
           E2E_SUITE:      ${{ inputs.suite }}
           KB_DEV_BIN: ${{ github.workspace }}/tools/scripts/kb-dev-docker.sh
 
+      - name: Clean ROOT-03 secondary project
+        if: always() && inputs.suite == 'platform'
+        run: docker compose exec -T platform rm -rf /workspace/kb-e2e-root-proof 2>/dev/null || true
+
       # ── Artifacts + summary ──────────────────────────────────────────────
 
       - name: Dump platform container logs
         if: always()
         run: |
           mkdir -p /tmp/e2e-logs
-          docker compose logs --no-color platform  > /tmp/e2e-logs/platform-bootstrap.log 2>&1 || true
-          docker compose logs --no-color verdaccio > /tmp/e2e-logs/verdaccio.log           2>&1 || true
+          docker compose logs --no-color platform 2>/dev/null | tail -c 1048576 | python3 e2e/scripts/summarize_safe_log.py --stdin --source platform > /tmp/e2e-logs/platform-log-summary.json || true
+          docker compose logs --no-color verdaccio 2>/dev/null | tail -c 1048576 | python3 e2e/scripts/summarize_safe_log.py --stdin --source verdaccio > /tmp/e2e-logs/verdaccio-log-summary.json || true
           if [ "${{ inputs.suite }}" = marketplace-registry ] || [ "${{ inputs.suite }}" = marketplace ]; then
-            docker compose logs --no-color marketplace-registry marketplace-state > /tmp/e2e-logs/registry-fixture.log 2>&1 || true
+            docker compose logs --no-color marketplace-registry marketplace-state 2>/dev/null | tail -c 1048576 | python3 e2e/scripts/summarize_safe_log.py --stdin --source registry-fixture > /tmp/e2e-logs/registry-log-summary.json || true
           fi
-          docker compose ps > /tmp/e2e-logs/ps.txt 2>&1 || true
-          docker compose ps -a --format json > /tmp/e2e-logs/compose-ps.json 2>&1 || true
-          docker compose ps -a -q | xargs -r docker inspect > /tmp/e2e-logs/compose-inspect.json 2>&1 || true
-          docker stats --no-stream --all --format '{{json .}}' > /tmp/e2e-logs/docker-stats.jsonl 2>&1 || true
-          docker compose exec -T platform sh -c 'kb-dev status --json' > /tmp/e2e-logs/kb-dev-status.json 2>&1 || true
-          docker compose exec -T platform sh -c 'kb-dev diagnose --json' > /tmp/e2e-logs/kb-dev-diagnose.json 2>&1 || true
-          for service in $(jq -r '.services // {} | keys[]' /tmp/e2e-logs/kb-dev-status.json 2>/dev/null || true); do
-            docker compose exec -T platform sh -c "kb-dev logs $service --all" \
-              > "/tmp/e2e-logs/$service.log" 2>&1 || true
+          docker compose ps -a -q 2>/dev/null | xargs -r docker inspect 2>/dev/null | jq '[.[] | .State as $state | {state: {status: ($state.Status as $status | if (["created", "restarting", "running", "removing", "paused", "exited", "dead"] | index($status)) then $status else "unknown" end), running: ($state.Running == true), exitCode: (if (($state.ExitCode | type) == "number" and $state.ExitCode >= 0 and $state.ExitCode <= 255) then $state.ExitCode else null end), oomKilled: ($state.OOMKilled == true)}, restartCount: (if (.RestartCount | type) == "number" and .RestartCount >= 0 and .RestartCount <= 100000 then .RestartCount else 0 end)}] | {containerCount: length, runningCount: (map(select(.state.running == true)) | length), stoppedCount: (map(select(.state.running == false)) | length), oomKilledCount: (map(select(.state.oomKilled == true)) | length), restartCount: (map(.restartCount) | add // 0), exitCodes: (map(.state.exitCode | select(. != null)) | group_by(.) | map({code: .[0], count: length}))]' \
+            > /tmp/e2e-logs/compose-inspect.json 2>/dev/null || true
+          docker stats --no-stream --all --format '{{json .}}' 2>/dev/null | python3 e2e/scripts/summarize-safe-resources.py \
+            > /tmp/e2e-logs/docker-stats-summary.json || true
+          docker compose exec -T platform python3 /workspace/e2e-host/scripts/summarize_safe_log.py --command status > /tmp/e2e-logs/kb-create-status.json 2>/dev/null || true
+          docker compose exec -T platform python3 /workspace/e2e-host/scripts/summarize_safe_log.py --command doctor > /tmp/e2e-logs/kb-create-doctor.json 2>/dev/null || true
+          for name in host.log host.jsonl launcher.log supervisor.log; do
+              docker compose exec -T platform python3 /workspace/e2e-host/scripts/summarize_safe_log.py \
+                --file "/workspace/kb-e2e/installer/host/$name" --source "$name" \
+                > "/tmp/e2e-logs/$name.summary.json" 2>/dev/null || true
           done
-          while IFS=$'\t' read -r name url; do
-            [ -n "$name" ] || continue
-            curl -sS --max-time 5 "$url/metrics" > "/tmp/e2e-logs/$name.prom" 2>&1 || true
-          done < <(jq -r '.services // {} | to_entries[] | select((.value.url // "") | startswith("http")) | [.key, .value.url] | @tsv' /tmp/e2e-logs/kb-dev-status.json 2>/dev/null || true)
-          find e2e -path '*/report/diagnostics/*' -type f -print > /tmp/e2e-logs/diagnostic-files.txt 2>&1 || true
-          docker compose exec -T platform sh -c 'find / -name "*.log" -size +0c 2>/dev/null | grep -v proc' \
-            > /tmp/e2e-logs/log-files-list.txt 2>&1 || true
-          docker compose cp platform:/workspace/kb-e2e/.kb          /tmp/e2e-logs/project-kb-dir  2>&1 || true
-          docker compose cp platform:/root/kb-platform/.kb          /tmp/e2e-logs/platform-kb-dir 2>&1 || true
-          docker compose exec -T platform sh -c 'kb-dev status 2>&1' > /tmp/e2e-logs/kb-dev-status.txt 2>&1 || true
-          docker compose exec -T platform sh -c 'cat /tmp/kb-e2e-diag.json 2>/dev/null' \
-            > /tmp/e2e-logs/kb-e2e-diag.json 2>&1 || true
 
-      - name: Upload platform logs
+      - name: Upload safe platform diagnostic summaries
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -412,32 +418,29 @@ jobs:
       - name: Publish diagnostic summary
         if: always()
         run: |
+          python3 e2e/scripts/summarize-safe-e2e-diagnostics.py "e2e/${{ inputs.suite }}/report/diagnostics" \
+            > /tmp/e2e-diagnostics-summary.json || true
           {
             echo "### E2E diagnostics: ${{ inputs.suite }}"
             echo
             echo '```text'
-            if [ -f /tmp/e2e-logs/kb-dev-status.json ]; then
-              cat /tmp/e2e-logs/kb-dev-status.json
-            else
-              cat /tmp/e2e-logs/ps.txt
-            fi
+            cat /tmp/e2e-logs/kb-create-status.json 2>/dev/null || echo '{"projectionAvailable":false}'
             echo '```'
             echo
-            for summary in e2e/${{ inputs.suite }}/report/diagnostics/*/summary.json; do
-              [ -f "$summary" ] || continue
-              echo "#### $(basename "$(dirname "$summary")")"
-              jq -r '"status: \(.status) | failed services: \((.failedServices // []) | join(", ")) | collection: \(.collectionStatus)"' "$summary" || true
-            done
+            cat /tmp/e2e-diagnostics-summary.json
             echo
-            echo "Full logs and metrics are in the uploaded platform-logs artifact."
+            echo "Allowlisted lifecycle, test-count, log-signature, and resource summaries are attached as artifacts."
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload KB_DEBUG diagnostic snapshot
+      - name: Project KB_DEBUG diagnostic snapshot
+        if: always()
+        run: python3 e2e/scripts/summarize_safe_log.py --file /tmp/kb-e2e-diag.json --source kb-e2e-diag > /tmp/kb-e2e-diag-summary.json || true
+      - name: Upload safe KB_DEBUG diagnostic summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.artifact-prefix != '' && format('{0}-', inputs.artifact-prefix) || '' }}kb-e2e-diag-${{ github.run_id }}-${{ inputs.suite }}
-          path: /tmp/kb-e2e-diag.json
+          path: /tmp/kb-e2e-diag-summary.json
           if-no-files-found: ignore
           retention-days: 14
 
@@ -446,15 +449,17 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ${{ inputs.artifact-prefix != '' && format('{0}-', inputs.artifact-prefix) || '' }}playwright-report-${{ github.run_id }}-${{ inputs.suite }}
-          path: e2e/${{ inputs.suite }}/report/
+          path: |
+            e2e/${{ inputs.suite }}/report/
+            !e2e/${{ inputs.suite }}/report/diagnostics/**
           retention-days: 14
 
       - name: Upload E2E diagnostic dossiers
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: ${{ inputs.artifact-prefix != '' && format('{0}-', inputs.artifact-prefix) || '' }}e2e-diagnostics-${{ inputs.suite }}-${{ github.run_id }}
-          path: e2e/${{ inputs.suite }}/report/diagnostics/
+          name: ${{ inputs.artifact-prefix != '' && format('{0}-', inputs.artifact-prefix) || '' }}e2e-diagnostics-safe-${{ inputs.suite }}-${{ github.run_id }}
+          path: /tmp/e2e-diagnostics-summary.json
           if-no-files-found: ignore
           retention-days: 14
 
