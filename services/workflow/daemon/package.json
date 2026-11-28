@@ -56,7 +56,7 @@
     "@kb-labs/workflow-steps": "workspace:*",
     "cron-parser": "^5.5.0",
     "date-fns-tz": "^3.2.0",
-    "fastify": "^5.12.1",
+    "fastify": "^5.12.6",
     "fastify-type-provider-zod": "^6.1.0",
     "node-cron": "^4.2.1",
     "pino": "^9.0.0",

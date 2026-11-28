@@ -7,7 +7,7 @@
   "exports": { ".": "./dist/manifest.js" },
   "files": ["dist/manifest.js", "dist/manifest.json", "dist/settings-schema.mjs"],
   "kb": { "manifest": "./dist/manifest.js", "requiredOutputs": ["./dist/manifest.json", "./dist/settings-schema.mjs"] },
-  "dependencies": { "zod": "3.25.76" },
+  "dependencies": { "zod": "4.6.6" },
   "scripts": { "prepack": "node ./build.mjs" },
   "license": "UNLICENSED"
 }

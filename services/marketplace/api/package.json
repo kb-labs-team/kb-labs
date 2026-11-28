@@ -31,7 +31,7 @@
     "@kb-labs/marketplace-core": "workspace:*",
     "@kb-labs/marketplace-npm": "workspace:*",
     "@kb-labs/shared-http": "workspace:*",
-    "fastify": "^5.12.1"
+    "fastify": "^5.12.6"
   },
   "devDependencies": {
     "@fastify/swagger": ">=9.5.1",
