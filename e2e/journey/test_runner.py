@@ -131,6 +131,79 @@ class WorkflowHostStateBoundaryTests(unittest.TestCase):
         self.assertIn("gateway is unhealthy", graph.state_failure("host-running"))
 
 
+class EmptyProjectStudioFixtureTests(unittest.TestCase):
+    def test_empty_registry_check_restores_selected_project_even_after_browser_failure(self):
+        with tempfile.TemporaryDirectory(prefix="journey-empty-studio-") as directory:
+            project = Path(directory) / "fresh-project"
+            project.mkdir()
+            row = {"id": "prj_fixture", "path": str(project.resolve()), "name": "friendly-alias",
+                   "status": "active"}
+            registered = [row.copy()]
+            calls = []
+
+            def execute(args):
+                calls.append(tuple(args))
+                if args[:3] == ["project", "list", "--json"]:
+                    data = {"projects": [item.copy() for item in registered]}
+                elif args[:2] == ["project", "remove"]:
+                    registered.clear()
+                    data = {"project": row.copy()}
+                elif args[:2] == ["project", "add"]:
+                    added = {"id": row["id"], "path": args[2],
+                             "name": args[args.index("--name") + 1], "status": "active"}
+                    registered.append(added.copy())
+                    data = {"project": added}
+                else:
+                    self.fail(f"unexpected project command: {args}")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            def browser_check():
+                self.assertEqual(registered, [])
+                return "Playwright verified a non-empty dashboard response"
+
+            result = runner.run_with_empty_project_registry(project, Path(directory), execute, browser_check)
+
+        self.assertEqual(result, "Playwright verified a non-empty dashboard response")
+        self.assertEqual([call[1] for call in calls if call[0:2] == ("project", "remove")], ["remove"])
+        self.assertEqual([call[1] for call in calls if call[0:2] == ("project", "add")], ["add"])
+        self.assertIn(("project", "add", str(project.resolve()), "--json", "--name", "friendly-alias"), calls)
+        self.assertEqual(registered[0]["id"], "prj_fixture")
+        self.assertEqual(registered[0]["path"], str(project.resolve()))
+        self.assertEqual(registered[0]["name"], "friendly-alias")
+        self.assertEqual(registered[0]["status"], "active")
+
+    def test_empty_registry_check_restores_project_after_keyboard_interrupt(self):
+        with tempfile.TemporaryDirectory(prefix="journey-empty-studio-interrupt-") as directory:
+            project = Path(directory) / "fresh-project"
+            project.mkdir()
+            row = {"id": "prj_fixture", "path": str(project.resolve()), "name": "Alias", "status": "active"}
+            registered = [row.copy()]
+
+            def execute(args):
+                if args[:3] == ["project", "list", "--json"]:
+                    data = {"projects": [item.copy() for item in registered]}
+                elif args[:2] == ["project", "remove"]:
+                    registered.clear()
+                    data = {"project": row.copy()}
+                elif args[:2] == ["project", "add"]:
+                    added = {"id": row["id"], "path": args[2],
+                             "name": args[args.index("--name") + 1], "status": "active"}
+                    registered.append(added.copy())
+                    data = {"project": added}
+                else:
+                    self.fail(f"unexpected project command: {args}")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            def interrupt_browser():
+                self.assertEqual(registered, [])
+                raise KeyboardInterrupt()
+
+            with self.assertRaises(KeyboardInterrupt):
+                runner.run_with_empty_project_registry(project, Path(directory), execute, interrupt_browser)
+
+        self.assertEqual(registered, [row])
+
+
 class MarketplaceInstallFlagTests(unittest.TestCase):
     def test_default_lane_passes_npm_mirror_without_registry_credentials(self):
         env = {"HOME": "/tmp/kb-journey-test-home"}

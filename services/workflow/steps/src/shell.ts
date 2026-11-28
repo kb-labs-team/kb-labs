@@ -10,7 +10,7 @@
  */
 
 import { execaCommand } from 'execa';
-import { captureProcessIdentity, type PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { captureProcessIdentity, captureProcessIdentitySync, type PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 /**
  * Commands that are always blocked (dangerous)
@@ -361,7 +361,15 @@ async function shellHandler(
       if (pid === undefined) {
         throw new Error('Shell process started without an OS process id');
       }
-      const identity = await captureProcessIdentity(pid);
+      let identity: Awaited<ReturnType<typeof captureProcessIdentity>>;
+      if (process.platform === 'linux') {
+        // Do not yield between spawn and reading /proc. Node/libuv reaps child
+        // PIDs from the event loop, so this synchronous capture preserves the
+        // original identity even when the command exits immediately.
+        identity = captureProcessIdentitySync(pid);
+      } else {
+        identity = await captureProcessIdentity(pid);
+      }
       try {
         await ctx.onProcessStarted(identity);
       } catch (error) {
