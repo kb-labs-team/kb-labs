@@ -15,7 +15,7 @@
     "@kb-labs/shared-testing-e2e": "workspace:*",
     "@kb-labs/workflow-daemon": "workspace:*",
     "@playwright/test": "^1.52.0",
-    "fastify": ">=5.12.2",
+    "fastify": ">=5.12.6",
     "typescript": "^5.4.0"
   }
 }

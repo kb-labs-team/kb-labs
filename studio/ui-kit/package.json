@@ -34,7 +34,7 @@
   "dependencies": {
     "@kb-labs/studio-ui-core": "workspace:*",
     "clsx": "^2.1.1",
-    "dompurify": "^3.4.13",
+    "dompurify": "^3.4.17",
     "marked": "^17.0.1"
   },
   "devDependencies": {
