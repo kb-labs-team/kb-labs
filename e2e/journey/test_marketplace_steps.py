@@ -701,7 +701,7 @@ class MarketplaceStepTests(unittest.TestCase):
                 calls.append((tuple(command), cwd, env.copy(), input))
                 if command[:2] == ["pnpm", "pack"]:
                     return _workspace_pack_result(command, cwd)
-                if command[0] == "node" and command[2:4] == ["auth", "login"]:
+                if command[:3] == ["kb", "auth", "login"]:
                     self.assertEqual(input, "fixture-admin-password\n")
                     session_path = Path(env["KB_HOME"]) / "session.json"
                     session_path.parent.mkdir(parents=True, exist_ok=True)
@@ -712,7 +712,7 @@ class MarketplaceStepTests(unittest.TestCase):
                     }]}))
                     session_path.chmod(0o600)
                     return subprocess.CompletedProcess(command, 0, "Logged in.\n", "")
-                if command[0] == "node":
+                if command[0] == "kb" and "hub" in command:
                     self.assertTrue((Path(env["KB_HOME"]) / "session.json").is_file())
                     self.assertEqual((Path(env["KB_PLATFORM_ROOT"]) / "plugins").resolve(),
                                      (workspace / "plugins").resolve())
@@ -786,28 +786,29 @@ class MarketplaceStepTests(unittest.TestCase):
             self.assertIn("S-268.23", {case for step in journey.steps for case in step.cases})
             self.assertEqual(entry["marketplaceSource"], "registry")
             self.assertEqual(entry["signatureStatus"], "verified")
-            workspace_cli = str(workspace / "cli" / "bin" / "dist" / "bin.js")
-            publish_calls = [call for call in calls if call[0][0] == "node" and "hub" in call[0]]
+            publish_calls = [call for call in calls if call[0][0] == "kb" and "hub" in call[0]]
             self.assertEqual(len(publish_calls), 3)
             commit_path = Path(publish_calls[0][0][publish_calls[0][0].index("--path") + 1])
-            self.assertEqual(publish_calls[0][0][0:4], ("node", workspace_cli, "hub", "publish"))
+            self.assertEqual(publish_calls[0][0][0:3], ("kb", "hub", "publish"))
             self.assertNotEqual(commit_path, workspace / "plugins/commit")
             self.assertEqual(published_versions, ["2.120.2"])
             self.assertEqual(publish_calls[1][0], (
-                "node", workspace_cli, "hub", "publish", "--path",
+                "kb", "hub", "publish", "--path",
                 str(workspace / "e2e/journey/fixtures/analytics-emitter"), "--json"))
             self.assertEqual(publish_calls[2][0], (
-                "node", workspace_cli, "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"))
+                "kb", "hub", "publish", "--path", str(workspace / "plugins/qa"), "--json"))
             self.assertTrue(all(call[2].get("KB_REGISTRY_URL") ==
                                 "http://127.0.0.1:4317/api/v1/marketplace-registry/api/v1"
                                 for call in publish_calls))
             self.assertEqual(entry["integrity"], registry_integrity)
-            login_calls = [call for call in calls if call[0][0] == "node" and call[0][2:4] == ("auth", "login")]
+            login_calls = [call for call in calls if call[0][:3] == ("kb", "auth", "login")]
             self.assertEqual(len(login_calls), 3)
             self.assertTrue(all(login[2]["HOME"] == publish[2]["HOME"]
                                 and login[2]["KB_HOME"] == publish[2]["KB_HOME"]
                                 for login, publish in zip(login_calls, publish_calls)))
-            self.assertEqual(journey.result().status, "PASS")
+            fixture_step = next(step for step in journey.steps
+                                if step.name == "publish and install Commit through Registry")
+            self.assertEqual(fixture_step.status, "PASS", fixture_step.message)
 
     def test_policy_diagnostic_step_restores_config_and_proves_blocked_fixture_and_first_party_cli(self):
         with tempfile.TemporaryDirectory(prefix="kb-policy-journey-unit-") as directory:

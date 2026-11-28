@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import json
 import sys
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Callable, Mapping
@@ -19,6 +18,7 @@ from invocations import (
     print_report_text,
     read_ux_cli_result,
     run_command,
+    TimeoutExpired,
 )
 
 
@@ -45,6 +45,20 @@ def run_hermetic_cli(
         workspace_root = Path(workspace_root).resolve()
         if not workspace_root.is_dir():
             raise FileNotFoundError(f"Journey workspace is missing at {workspace_root}")
+        cli_entry = workspace_root / "cli/bin/dist/bin.js"
+        if len(command) > 1 and Path(command[0]).name == "node":
+            command_entry = Path(command[1])
+            targets_workspace_cli = (
+                command_entry.as_posix() == "cli/bin/dist/bin.js"
+                or command_entry.resolve() == cli_entry
+            )
+            if targets_workspace_cli:
+                if not cli_entry.is_file():
+                    raise FileNotFoundError(
+                        f"built workspace CLI is missing at {cli_entry}; "
+                        "build it with `kb-devkit run build --affected` and retry"
+                    )
+                command = [command[0], str(cli_entry), *command[2:]]
     child_env = dict(os.environ if env is None else env)
     with tempfile.TemporaryDirectory(prefix="kb-journey-home-") as home:
         fixture_env = configure_hermetic_cli_fixture(
@@ -96,7 +110,7 @@ def run_hermetic_cli(
                      "--client-id", client_id, "--client-secret", client_secret],
                     cwd=fixture_cwd, env=fixture_env, runner=runner, timeout=min(timeout, 90),
                 )
-            except (OSError, subprocess.TimeoutExpired):
+            except (OSError, TimeoutExpired):
                 raise RuntimeError("isolated Gateway machine login failed; credentials are redacted") from None
             credential_path = Path(fixture_env["KB_HOME"]) / "credentials.json"
             if (login.returncode != 0 or client_secret in login.stdout or client_secret in login.stderr
@@ -121,7 +135,7 @@ def run_hermetic_cli(
         try:
             result = run_command(command, cwd=fixture_cwd, env=fixture_env, runner=runner,
                                  timeout=timeout, redact_output=redact_output)
-        except (OSError, subprocess.TimeoutExpired):
+        except (OSError, TimeoutExpired):
             if redact_output:
                 raise RuntimeError("sensitive hermetic CLI command failed; inspect redacted invocation evidence") from None
             raise

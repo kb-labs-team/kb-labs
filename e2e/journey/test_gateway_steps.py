@@ -417,7 +417,9 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_INVOCATIONS": directory,
             "KB_JOURNEY_PROJECT_ID": "prj_fixture",
         }, clear=False), patch("gateway_steps.run_llm_provider_steps"), \
-                patch("gateway_steps._http", side_effect=fake_http):
+                patch("gateway_steps._http", side_effect=fake_http), \
+                patch("gateway_steps.project_service_path", side_effect=lambda project_id, service, path: f"/api/v1/projects/{project_id}/{service}/{path}"), \
+                patch("gateway_steps.open_http", return_value=(403, b'{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","message":"Forbidden","hint":"Not allowed"}}', {})):
             journey = Journey("local", "planned-adapter-catalog-not-in-extras")
             run_gateway_steps(journey, token="fixture-token", project_id="project-a",
                               project_root="/fixture/project-a", project_b_id="project-b",
@@ -432,7 +434,9 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_INVOCATIONS": directory,
             "KB_JOURNEY_PROJECT_ID": "prj_fixture",
         }, clear=False), patch("gateway_steps._http", return_value=(200, GatewayHttpResponse(data=None, meta={"durationMs": 1}))), \
-                patch("gateway_steps.run_llm_provider_steps"):
+                patch("gateway_steps.run_llm_provider_steps"), \
+                patch("gateway_steps.project_service_path", side_effect=lambda project_id, service, path: f"/api/v1/projects/{project_id}/{service}/{path}"), \
+                patch("gateway_steps.open_http", return_value=(403, b'{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","message":"Forbidden","hint":"Not allowed"}}', {})):
             journey = Journey("local", "analytics-track-missing-data")
             run_gateway_steps(journey, token="fixture-token", project_id="project-a",
                               project_root="/fixture/project-a", project_b_id="project-b",
@@ -453,7 +457,9 @@ class GatewayStepTests(unittest.TestCase):
             "KB_JOURNEY_INVOCATIONS": directory,
             "KB_JOURNEY_PROJECT_ID": "prj_fixture",
         }, clear=False), patch("gateway_steps._http", side_effect=fake_http), \
-                patch("gateway_steps.run_llm_provider_steps"):
+                patch("gateway_steps.run_llm_provider_steps"), \
+                patch("gateway_steps.project_service_path", side_effect=lambda project_id, service, path: f"/api/v1/projects/{project_id}/{service}/{path}"), \
+                patch("gateway_steps.open_http", return_value=(403, b'{"ok":false,"error":{"code":"KB_AUTH_FORBIDDEN","message":"Forbidden","hint":"Not allowed"}}', {})):
             journey = Journey("local", "analytics-track-recorded")
             run_gateway_steps(journey, token="fixture-token", project_id="project-a",
                               project_root="/fixture/project-a", project_b_id="project-b",

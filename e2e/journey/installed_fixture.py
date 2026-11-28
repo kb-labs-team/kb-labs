@@ -367,8 +367,10 @@ def configure_hermetic_cli_fixture(
     if workspace_root is not None:
         workspace_root = Path(workspace_root).resolve()
         if source_config is None:
-            source_config = workspace_root / layout_value(
+            candidate_config = workspace_root / layout_value(
                 "sharedRuntimePaths.kb_kb_config_jsonc.platformPath")
+            if candidate_config.is_file():
+                source_config = candidate_config
 
     root = write_local_access_mode(root, source_config)
     if workspace_root is not None and installed_platform_root is not None:
@@ -381,7 +383,11 @@ def configure_hermetic_cli_fixture(
         destination_lock = root / relative_lock
         if source_lock.resolve() != destination_lock.resolve():
             destination_lock.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source_lock, destination_lock)
+            if source_lock.is_file():
+                shutil.copy2(source_lock, destination_lock)
+            else:
+                destination_lock.write_text(json.dumps({"schema": "kb.marketplace/3", "plugins": {}}),
+                                            encoding="utf-8")
         if installed_platform_root is not None:
             _merge_installed_platform_adapters(
                 root, destination_lock, Path(installed_platform_root).resolve())
@@ -409,7 +415,7 @@ def configure_hermetic_cli_fixture(
             journey_source = journey_source.resolve()
         if journey_root.is_symlink():
             journey_root.unlink()
-        if not journey_root.exists():
+        if not journey_root.exists() and journey_source.is_dir():
             shutil.copytree(journey_source, journey_root, symlinks=True)
         fixture_env["KB_PROJECT_ROOT"] = str(root)
 

@@ -10,7 +10,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import tempfile
 import tarfile
 import time
@@ -42,6 +41,7 @@ from invocations import (
     run_command,
     run_with_runner,
     store_report_secret,
+    TimeoutExpired,
 )
 from plugin_author_steps import preflight_installed_plugin_command, run_commit_case_steps
 from commit_fixture import commit_fixture_source_version
@@ -1073,7 +1073,7 @@ def prepare_registry_commit_project_fixture(journey: Journey, project_root: str 
                     forbid_secret_in_files=share_token,
                     require_extension_store_entry=(package_name, expected_version),
                     server_kb_home=_marketplace_server_kb_home(base_env))
-            except (OSError, subprocess.TimeoutExpired):
+            except (OSError, TimeoutExpired):
                 raise RuntimeError("recipient CLI private package install timed out or failed; inspect redacted evidence") from None
             result = _sensitive_cli_success_data(installed_result)
             installed = result.get("installed")

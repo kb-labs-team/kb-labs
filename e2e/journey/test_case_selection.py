@@ -275,13 +275,21 @@ class CaseJourneySelectionTests(unittest.TestCase):
                 }), "")
 
             output = StringIO()
+            real_is_file = Path.is_file
+            workspace_cli = Path(__file__).resolve().parents[2] / "cli/bin/dist/bin.js"
+            def fixture_is_file(path):
+                return True if Path(path) == workspace_cli else real_is_file(path)
             with patch.dict(os.environ, {
                 "HOME": caller_home,
                 "KB_HOME": "/caller/kb-home",
                 "KB_PLATFORM_ROOT": "/caller/platform",
                 "KB_NET_OFFSET": "731",
                 "KB_JOURNEY_CASES": "S-042",
-            }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), redirect_stdout(output):
+            }, clear=False), patch("hermetic_cli.run_command", side_effect=invoke), \
+                    patch("hermetic_cli.Path.is_file", autospec=True, side_effect=fixture_is_file), \
+                    patch("installed_fixture.write_local_access_mode",
+                          side_effect=lambda platform_root, _source_config: platform_root), \
+                    redirect_stdout(output):
                 self.assertEqual(select_from_cases.main(), 0)
 
             self.assertEqual(len(captured), 2)
