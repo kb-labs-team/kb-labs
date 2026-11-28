@@ -214,6 +214,95 @@ class PullRequestDeltaTests(unittest.TestCase):
                 summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, [claim])
                 self.assertEqual(passed, expected, summary)
 
+    # case: S-120.1
+    def test_s120_owner_migration_requires_exact_non_owner_skip_and_owner_pass(self):
+        claim = "S-120.1"
+        step = "Studio dashboard with empty project registry"
+        owner = "service-local:explore"
+        non_owner = "agent:commit"
+        owner_report = "installer-case-local-agent-explore-default.json"
+        non_owner_report = "installer-case-local-agent-commit-default.json"
+        mismatch = f"registered for runner(s) {owner}; this execution used {non_owner}"
+
+        def write_s120_mode(root, sha, mode, *, candidate, owner_status=None,
+                            non_owner_status=None, non_owner_message=None,
+                            non_owner_row_mode=None, multiple_owners=False,
+                            include_non_owner_report=True, extra_baseline_service_failure=False):
+            directory = root / mode
+            directory.mkdir(parents=True, exist_ok=True)
+            owner_status = owner_status or ("PASS" if candidate else "FAIL")
+            non_owner_status = non_owner_status or ("SKIPPED" if candidate else "FAIL")
+            if mode == "secured":
+                selection = [claim]
+                plan = {"selection": selection, "steps": [], "selectedClaimOwners": {},
+                        "prerequisiteSteps": [], "runners": [], "owners": {},
+                        "selectedOwningStepsByRunner": {}}
+                result = "NO_SELECTED_CLAIMS"
+            else:
+                selection = [claim]
+                assignments = {owner: {step: [claim]}}
+                runner_owners = {owner: [claim], non_owner: []}
+                if multiple_owners:
+                    assignments[non_owner] = {step: [claim]}
+                    runner_owners[non_owner] = [claim]
+                else:
+                    assignments[non_owner] = {}
+                plan = {"selection": selection, "steps": [claim],
+                        "selectedClaimOwners": {step: [claim]}, "prerequisiteSteps": [],
+                        "runners": [non_owner, owner], "owners": runner_owners,
+                        "selectedOwningStepsByRunner": assignments}
+                result = "PASS" if candidate and owner_status == "PASS" else "FAIL"
+            values = {
+                "run.json": {"commit": sha},
+                "batch-metadata.json": {"commit": sha, "mode": mode,
+                                        "requestedSelection": [claim], "result": result},
+                "selection-plan.json": plan,
+            }
+            if mode == "local":
+                values[owner_report] = {
+                    "case_run": {"mode": mode},
+                    "steps": [{"stepId": f"case:{claim}", "name": step,
+                               "status": owner_status, "cases": [claim],
+                               "message": "Playwright exited 1" if owner_status == "FAIL" else "passed"}],
+                }
+                if include_non_owner_report:
+                    values[non_owner_report] = {
+                        "case_run": {"mode": mode},
+                        "steps": [{"stepId": f"case:{claim}", "name": step,
+                                   "status": non_owner_status, "cases": [claim],
+                                   "message": non_owner_message or mismatch,
+                                   **({"mode": non_owner_row_mode} if non_owner_row_mode else {})}],
+                    }
+                if extra_baseline_service_failure:
+                    values["service-local.json"] = {
+                        "case_run": {"mode": mode},
+                        "steps": [{"stepId": f"case:{claim}", "name": step,
+                                   "status": "FAIL", "cases": [claim], "message": "extra service failure"}],
+                    }
+            for name, value in values.items():
+                (directory / name).write_text(json.dumps(value), encoding="utf-8")
+
+        for case, options, expected, extra_baseline in (
+            ("exact owner recovery", {}, True, False),
+            ("missing explicit non-owner skip", {"include_non_owner_report": False}, False, False),
+            ("altered ownership reason", {"non_owner_message": mismatch + " changed"}, False, False),
+            ("wrong explicit non-owner mode", {"non_owner_row_mode": "secured"}, False, False),
+            ("multiple owners", {"multiple_owners": True}, False, False),
+            ("owner still fails", {"owner_status": "FAIL"}, False, False),
+            ("extra baseline service failure", {}, False, True),
+        ):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                base, candidate = root / "base", root / "candidate"
+                for mode in ("local", "secured"):
+                    write_s120_mode(base, "a" * 40, mode, candidate=False,
+                                    extra_baseline_service_failure=extra_baseline)
+                    write_s120_mode(candidate, "b" * 40, mode, candidate=True, **options)
+                summary, passed = check_pr(base, candidate, "a" * 40, "b" * 40, [claim])
+                self.assertEqual(passed, expected, summary)
+                if expected:
+                    self.assertIn("Recovered", summary)
+
     # case: S-262.21
     def test_passing_added_prerequisite_does_not_count_as_recovery(self):
         with tempfile.TemporaryDirectory() as directory:
