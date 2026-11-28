@@ -11,4 +11,4 @@ export const commandContractSchema = z.object({
   examples: z.array(z.string().min(1)).optional(),
 });
 
-export const commandContractMapSchema = z.record(commandContractSchema);
+export const commandContractMapSchema = z.record(z.string(), commandContractSchema);

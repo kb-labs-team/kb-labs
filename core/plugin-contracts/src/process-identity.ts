@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 
@@ -53,6 +54,27 @@ export async function captureProcessIdentity(pid: number): Promise<ProcessIdenti
   const startTime = await readStartTime(pid);
   if (!startTime) {
     return undefined;
+  }
+  return { pid, startTime };
+}
+
+/**
+ * Capture a Linux process identity without yielding to the event loop.
+ * Child processes remain waitable until libuv reaps them, so this closes the
+ * spawn-to-/proc-read PID reuse window for short-lived children.
+ */
+export function captureProcessIdentitySync(pid: number): ProcessIdentity {
+  if (!Number.isSafeInteger(pid) || pid < 1) {
+    throw new RangeError(`Invalid process id: ${pid}`);
+  }
+  if (process.platform !== 'linux') {
+    throw new Error('Synchronous process identity capture is supported only on Linux');
+  }
+  const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+  const fields = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+  const startTime = fields[19] ?? '';
+  if (!startTime) {
+    throw new Error(`Process ${pid} exited before its identity could be captured`);
   }
   return { pid, startTime };
 }

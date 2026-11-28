@@ -16,5 +16,8 @@
   },
   {
     "directory": "e2e/journey/fixtures/update-adapter"
+  },
+  {
+    "directory": "e2e/journey/fixtures/legacy-zod3-settings"
   }
 ]

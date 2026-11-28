@@ -10,7 +10,7 @@
  */
 
 import { execaCommand } from 'execa';
-import { captureProcessIdentity, type PluginContextV3 } from '@kb-labs/plugin-contracts';
+import { captureProcessIdentity, captureProcessIdentitySync, type PluginContextV3 } from '@kb-labs/plugin-contracts';
 
 /**
  * Commands that are always blocked (dangerous)
@@ -356,6 +356,18 @@ async function shellHandler(
       detached: true,
     });
 
+    let processIdentity: Awaited<ReturnType<typeof captureProcessIdentity>> | undefined;
+    const pid = proc.pid;
+    if (ctx.onProcessStarted && process.platform === 'linux') {
+      if (pid === undefined) {
+        throw new Error('Shell process started without an OS process id');
+      }
+      // Do not yield between spawn and reading /proc. Node/libuv reaps child
+      // PIDs from the event loop, so this synchronous capture preserves the
+      // original identity even when the command exits immediately.
+      processIdentity = captureProcessIdentitySync(pid);
+    }
+
     // Stream stdout/stderr line-by-line in real-time.
     // We consume the streams ourselves via 'data' events for live log streaming.
     // Because attaching a 'data' listener drains the stream, execa's result.stdout
@@ -412,14 +424,15 @@ async function shellHandler(
     });
 
     if (ctx.onProcessStarted) {
-      const pid = proc.pid;
       if (pid === undefined) {
         throw new Error('Shell process started without an OS process id');
       }
-      const identity = await captureProcessIdentity(pid);
-      if (identity) {
+      if (process.platform !== 'linux') {
+        processIdentity = await captureProcessIdentity(pid);
+      }
+      if (processIdentity) {
         try {
-          await ctx.onProcessStarted(identity);
+          await ctx.onProcessStarted(processIdentity);
         } catch (error) {
           try {
             process.kill(process.platform === 'darwin' || process.platform === 'linux' ? -pid : pid, 'SIGKILL');

@@ -27,7 +27,7 @@
   },
   "dependencies": {
     "@kb-labs/plugin-contracts": "workspace:*",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

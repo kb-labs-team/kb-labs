@@ -42,7 +42,7 @@
     "fast-glob": "^3.3.2",
     "pino": "^9.0.0",
     "yaml": "^2.8.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

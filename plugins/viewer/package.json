@@ -42,7 +42,7 @@
     "build:cli": "tsup --config tsup.config.ts"
   },
   "dependencies": {
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "fflate": "^0.8.3",
     "js-yaml": "^4.2.0",
     "mermaid": "^11.4.1",

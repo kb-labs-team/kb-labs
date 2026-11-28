@@ -25,8 +25,8 @@ from installer_case_steps import (commit_marketplace_install_record,
                                   first_admin_credential_disclosed_once,
                                   requested_commit_marketplace_install_satisfied)
 import runner
-from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
-                    read_apply_result, registry_install_config)
+from runner import (REGISTRY, _healthy_workflow_run_detail, marketplace_install_flags,
+                    read_apply_result, registry_gateway_url_from_plan, registry_install_config)
 import journey_resources
 
 
@@ -58,6 +58,39 @@ class KbCreateApplyEnvelopeTests(unittest.TestCase):
         envelope = read_kb_create_cli_result("install", result)
 
         self.assertEqual(envelope["data"]["operation"], "install")
+
+
+class HealthyWorkflowRunLookupTests(unittest.TestCase):
+    def test_missing_run_is_treated_as_pending(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "runs", "view"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND",
+                "message": "Workflow run was not found.",
+            }}),
+            "",
+        )
+        self.assertIsNone(_healthy_workflow_run_detail(result))
+
+    def test_terminal_run_returns_payload(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "runs", "view"], 0,
+            json.dumps({"ok": True, "data": {"status": "success"}}),
+            "",
+        )
+        self.assertEqual(_healthy_workflow_run_detail(result), {"status": "success"})
+
+    def test_unexpected_error_is_not_reclassified_as_pending(self):
+        result = subprocess.CompletedProcess(
+            ["kb", "workflow", "runs", "view"], 1,
+            json.dumps({"ok": False, "error": {
+                "code": "KB_RUNTIME_WORKFLOW_UNAVAILABLE",
+                "message": "Workflow service is unavailable.",
+            }}),
+            "",
+        )
+        with self.assertRaisesRegex(ValueError, "KB_RUNTIME_WORKFLOW_UNAVAILABLE"):
+            _healthy_workflow_run_detail(result)
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
@@ -127,6 +160,79 @@ class WorkflowHostStateBoundaryTests(unittest.TestCase):
         self.assertEqual(outcome, "BLOCKED")
         self.assertEqual(later_group_ran, [])
         self.assertIn("gateway is unhealthy", graph.state_failure("host-running"))
+
+
+class EmptyProjectStudioFixtureTests(unittest.TestCase):
+    def test_empty_registry_check_restores_selected_project_even_after_browser_failure(self):
+        with tempfile.TemporaryDirectory(prefix="journey-empty-studio-") as directory:
+            project = Path(directory) / "fresh-project"
+            project.mkdir()
+            row = {"id": "prj_fixture", "path": str(project.resolve()), "name": "friendly-alias",
+                   "status": "active"}
+            registered = [row.copy()]
+            calls = []
+
+            def execute(args):
+                calls.append(tuple(args))
+                if args[:3] == ["project", "list", "--json"]:
+                    data = {"projects": [item.copy() for item in registered]}
+                elif args[:2] == ["project", "remove"]:
+                    registered.clear()
+                    data = {"project": row.copy()}
+                elif args[:2] == ["project", "add"]:
+                    added = {"id": row["id"], "path": args[2],
+                             "name": args[args.index("--name") + 1], "status": "active"}
+                    registered.append(added.copy())
+                    data = {"project": added}
+                else:
+                    self.fail(f"unexpected project command: {args}")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            def browser_check():
+                self.assertEqual(registered, [])
+                return "Playwright verified a non-empty dashboard response"
+
+            result = runner.run_with_empty_project_registry(project, Path(directory), execute, browser_check)
+
+        self.assertEqual(result, "Playwright verified a non-empty dashboard response")
+        self.assertEqual([call[1] for call in calls if call[0:2] == ("project", "remove")], ["remove"])
+        self.assertEqual([call[1] for call in calls if call[0:2] == ("project", "add")], ["add"])
+        self.assertIn(("project", "add", str(project.resolve()), "--json", "--name", "friendly-alias"), calls)
+        self.assertEqual(registered[0]["id"], "prj_fixture")
+        self.assertEqual(registered[0]["path"], str(project.resolve()))
+        self.assertEqual(registered[0]["name"], "friendly-alias")
+        self.assertEqual(registered[0]["status"], "active")
+
+    def test_empty_registry_check_restores_project_after_keyboard_interrupt(self):
+        with tempfile.TemporaryDirectory(prefix="journey-empty-studio-interrupt-") as directory:
+            project = Path(directory) / "fresh-project"
+            project.mkdir()
+            row = {"id": "prj_fixture", "path": str(project.resolve()), "name": "Alias", "status": "active"}
+            registered = [row.copy()]
+
+            def execute(args):
+                if args[:3] == ["project", "list", "--json"]:
+                    data = {"projects": [item.copy() for item in registered]}
+                elif args[:2] == ["project", "remove"]:
+                    registered.clear()
+                    data = {"project": row.copy()}
+                elif args[:2] == ["project", "add"]:
+                    added = {"id": row["id"], "path": args[2],
+                             "name": args[args.index("--name") + 1], "status": "active"}
+                    registered.append(added.copy())
+                    data = {"project": added}
+                else:
+                    self.fail(f"unexpected project command: {args}")
+                return subprocess.CompletedProcess(args, 0, json.dumps({"ok": True, "data": data}), "")
+
+            def interrupt_browser():
+                self.assertEqual(registered, [])
+                raise KeyboardInterrupt()
+
+            with self.assertRaises(KeyboardInterrupt):
+                runner.run_with_empty_project_registry(project, Path(directory), execute, interrupt_browser)
+
+        self.assertEqual(registered, [row])
 
 
 class MarketplaceInstallFlagTests(unittest.TestCase):
@@ -1015,6 +1121,13 @@ thread.join()
         fixture_calls = []
         host_cycle = []
         events = []
+        project_registry = [{
+            "id": "prj_main",
+            "path": str(project.resolve()),
+            "name": "fresh-project",
+            "status": "active",
+        }]
+        project_registry_events = []
 
         def fake_run(command, *, env=None, cwd=None, **_kwargs):
             argv = [str(item) for item in command]
@@ -1073,7 +1186,28 @@ thread.join()
                     return subprocess.CompletedProcess(command, 7, "project show: secondary shim missing", ""), 0.0
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
             elif "project list" in " ".join(argv):
-                output = json.dumps({"ok": True, "data": {"projects": [{"id": "prj_main"}]}})
+                if mode == "local" and selection == "":
+                    project_registry_events.append(f"list:{len(project_registry)}")
+                    projects = [item.copy() for item in project_registry]
+                else:
+                    projects = [{"id": "prj_main"}]
+                output = json.dumps({"ok": True, "data": {"projects": projects}})
+            elif mode == "local" and selection == "" and "project remove" in " ".join(argv):
+                project_id = argv[argv.index("remove") + 1]
+                removed = next((item for item in project_registry if item["id"] == project_id), None)
+                if removed is None:
+                    return subprocess.CompletedProcess(command, 1, "project not found", ""), 0.0
+                project_registry.remove(removed)
+                project_registry_events.append(f"remove:{project_id}")
+                output = json.dumps({"ok": True, "data": {"project": removed}})
+            elif mode == "local" and selection == "" and "project add" in " ".join(argv):
+                project_path = argv[argv.index("add") + 1]
+                project_name = argv[argv.index("--name") + 1]
+                restored = {"id": "prj_main", "path": project_path,
+                            "name": project_name, "status": "active"}
+                project_registry[:] = [restored]
+                project_registry_events.append(f"add:{restored['id']}")
+                output = json.dumps({"ok": True, "data": {"project": restored}})
             elif "workflow defs list" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": [{"id": "journey-hello"}]})
             elif "workflow crons list" in " ".join(argv):
@@ -1224,6 +1358,7 @@ thread.join()
             "fixture_calls": fixture_calls,
             "host_cycle": host_cycle,
             "events": events,
+            "project_registry_events": project_registry_events,
         }
 
     # case: S-262.8
@@ -1323,6 +1458,9 @@ thread.join()
         self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start", "stop"])
         self.assertEqual(observed["events"], [
             "host:stop", "host:start", "host:stop", *isolated_groups, "host:start", "host:stop",
+        ])
+        self.assertEqual(observed["project_registry_events"][:5], [
+            "list:1", "remove:prj_main", "list:0", "add:prj_main", "list:1",
         ])
 
     def test_failed_update_keeps_candidate_version_known_and_runs_independent_cleanup(self):

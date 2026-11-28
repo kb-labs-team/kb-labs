@@ -13,7 +13,7 @@ export const StageTraceSchema = z.object({
   /** Number of items the stage produced (chunks, candidates, …). */
   outputCount: z.number().optional(),
   /** Free-form, stage-specific detail (scores, weights, decisions). */
-  detail: z.record(z.unknown()).optional(),
+  detail: z.record(z.string(), z.unknown()).optional(),
 });
 export type StageTrace = z.infer<typeof StageTraceSchema>;
 

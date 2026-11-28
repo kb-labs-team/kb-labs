@@ -54,11 +54,12 @@ test('dashboard opens on a fresh host with an empty project registry @S-120.1', 
   await expect(page.locator('button').filter({ has: page.locator('svg.lucide-bell') })).toBeVisible()
   await expect(page.getByText('local-admin', { exact: true }).first()).toBeVisible()
   await expect(page.getByText('Online', { exact: true })).toBeVisible()
-  for (const label of ['Search', 'Dashboard', 'Projects', 'Plugins', 'Marketplace', 'Analytics',
+  await expect(page.getByRole('button', { name: 'Search ⌘K', exact: true })).toBeVisible()
+  for (const label of ['Dashboard', 'Projects', 'Plugins', 'Marketplace', 'Analytics',
     'Observability', 'Settings']) {
-    await expect(page.getByRole('link', { name: new RegExp(label, 'i') }).first()).toBeVisible()
+    await expect(page.getByRole('menuitem', { name: new RegExp(`${label}$`, 'i') }).first()).toBeVisible()
   }
-  await page.getByRole('link', { name: 'Analytics', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Analytics$/i }).click()
   await expect(page.getByText('Adapters', { exact: true })).toBeVisible()
   await expect(page.getByText('v0.1.0', { exact: true })).toBeVisible()
   await expect(page.getByText('Help', { exact: true })).toBeVisible()
@@ -87,7 +88,7 @@ test('dashboard opens on a fresh host with an empty project registry @S-120.1', 
     await expect(page.getByText(`${studioPluginCount} extension${studioPluginCount === 1 ? '' : 's'}`, { exact: true })).toBeVisible()
   }
   if (pluginRegistry.data!.manifests!.length === 0) {
-    await page.getByRole('link', { name: 'Marketplace', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Marketplace$/i }).click()
     await expect(page.getByText('No extensions found', { exact: true })).toBeVisible()
   }
 })

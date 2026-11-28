@@ -272,7 +272,7 @@ export const LayeringResponseSchema = z.object({
   violations: z.array(LayeringViolationSchema),
   totalViolations: z.number(),
   affectedPackages: z.array(z.string()),
-  layerMap: z.record(z.number()),
+  layerMap: z.record(z.string(), z.number()),
 });
 
 export type LayeringResponse = z.infer<typeof LayeringResponseSchema>;

@@ -51,10 +51,10 @@
     "chokidar": "^4.0.3",
     "cli-table3": "^0.6.5",
     "colorette": "^2.0.20",
-    "glob": "^11.0.0",
+    "glob": "^14.0.6",
     "semver": "^7.6.3",
     "yaml": "^2.8.2",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

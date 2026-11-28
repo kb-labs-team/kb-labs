@@ -1,13 +1,35 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { readFile } from 'node:fs/promises';
-import { captureProcessIdentity, isProcessIdentityAlive, sameProcessIdentity } from './process-identity.js';
+import {
+  captureProcessIdentity,
+  captureProcessIdentitySync,
+  isProcessIdentityAlive,
+  sameProcessIdentity,
+} from './process-identity.js';
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, readFile: vi.fn(actual.readFile) };
 });
-
 describe('process identity', () => {
+  it.skipIf(process.platform !== 'linux')('captures a fast-exiting Linux child before the event loop can reap and reuse its pid', async () => {
+    const child = spawn('sh', ['-c', 'exit 0'], { detached: true, stdio: 'ignore' });
+    const pid = child.pid;
+    expect(pid).toBeDefined();
+
+    const identity = captureProcessIdentitySync(pid!);
+    expect(identity).toMatchObject({ pid, startTime: expect.any(String) });
+    await once(child, 'close');
+  });
+
+  it.skipIf(process.platform !== 'linux')('does not suppress process identity capture errors other than a valid identity', () => {
+    expect(() => captureProcessIdentitySync(0)).toThrow(RangeError);
+    expect(() => captureProcessIdentitySync(Number.MAX_SAFE_INTEGER))
+      .toThrow(expect.objectContaining({ code: 'ENOENT' }));
+  });
+
   // case: S-025.8
   it('does not treat a reused pid with a different start time as the original process', () => {
     expect(sameProcessIdentity(

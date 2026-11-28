@@ -21,6 +21,7 @@ import { WorkflowSpecSchema } from '@kb-labs/workflow-contracts';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
 import type { IEntityRegistry } from '@kb-labs/plugin-contracts';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
+import { ZodError } from 'zod';
 import { ManifestScanner, type WorkflowRuntime } from './manifest-scanner';
 import { WorkflowRepository, type WorkflowListOptions } from './workflow-repository';
 
@@ -330,12 +331,11 @@ export class WorkflowService {
       WorkflowSpecSchema.parse(spec);
       return { valid: true };
     } catch (error) {
-      if (error && typeof error === 'object' && 'errors' in error) {
-        const zodError = error as { errors: Array<{ path: (string | number)[]; message: string }> };
+      if (error instanceof ZodError) {
         return {
           valid: false,
-          errors: zodError.errors.map((e) => ({
-            path: e.path.join('.'),
+          errors: error.issues.map((e) => ({
+            path: e.path.map(String).join('.'),
             message: e.message,
           })),
         };

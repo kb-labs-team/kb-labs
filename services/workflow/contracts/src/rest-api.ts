@@ -295,7 +295,7 @@ export const WorkflowListResponseSchema = z.object({
  * Workflow run request schema (POST /api/v1/workflows/:id/run)
  */
 export const WorkflowRunRequestSchema = z.object({
-  inputs: z.record(z.unknown()).optional(),
+  inputs: z.record(z.string(), z.unknown()).optional(),
   input: z.unknown().optional(),
   target: z.object({
     environmentId: z.string().min(1).optional(),
@@ -335,7 +335,7 @@ export interface WorkflowRestartRequest {
 
 export const WorkflowRestartRequestSchema = z.object({
   fromStepId: z.string().optional(),
-  env: z.record(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
 })
 
 export interface WorkflowRestartResponse {
@@ -540,7 +540,7 @@ export const JobLogsResponseSchema = z.object({
     timestamp: z.string(),
     level: z.enum(['info', 'warn', 'error', 'debug']),
     message: z.string(),
-    context: z.record(z.unknown()).optional(),
+    context: z.record(z.string(), z.unknown()).optional(),
   })),
   total: z.number(),
   hasMore: z.boolean(),

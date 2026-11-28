@@ -43,10 +43,10 @@ describe('resolved execution mode contract', () => {
       expect(result.success).toBe(false);
       if (result.success) continue;
       const issue = result.error.issues[0];
-      if (issue?.code !== 'invalid_enum_value') {
-        throw new Error(`Expected invalid_enum_value, received ${issue?.code ?? 'no issue'}`);
+      if (issue?.code !== 'invalid_value') {
+        throw new Error(`Expected invalid_value, received ${issue?.code ?? 'no issue'}`);
       }
-      expect(issue.options).toEqual(['auto', ...RESOLVED_EXECUTION_MODES]);
+      expect(issue.values).toEqual(['auto', ...RESOLVED_EXECUTION_MODES]);
 
       const platformIssues = validatePlatformUserConfig({ platform: { execution: { mode } } });
       expect(platformIssues[0]?.path).toBe('platform.execution.mode');

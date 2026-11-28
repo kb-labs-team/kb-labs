@@ -40,7 +40,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "glob": "^11.0.0",
+    "glob": "^14.0.6",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/plugin-contracts": "workspace:*"
   },

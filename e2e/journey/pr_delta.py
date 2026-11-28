@@ -45,6 +45,7 @@ class SelectionEvidence(NamedTuple):
     measured: dict[tuple[str, str], set[Evidence]]
     indirect: dict[str, set[Evidence]]
     plan: dict
+    directory: Path
 
 
 def plan_claims(paths: list[str]) -> list[str]:
@@ -92,7 +93,7 @@ def selected_outcomes(directory: Path, sha: str, mode: str,
         raise ValueError(f"{mode}: invalid or incomplete metadata for commit {sha}")
     selected = set(plan["steps"])
     if metadata["result"] == "NO_SELECTED_CLAIMS" and not selected and not plan["runners"]:
-        return SelectionEvidence({}, {}, plan)
+        return SelectionEvidence({}, {}, plan, directory)
     if metadata["result"] not in {"PASS", "FAIL"} or not selected or not selected <= set(claims) or not plan["runners"]:
         raise ValueError(f"{mode}: invalid selected Journey plan for commit {sha}")
     owners = plan["selectedClaimOwners"]
@@ -134,7 +135,7 @@ def selected_outcomes(directory: Path, sha: str, mode: str,
     if metadata["result"] == "FAIL" and all(row.status == "PASS" for results in measured.values()
                                             for row in results):
         raise ValueError(f"{mode}: runner failed outside the available results for commit {sha}")
-    return SelectionEvidence(dict(measured), dict(unnamed_claim_results), plan)
+    return SelectionEvidence(dict(measured), dict(unnamed_claim_results), plan, directory)
 
 
 def workflow_child_recovered(mode: str, key: tuple[str, str], before: SelectionEvidence,
@@ -166,6 +167,116 @@ def workflow_child_recovered(mode: str, key: tuple[str, str], before: SelectionE
             and after.measured.get((step, claim)) == {Evidence(f"service-{mode}.json", step, "PASS", "")})
 
 
+def legacy_s120_non_owner_recovered(mode: str, key: tuple[str, str], before: SelectionEvidence,
+                                    after: SelectionEvidence) -> bool:
+    """Recognize the configured ownership migration without dropping owner evidence."""
+    step, claim = key
+    migration = read_json(CLAIM_MAP).get("legacyS120OwnershipMigration", {})
+    if mode != migration.get("mode") or (step, claim) != (migration.get("step"), migration.get("claim")):
+        return False
+
+    owner = migration.get("owner")
+    non_owner = migration.get("nonOwner")
+    if not isinstance(owner, str) or not isinstance(non_owner, str):
+        return False
+
+    def report_name(selector: str) -> str | None:
+        spec = RUNNERS.get(selector)
+        if spec is None or spec.mode != mode:
+            return None
+        return f"installer-case-{mode}-{spec.front_door}-{spec.scenario}-{spec.variant}.json"
+
+    owner_report = report_name(owner)
+    non_owner_report = report_name(non_owner)
+    if owner_report is None or non_owner_report is None or owner_report == non_owner_report:
+        return False
+
+    def unique_runner_reports(plan: dict) -> bool:
+        selectors = plan.get("runners")
+        if not isinstance(selectors, list):
+            return False
+        reports = [report_name(selector) for selector in selectors]
+        return (all(isinstance(name, str) for name in reports)
+                and len(reports) == len(set(reports))
+                and reports.count(owner_report) == reports.count(non_owner_report) == 1)
+
+    def selected_owners(plan: dict) -> set[str]:
+        assignments = plan.get("selectedOwningStepsByRunner")
+        if not isinstance(assignments, dict):
+            return set()
+        return {selector for selector, steps in assignments.items()
+                if isinstance(steps, dict) and claim in steps.get(step, [])}
+
+    def report_rows(directory: Path) -> list[tuple[str, str, str, str, tuple[str, ...]]] | None:
+        found = []
+        try:
+            for path in sorted(directory.glob("*.json")):
+                if not path.name.startswith(REPORT_PREFIXES):
+                    continue
+                report = read_json(path)
+                if report.get("case_run", {}).get("mode") != mode:
+                    continue
+                rows = report.get("steps", [])
+                if not isinstance(rows, list):
+                    return None
+                for row in rows:
+                    if (isinstance(row, dict) and row.get("name") == step
+                            and row.get("mode", mode) == mode
+                            and claim in row.get("cases", [])):
+                        cases = row.get("cases")
+                        if not isinstance(cases, list) or any(not isinstance(item, str) for item in cases):
+                            return None
+                        found.append((path.name, row.get("status"), row.get("message", ""),
+                                      row.get("stepId", ""), tuple(cases)))
+        except (OSError, ValueError, TypeError):
+            return None
+        return found
+
+    plans = (before.plan, after.plan)
+    if any(not unique_runner_reports(plan) for plan in plans):
+        return False
+    if any(not {owner, non_owner}.issubset(set(plan.get("runners", []))) for plan in plans):
+        return False
+    if any(plan.get("selectedClaimOwners", {}).get(step) != [claim] for plan in plans):
+        return False
+    if any(selected_owners(plan) != {owner} for plan in plans):
+        return False
+    if any(claim not in plan.get("owners", {}).get(owner, [])
+           or claim in plan.get("owners", {}).get(non_owner, []) for plan in plans):
+        return False
+
+    baseline_rows = report_rows(before.directory)
+    candidate_rows = report_rows(after.directory)
+    if baseline_rows is None or candidate_rows is None:
+        return False
+    mismatch = (f"registered for runner(s) {owner}; this execution used {non_owner}")
+    expected_baseline = {
+        (owner_report, "FAIL", "case:" + claim, (claim,)),
+        (non_owner_report, "FAIL", "case:" + claim, (claim,)),
+    }
+    expected_candidate = {
+        (owner_report, "PASS", "case:" + claim, (claim,)),
+        (non_owner_report, "SKIPPED", "case:" + claim, (claim,)),
+    }
+    if {(name, status, step_id, cases) for name, status, _, step_id, cases in baseline_rows} != expected_baseline:
+        return False
+    if {(name, status, step_id, cases) for name, status, _, step_id, cases in candidate_rows} != expected_candidate:
+        return False
+    old_measured = before.measured.get((step, claim), set())
+    if {(row.report, row.status) for row in old_measured} != {
+            (owner_report, "FAIL"), (non_owner_report, "FAIL")}:
+        return False
+    baseline_non_owner = [row for row in baseline_rows if row[0] == non_owner_report]
+    candidate_non_owner = [row for row in candidate_rows if row[0] == non_owner_report]
+    owner_candidate = [row for row in candidate_rows if row[0] == owner_report]
+    owner_baseline = [row for row in baseline_rows if row[0] == owner_report]
+    return (len(baseline_non_owner) == len(candidate_non_owner) == 1
+            and baseline_non_owner[0][2] == candidate_non_owner[0][2] == mismatch
+            and len(owner_baseline) == len(owner_candidate) == 1
+            and owner_baseline[0][1] == "FAIL" and owner_candidate[0][1] == "PASS"
+            and after.measured.get((step, claim)) == {Evidence(owner_report, step, "PASS", "")})
+
+
 def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, claims: list[str]) -> tuple[str, bool]:
     lines = ["## Journey baseline delta", "", f"- Base: `{base_sha}`", f"- Tested merge: `{candidate_sha}`",
              f"- Selected claims: {', '.join(claims)}", ""]
@@ -194,6 +305,8 @@ def check_pr(base: Path, candidate: Path, base_sha: str, candidate_sha: str, cla
             # Multiple indirect blockers can demonstrate unchanged debt, not owner recovery.
             multiple_blockers = sum(row.step != name for row in old) > 1
             if key == workflow_child_key and workflow_child_recovered(mode, key, baseline, proposed):
+                improved.append(label)
+            elif legacy_s120_non_owner_recovered(mode, key, baseline, proposed):
                 improved.append(label)
             elif (not multiple_blockers and {row.report for row in old} == {row.report for row in new}
                     and new_statuses == {"PASS"} and old_statuses & {"FAIL", "BLOCKED"}):

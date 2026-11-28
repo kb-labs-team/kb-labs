@@ -40,7 +40,7 @@
     "@kb-labs/shared-http": "workspace:*",
     "@kb-labs/shared-daemon": "workspace:*",
     "yaml": "^2.8.0",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@kb-labs/devkit": "workspace:*",

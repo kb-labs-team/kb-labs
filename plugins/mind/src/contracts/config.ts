@@ -138,10 +138,10 @@ export const MindConfigSchema = z.object({
   defaultIndex: z.string().default('default'),
   /** Named indexes with per-index scope + overrides. */
   indexes: z.record(z.string(), IndexConfigSchema).default({}),
-  chunk: ChunkConfigSchema.default({}),
-  retrieval: RetrievalConfigSchema.default({}),
-  modes: ModesConfigSchema.default({}),
-  confidence: ConfidenceConfigSchema.default({}),
+  chunk: ChunkConfigSchema.prefault({}),
+  retrieval: RetrievalConfigSchema.prefault({}),
+  modes: ModesConfigSchema.prefault({}),
+  confidence: ConfidenceConfigSchema.prefault({}),
 });
 
 export type ChunkConfig = z.infer<typeof ChunkConfigSchema>;

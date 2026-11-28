@@ -103,7 +103,7 @@
     "@kb-labs/platform-client": "workspace:*",
     "@kb-labs/perm-presets": "workspace:*",
     "@kb-labs/shared-tool-kit": "workspace:*",
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "@kb-labs/core-resource-broker": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",

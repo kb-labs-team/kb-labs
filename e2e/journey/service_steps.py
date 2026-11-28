@@ -207,7 +207,10 @@ class Journey:
         step_id = "case:" + ",".join(sorted(set(case_ids))) if case_ids else f"flow:{name}"
         normalized_requirements = self._identified_requirements(required_items)
         dependency_details = {"requires": normalized_requirements} if normalized_requirements else None
-        selected = bool(self.selected_steps.intersection(case_ids))
+        runner_claims = (self.selected_runner_claims
+                         if self.selection_boundary.completion_owners is not None
+                         else self.selected_steps)
+        selected = bool(runner_claims.intersection(case_ids))
         eligible_runners = set(runners)
         if selected and eligible_runners and self.runner_selector not in eligible_runners:
             message = (f"registered for runner(s) {', '.join(sorted(eligible_runners))}; "

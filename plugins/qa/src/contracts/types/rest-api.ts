@@ -13,7 +13,7 @@ export const SnapshotMetaSchema = z.object({
   timestamp: z.string(),
   git: SnapshotGitSchema.optional(),
   durationMs: z.number(),
-  runContext: z.record(z.unknown()).optional(),
+  runContext: z.record(z.string(), z.unknown()).optional(),
 });
 
 // DevkitRunOutput
@@ -53,7 +53,7 @@ export const DevkitCheckIssueSchema = z.object({
 
 export const DevkitCheckOutputSchema = z.object({
   ok: z.boolean(),
-  packages: z.record(z.object({
+  packages: z.record(z.string(), z.object({
     ok: z.boolean(),
     issues: z.array(DevkitCheckIssueSchema).nullable(),
   })),
@@ -72,19 +72,19 @@ export const DevkitStatsOutputSchema = z.object({
     total_errors: z.number(),
     total_warnings: z.number(),
   }),
-  by_category: z.record(z.object({
+  by_category: z.record(z.string(), z.object({
     total: z.number(),
     healthy: z.number(),
     issues: z.number(),
     grade: z.string(),
   })),
-  issues_by_type: z.record(z.object({
+  issues_by_type: z.record(z.string(), z.object({
     check: z.string(),
     errors: z.number(),
     warnings: z.number(),
     packages: z.number(),
   })),
-  coverage: z.record(z.object({
+  coverage: z.record(z.string(), z.object({
     pass: z.number(),
     total: z.number(),
     pct: z.number(),
@@ -184,7 +184,7 @@ export type QASummaryResponse = z.infer<typeof QASummaryResponseSchema>;
 export const QARunRequestSchema = z.object({
   tasks: z.array(z.string()).optional(),
   save: z.boolean().optional(),
-  runContext: z.record(z.unknown()).optional(),
+  runContext: z.record(z.string(), z.unknown()).optional(),
 });
 export type QARunRequest = z.infer<typeof QARunRequestSchema>;
 
@@ -198,7 +198,7 @@ export type QARunResponse = z.infer<typeof QARunResponseSchema>;
 // POST /check
 export const QACheckRequestSchema = z.object({
   save: z.boolean().optional(),
-  runContext: z.record(z.unknown()).optional(),
+  runContext: z.record(z.string(), z.unknown()).optional(),
 });
 export type QACheckRequest = z.infer<typeof QACheckRequestSchema>;
 

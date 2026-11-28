@@ -43,7 +43,7 @@
     "react-resizable": "^3.0.5",
     "react-router-dom": "^7.15.0",
     "reactflow": "^11.11.4",
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

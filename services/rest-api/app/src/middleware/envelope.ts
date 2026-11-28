@@ -3,7 +3,8 @@
  * Response envelope wrapper middleware — single source of truth for error formatting.
  */
 
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { createUxFailureResult, createUxSuccessResult, isUxResult, isUxResultCandidate } from '@kb-labs/core-platform/ux-result';
 import { codeForHttpFailure, normalizeHttpFailure, statusForHttpFailure, toErrorEnvelope } from '@kb-labs/core-platform';

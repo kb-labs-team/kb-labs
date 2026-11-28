@@ -128,8 +128,8 @@ export const AuthConfigSchema = z.object({
   refreshGraceWindowSec: z.number().int().nonnegative().default(5),
   /** bcrypt cost factor for password hashing. */
   bcryptCost: z.number().int().min(4).max(31).default(12),
-  passwordPolicy: AuthPasswordPolicySchema.default({}),
-  rateLimit: AuthRateLimitSchema.default({}),
+  passwordPolicy: AuthPasswordPolicySchema.prefault({}),
+  rateLimit: AuthRateLimitSchema.prefault({}),
   /** Invite link TTL in milliseconds. Default 7 days. */
   inviteTtlMs: z.number().int().positive().default(7 * 24 * 60 * 60 * 1000),
   /** Bootstrap admin account seeding. Credentials come from env vars. */

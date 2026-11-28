@@ -66,13 +66,13 @@
     "colorette": "^2.0.20",
     "execa": "^9.5.3",
     "fast-glob": "^3.3.2",
-    "glob": "^11.0.0",
-    "minimatch": "^10.0.1",
+    "glob": "^14.0.6",
+    "minimatch": "^11.0.9",
     "pathe": "^1.1.2",
     "pino": "^9.0.0",
     "semver": "^7.6.3",
     "yaml": "^2.8.0",
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "@kb-labs/scaffold": "workspace:*"
   },
   "devDependencies": {

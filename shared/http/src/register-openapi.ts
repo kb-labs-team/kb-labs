@@ -5,8 +5,8 @@
  * Use this as the visibility toggle — internal/undocumented routes simply
  * omit `tags:` and they won't appear in /docs or /openapi.json.
  *
- * Plain JSON Schema and Zod schemas are both supported natively by
- * @fastify/swagger without any custom transform.
+ * Plain JSON Schema can be mixed with Zod schemas; the Zod type provider
+ * converts only Zod fields for @fastify/swagger.
  *
  * @example
  * ```ts
@@ -21,9 +21,9 @@
  * ```
  */
 
-import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { ZodSchema } from 'zod';
+import { jsonSchemaTransform } from 'fastify-type-provider-zod';
 import type { FastifyContextConfig } from 'fastify';
+import { z } from 'zod';
 
 /** Minimal structural interface to accept any Fastify instance regardless of version. */
 interface FastifyLike {
@@ -33,26 +33,48 @@ interface FastifyLike {
   swagger?(): unknown;
 }
 
-/** Returns true if the value is a Zod schema (has ._def). */
-function isZod(v: unknown): boolean {
-  return v != null && typeof v === 'object' && '_def' in (v as object);
+function isZodSchema(value: unknown): value is z.ZodType {
+  return value instanceof z.ZodType;
 }
 
-/** Convert Zod schemas in a route schema object to plain JSON Schema. */
-function convertSchema(schema: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = { ...schema };
+/** Convert only Zod portions of a route schema; keep plain JSON Schema intact. */
+function transformRouteSchema(input: Parameters<typeof jsonSchemaTransform>[0]) {
+  const { schema } = input;
+  const zodSchema = { ...schema };
+
   for (const key of ['body', 'querystring', 'params', 'headers'] as const) {
-    if (isZod(out[key])) { out[key] = zodToJsonSchema(out[key] as ZodSchema); }
+    if (!isZodSchema(zodSchema[key])) {
+      delete zodSchema[key];
+    }
   }
-  if (out['response'] && typeof out['response'] === 'object') {
-    out['response'] = Object.fromEntries(
-      Object.entries(out['response'] as Record<string, unknown>).map(([code, s]) => [
-        code,
-        isZod(s) ? zodToJsonSchema(s as ZodSchema) : s,
-      ]),
-    );
+
+  const response = schema.response;
+  const zodResponses = response && typeof response === 'object'
+    ? Object.fromEntries(Object.entries(response).filter(([, responseSchema]) =>
+      isZodSchema(responseSchema) || (
+        responseSchema !== null && typeof responseSchema === 'object' &&
+        'properties' in responseSchema && isZodSchema(responseSchema.properties)
+      ),
+    ))
+    : {};
+  if (Object.keys(zodResponses).length > 0) {
+    zodSchema.response = zodResponses;
+  } else {
+    delete zodSchema.response;
   }
-  return out;
+
+  const transformed = jsonSchemaTransform({ ...input, schema: zodSchema });
+  const convertedResponses = transformed.schema.response;
+  return {
+    ...transformed,
+    schema: {
+      ...schema,
+      ...transformed.schema,
+      ...(response && convertedResponses && typeof convertedResponses === 'object'
+        ? { response: { ...response, ...convertedResponses } }
+        : {}),
+    },
+  };
 }
 
 export interface OpenAPIOptions {
@@ -78,8 +100,8 @@ export async function registerOpenAPI(server: FastifyLike, options: OpenAPIOptio
   const swagger = await import('@fastify/swagger');
 
   // @fastify/swagger uses fastify-plugin — decorates the root instance with swagger().
-  // transform() converts any Zod schemas to plain JSON Schema via zodToJsonSchema.
-  // Plain JSON Schema passes through unchanged. Routes can freely mix both.
+  // The provider transform converts Zod v4 schemas across request and response
+  // positions while preserving plain JSON Schema. Routes can freely mix both.
   await server.register(swagger.default ?? swagger, {
     openapi: {
       info: {
@@ -90,9 +112,7 @@ export async function registerOpenAPI(server: FastifyLike, options: OpenAPIOptio
       servers: options.servers ?? [],
     },
     hideUntagged: true,
-    transform({ schema, url }: { schema: Record<string, unknown>; url: string }) {
-      return { schema: convertSchema(schema), url };
-    },
+    transform: transformRouteSchema,
   });
 
   const specPath = options.specPath ?? '/openapi.json';

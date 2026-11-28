@@ -19,7 +19,7 @@ describe("normalizeLLMError", () => {
     const htmlBody = "<!DOCTYPE html><html><body><h1>502 Bad Gateway</h1><p>nginx</p></body></html>";
     // Mirrors what openai's fetch handler does for a non-JSON error body:
     // APIError.generate(status, errorResponse=undefined, message=rawText, headers).
-    const apiError = OpenAI.APIError.generate(502, undefined, htmlBody, {});
+    const apiError = OpenAI.APIError.generate(502, undefined, htmlBody, new Headers());
 
     expect(() => normalizeLLMError(apiError)).toThrowError(/HTTP 502/);
     try {
@@ -33,10 +33,10 @@ describe("normalizeLLMError", () => {
 
   it("preserves structured provider context for a well-formed JSON API error", () => {
     const jsonError = { error: { message: "Invalid API key", type: "invalid_request_error" } };
-    const apiError = OpenAI.APIError.generate(401, jsonError, "Invalid API key", {
+    const apiError = OpenAI.APIError.generate(401, jsonError, "Invalid API key", new Headers({
       "content-type": "application/json",
       "x-request-id": "req-123",
-    });
+    }));
 
     try {
       normalizeLLMError(apiError);

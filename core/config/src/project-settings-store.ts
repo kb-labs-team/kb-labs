@@ -78,10 +78,10 @@ export async function writeProjectSetting(
     value: options.value,
     dryRun: options.dryRun,
     validate: validator && pluginId
-      ? (nextDocument) => {
+      ? async (nextDocument) => {
           const nextPlugins = isRecord(nextDocument.plugins) ? nextDocument.plugins : {};
           const nextPluginSettings = isRecord(nextPlugins[pluginId]) ? nextPlugins[pluginId] : {};
-          const validation = validator.validate(mergeSettings(options.baseSettings ?? {}, nextPluginSettings));
+          const validation = await validator.validate(mergeSettings(options.baseSettings ?? {}, nextPluginSettings));
           if (!validation.valid) {
             const settingPath = options.path.join('.');
             throw new ConfigWriteError('KB_PLUGIN_SETTINGS_INVALID', `${settingPath}: ${validation.cause}`, {
