@@ -10945,7 +10945,7 @@
   - maps static filesystem prefixes and environment grants without implicit access
   - denies filesystem, network, and environment access when omitted
   - refuses every declared network permission before provisioning
-  - accepts shipped default permissions and refuses the shipped GitHub plugin grants
+  - accepts shipped default permissions
 
 **`core/plugin-execution-factory/src/__tests__/errors.test.ts`**
 
