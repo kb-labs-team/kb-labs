@@ -239,7 +239,7 @@
       "id": "@kb-labs/e2e-analytics-emitter",
       "pkg": "@kb-labs/e2e-analytics-emitter",
       "description": "Journey fixture for analytics and LLM provider coverage",
-      "default": false
+      "default": true
     },
     {
       "pkg": "fixture-compat",

@@ -75,6 +75,23 @@ else
 fi
 cd "$PLATFORM_ROOT"
 
+# Keep a second, isolated project root for ROOT-03. Its project-owned lock
+# points at a local copy of the installed fixture so the API can prove that
+# project scope wins over the same plugin installed in platform scope.
+ROOT_PROOF_PROJECT=/workspace/kb-e2e-root-proof
+ROOT_PROOF_PLUGIN="$ROOT_PROOF_PROJECT/plugins/e2e-analytics-emitter"
+ROOT_PROOF_PLUGIN_SOURCE="$PLATFORM_ROOT/current/node_modules/@kb-labs/e2e-analytics-emitter"
+if [ ! -d "$ROOT_PROOF_PLUGIN_SOURCE" ]; then
+  echo "ERROR: platform-scoped analytics fixture is missing at $ROOT_PROOF_PLUGIN_SOURCE" >&2
+  exit 1
+fi
+rm -rf "$ROOT_PROOF_PROJECT"
+mkdir -p "$ROOT_PROOF_PLUGIN" "$ROOT_PROOF_PROJECT/.kb"
+cp -R "$ROOT_PROOF_PLUGIN_SOURCE/." "$ROOT_PROOF_PLUGIN/"
+cat > "$ROOT_PROOF_PROJECT/.kb/marketplace.lock" <<'EOF'
+{"schema":"kb.marketplace/3","plugins":{"@kb-labs/e2e-analytics-emitter":{"source":"local","link":"plugins/e2e-analytics-emitter","enabled":true}}}
+EOF
+
 # Scaffold test workflows used by E2E suite
 mkdir -p .kb/workflows
 

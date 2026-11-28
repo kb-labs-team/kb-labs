@@ -12,7 +12,9 @@ test('PL-01: plugin registry is populated after startup', async ({ request }) =>
   const body = await res.json()
   // Envelope: { ok: true, data: { manifests: [...] } }
   const manifests: unknown[] = body.data?.manifests ?? body.manifests ?? []
-  expect(manifests.length).toBeGreaterThan(0)
+  expect(manifests).toEqual(expect.arrayContaining([
+    expect.objectContaining({ pluginId: '@kb-labs/e2e-analytics-emitter' }),
+  ]))
 })
 
 test('PL-02: plugin registry health — no validation errors', async ({ request }) => {
