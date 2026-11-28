@@ -1090,6 +1090,13 @@ thread.join()
         fixture_calls = []
         host_cycle = []
         events = []
+        project_registry = [{
+            "id": "prj_main",
+            "path": str(project.resolve()),
+            "name": "fresh-project",
+            "status": "active",
+        }]
+        project_registry_events = []
 
         def fake_run(command, *, env=None, cwd=None, **_kwargs):
             argv = [str(item) for item in command]
@@ -1148,7 +1155,25 @@ thread.join()
                     return subprocess.CompletedProcess(command, 7, "project show: secondary shim missing", ""), 0.0
                 output = json.dumps({"ok": True, "data": {"project": {"id": "prj_main", "name": "fresh-project"}}})
             elif "project list" in " ".join(argv):
-                output = json.dumps({"ok": True, "data": {"projects": [{"id": "prj_main"}]}})
+                project_registry_events.append(f"list:{len(project_registry)}")
+                output = json.dumps({"ok": True, "data": {
+                    "projects": [item.copy() for item in project_registry]}})
+            elif "project remove" in " ".join(argv):
+                project_id = argv[argv.index("remove") + 1]
+                removed = next((item for item in project_registry if item["id"] == project_id), None)
+                if removed is None:
+                    return subprocess.CompletedProcess(command, 1, "project not found", ""), 0.0
+                project_registry.remove(removed)
+                project_registry_events.append(f"remove:{project_id}")
+                output = json.dumps({"ok": True, "data": {"project": removed}})
+            elif "project add" in " ".join(argv):
+                project_path = argv[argv.index("add") + 1]
+                project_name = argv[argv.index("--name") + 1]
+                restored = {"id": "prj_main", "path": project_path,
+                            "name": project_name, "status": "active"}
+                project_registry[:] = [restored]
+                project_registry_events.append(f"add:{restored['id']}")
+                output = json.dumps({"ok": True, "data": {"project": restored}})
             elif "workflow defs list" in " ".join(argv):
                 output = json.dumps({"ok": True, "data": [{"id": "journey-hello"}]})
             elif "workflow crons list" in " ".join(argv):
@@ -1299,6 +1324,7 @@ thread.join()
             "fixture_calls": fixture_calls,
             "host_cycle": host_cycle,
             "events": events,
+            "project_registry_events": project_registry_events,
         }
 
     # case: S-262.8
@@ -1398,6 +1424,9 @@ thread.join()
         self.assertEqual(observed["host_cycle"], ["stop", "start", "stop", "start", "stop"])
         self.assertEqual(observed["events"], [
             "host:stop", "host:start", "host:stop", *isolated_groups, "host:start", "host:stop",
+        ])
+        self.assertEqual(observed["project_registry_events"][:5], [
+            "list:1", "remove:prj_main", "list:0", "add:prj_main", "list:1",
         ])
 
     def test_failed_update_keeps_candidate_version_known_and_runs_independent_cleanup(self):
