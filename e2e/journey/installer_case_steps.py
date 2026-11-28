@@ -56,8 +56,8 @@ from journey_resources import (installer_case_fixture_root, installer_scenario_r
                                active_platform_root,
                                register_preserved_fixture_root,
                                snapshot_tree, workspace_resource)
-from service_port_assertions import (assert_root_offset, service_ports,
-                                     service_transport_ports)
+from service_port_assertions import (assert_managed_root_offset, assert_root_offset, service_ports,
+                                     service_transport_ports, service_transport_urls)
 from service_steps import Journey
 
 CommandRunner = Callable[..., CompletedProcess]
@@ -1666,6 +1666,46 @@ def run_stable_layout_contract_refusal_step(*, mode: str, platform_root: Path,
     return journey
 
 
+@contextmanager
+def private_json_file(document: dict, parent: Path, prefix: str):
+    """Write a private JSON fixture file and remove it when its command finishes."""
+    path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", prefix=prefix,
+                                         suffix=".json", dir=parent, delete=False) as stream:
+            path = Path(stream.name)
+            stream.write(json.dumps(document))
+        path.chmod(0o600)
+        yield path
+    finally:
+        if path is not None:
+            path.unlink(missing_ok=True)
+
+
+def external_transport_config(plan: dict) -> dict:
+    """Build declared config with the same external service transport URLs."""
+    services = service_ports(plan)
+    external_urls = {service_id: url for service_id, url in service_transport_urls(plan).items()
+                     if service_id not in services}
+    return {"serviceTransportURLs": external_urls} if external_urls else {}
+
+
+@contextmanager
+def secondary_install_request_file(secondary_plan: dict, root: Path,
+                                   project_root: Path | None = None):
+    """Write the scenario-resolved request for a secondary root."""
+    request = copy.deepcopy(secondary_plan.get("request"))
+    if not isinstance(request, dict) or not request:
+        raise RuntimeError("secondary plan omitted its normalized request")
+    request["platformRoot"] = str(root)
+    if project_root is not None:
+        request["projectRoot"] = str(project_root)
+    else:
+        request.pop("projectRoot", None)
+    with private_json_file(request, root.parent, ".pc001-request-") as request_path:
+        yield request_path
+
+
 def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
                                 primary_root: Path, automatic_root: Path,
                                 explicit_root: Path, run_command: CommandRunner) -> Journey:
@@ -1676,10 +1716,12 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         if gateway_port < 4000 or gateway_port > 9900 or (gateway_port - 4000) % 100:
             raise RuntimeError(f"{label} Gateway allocation left the 4000–9900 product domain: {gateway_port}")
         services = plan.get("serviceGraph", {}).get("services", [])
-        service_ports = [service["port"] for service in services
-                         if isinstance(service.get("port"), int) and service.get("port", 0)]
-        transport_ports = service_transport_ports(plan).values()
-        unsafe_ports = [port for port in [*service_ports, *transport_ports] if port >= 32768]
+        service_port_values = [service["port"] for service in services
+                               if isinstance(service.get("port"), int) and service.get("port", 0)]
+        graph_ids = set(service_ports(plan))
+        transport_ports = (port for service_id, port in service_transport_ports(plan).items()
+                           if service_id in graph_ids)
+        unsafe_ports = [port for port in [*service_port_values, *transport_ports] if port >= 32768]
         if unsafe_ports:
             raise RuntimeError(f"{label} produced service ports in the conventional ephemeral range: {unsafe_ports}")
 
@@ -1696,8 +1738,8 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         assert_allocation_domain(automatic_plan, automatic_port, "secondary receipt")
         primary_plan = primary_receipt.get("plan", {})
         primary_ports = service_ports(primary_plan)
-        primary_transport_ports = service_transport_ports(primary_plan)
-        assert_root_offset(automatic_plan, primary_ports, primary_transport_ports, 100,
+        primary_transport_urls = service_transport_urls(primary_plan)
+        assert_root_offset(automatic_plan, primary_ports, primary_transport_urls, 100,
                            "secondary receipt")
         InstallerHostLifecycle(launcher, run_command).set_running(automatic_root, False)
 
@@ -1705,12 +1747,21 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
         try:
             project_root = explicit_root.parent / "pc001-explicit-gateway-project"
             project_root.mkdir(parents=True, exist_ok=True)
-            result = run_command([launcher, "install", "--json", "--index", str(stable_index),
-                                  "--platform-channel", "stable", "--platform-root", str(explicit_root),
-                                  "--service-profile", "default", "--scenario", "custom",
-                                  "--scenario-answers", json.dumps({"access.mode": "local"}),
-                                  "--gateway-url", "http://127.0.0.1:4200",
-                                  "--project-root", str(project_root)])
+            explicit_gateway = "http://127.0.0.1:4200"
+            config = external_transport_config(primary_plan)
+            with private_json_file(config, explicit_root.parent, ".pc001-config-") as config_path:
+                plan_result = run_command([launcher, "plan", "--json", "--index", str(stable_index),
+                                           "--platform-channel", "stable", "--platform-root", str(explicit_root),
+                                           "--service-profile", "default", "--scenario", "custom",
+                                           "--scenario-answers", json.dumps({"access.mode": "local"}),
+                                           "--gateway-url", explicit_gateway, "--project-root", str(project_root),
+                                           "--config", str(config_path)])
+                explicit_plan = _data(plan_result, "explicit secondary plan").get("plan", {})
+                with secondary_install_request_file(explicit_plan, explicit_root,
+                                                    project_root) as request_path:
+                    result = run_command([launcher, "install", "--json", "--index", str(stable_index),
+                                          "--input", str(request_path), "--platform-root", str(explicit_root),
+                                          "--project-root", str(project_root)])
             explicit_installed = (active_platform_root(explicit_root) / ".kb/v2/receipt.json").is_file()
             data = _data(result, "explicit Gateway install")
             if not shim_owner_matches(data, install_root=explicit_root, expected_owner=primary_root):
@@ -1719,6 +1770,18 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
             explicit_url = explicit_receipt.get("verification", {}).get("hostHealthUrl", "")
             if explicit_url != "http://127.0.0.1:4200/health":
                 raise RuntimeError(f"explicit Gateway override was not recorded in the receipt: {explicit_url}")
+            explicit_plan = explicit_receipt.get("plan", {})
+            assert_allocation_domain(explicit_plan, 4200, "explicit secondary receipt")
+            assert_root_offset(explicit_plan, primary_ports, primary_transport_urls, 200,
+                               "explicit secondary receipt")
+            persisted_explicit = json.loads(
+                (active_platform_root(explicit_root) / ".kb/v2/receipt.json").read_text())
+            persisted_plan = persisted_explicit.get("plan", {})
+            if (persisted_explicit.get("verification", {}).get("hostHealthUrl") != explicit_url
+                    or service_transport_urls(persisted_plan) != service_transport_urls(explicit_plan)):
+                raise RuntimeError("explicit secondary receipt did not persist the configured transport URLs")
+            assert_root_offset(persisted_plan, primary_ports, primary_transport_urls, 200,
+                               "persisted explicit secondary receipt")
 
             next_plan = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
                                            "--platform-channel", "stable", "--platform-root",
@@ -1727,8 +1790,8 @@ def run_gateway_allocation_step(*, mode: str, launcher: str, stable_index: Path,
             if urlsplit(next_url).port != automatic_port + 200:
                 raise RuntimeError(f"stopped root did not retain its allocation: new root planned {next_url}")
             assert_allocation_domain(next_plan, urlsplit(next_url).port, "next planned root")
-            assert_root_offset(next_plan, primary_ports, primary_transport_ports, 300,
-                               "next planned root")
+            assert_managed_root_offset(next_plan, primary_ports, primary_transport_urls, 300,
+                                       "next planned root")
 
             planned = _data(run_command([launcher, "plan", "--json", "--index", str(stable_index),
                                          "--platform-channel", "stable", "--platform-root",
@@ -2530,12 +2593,25 @@ def run_installer_case_steps(*, mode: str, launcher: str, stable_index: Path,
     def secret_apply() -> None:
         if not secret_value:
             raise RuntimeError("isolated journey secret is unavailable for S-181.3")
-        apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
-                                    "--platform-channel", "stable", "--platform-root", str(secret_root),
-                                    "--scenario", "custom", "--scenario-answers",
-                                    json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
-                                                "admin.tenant": "journey"}),
-                                    "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
+        primary_receipt = json.loads((active_platform_root(platform_root) / ".kb/v2/receipt.json").read_text())
+        primary_plan = primary_receipt.get("plan", {})
+        answers = json.dumps({"access.mode": "secured", "admin.email": "journey-admin@example.test",
+                              "admin.tenant": "journey"})
+        plan_args = [launcher, "plan", "--json", "--index", str(stable_index),
+                     "--platform-channel", "stable", "--platform-root", str(secret_root),
+                     "--service-profile", "default", "--scenario", "custom", "--scenario-answers", answers]
+        preview = _data(run_command(plan_args), "secondary secure plan").get("plan", {})
+        preview_gateway = preview.get("request", {}).get("gatewayUrl")
+        config = external_transport_config(primary_plan)
+        with private_json_file(config, secret_root.parent, ".pc001-config-") as config_path:
+            planned = _data(run_command([*plan_args, "--config", str(config_path)]),
+                            "configured secondary secure plan").get("plan", {})
+            if planned.get("request", {}).get("gatewayUrl") != preview_gateway:
+                raise RuntimeError("secondary install config changed its automatically allocated Gateway URL")
+            with secondary_install_request_file(planned, secret_root) as request_path:
+                apply_result = run_command([launcher, "apply", "--json", "--index", str(stable_index),
+                                            "--input", str(request_path), "--config", str(config_path),
+                                            "--secret-env", "gateway.bootstrap.password=KB_JOURNEY_ADMIN_PASSWORD"])
         payload = _data(apply_result, "secret apply")
         if not shim_owner_matches(payload, install_root=secret_root, expected_owner=platform_root):
             raise RuntimeError(f"secret apply changed the live command owner: {payload.get('shim')}")
