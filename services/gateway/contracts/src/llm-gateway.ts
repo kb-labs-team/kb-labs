@@ -36,7 +36,7 @@ export const ChatToolSchema = z.object({
   function: z.object({
     name: z.string(),
     description: z.string().optional(),
-    parameters: z.record(z.unknown()).optional(),
+    parameters: z.record(z.string(), z.unknown()).optional(),
   }),
 });
 

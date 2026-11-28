@@ -13,7 +13,7 @@ export const restApiConfigSchema = z.object({
     origins: z.array(z.string()).default(['http://localhost:3000', 'http://localhost:5173']),
     allowCredentials: z.boolean().default(true),
     profile: z.enum(['dev', 'preview', 'prod']).default('dev'),
-  }).default({}),
+  }).prefault({}),
   timeouts: z.object({
     requestTimeout: z.number().int().positive().default(30000),
     bodyLimit: z.number().int().positive().default(10_485_760),

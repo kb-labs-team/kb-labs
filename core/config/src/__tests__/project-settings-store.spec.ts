@@ -1,7 +1,14 @@
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@kb-labs/core-platform', () => ({
+  resolveKbHome: () => os.tmpdir(),
+  projectSettingsFilePath: (home: string, projectId: string) => path.join(home, 'state', projectId, 'config.jsonc'),
+  projectOverlaysDirPath: (home: string, projectId: string) => path.join(home, 'state', projectId, 'overlays'),
+}));
 
 import { projectSettingsPath, readProjectSettings, writeProjectSetting } from '../project-settings-store.js';
 
@@ -87,6 +94,42 @@ describe('platform-owned project settings store', () => {
     });
     expect(await fs.readFile(filePath, 'utf8')).toBe(before);
   });
+
+  // case: S-204.13
+  it('keeps the saved value when a plugin Zod v3 validator rejects or stalls', async () => {
+    const root = await temporaryRoot();
+    const pluginRoot = path.join(root, 'plugin');
+    const zodRoot = path.dirname(fileURLToPath(import.meta.resolve('zod')));
+    await fs.mkdir(path.join(pluginRoot, 'node_modules'), { recursive: true });
+    await fs.symlink(zodRoot, path.join(pluginRoot, 'node_modules', 'zod'), 'dir');
+    await fs.writeFile(path.join(pluginRoot, 'settings.mjs'), `
+      import { z } from 'zod/v3';
+      const baseSchema = z.object({ scope: z.object({ enabled: z.boolean() }).optional() });
+      export const SettingsSchema = { safeParse(value) {
+        if (value.scope?.enabled === 'stall') while (true) {}
+        return baseSchema.safeParse(value);
+      } };
+    `);
+    const options = {
+      projectId: 'prj_stalled_validator', root,
+      path: ['plugins', 'sample', 'scope', 'enabled'] as const,
+      settingsSchema: { zod: './settings.mjs#SettingsSchema' },
+      settingsPackageRoot: pluginRoot,
+    };
+    await writeProjectSetting({ ...options, value: true });
+    const filePath = projectSettingsPath(options);
+    const before = await fs.readFile(filePath, 'utf8');
+
+    await expect(writeProjectSetting({ ...options, value: 'invalid' })).rejects.toMatchObject({
+      code: 'KB_PLUGIN_SETTINGS_INVALID',
+    });
+    expect(await fs.readFile(filePath, 'utf8')).toBe(before);
+
+    await expect(writeProjectSetting({ ...options, value: 'stall' })).rejects.toMatchObject({
+      code: 'KB_PLUGIN_SETTINGS_INVALID',
+    });
+    expect(await fs.readFile(filePath, 'utf8')).toBe(before);
+  }, 15_000);
 
   it('refuses to write plugin settings when no manifest schema is available', async () => {
     const root = await temporaryRoot();

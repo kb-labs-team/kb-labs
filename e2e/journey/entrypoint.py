@@ -13,6 +13,7 @@ import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Mapping
 
 from platform_state_dump import dump_platform_state, failure_dump_environment
 from dispatch_registry import RUNNERS
@@ -20,6 +21,7 @@ from scoreboard import write_scoreboards
 from journey_resources import case_catalog_root, journey_module
 from invocations import print_report_text, write_report_json, write_report_text
 from journey_selection import JourneySelection, JourneySelectionError, read_journey_selection, use_journey_selection
+import redaction
 
 
 class RunnerSignalTermination(RuntimeError):
@@ -53,13 +55,42 @@ def _failure_message(error: BaseException) -> str:
     return f"{error.__class__.__name__}: {error}"
 
 
+def _runner_report_environment(namespace: dict | None) -> dict[str, str]:
+    """Keep the primary HOME while exposing all runner secrets to report redaction."""
+    fallback = namespace.get("BASE_ENV") if namespace else None
+    if not isinstance(fallback, Mapping):
+        fallback = os.environ
+    active = namespace.get("ACTIVE_MAIN_ENV") if namespace else None
+    last = namespace.get("LAST_COMMAND_ENV") if namespace else None
+    preferred = failure_dump_environment(
+        active if isinstance(active, Mapping) else None,
+        last if isinstance(last, Mapping) else None,
+        fallback,
+    )
+    result = dict(preferred)
+    retained = namespace.get("_JOURNEY_REDACTION_SECRET_VALUES", []) if namespace else []
+    secrets = set(value for value in retained if isinstance(value, str)) if isinstance(retained, list) else set()
+    for source in (os.environ, fallback, active, last):
+        if not isinstance(source, Mapping):
+            continue
+        for key, value in source.items():
+            if isinstance(key, str) and isinstance(value, str) and redaction.is_secret_key(key):
+                secrets.add(value)
+    if namespace is not None:
+        namespace["_JOURNEY_REDACTION_SECRET_VALUES"] = sorted(secrets)
+    for secret_index, value in enumerate(sorted(secrets)):
+        result[f"journey_redaction_secret_{secret_index}"] = value
+    return result
+
+
 def write_case_scoreboards(summary_path: str | Path) -> None:
     report_dir = Path(summary_path).parent
     write_scoreboards(report_dir, case_catalog_root())
 
 
 def record_runner_failure(summary_path: str | Path, mode: str, error: BaseException, phase: str,
-                          selection: JourneySelection | None = None) -> None:
+                          selection: JourneySelection | None = None,
+                          env: dict[str, str] | None = None) -> None:
     name = "journey selection metadata" if phase == "selection" else "runner startup" if phase == "startup" else "runner crash"
     step = {
         "name": name,
@@ -105,22 +136,69 @@ def record_runner_failure(summary_path: str | Path, mode: str, error: BaseExcept
             name: sorted(claims) for name, claims in selection.owning_steps.items()
         }
         result["case_run"] = case_run
-    write_report_json(target, result)
+    write_report_json(target, result, env=env)
+
+
+def _write_partial_journey_result(target: Path, journey, *, env: dict[str, str]) -> None:
+    """Merge in-memory steps into an existing report instead of replacing prior evidence."""
+    partial = redaction.redact_report_value(journey.result().__dict__, env=env)
+    try:
+        existing = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        write_report_json(target, partial, env=env)
+        return
+    if not isinstance(existing, dict) or not isinstance(existing.get("steps"), list):
+        write_report_json(target, partial, env=env)
+        return
+
+    for step in partial.get("steps", []):
+        if step not in existing["steps"]:
+            existing["steps"].append(step)
+
+    old_case_run = existing.get("case_run")
+    new_case_run = partial.get("case_run")
+    if isinstance(old_case_run, dict) and isinstance(new_case_run, dict):
+        claims = {
+            item["claimId"]: item
+            for item in old_case_run.get("claims", [])
+            if isinstance(item, dict) and isinstance(item.get("claimId"), str)
+        }
+        for item in new_case_run.get("claims", []):
+            if isinstance(item, dict) and isinstance(item.get("claimId"), str):
+                current = claims.get(item["claimId"])
+                if current is None or item.get("status") == "FAIL":
+                    claims[item["claimId"]] = item
+        old_case_run["claims"] = [claims[key] for key in sorted(claims)]
+        for key in ("selection", "selectedClaims"):
+            old_case_run[key] = sorted(set(old_case_run.get(key, [])) | set(new_case_run.get(key, [])))
+        owners = old_case_run.setdefault("selectedOwningSteps", {})
+        for name, values in new_case_run.get("selectedOwningSteps", {}).items():
+            owners[name] = sorted(set(owners.get(name, [])) | set(values))
+    elif isinstance(new_case_run, dict):
+        existing["case_run"] = new_case_run
+
+    if existing.get("status") != "PASS" or partial.get("status") != "PASS":
+        existing["status"] = "FAIL"
+    existing["first_failure"] = existing.get("first_failure") or partial.get("first_failure")
+    write_report_json(target, existing, env=env)
 
 
 def _record_process_failure(summary_path: str | Path, mode: str, error: BaseException,
                             phase: str, namespace: dict | None = None,
                             selection: JourneySelection | None = None) -> None:
     report = Path(summary_path)
+    report_env = _runner_report_environment(namespace)
     reason = _failure_message(error)
     diagnostic = report.with_name("journey-diagnostics.log")
     diagnostic_written = False
     try:
         trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
-        write_report_text(diagnostic, f"\n== Journey {phase} failure ==\n{reason}\n{trace}\n", append=True)
+        write_report_text(diagnostic, f"\n== Journey {phase} failure ==\n{reason}\n{trace}\n",
+                          env=report_env, append=True)
         diagnostic_written = True
     except BaseException as diagnostic_error:
         print_report_text(f"Journey failure diagnostics could not be written: {diagnostic_error}",
+                          env=report_env,
                           stream=sys.stderr, flush=True)
 
     try:
@@ -128,21 +206,24 @@ def _record_process_failure(summary_path: str | Path, mode: str, error: BaseExce
 
         journey = namespace.get("CASE_JOURNEY") if namespace is not None else None
         if isinstance(journey, Journey):
-            journey.write_json(report.with_name(f"service-{mode}.json"))
+            _write_partial_journey_result(report.with_name(f"service-{mode}.json"), journey,
+                                          env=report_env)
     except BaseException as partial_error:
         print_report_text(f"Journey partial results could not be written: {partial_error}",
+                          env=report_env,
                           stream=sys.stderr, flush=True)
 
     try:
-        record_runner_failure(summary_path, mode, error, phase, selection)
+        record_runner_failure(summary_path, mode, error, phase, selection, env=report_env)
         write_case_scoreboards(summary_path)
     except BaseException as write_error:
         print_report_text(f"Journey runner {phase} failed; could not write result: {write_error}",
+                          env=report_env,
                           stream=sys.stderr, flush=True)
     message = f"Journey runner crashed: {reason}" if phase == "crash" else f"Journey runner {phase} failed: {reason}"
     if diagnostic_written:
         message += f"\nNext: {shlex.join(['cat', str(diagnostic)])}"
-    print_report_text(message, stream=sys.stdout, flush=True)
+    print_report_text(message, env=report_env, stream=sys.stdout, flush=True)
 
 
 def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str,
@@ -153,8 +234,14 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str,
     try:
         with _runner_signal_handlers():
             namespace = runpy.run_path(str(runner_path), run_name="journey_runner_module")
+            runner_main = namespace.get("main")
+            if not callable(runner_main):
+                raise RuntimeError("Journey runner does not define main()")
+            # runpy returns a snapshot mapping; the function's globals are the live
+            # namespace that receives assignments made while main() is running.
+            namespace = runner_main.__globals__
             phase = "crash"
-            exit_code = int(namespace["main"]())
+            exit_code = int(runner_main())
     except BaseException as error:
         if isinstance(error, SystemExit) and error.code in (None, 0):
             exit_code = 0
@@ -162,6 +249,14 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str,
             try:
                 report = Path(summary_path)
                 environment = namespace.get("env") if namespace is not None else None
+                report_env = _runner_report_environment(namespace)
+                active_env = namespace.get("ACTIVE_MAIN_ENV") if namespace is not None else None
+                last_env = namespace.get("LAST_COMMAND_ENV") if namespace is not None else None
+                dump_env = failure_dump_environment(
+                    active_env if isinstance(active_env, Mapping) else None,
+                    last_env if isinstance(last_env, Mapping) else None,
+                    environment if isinstance(environment, Mapping) else os.environ,
+                )
                 dump = namespace.get("STATE_DUMP_GUARD") if namespace is not None else None
                 write_dump = dump.dump if dump is not None else dump_platform_state
                 write_dump(
@@ -171,17 +266,14 @@ def run_runner(runner_path: str | Path, summary_path: str | Path, mode: str,
                     front=journey_value("KB_JOURNEY_FRONT_DOOR", "agent"),
                     scenario=journey_value("KB_JOURNEY_SCENARIO", "commit"),
                     variant=journey_value("KB_JOURNEY_VARIANT", "default"),
-                    first_failure=_failure_message(error),
-                    env=failure_dump_environment(
-                        namespace.get("ACTIVE_MAIN_ENV") if namespace is not None else None,
-                        namespace.get("LAST_COMMAND_ENV") if namespace is not None else None,
-                        environment or os.environ,
-                    ),
+                    first_failure=redaction.redact_text(_failure_message(error), report_env),
+                    env=dump_env,
                     cwd=namespace.get("LAST_COMMAND_CWD") if namespace is not None else None,
                     admin_password="JourneyPassw0rd!" if mode == "secured" else "",
                 )
             except BaseException as dump_error:
                 print_report_text(f"Journey state dump failed: {dump_error.__class__.__name__}: {dump_error}",
+                                  env=_runner_report_environment(namespace),
                                   stream=sys.stderr, flush=True)
             _record_process_failure(summary_path, mode, error, phase, namespace, selection)
             exit_code = 1

@@ -141,7 +141,7 @@ export function nonNegativeInt(options?: { max?: number; default?: number }): z.
 export function enumSchema<T extends [string, ...string[]]>(
   values: T,
   options?: { default?: T[number] }
-): z.ZodDefault<z.ZodEnum<T>> | z.ZodEnum<T> {
+) {
   const schema = z.enum(values);
 
   if (options?.default !== undefined) {
@@ -301,11 +301,11 @@ export function datetime(options?: { optional?: boolean }) {
  * @example
  * ```typescript
  * schema.json()
- * // Equivalent to: z.record(z.unknown())
+ * // Equivalent to: z.record(z.string(), z.unknown())
  * ```
  */
 export function json() {
-  return z.record(z.unknown()).describe('JSON object');
+  return z.record(z.string(), z.unknown()).describe('JSON object');
 }
 
 /**

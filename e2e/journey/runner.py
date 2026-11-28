@@ -271,6 +271,93 @@ def uninstall_human_summary_has_shim_result(output: str, install_root: Path) -> 
             or "The existing kb command was left untouched because its owner could not be verified." in output)
 
 
+def run_with_empty_project_registry(project_root: Path, disposable_root: Path,
+                                    execute: Callable[[list[str]], CompletedProcess[str]],
+                                    check: Callable[[], str | None]) -> str | None:
+    """Run a Studio check with no registered projects in its disposable install."""
+    project_root = project_root.resolve()
+    disposable_root = disposable_root.resolve()
+    if project_root.parent != disposable_root or project_root.name != "fresh-project":
+        return "empty-project Studio fixture requires the selected project under its disposable install root"
+
+    def cli(args: list[str]) -> tuple[dict | None, str | None]:
+        try:
+            result = execute(args)
+            if result.returncode != 0:
+                return None, f"kb {' '.join(args[:2])} exited {result.returncode}"
+            payload = decode_ux_success_result(read_ux_cli_result(result))
+        except Exception as error:
+            return None, f"kb {' '.join(args[:2])} failed during project-registry checks ({type(error).__name__})"
+        return (payload if isinstance(payload, dict) else None), None
+
+    def list_projects() -> tuple[list[dict] | None, str | None]:
+        payload, error = cli(["project", "list", "--json"])
+        if error:
+            return None, error
+        rows = payload.get("projects") if payload else None
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            return None, "kb project list omitted its projects array"
+        return rows, None
+
+    rows, error = list_projects()
+    if error:
+        return error
+    if not rows:
+        return check()
+    path = rows[0].get("path") if len(rows) == 1 else None
+    if (len(rows) != 1 or not isinstance(path, str) or Path(path).resolve() != project_root
+            or rows[0].get("status") != "active"
+            or not isinstance(rows[0].get("id"), str) or not rows[0]["id"]
+            or not isinstance(rows[0].get("name"), str) or not rows[0]["name"]):
+        return "empty-project Studio fixture requires its only project to be an active disposable fixture"
+
+    project_id = rows[0]["id"]
+    project_name = rows[0]["name"]
+    project_path = path
+
+    def restore_project() -> str | None:
+        added, restore_error = cli(["project", "add", project_path, "--json", "--name", project_name])
+        added_project = added.get("project") if added else None
+        if (restore_error or not isinstance(added_project, dict)
+                or added_project.get("id") != project_id
+                or added_project.get("path") != project_path
+                or added_project.get("name") != project_name):
+            return restore_error or "kb project add did not restore the selected project identity"
+        restored_rows, restore_error = list_projects()
+        if restore_error:
+            return restore_error
+        if (len(restored_rows or []) != 1
+                or restored_rows[0].get("id") != project_id
+                or restored_rows[0].get("path") != project_path
+                or restored_rows[0].get("name") != project_name
+                or restored_rows[0].get("status") != "active"):
+            return "project registry did not return to its original selected-project state"
+        return None
+
+    test_failure: str | None = None
+    cleanup_failure: str | None = None
+    try:
+        removed, error = cli(["project", "remove", project_id, "--yes", "--json"])
+        removed_project = removed.get("project") if removed else None
+        if error or not isinstance(removed_project, dict) or removed_project.get("id") != project_id:
+            test_failure = error or "kb project remove did not confirm the selected project"
+        else:
+            empty_rows, error = list_projects()
+            if error:
+                test_failure = error
+            elif empty_rows:
+                test_failure = "project registry was not empty after unregistering the selected project"
+            else:
+                test_failure = check()
+    except Exception as error:
+        test_failure = f"empty-project Studio check failed: {type(error).__name__}: {error}"
+    finally:
+        cleanup_failure = restore_project()
+    if cleanup_failure:
+        return f"{test_failure + '; ' if test_failure else ''}project registration cleanup failed: {cleanup_failure}"
+    return test_failure
+
+
 DOCTOR_ROOT_ISOLATION_GROUP = run_doctor_root_isolation_step
 INSTALLER_CASE_GROUP = run_installer_case_steps
 APPLY_SCENARIO_GROUP = run_apply_scenario_step
@@ -1139,6 +1226,18 @@ def run_workflow_with_host_boundary(graph: FlowGraph, *, env: dict[str, str], la
                              include_installed=False, include_version=False)
 
 
+def _healthy_workflow_run_detail(result: CompletedProcess[str]) -> dict[str, Any] | None:
+    """Read the optional health workflow, treating read-after-write misses as pending."""
+    envelope = read_ux_cli_result(result)
+    if envelope.get("ok") is False:
+        error = decode_ux_error_result(envelope)
+        if error.get("code") == "KB_RUNTIME_WORKFLOW_RUN_NOT_FOUND":
+            return None
+        raise ValueError(f"workflow health run lookup failed ({error['code']})")
+    detail = decode_ux_success_result(envelope)
+    return detail if isinstance(detail, dict) else None
+
+
 def verify_broken_install_doctor(launcher: str, env: dict[str, str]) -> None:
     receipt = PLATFORM_CURRENT / ".kb" / "v2" / "receipt.json"
     hidden_receipt = receipt.with_name("receipt.journey-hidden.json")
@@ -1302,8 +1401,7 @@ def _main(*, update_variant_runner=None):
     env = dict(BASE_ENV)
     env["HOME"] = str(HOME)
     env["KB_JOURNEY_HOME_LABEL"] = "main"
-    # The entrypoint's crash handler runs outside this module's global namespace
-    # (runpy returns a separate dict), so publish the active install HOME there.
+    # Keep subprocesses and diagnostic probes aligned with the active installed HOME.
     os.environ["HOME"] = str(HOME)
     os.environ["KB_JOURNEY_HOME_LABEL"] = "main"
     env["KB_JOURNEY_INVOCATIONS"] = str(Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md")).resolve().parent)
@@ -1745,13 +1843,22 @@ def _main(*, update_variant_runner=None):
         }
         report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
         service_report = report.with_name("service-local.json")
-        with invocation_context(step_id="S-120.1"):
-            passed, elapsed, message = run_studio_browser_step([
-                "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
-                "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
-            ], studio_env, service_report, "local", True, cases=["S-120.1"], timeout=180)
-        TIMES["Studio empty project browser journey"] = elapsed
-        return None if passed else message
+
+        def run_browser_check() -> str | None:
+            with invocation_context(step_id="S-120.1"):
+                passed, elapsed, message = run_studio_browser_step([
+                    "/opt/kb-studio-playwright/node_modules/.bin/playwright", "test",
+                    "--config=/opt/kb-studio-playwright/playwright.config.mjs", "--grep", "@S-120.1",
+                ], studio_env, service_report, "local", True, cases=["S-120.1"], timeout=180)
+            TIMES["Studio empty project browser journey"] = elapsed
+            return None if passed else message
+
+        def project_cli(args: list[str]) -> CompletedProcess[str]:
+            result, _ = run(kb_command(args, executable=str(BIN / "kb")),
+                            env=env, cwd=PROJECT, timeout=90)
+            return result
+
+        return run_with_empty_project_registry(PROJECT, HOME, project_cli, run_browser_check)
 
     if mode == "local":
         CASE_JOURNEY.step(
@@ -2474,6 +2581,11 @@ def _main(*, update_variant_runner=None):
             cases=[*workflow_claims, "S-007.5"], record_empty_success=False,
             runners=("service-local:explore", "service-secured:explore"),
         )
+        # Persist completed workflow evidence before the optional health-run poll below.
+        # That poll exercises a separate project fixture and must not erase these rows
+        # if its runtime lookup fails.
+        workflow_result = workflow_journey.result()
+        merge_workflow_result(service_report, workflow_result.__dict__)
         if isinstance(project_b_handoff, ProjectBRootValid):
             project_b_fixture_root = project_b_handoff.root
             prepare_workflow_fixtures(project_b_fixture_root)
@@ -2514,7 +2626,7 @@ def _main(*, update_variant_runner=None):
                                         env=service_env,
                                         cwd=project_b_fixture_root, timeout=90)
                     try:
-                        detail = decode_ux_success_result(read_ux_cli_result(viewed))
+                        detail = _healthy_workflow_run_detail(viewed) or {}
                     except json.JSONDecodeError:
                         detail = {}
                     if isinstance(detail, dict) and detail.get("status") in {"success", "failed", "cancelled"}:
@@ -2522,8 +2634,6 @@ def _main(*, update_variant_runner=None):
                             service_env["KB_STUDIO_HEALTHY_PROJECT_RUN_ID"] = healthy_run_id
                         break
                     time.sleep(2)
-        workflow_result = workflow_journey.result()
-        merge_workflow_result(service_report, workflow_result.__dict__)
         if workflow_result.status != "PASS":
             fail(f"{mode} workflow journey: {workflow_result.first_failure}")
             first = workflow_result.first_failure or {}

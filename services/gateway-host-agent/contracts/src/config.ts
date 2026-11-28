@@ -54,7 +54,7 @@ export const AgentConfigSchema = z.object({
   /** Structured workspace entries (optional, enriches workspacePaths) */
   workspaces: z.array(WorkspaceEntrySchema).optional(),
   /** Execution configuration for plugin execution capability */
-  execution: ExecutionConfigSchema.default({}),
+  execution: ExecutionConfigSchema.prefault({}),
 });
 
 export type ExecutionConfig = z.infer<typeof ExecutionConfigSchema>;

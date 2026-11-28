@@ -1078,7 +1078,9 @@ def run_workflow_journey(journey: Journey, *, env: dict[str, str], project: Path
             raise AssertionError(f"run did not complete with the submitted input: {success_detail!r}")
 
     journey.step("verify terminal status and submitted input", "workflow", inspect_success,
-                 cases=["S-007.2", "S-056.1", "PC-002.5"])
+                 cases=["S-007.2", "S-056.1", "PC-002.5"],
+                 requires=("step:discover installed project workflow definitions",
+                           "step:start workflow with input"))
     def inspect_success_logs() -> None:
         with invocation_context(step_id="S-007.3"):
             logs = _logs(successful_id, env=env, cwd=project)

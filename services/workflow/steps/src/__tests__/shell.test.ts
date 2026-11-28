@@ -395,6 +395,24 @@ describe('ShellOutput type shape', () => {
 // must stop its child process group when that boundary aborts the context.
 // ---------------------------------------------------------------------------
 describe('shellHandler — execution-boundary cancellation', () => {
+  it.skipIf(process.platform !== 'linux')('runs a fast-exiting command after synchronously recording its process identity', async () => {
+    const { ctx, cleanup } = makeShellTestContext()
+    const onProcessStarted = vi.fn(async () => undefined)
+    Object.defineProperty(ctx, 'onProcessStarted', { value: onProcessStarted })
+    try {
+      const execution = shellModule.execute(ctx, { command: "printf 'fast-exit\\n'" })
+
+      // The callback must run in the same stack as spawn, before any async
+      // /proc read gives libuv a chance to reap the short-lived child.
+      expect(onProcessStarted).toHaveBeenCalledOnce()
+      const result = await execution
+      expect(result).toMatchObject({ exitCode: 0, ok: true, stdout: 'fast-exit\n' })
+      expect(onProcessStarted).toHaveBeenCalledWith(expect.objectContaining({ pid: expect.any(Number), startTime: expect.any(String) }))
+    } finally {
+      cleanup()
+    }
+  })
+
   // case: S-243.5
   it('stops the child process group on boundary abort and flushes captured output', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'workflow-shell-timeout-'))

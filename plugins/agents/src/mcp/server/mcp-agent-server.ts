@@ -115,7 +115,7 @@ const RunTaskInput = z.object({
     .default('execute')
     .describe('Agent execution mode'),
   options: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .optional()
     .describe('Additional mode-specific options'),
 });

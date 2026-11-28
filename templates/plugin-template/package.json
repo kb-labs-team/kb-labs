@@ -106,7 +106,7 @@
     "manifest": "./dist/manifest.v3.js"
   },
   "dependencies": {
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "peerDependencies": {
     "@kb-labs/sdk": "workspace:*"

@@ -186,7 +186,7 @@ export const configSet = defineSystemCommand<Flags, ConfigSetResult>({
                 isRecord(projectPluginSettings) ? projectPluginSettings : {},
               ),
             );
-            const validation = pluginValidator.validate(effectiveSettings);
+            const validation = await pluginValidator.validate(effectiveSettings);
             if (!validation.valid) {
               const settingPath = segments.join('.');
               throw new ConfigWriteError('KB_PLUGIN_SETTINGS_INVALID', `${settingPath}: ${validation.cause}`, {

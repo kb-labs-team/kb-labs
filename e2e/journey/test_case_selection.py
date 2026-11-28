@@ -582,6 +582,44 @@ class CaseJourneySelectionTests(unittest.TestCase):
                                   cases=["S-040.1"], runners=("human:default",))
         self.assertEqual(result.status, "SKIPPED")
 
+    def test_selected_claim_runs_only_on_its_completion_owner(self):
+        base = {
+            "KB_JOURNEY_CASES": "S-120.1",
+            "KB_JOURNEY_SELECTED_STEPS": "S-120.1",
+            "KB_JOURNEY_SELECTED_OWNING_STEPS": json.dumps({
+                "Studio dashboard with empty project registry": ["S-120.1"],
+            }),
+        }
+        with patch.dict(os.environ, {
+                **base,
+                "KB_JOURNEY_RUNNER_SELECTOR": "agent:commit",
+                "KB_JOURNEY_SELECTED_COMPLETION_OWNERS": "{}",
+        }, clear=False):
+            other_runner = Journey("local", "s120-non-owner")
+            calls = []
+            result = other_runner.step(
+                "Studio dashboard with empty project registry", "studio",
+                lambda: calls.append("ran"), cases=["S-120.1"],
+                runners=("service-local:explore",),
+            )
+        self.assertEqual(result.status, "SKIPPED")
+        self.assertEqual(calls, [])
+        self.assertEqual(other_runner.missing_selected_claims([]), [])
+
+        with patch.dict(os.environ, {
+                **base,
+                "KB_JOURNEY_RUNNER_SELECTOR": "service-local:explore",
+                "KB_JOURNEY_SELECTED_COMPLETION_OWNERS": json.dumps({
+                    "Studio dashboard with empty project registry": ["S-120.1"],
+                }),
+        }, clear=False):
+            owner_runner = Journey("local", "s120-owner")
+            result = owner_runner.step(
+                "Studio dashboard with empty project registry", "studio",
+                lambda: None, cases=["S-120.1"], runners=("service-local:explore",),
+            )
+        self.assertEqual(result.status, "PASS")
+
     def test_every_registry_claim_is_reachable_by_step_selection(self):
         result = coverage("local", source="e2e/journey/service_runner.py")
         case = result["cases"][0]

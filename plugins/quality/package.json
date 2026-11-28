@@ -83,9 +83,9 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "zod": "^3.25.76",
+    "zod": "^4.6.7",
     "globby": "^11.0.0",
-    "minimatch": "^10.0.1",
+    "minimatch": "^11.0.9",
     "typescript": "^5.6.3"
   },
   "devDependencies": {

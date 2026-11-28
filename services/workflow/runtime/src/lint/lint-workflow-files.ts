@@ -171,7 +171,7 @@ async function lintOne(file: string, base: string): Promise<FileLintResult> {
  * Format a ZodIssue as `<json-path>: <message>`. Refine-level issues carry an
  * empty path, so fall back to `(root)` — matching the WorkflowLoader format.
  */
-function formatIssue(issue: { path: (string | number)[]; message: string }): string {
-  const path = issue.path.join('.') || '(root)'
+function formatIssue(issue: { path: readonly PropertyKey[]; message: string }): string {
+  const path = issue.path.map(String).join('.') || '(root)'
   return `${path}: ${issue.message}`
 }

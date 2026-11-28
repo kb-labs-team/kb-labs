@@ -33,28 +33,20 @@ export const ExecutionRetryConfigSchema = z.object({
 
 const SUPPORTED_EXECUTION_MODES = ['auto', ...RESOLVED_EXECUTION_MODES] as const;
 const EXECUTION_MODE_HINT = `Supported modes are ${SUPPORTED_EXECUTION_MODES.join(', ')}. Run \`kb config set platform.execution.mode in-process --scope platform\`.`;
+const REMOTE_EXECUTION_UNSUPPORTED = 'remote execution is not supported in this release';
 
 registerZodEnumIssueHint(SUPPORTED_EXECUTION_MODES, (issue) => (
-  isRoadmapExecutionMode(issue.received) ? EXECUTION_MODE_HINT : undefined
+  issue.message === REMOTE_EXECUTION_UNSUPPORTED ? EXECUTION_MODE_HINT : undefined
 ));
-
-const executionModeErrorMap: z.ZodErrorMap = (issue, ctx) => {
-  if (issue.code === z.ZodIssueCode.invalid_enum_value) {
-    return {
-      message: isRoadmapExecutionMode(issue.received)
-        ? 'remote execution is not supported in this release'
-        : ctx.defaultError,
-    };
-  }
-  return { message: ctx.defaultError };
-};
 
 function isRoadmapExecutionMode(value: unknown): boolean {
   return ROADMAP_EXECUTION_MODES.some((mode) => mode === value);
 }
 
 export const ExecutionConfigSchema = z.object({
-  mode: z.enum(SUPPORTED_EXECUTION_MODES, { errorMap: executionModeErrorMap }).optional(),
+  mode: z.enum(SUPPORTED_EXECUTION_MODES, {
+    error: (issue) => isRoadmapExecutionMode(issue.input) ? REMOTE_EXECUTION_UNSUPPORTED : undefined,
+  }).optional(),
 
   workerPool: z.object({
     min: z.number().int().nonnegative().optional(),
@@ -103,7 +95,7 @@ export function validateExecutionConfig(raw: unknown): ExecutionConfigParsed {
  */
 export const AdapterValueSchema = z.union(
   [z.string().min(1), z.array(z.string().min(1)).min(1), z.null()],
-  { errorMap: () => ({ message: 'must be an adapter package name, a non-empty list of them, or null' }) },
+  { error: 'must be an adapter package name, a non-empty list of them, or null' },
 );
 
 /**
@@ -145,7 +137,7 @@ export const PlatformAdaptersSchema = z.object(knownAdapterSlotShape).catchall(A
  */
 export const PlatformAdapterOptionsSchema = z.record(
   z.string().min(1),
-  z.record(z.string(), z.unknown(), { invalid_type_error: 'adapter options must be an object' }),
+  z.record(z.string(), z.unknown(), { error: 'adapter options must be an object' }),
 );
 
 export const DeploymentTopologySchema = z.enum(['local', 'cloud', 'k8s']);

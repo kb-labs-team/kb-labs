@@ -275,11 +275,13 @@ export class KBLabsGatewayLLM implements ILLM {
       return { content: "", toolCalls: [], usage: { promptTokens: 0, completionTokens: 0 }, model: "" };
     }
 
-    const toolCalls: LLMToolCall[] = (message.tool_calls ?? []).map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      input: JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>,
-    }));
+    const toolCalls: LLMToolCall[] = (message.tool_calls ?? [])
+      .filter((tc) => "function" in tc)
+      .map((tc) => ({
+        id: tc.id,
+        name: tc.function.name,
+        input: JSON.parse(tc.function.arguments || "{}") as Record<string, unknown>,
+      }));
 
     return {
       content: message.content ?? "",

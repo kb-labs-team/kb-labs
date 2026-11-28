@@ -3,6 +3,13 @@
     "owner": "initialize solo project workflow",
     "claim": "S-002.1"
   },
+  "legacyS120OwnershipMigration": {
+    "mode": "local",
+    "step": "Studio dashboard with empty project registry",
+    "claim": "S-120.1",
+    "owner": "service-local:explore",
+    "nonOwner": "agent:commit"
+  },
   "crossCutting": [
     "PC-001.2",
     "S-010.1",
