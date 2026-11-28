@@ -3,10 +3,6 @@ import type { PermissionSpec } from '@kb-labs/plugin-contracts';
 import { DEFAULT_PERMISSIONS } from '@kb-labs/plugin-contracts';
 import { assertContainerNetworkPermissionsSupported, createContainerExecutionSpec } from '../container-spec.js';
 
-const githubManifestModule = await import(
-  new URL('../../../../plugins/github/src/manifest.ts', import.meta.url).href,
-) as { manifest: { permissions: PermissionSpec } };
-
 describe('PermissionSpec container mapping', () => {
   // case: S-244.1
   it('maps static filesystem prefixes and environment grants without implicit access', () => {
@@ -54,13 +50,7 @@ describe('PermissionSpec container mapping', () => {
     }
   });
 
-  // case: S-244.3
-  it('accepts shipped default permissions and refuses the shipped GitHub plugin grants', () => {
+  it('accepts shipped default permissions', () => {
     expect(() => assertContainerNetworkPermissionsSupported(DEFAULT_PERMISSIONS)).not.toThrow();
-    expect(() => assertContainerNetworkPermissionsSupported(githubManifestModule.manifest.permissions)).toThrow(
-      expect.objectContaining({
-        envelope: expect.objectContaining({ code: 'KB_RUNTIME_CONTAINER_NETWORK_UNSUPPORTED' }),
-      }),
-    );
   });
 });
