@@ -411,11 +411,16 @@ jobs:
 
       - name: Project E2E diagnostics onto allowlist
         if: always()
-        run: python3 e2e/scripts/summarize-safe-e2e-diagnostics.py "${{ inputs.report-dir }}/diagnostics" > "/tmp/e2e-diagnostics-${{ inputs.suite }}-summary.json" || true
+        env:
+          E2E_REPORT_DIR: ${{ inputs.report-dir }}
+          E2E_SUITE: ${{ inputs.suite }}
+        run: python3 e2e/scripts/summarize-safe-e2e-diagnostics.py "$E2E_REPORT_DIR/diagnostics" > "/tmp/e2e-diagnostics-$E2E_SUITE-summary.json" || true
 
       - name: Project KB_DEBUG diagnostic snapshot
         if: always()
-        run: python3 e2e/scripts/summarize_safe_log.py --file /tmp/kb-e2e-diag.json --source kb-e2e-diag > /tmp/kb-e2e-diag-${{ inputs.suite }}-summary.json || true
+        env:
+          E2E_SUITE: ${{ inputs.suite }}
+        run: python3 e2e/scripts/summarize_safe_log.py --file /tmp/kb-e2e-diag.json --source kb-e2e-diag > "/tmp/kb-e2e-diag-$E2E_SUITE-summary.json" || true
       - name: Upload safe KB_DEBUG diagnostic summary
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
