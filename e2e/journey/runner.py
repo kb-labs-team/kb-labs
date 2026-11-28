@@ -760,6 +760,15 @@ def record_studio_browser_outcome(passed: bool, message: str | None) -> str | No
     return detail
 
 
+def studio_browser_case_outcome(verdict: dict, case_id: str) -> str | None:
+    if verdict.get("ran") is not True:
+        return f"BLOCKED: Studio browser suite did not produce evidence for {case_id}"
+    case_results = verdict.get("case_results")
+    if not isinstance(case_results, dict) or case_results.get(case_id) is not True:
+        return f"{case_id} did not report an executed Playwright PASS"
+    return None
+
+
 def write_journey_diagnostic(message: str, *, env=None) -> None:
     report = Path(journey_value("KB_JOURNEY_SUMMARY", "/summary/journey-summary.md"))
     write_report_text(report.with_name("journey-diagnostics.log"), message,
@@ -2675,7 +2684,7 @@ def _main(*, update_variant_runner=None):
                         if mode == "secured" else [])
 
         run_studio_browser_group = reject_unprepared_studio_flow
-        studio_browser_verdict = {"ran": False, "message": None}
+        studio_browser_verdict = {"ran": False, "message": None, "case_results": {}}
         studio_late_browser_required = False
         if isinstance(project_b_handoff, ProjectBRootValid) and (
                 not outer_graph.selection_active or "studio" in outer_graph.selected_groups):
@@ -3025,14 +3034,18 @@ def _main(*, update_variant_runner=None):
                             ], browser_env, service_report, mode, studio_shell_passed,
                                 cases=browser_claims, timeout=660)
                         TIMES["Studio browser journey"] = studio_elapsed
-                        if studio_passed and any(not playwright_case_passed(suite_json, case_id)
-                                                 for case_id in browser_claims):
+                        browser_case_results = {
+                            case_id: playwright_case_passed(suite_json, case_id)
+                            for case_id in browser_claims
+                        }
+                        studio_browser_verdict["case_results"] = browser_case_results
+                        studio_browser_verdict["ran"] = suite_json.is_file()
+                        if studio_passed and not all(browser_case_results.values()):
                             studio_passed = False
                             studio_message = (
                                 "Studio Playwright exited successfully without PASS for every selected "
                                 "case and the installed Project B analytics scope case")
                     outcome = record_studio_browser_outcome(studio_passed, studio_message)
-                    studio_browser_verdict["ran"] = True
                     studio_browser_verdict["message"] = outcome
                     return outcome
         else:
@@ -3068,12 +3081,28 @@ def _main(*, update_variant_runner=None):
         capture_case_failure()
         def late_browser_verdict() -> str | None:
             if not studio_browser_verdict["ran"]:
-                return "BLOCKED: Studio browser suite did not produce a verdict"
+                return studio_browser_verdict["message"] or "BLOCKED: Studio browser suite did not produce a verdict"
             return studio_browser_verdict["message"]
 
         CASE_JOURNEY.step(
             "Studio late browser verdict", "studio", late_browser_verdict,
             requires=("state:host-running", "state:project-registered"),
+            selection_requires=(
+                "step:Studio shell", "step:install plugin cron fixture",
+                "step:inspect failed step and error",
+                "step:verify terminal status and submitted input",
+                "step:Studio project attachment isolation with empty Project A",
+                "step:Studio workflow history with empty Project B",
+            ),
+            runners=("service-local:explore", "service-secured:explore"),
+        )
+        capture_case_failure()
+
+        CASE_JOURNEY.step(
+            "Studio workflow run list shows project scope and completion time",
+            "studio", lambda: studio_browser_case_outcome(studio_browser_verdict, "S-122.1"),
+            cases=["S-122.1"],
+            selection_requires=("step:Studio late browser verdict",),
             runners=("service-local:explore", "service-secured:explore"),
         )
         capture_case_failure()

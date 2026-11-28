@@ -338,13 +338,16 @@ class StudioJourneyTests(unittest.TestCase):
     def test_failed_studio_shell_blocks_playwright(self):
         with tempfile.TemporaryDirectory() as directory:
             report = Path(directory) / "service-local.json"
+            private_json = Path(directory) / "private-playwright.json"
             report.write_text(json.dumps({"status": "FAIL", "steps": []}))
-            with patch("invocations.subprocess.run") as run:
+            with patch("studio_steps.run_streaming_command") as run:
                 passed, elapsed, message = run_studio_browser_step(
-                    ["playwright"], {}, report, "local", False)
+                    ["playwright"], {"KB_STUDIO_PLAYWRIGHT_JSON": str(private_json)},
+                    report, "local", False)
+                run.assert_not_called()
+                self.assertFalse(private_json.exists())
             saved = json.loads(report.read_text())
 
-        run.assert_not_called()
         self.assertFalse(passed)
         self.assertEqual(elapsed, 0.0)
         self.assertIn("shell check failed", message)

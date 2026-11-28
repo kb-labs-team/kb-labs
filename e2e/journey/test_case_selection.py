@@ -477,6 +477,50 @@ class CaseJourneySelectionTests(unittest.TestCase):
         self.assertEqual(verdict.cases, [])
         self.assertEqual(verdict.step_id, "flow:Studio late browser verdict")
 
+    def test_studio_workflow_table_claim_has_literal_owner_and_late_browser_prerequisite(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        line = next(line for line, declaration in _case_declarations(source, root).items()
+                    if "S-122.1" in (declaration.get("cases") or ()))
+        case = {"id": "S-122", "status": "active", "steps": [{
+            "stepId": "S-122.1", "claims": [
+                {"kind": "journey", "source": source, "line": line},
+                {"kind": "e2e", "source": "e2e/studio/scenarios/default/cases/analytics.spec.ts"},
+            ],
+        }]}
+        results = [{"mode": mode, "cases": [case]} for mode in ("local", "secured")]
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                selection = selection_from_coverage(results, "S-122.1", mode=mode)
+                self.assertEqual(selection["selectedClaimOwners"], {
+                    "Studio workflow run list shows project scope and completion time": ["S-122.1"],
+                })
+                self.assertIn("Studio late browser verdict", selection["prerequisiteSteps"])
+                self.assertIn("Studio shell", selection["prerequisiteSteps"])
+                self.assertIn("install plugin cron fixture", selection["prerequisiteSteps"])
+                self.assertIn("inspect failed step and error", selection["prerequisiteSteps"])
+                self.assertIn("verify terminal status and submitted input", selection["prerequisiteSteps"])
+                self.assertIn("Studio project attachment isolation with empty Project A",
+                              selection["prerequisiteSteps"])
+                self.assertIn("Studio workflow history with empty Project B",
+                              selection["prerequisiteSteps"])
+
+    def test_studio_case_owner_uses_its_own_tagged_result_when_late_suite_has_other_failures(self):
+        from runner import studio_browser_case_outcome
+
+        self.assertIsNone(studio_browser_case_outcome({
+            "ran": True,
+            "message": "an unrelated late Studio assertion failed",
+            "case_results": {"S-122.1": True},
+        }, "S-122.1"))
+        self.assertIn("S-122.1", studio_browser_case_outcome({
+            "ran": True,
+            "message": "S-122.1 skipped",
+            "case_results": {"S-122.1": False},
+        }, "S-122.1") or "")
+        self.assertTrue((studio_browser_case_outcome({"ran": False}, "S-122.1") or "").startswith(
+            "BLOCKED:"))
+
     # case: S-262.8
     def test_studio_browser_claims_select_shell_and_plugin_cron_in_both_modes(self):
         root = Path(__file__).resolve().parents[2]
