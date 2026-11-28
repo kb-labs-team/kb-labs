@@ -201,7 +201,8 @@ describe('PnpmInstaller registry tarball integrity', () => {
     expect(publicError).not.toContain(redirectUrl);
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0]?.[0]).toBe(tarballUrl);
+    expect(fetchMock.mock.calls[0]?.[0]).toBeInstanceOf(URL);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe(tarballUrl);
     expect(fetchMock.mock.calls[0]?.[1]).toMatchObject({
       headers: { 'X-Share-Token': shareToken },
       redirect: 'manual',
