@@ -142,16 +142,24 @@ export async function createWorkflowWorker(
     layer: "service",
   }).forComponent("workflow-worker").with({ projectId });
 
-  // Clean up stale worktrees from previous daemon runs on startup.
+  // Report retained worktrees so users can recover changes after restart.
   const wsProvider = platform.getAdapter<IWorkspaceProvider>("workspace");
-  if (
-    wsProvider &&
-    typeof (wsProvider as { startupCleanup?: () => Promise<void> })
-      .startupCleanup === "function"
-  ) {
-    (wsProvider as unknown as { startupCleanup: (projectRoot?: string) => Promise<void> })
-      .startupCleanup(process.env["KB_PROJECT_ROOT"] ?? workspaceRoot)
-      .catch(() => {});
+  if (typeof wsProvider?.startupCleanup === "function") {
+    try {
+      const preserved = await wsProvider.startupCleanup(projectRoot);
+      for (const workspace of preserved) {
+        workerLogger.warn("Preserved workflow worktree for recovery", {
+          workspaceId: workspace.workspaceId,
+          status: workspace.status,
+          path: workspace.path,
+          reason: workspace.reason,
+        });
+      }
+    } catch (error: unknown) {
+      workerLogger.warn("Workflow worktree startup cleanup failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   let isRunning = false;

@@ -31,6 +31,7 @@ definitions, executions, history, and logs scoped to each project.
 | S-198.5 | Run a workflow that provisions an isolated git worktree, then run an installed plugin command from that worktree | The command resolves the owning registered project ID while its cwd remains the worktree path. |
 | S-198.6 | From a workflow step in the worktree, run `kb project show --json` and a platform CLI command | `KB_PLATFORM_ROOT` points to the installed platform, `KB_WORKSPACE_ROOT` points to the worktree, and the command resolves the owning project ID. |
 | S-198.7 | Register a repository root, then a project directory inside another repository; run plugin commands from their worktrees, including a path inside and outside the registered subdirectory; then run from an unregistered or bare repository | Each registered worktree path inside its registered project resolves to that project. A path outside a registered subdirectory, an unregistered repository, and a bare repository return `KB_PROJECT_UNKNOWN` with a `kb project add <path>` hint. |
+| S-198.8 | Modify a tracked file and add an untracked file in a workflow task worktree, then restart the workflow daemon and inspect startup cleanup output | Cleanup preserves the dirty worktree and reports its workspace ID, `preserved` status, and absolute path so the developer can recover the changes. Startup also retains clean worktrees, including worktrees in use and worktrees containing only ignored files. A provisioning failure leaves an existing worktree available for recovery. |
 
 ## Dependencies
 

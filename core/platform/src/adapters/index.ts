@@ -188,6 +188,7 @@ export type {
   AttachWorkspaceRequest,
   WorkspaceAttachment,
   WorkspaceStatusResult,
+  WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
 } from "../workspace/workspace-provider.js";
 

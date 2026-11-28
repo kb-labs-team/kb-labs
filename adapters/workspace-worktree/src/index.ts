@@ -12,6 +12,7 @@ import type {
   AttachWorkspaceRequest,
   WorkspaceAttachment,
   WorkspaceStatusResult,
+  WorkspaceCleanupResult,
   WorkspaceProviderCapabilities,
   WorkspaceStatus,
 } from '@kb-labs/sdk/adapters';
@@ -221,12 +222,12 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     } catch (error) {
       progress('failed', `Provisioning failed: ${error instanceof Error ? error.message : String(error)}`);
 
-      try {
-        await this.exec(`git worktree remove "${worktreePath}" --force`, repoRoot, TIMEOUTS.cleanup);
-      } catch { /* ignore cleanup errors */ }
+      const recoveryHint = existsSync(worktreePath)
+        ? ` Workspace preserved for recovery at ${worktreePath}`
+        : '';
 
       throw new Error(
-        `Failed to provision workspace: ${error instanceof Error ? error.message : String(error)}`
+        `Failed to provision workspace: ${error instanceof Error ? error.message : String(error)}${recoveryHint}`
       );
     }
   }
@@ -249,7 +250,7 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     record.refCount--;
     // Keep the worktree alive for the entire run — subsequent jobs of the same run
     // reuse it and see all accumulated changes (agent edits, build artifacts, etc.).
-    // Cleanup happens on daemon restart (startupCleanup) or explicit destroy().
+    // Startup reports retained worktrees. Explicit destroy() ends their lifetime.
     record.status = 'released';
   }
 
@@ -273,26 +274,54 @@ export class WorktreeWorkspaceAdapter implements IWorkspaceProvider {
     this.records.delete(workspaceId);
   }
 
-  async startupCleanup(projectRoot = this.configuredProjectRoot): Promise<void> {
-    if (!projectRoot) return;
+  async startupCleanup(projectRoot = this.configuredProjectRoot): Promise<WorkspaceCleanupResult[]> {
+    if (!projectRoot) {
+      return [];
+    }
     const repoRoot = path.resolve(projectRoot);
     const worktreeBaseDir = path.resolve(repoRoot, this.worktreeDir);
     if (!existsSync(worktreeBaseDir)) {
-      return;
+      return [];
     }
-    const entries = readdirSync(worktreeBaseDir);
-    for (const entry of entries) {
-      const worktreePath = path.join(worktreeBaseDir, entry);
-      try {
-        await this.exec(`git worktree remove "${worktreePath}" --force`, repoRoot, TIMEOUTS.cleanup);
-      } catch {
-        rmSync(worktreePath, { recursive: true, force: true });
+    const preserved: WorkspaceCleanupResult[] = [];
+    for (const entry of readdirSync(worktreeBaseDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
       }
+      const worktreePath = path.join(worktreeBaseDir, entry.name);
+      const status = await this.inspectWorktree(worktreePath);
+      if (status === 'not-worktree') {
+        continue;
+      }
+
+      // Git cleanliness cannot establish that a workflow has finished using this path.
+      preserved.push({
+        workspaceId: entry.name,
+        status: 'preserved',
+        path: worktreePath,
+        reason: status,
+      });
     }
+    return preserved;
+  }
+
+  private async inspectWorktree(worktreePath: string): Promise<WorkspaceCleanupResult['reason'] | 'not-worktree'> {
+    let topLevel: string;
     try {
-      await this.exec('git worktree prune', repoRoot, TIMEOUTS.cleanup);
-    } catch { /* ignore */ }
-    this.records.clear();
+      topLevel = (await this.exec('git rev-parse --show-toplevel', worktreePath, TIMEOUTS.cleanup)).trim();
+    } catch {
+      return 'status-unavailable';
+    }
+    if (path.resolve(topLevel) !== path.resolve(worktreePath)) {
+      return 'not-worktree';
+    }
+
+    try {
+      const status = await this.exec('git --no-optional-locks status --porcelain --untracked-files=all', worktreePath, TIMEOUTS.cleanup);
+      return status.trim() ? 'dirty' : 'ownership-unverified';
+    } catch {
+      return 'status-unavailable';
+    }
   }
 
   async getStatus(workspaceId: string): Promise<WorkspaceStatusResult> {

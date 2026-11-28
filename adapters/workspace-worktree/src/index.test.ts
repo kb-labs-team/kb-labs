@@ -4,7 +4,7 @@ import { WorktreeWorkspaceAdapter } from './index.js';
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, existsSync: vi.fn(), mkdirSync: vi.fn(), symlinkSync: vi.fn(), rmSync: vi.fn() };
+  return { ...actual, existsSync: vi.fn(), mkdirSync: vi.fn(), readdirSync: vi.fn(), symlinkSync: vi.fn(), rmSync: vi.fn() };
 });
 
 vi.mock('node:child_process', () => ({
