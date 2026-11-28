@@ -39,6 +39,16 @@ def coverage(mode: str, *, source: str, kind: str = "journey", status: str = "ac
 
 
 class CaseJourneySelectionTests(unittest.TestCase):
+    def test_selection_only_prerequisites_do_not_gate_cross_runner_step_execution(self):
+        journey = Journey("local", "cross-runner-selection-prerequisite")
+        ran = []
+        result = journey.step("early Studio owner", "studio", lambda: ran.append(True),
+                              cases=["S-120.1"], selection_requires=("step:Studio shell",))
+
+        self.assertEqual(result.status, "PASS")
+        self.assertEqual(ran, [True])
+        self.assertNotIn("requires", result.details or {})
+
     # case: S-262.19
     def test_shared_prerequisite_does_not_select_sibling_service_group(self):
         selection = JourneySelection(
@@ -442,7 +452,164 @@ class CaseJourneySelectionTests(unittest.TestCase):
         local = selection_from_coverage(results, "S-120.1", mode="local", requested_runners="")
         self.assertEqual(local["runners"], ["service-local:explore"])
         self.assertEqual(local["selectedClaimOwners"], {"Studio dashboard with empty project registry": ["S-120.1"]})
+        self.assertIn("Studio workflow history with empty Project B", local["prerequisiteSteps"])
+        self.assertIn("Studio late browser verdict", local["prerequisiteSteps"])
+        self.assertIn("Studio shell", local["prerequisiteSteps"])
+        self.assertIn("install plugin cron fixture", local["prerequisiteSteps"])
+        self.assertIn("inspect failed step and error", local["prerequisiteSteps"])
+        self.assertIn("start failing workflow", local["prerequisiteSteps"])
+        self.assertIn("discover installed project workflow definitions", local["prerequisiteSteps"])
         self.assertEqual(runners_for_case_selection(results, "S-120.1", "secured"), [])
+        late_verdict = JourneySelection(
+            requested=tuple(local["selection"]), claims=frozenset(local["steps"]),
+            owning_steps={name: tuple(ids) for name, ids in local["selectedOwningSteps"].items()},
+            prerequisite_steps=frozenset(local["prerequisiteSteps"]),
+            prerequisite_flows=frozenset(local["prerequisiteFlows"]),
+            capabilities=frozenset(local["capabilities"]),
+            runner_selector=local["runners"][0], requested_runners="",
+            completion_owners={name: tuple(ids)
+                               for name, ids in local["selectedClaimOwners"].items()},
+        )
+        late_journey = Journey("local", "studio-late-verdict", selection=late_verdict)
+        verdict = late_journey.step("Studio late browser verdict", "studio",
+                                    lambda: "Playwright assertion failed", runners=("service-local:explore",))
+        self.assertEqual(verdict.status, "FAIL")
+        self.assertEqual(verdict.cases, [])
+        self.assertEqual(verdict.step_id, "flow:Studio late browser verdict")
+
+    # case: S-262.8
+    def test_studio_browser_claims_select_shell_and_plugin_cron_in_both_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        declarations = _case_declarations(source, root)
+        line = next(line for line, declaration in declarations.items()
+                    if "S-106.1" in (declaration.get("cases") or ()))
+        case = {"id": "S-106", "status": "active", "steps": [{
+            "stepId": "S-106.1", "claims": [{"kind": "journey", "source": source, "line": line}],
+        }]}
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                selection = selection_from_coverage([{"mode": mode, "cases": [case]}],
+                                                    "S-106.1", mode=mode)
+                if mode == "local":
+                    self.assertEqual(selection["runners"], [])
+                    self.assertEqual(selection["selectedClaimOwners"], {})
+                    continue
+                self.assertEqual(selection["runners"], ["service-secured:explore"])
+                self.assertIn("Studio shell", selection["prerequisiteSteps"])
+                self.assertIn("install plugin cron fixture", selection["prerequisiteSteps"])
+                self.assertIn("inspect failed step and error", selection["prerequisiteSteps"])
+                self.assertIn("start failing workflow", selection["prerequisiteSteps"])
+                self.assertIn("discover installed project workflow definitions",
+                              selection["prerequisiteSteps"])
+                self.assertIn("Studio project attachment isolation with empty Project A",
+                              selection["prerequisiteSteps"])
+                self.assertIn("Studio late browser verdict", selection["prerequisiteSteps"])
+
+    def test_empty_project_b_phase_has_a_real_owner_in_both_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        declarations = _case_declarations(source, root)
+        line = next(line for line, declaration in declarations.items()
+                    if "S-021.5" in (declaration.get("cases") or ()))
+        case = {"id": "S-021", "status": "active", "steps": [{
+            "stepId": "S-021.5", "claims": [{"kind": "journey", "source": source, "line": line}],
+        }]}
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                selection = selection_from_coverage([{"mode": mode, "cases": [case]}],
+                                                    "S-021.5", mode=mode)
+                self.assertEqual(selection["selectedClaimOwners"], {
+                    "Studio workflow history with empty Project B": ["S-021.5"],
+                })
+                self.assertIn("Studio project attachment isolation with empty Project A",
+                              selection["prerequisiteSteps"])
+                self.assertIn("Studio shell", selection["prerequisiteSteps"])
+                self.assertNotIn("Studio late browser verdict", selection["prerequisiteSteps"])
+
+    def test_empty_project_attachment_phase_has_a_real_owner_in_both_modes(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        declarations = _case_declarations(source, root)
+        line = next(line for line, declaration in declarations.items()
+                    if "S-046.1" in (declaration.get("cases") or ()))
+        case = {"id": "S-046", "status": "active", "steps": [{
+            "stepId": "S-046.1", "claims": [{"kind": "journey", "source": source, "line": line}],
+        }]}
+        for mode in ("local", "secured"):
+            with self.subTest(mode=mode):
+                selection = selection_from_coverage([{"mode": mode, "cases": [case]}],
+                                                    "S-046.1", mode=mode)
+                self.assertEqual(selection["selectedClaimOwners"], {
+                    "Studio project attachment isolation with empty Project A": ["S-046.1"],
+                })
+                self.assertIn("Studio shell", selection["prerequisiteSteps"])
+                self.assertNotIn("Studio late browser verdict", selection["prerequisiteSteps"])
+
+    def test_studio_prerequisite_groups_run_and_unclaimed_browser_failure_fails_batch(self):
+        root = Path(__file__).resolve().parents[2]
+        source = "e2e/journey/runner.py"
+        line = next(line for line, declaration in _case_declarations(source, root).items()
+                    if "S-120.1" in (declaration.get("cases") or ()))
+        case = {"id": "S-120", "status": "active", "steps": [{
+            "stepId": "S-120.1", "claims": [{"kind": "journey", "source": source, "line": line}],
+        }]}
+        plan = selection_from_coverage([{"mode": "local", "cases": [case]}],
+                                       "S-120.1", mode="local")
+        selection = JourneySelection(
+            requested=tuple(plan["selection"]), claims=frozenset(plan["steps"]),
+            owning_steps={name: tuple(ids) for name, ids in plan["selectedOwningSteps"].items()},
+            prerequisite_steps=frozenset(plan["prerequisiteSteps"]),
+            prerequisite_flows=frozenset(plan["prerequisiteFlows"]),
+            capabilities=frozenset(plan["capabilities"]), runner_selector=plan["runners"][0],
+            requested_runners="",
+            completion_owners={name: tuple(ids) for name, ids in plan["selectedClaimOwners"].items()},
+        )
+        from runner import OUTER_GROUP_DEPENDENCIES, outer_selection_groups
+        groups = outer_selection_groups()
+        states = {state: {"passed": True, "evidence": "fixture ready"}
+                  for dependencies in OUTER_GROUP_DEPENDENCIES.values() for state in dependencies}
+        journey = Journey("local", "studio-prerequisite-group-selection", selection=selection)
+        graph = FlowGraph(journey, OUTER_GROUP_DEPENDENCIES, states=states, groups=groups)
+
+        self.assertIn("workflow", graph.selected_groups)
+        self.assertIn("studio", graph.selected_groups)
+        self.assertIn("install plugin cron fixture", groups["workflow"]["steps"])
+        self.assertNotIn("candidate provenance", groups["workflow"]["steps"])
+        workflow_action = []
+        workflow_status = graph.flow(
+            "workflow execution journey", "workflow", "workflow",
+            lambda: workflow_action.append("ran"), cases=["S-002.1"], record_empty_success=False,
+        )
+        self.assertEqual(workflow_status, "PASS")
+        self.assertEqual(workflow_action, ["ran"])
+
+        import runner
+        runner.FIRST_FAILURE = ""
+        studio_status = graph.flow(
+            "Studio browser journey", "studio", "studio", None,
+            cases=["S-106.1", "S-107.1"],
+            case_action=lambda _cases: runner.record_studio_browser_outcome(
+                False, "Playwright browser assertion failed"),
+        )
+        self.assertEqual(studio_status, "PASS")  # unselected claim rows are SKIPPED
+        self.assertEqual(journey.steps[-1].status, "SKIPPED")
+        self.assertEqual(journey.result().status, "PASS")
+        self.assertEqual(runner.FIRST_FAILURE, "Studio browser journey: Playwright browser assertion failed")
+        runner.FIRST_FAILURE = ""
+
+    def test_studio_browser_prerequisites_still_block_before_action(self):
+        journey = Journey("local", "studio-browser-prerequisite-blocker")
+        invoked = []
+        graph = FlowGraph(journey, {"studio": ("host-running",)}, states={
+            "host-running": {"passed": False, "evidence": "host stopped", "group": "host",
+                             "step": "host probe", "mutation": "host shutdown", "claim": "no case claim"},
+        })
+        status = graph.flow("Studio browser journey", "studio", "studio",
+                             lambda: invoked.append("ran"), cases=["S-106.1"])
+        self.assertEqual(status, "BLOCKED")
+        self.assertEqual(invoked, [])
+        self.assertEqual(journey.steps[-1].status, "BLOCKED")
 
     # case: S-262.8
     def test_partial_batch_keeps_all_same_mode_claim_owners(self):

@@ -185,8 +185,10 @@ class Journey:
     def step(self, name: str, capability: str, check: Callable[[], str | None], cases: Iterable[str] = (),
              details: Callable[[], dict[str, Any]] | None = None, *,
              requires: Iterable[str] = (), provides: Iterable[str] = (), role: str = "step",
-             runners: Iterable[str] = (), plan_after_phase: str | None = None,
+             runners: Iterable[str] = (), selection_requires: Iterable[str] = (),
+             plan_after_phase: str | None = None,
              plan_phase: str | None = None) -> StepResult:
+        # selection_requires is consumed by the static planner; it is not a runtime edge.
         return self._record_step(name, capability, check, cases, details, requires=requires,
                                  provides=provides, role=role, runners=runners,
                                  plan_after_phase=plan_after_phase, plan_phase=plan_phase)
@@ -721,6 +723,7 @@ class FlowGraph:
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object],
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
+             selection_requires: Iterable[str] = (),
              skip_note: str | None = None, case_action: None = None,
              plan_after_phase: str | None = None, plan_phase: str | None = None) -> str: ...
 
@@ -728,6 +731,7 @@ class FlowGraph:
     def flow(self, name: str, group: str, capability: str, action: None,
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
+             selection_requires: Iterable[str] = (),
              skip_note: str | None = None,
              case_action: Callable[[tuple[str, ...]], object],
              plan_after_phase: str | None = None, plan_phase: str | None = None) -> str: ...
@@ -735,6 +739,7 @@ class FlowGraph:
     def flow(self, name: str, group: str, capability: str, action: Callable[[], object] | None,
              cases: Iterable[str] = (), *, role: str = "step",
              record_empty_success: bool = True, runners: Iterable[str] = (),
+             selection_requires: Iterable[str] = (),
              skip_note: str | None = None,
              case_action: Callable[[tuple[str, ...]], object] | None = None,
              plan_after_phase: str | None = None, plan_phase: str | None = None) -> str:
@@ -748,6 +753,8 @@ class FlowGraph:
             if plan_phase == "teardown":
                 return self.journey.step(name, capability, check, cases=cases, role=role,
                                          runners=runners, plan_phase="teardown")
+            # The selector reads literal selection_requires= values from flow call sites.
+            # Runtime ordering for outer flows is still enforced by group states.
             return self.journey.step(name, capability, check, cases=cases, role=role, runners=runners)
 
         if (action is None) == (case_action is None):

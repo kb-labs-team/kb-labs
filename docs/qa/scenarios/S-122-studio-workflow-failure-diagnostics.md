@@ -23,7 +23,7 @@ When a workflow fails or a runtime is unhealthy, use Studio to identify the affe
 
 | # | Action | Expected |
 |---|--------|----------|
-| S-122.1 | Select the failing project and open Workflow Runs | The failed run appears with its run ID, workflow name, failure status, and completion time. The healthy project's runs are not mixed into the selected project's list. |
+| S-122.1 | Select the failing project, open Workflow Runs, and switch to Table | The failed run appears with its run ID, workflow name, failure status, and completion time. The healthy project's runs are not mixed into the selected project's list. |
 | S-122.2 | Open the failed run | The named failing step and its error message are visible, with a link or action to inspect the run's logs. |
 | S-122.3 | Follow the run's log action | Studio opens History for the selected project filtered to that run, without sending requests to a previously selected project or applying an implicit time window. History loads successfully and shows the unique diagnostic marker from the run without entries from other runs, including when the run is older than 15 minutes. An AI summary requested from this view stays scoped to the same run and does not add a time window. |
 | S-122.4 | Open Observability Metrics or service health from the same project context | The unhealthy service/runtime is named with its reported health state and recent error; the project/run context remains identifiable. |

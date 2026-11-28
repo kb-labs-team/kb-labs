@@ -3,6 +3,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: '/opt/kb-studio-playwright/specs',
   testMatch: ['**/*.spec.js'],
+  workers: 1,
   reporter: [
     ['json', { outputFile: process.env.KB_STUDIO_PLAYWRIGHT_JSON }],
     ['line'],

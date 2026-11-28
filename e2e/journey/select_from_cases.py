@@ -71,7 +71,8 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
         if not isinstance(name, str):
             continue
         keywords = {keyword.arg: keyword.value for keyword in call.keywords}
-        prerequisites = keywords.get("requires")
+        prerequisite_nodes = [keywords[key] for key in ("requires", "selection_requires")
+                              if key in keywords]
         role = keywords.get("role")
         plan_after_phase = keywords.get("plan_after_phase")
         plan_phase = keywords.get("plan_phase")
@@ -93,10 +94,10 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
                       if len(call.args) > capability_index
                       and isinstance(call.args[capability_index], ast.Constant)
                       and isinstance(call.args[capability_index].value, str) else None)
-        if prerequisites is None:
-            required = []
-        elif isinstance(prerequisites, (ast.Tuple, ast.List)):
-            required = []
+        required = []
+        for prerequisites in prerequisite_nodes:
+            if not isinstance(prerequisites, (ast.Tuple, ast.List)):
+                raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
             for item in prerequisites.elts:
                 if not isinstance(item, ast.Constant) or not isinstance(item.value, str):
                     raise ValueError(f"requires= in {source}:{call.lineno} must contain literal dependency references")
@@ -104,8 +105,6 @@ def _case_declarations(source: str, root: Path) -> dict[int, dict]:
                     required.append(str(Dependency.parse(item.value)))
                 except ValueError as error:
                     raise ValueError(f"{source}:{call.lineno}: {error}") from error
-        else:
-            raise ValueError(f"step {name!r} in {source} must declare prerequisites as a literal sequence")
         role_name = role.value if isinstance(role, ast.Constant) else None
         if plan_after_phase is not None and (
                 not isinstance(plan_after_phase, ast.Constant)
@@ -430,11 +429,17 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
             if any(keyword.arg is None for keyword in node.keywords):
                 raise ValueError(f"{source}:{node.lineno}: dependency declaration is not statically resolvable")
             keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+            required: list[str] = []
+            selection_required_node = keywords.get("selection_requires")
+            if selection_required_node is not None:
+                if not isinstance(selection_required_node, ast.Tuple):
+                    raise ValueError(f"{source}:{node.lineno}: selection_requires must be a literal tuple")
+                required.extend(literal_references(selection_required_node, source, node.lineno))
             required_node = keywords.get("requires")
             if required_node is None:
-                required: list[str] = []
+                pass
             elif isinstance(required_node, ast.Tuple):
-                required = literal_references(required_node, source, node.lineno)
+                required.extend(literal_references(required_node, source, node.lineno))
             elif isinstance(required_node, ast.Name):
                 function = enclosing_function(tree, node)
                 parameters = ({argument.arg for argument in
@@ -471,6 +476,13 @@ def _source_step_declarations_cached(sources: tuple[str, ...], root: Path) -> di
                         if forwarded_value is None:
                             raise ValueError(f"{call_source}:{call_site.lineno}: dependency declaration is not statically resolvable")
                     call_required = literal_references(forwarded_value, call_source, call_site.lineno)
+                    selection_required = call_keywords.get("selection_requires")
+                    if selection_required is not None:
+                        if not isinstance(selection_required, ast.Tuple):
+                            raise ValueError(
+                                f"{call_source}:{call_site.lineno}: selection_requires must be a literal tuple")
+                        call_required.extend(literal_references(
+                            selection_required, call_source, call_site.lineno))
                     inner_name = node.args[0] if node.args else None
                     call_name_node = None
                     if isinstance(inner_name, ast.Name):

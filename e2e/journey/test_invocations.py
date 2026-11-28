@@ -180,6 +180,33 @@ class PtyInvocationTest(unittest.TestCase):
         self.assertNotIn("encoded%3Asecret", rendered)
         self.assertEqual(rendered.count("[REDACTED]@"), 2)
 
+    def test_one_time_auth_url_tokens_are_redacted_in_retained_evidence(self):
+        message = (
+            "activation https://studio.example/activate/one-time-activation-secret?next=%2Fprojects "
+            "reset http://studio.example/reset-password/one-time-reset-secret#form"
+        )
+        rendered = redaction.redact_text(message)
+        self.assertNotIn("one-time-activation-secret", rendered)
+        self.assertNotIn("one-time-reset-secret", rendered)
+        self.assertIn("/activate/[REDACTED]?next=%2Fprojects", rendered)
+        self.assertIn("/reset-password/[REDACTED]#form", rendered)
+
+        with tempfile.TemporaryDirectory(prefix="journey-auth-url-redaction-") as temp:
+            root = Path(temp)
+            log = root / "playwright.log"
+            invocation_log = root / "invocations" / "calls.jsonl"
+            invocations.write_report_text(log, message)
+            with invocations.invocation_context(report_root=root):
+                invocations.record_invocation(
+                    kind="command", argv=["playwright"], cwd=root, env={}, exit_code=1,
+                    stdout=message, duration_seconds=0.1,
+                )
+            retained = log.read_text() + invocation_log.read_text()
+        self.assertNotIn("one-time-activation-secret", retained)
+        self.assertNotIn("one-time-reset-secret", retained)
+        self.assertIn("/activate/[REDACTED]", retained)
+        self.assertIn("/reset-password/[REDACTED]", retained)
+
     def test_url_redaction_scales_for_large_single_line_logs(self):
         value = "x" * (128 * 1024)
         started = time.monotonic()
