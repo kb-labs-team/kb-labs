@@ -201,6 +201,13 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     const installed: InstallResultEntry[] = [];
     const warnings: string[] = [];
     const diagnostics: MarketplaceDiagnostic[] = [];
+    if (specs.some(spec => spec.startsWith('kb:'))) {
+      throw new ErrorEnvelopeError(createErrorEnvelope('KB_RUNTIME_INPUT_INVALID', {
+        details: { field: 'specs' },
+        message: 'Marketplace install specs do not use the Registry CLI "kb:" prefix.',
+        hint: 'Use the Marketplace package identity, for example "@scope/name", without the "kb:" prefix.',
+      }));
+    }
     const lock = await readMarketplaceLock(scopeRoot, new DiagnosticCollector(), ctx.scope);
 
     for (const spec of specs) {
@@ -264,6 +271,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
           ctx.scope,
           ctx.scope === 'project' ? source.dependencyRegistryUrl : undefined,
           ctx.scope === 'platform',
+          resolved.downloadUrl ? source.getArtifactRequestHeaders?.(resolved.downloadUrl) : undefined,
         )
         : await source.install(resolved, scopeRoot, opts);
 
@@ -577,6 +585,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
     scope: MarketplaceScope,
     registryUrl?: string,
     usePlatformNpmrc = false,
+    artifactHeaders?: Record<string, string>,
   ): Promise<InstalledPackage> {
     const store = this.extensionStore;
     if (!store) {
@@ -593,6 +602,7 @@ export class MarketplaceService implements MarketplaceServiceAPI {
         ...(registryUrl ? { registryUrl } : {}),
         ...(usePlatformNpmrc ? { usePlatformNpmrc: true } : {}),
         ...(usePlatformNpmrc ? { requireExplicitSpec: true } : {}),
+        ...(artifactHeaders && Object.keys(artifactHeaders).length > 0 ? { artifactHeaders } : {}),
       });
     } catch (error) {
       if (error instanceof IntegrityMismatchError) {

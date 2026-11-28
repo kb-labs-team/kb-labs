@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "e2e": "kb-labs-e2e-runner"
+    "e2e": "kb-labs-e2e-runner",
+    "test": "node --test scripts/*.test.mjs"
   },
   "devDependencies": {
     "@kb-labs/core-platform": "workspace:*",

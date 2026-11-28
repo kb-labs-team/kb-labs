@@ -1,36 +1,33 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { GATEWAY } from '@kb-labs/e2e-shared/urls.js'
-import { registerAgent, issueToken } from '@kb-labs/e2e-shared/auth.js'
+import { registerAgent, issueToken, unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 
 async function registerHostForAgent(
   request: APIRequestContext,
   name: string,
 ): Promise<{ hostId: string; token: string }> {
   const creds = await registerAgent(request, `e2e-agent-${name}`)
-  const namespaceId = 'e2e'
+  const namespaceId = creds.namespaceId
   const tokens = await issueToken(request, creds)
 
   const regRes = await request.post(`${GATEWAY}/hosts/register`, {
     data: { name, namespaceId, capabilities: [], workspacePaths: [] },
   })
   expect([200, 201]).toContain(regRes.status())
-  const body = await regRes.json()
-  const hostId: string = body.hostId ?? body.data?.hostId ?? body.id
+  const { hostId } = unwrapGatewaySuccess<{ hostId: string }>(await regRes.json())
   expect(hostId).toBeTruthy()
   return { hostId, token: tokens.accessToken }
 }
 
 test('GW-H-01: POST /hosts/register returns hostId and machineToken', async ({ request }) => {
-  await registerAgent(request, 'e2e-agent-h01')
-  const namespaceId = 'e2e'
+  const agent = await registerAgent(request, 'e2e-agent-h01')
+  const namespaceId = agent.namespaceId
 
   const res = await request.post(`${GATEWAY}/hosts/register`, {
     data: { name: 'e2e-host-reg', namespaceId, capabilities: [], workspacePaths: [] },
   })
   expect([200, 201]).toContain(res.status())
-  const body = await res.json()
-  const hostId: string = body.hostId ?? body.data?.hostId ?? body.id
-  const machineToken: string = body.machineToken ?? body.data?.machineToken ?? body.token
+  const { hostId, machineToken } = unwrapGatewaySuccess<{ hostId: string; machineToken: string }>(await res.json())
   expect(hostId).toBeTruthy()
   expect(machineToken).toBeTruthy()
 })
@@ -42,9 +39,8 @@ test('GW-H-02: GET /hosts with token returns array', async ({ request }) => {
     headers: { Authorization: `Bearer ${tokens.accessToken}` },
   })
   expect(res.status()).toBe(200)
-  const body = await res.json()
-  const list = body.data ?? body.hosts ?? body
-  expect(Array.isArray(list)).toBe(true)
+  const { hosts } = unwrapGatewaySuccess<{ hosts: unknown[] }>(await res.json())
+  expect(Array.isArray(hosts)).toBe(true)
 })
 
 test('GW-H-03: GET /hosts/:hostId returns registered host detail', async ({ request }) => {
@@ -54,9 +50,8 @@ test('GW-H-03: GET /hosts/:hostId returns registered host detail', async ({ requ
     headers: { Authorization: `Bearer ${token}` },
   })
   expect(res.status()).toBe(200)
-  const body = await res.json()
-  const id: string = body.hostId ?? body.data?.hostId ?? body.id
-  expect(id).toBe(hostId)
+  const host = unwrapGatewaySuccess<{ hostId: string }>(await res.json())
+  expect(host.hostId).toBe(hostId)
 })
 
 test('GW-H-04: DELETE /hosts/:hostId removes the host', async ({ request }) => {

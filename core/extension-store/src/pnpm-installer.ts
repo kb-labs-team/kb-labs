@@ -52,7 +52,7 @@ export class PnpmInstaller implements PackageInstaller {
 
     await fs.mkdir(projectDir, { recursive: true });
     await fs.mkdir(casDir, { recursive: true });
-    const installSpec = await prepareVerifiedTarball(projectDir, name, spec, options.expectedIntegrity);
+    const installSpec = await prepareVerifiedTarball(projectDir, name, spec, options.expectedIntegrity, options.artifactHeaders);
     await writeSyntheticProject(projectDir, name, installSpec);
     const platformRoot = options.platformRoot ?? this.platformRoot;
     const platformKbDir = platformRoot ? path.join(platformRoot, '.kb') : undefined;
@@ -167,6 +167,7 @@ async function prepareVerifiedTarball(
   name: string,
   spec: string,
   expectedIntegrity: string | undefined,
+  artifactHeaders?: Record<string, string>,
 ): Promise<string> {
   if (!expectedIntegrity) { return spec; }
 
@@ -179,10 +180,19 @@ async function prepareVerifiedTarball(
   if (url.protocol !== 'https:' && url.protocol !== 'http:') { return spec; }
 
   let response: Response;
+  const hasArtifactHeaders = Object.keys(artifactHeaders ?? {}).length > 0;
   try {
-    response = await fetch(url);
+    response = await fetch(url, {
+      ...(hasArtifactHeaders ? { headers: artifactHeaders, redirect: 'manual' as const } : {}),
+    });
   } catch {
     throw new StoreInstallError({ plugin: name }, 'Package tarball request failed before an HTTP response.');
+  }
+  if (hasArtifactHeaders && response.status >= 300 && response.status < 400) {
+    throw new StoreInstallError(
+      { plugin: name },
+      'Package tarball request was redirected; authenticated artifact redirects are refused.',
+    );
   }
   if (!response.ok) {
     throw new StoreInstallError({ plugin: name }, `Package tarball request failed with HTTP ${response.status}.`);

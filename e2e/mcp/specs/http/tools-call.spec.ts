@@ -36,5 +36,5 @@ test('M-11: calling an unknown tool reports isError', async ({ request }) => {
   )
 
   expect(result?.isError).toBe(true)
-  expect(result?.content?.[0]?.text ?? '').toContain('Unknown tool')
+  expect(result?.content?.[0]?.text ?? '').toContain('KB_RUNTIME_MCP_UNKNOWN_TOOL')
 })

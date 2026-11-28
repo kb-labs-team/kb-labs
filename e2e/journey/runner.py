@@ -157,36 +157,39 @@ def registry_gateway_url_from_plan(plan_data: dict) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
 
 
-def registry_install_request(plan_data: dict, *, gateway_url: str, registry_upstream: str) -> dict:
-    """Add the Registry Gateway route to the actual install request, before host/plugin startup."""
+def read_apply_result(result: CompletedProcess) -> tuple[dict, dict]:
+    """Read apply's one UX envelope without falling back to install JSONL parsing."""
+    envelope = read_ux_cli_result(result)
+    payload = decode_ux_success_result(envelope)
+    if not isinstance(payload, dict):
+        raise ValueError("kb-create apply result data must be an object")
+    return envelope, payload
+
+
+def registry_install_config(plan_data: dict, *, registry_upstream: str, npm_url: str = REGISTRY) -> dict:
+    """Build the typed Registry route config from the resolved Gateway topology."""
     plan = plan_data.get("plan", {})
-    request = plan.get("request")
-    if not isinstance(request, dict):
+    if not isinstance(plan.get("request"), dict):
         raise ValueError("install plan omitted its normalized request")
-    request = json.loads(json.dumps(request))
-    sources = request.setdefault("marketplaceSources", {})
-    sources["registryUrl"] = f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry"
-    request["gatewayUrl"] = gateway_url
-    secret_inputs = request.setdefault("secretInputs", [])
-    if "gateway.internalSecret" not in secret_inputs:
-        secret_inputs.append("gateway.internalSecret")
-    values = request.setdefault("values", {})
-    values["gateway.marketplaceRegistryRoute"] = json.dumps({
-        "serviceId": "marketplace-registry",
-        "prefix": "/api/v1/marketplace-registry",
-        "rewritePrefix": "",
-    }, separators=(",", ":"))
-    patches = plan.get("configPatches", [])
-    adapter_options = next((patch.get("json") for patch in patches
-                            if patch.get("path") == "/platform/adapterOptions"), None)
-    if not isinstance(adapter_options, str):
-        raise ValueError("install plan omitted platform.adapterOptions")
-    options = json.loads(adapter_options)
-    transport = options.setdefault("serviceTransport", {})
-    services = transport.setdefault("services", {})
-    services["marketplace-registry"] = {"url": registry_upstream}
-    values["platform.adapterOptions"] = json.dumps(options, separators=(",", ":"))
-    return request
+    gateway_url = registry_gateway_url_from_plan(plan_data)
+    config = {
+        "marketplaceSources": {
+            "registryUrl": f"{gateway_url.rstrip('/')}/api/v1/marketplace-registry",
+            "signingPublicKeyEnv": "KB_JOURNEY_MARKETPLACE_PUBLIC_KEY",
+            "registryTokenEnv": "KB_JOURNEY_MARKETPLACE_TOKEN",
+            "npmUrl": npm_url,
+        },
+        "serviceTransportURLs": {"marketplace-registry": registry_upstream},
+        "secretInputs": ["gateway.internalSecret"],
+        "values": {
+            "gateway.marketplaceRegistryRoute": {
+                "serviceId": "marketplace-registry",
+                "prefix": "/api/v1/marketplace-registry",
+                "rewritePrefix": "",
+            },
+        },
+    }
+    return config
 
 
 STATE_DUMP_GUARD = PlatformStateDumpOnce()
@@ -1491,7 +1494,8 @@ def _main(*, update_variant_runner=None):
             preview_args[1] = "plan"
             preview, _ = run(preview_args, env=env, timeout=120)
             try:
-                preview_data = decode_ux_success_result(read_kb_create_cli_result("plan", preview))
+                preview_envelope = read_kb_create_cli_result("plan", preview)
+                preview_data = decode_ux_success_result(preview_envelope)
                 gateway_url = registry_gateway_url_from_plan(preview_data)
             except (json.JSONDecodeError, AttributeError, TypeError):
                 gateway_url = None
@@ -1503,41 +1507,57 @@ def _main(*, update_variant_runner=None):
                 return finalize_run(False)
             registry_upstream = env["KB_JOURNEY_MARKETPLACE_REGISTRY_URL"]
             try:
-                request = registry_install_request(
-                    preview_data, gateway_url=gateway_url, registry_upstream=registry_upstream)
+                config = registry_install_config(preview_data, registry_upstream=registry_upstream)
             except (TypeError, ValueError, json.JSONDecodeError) as error:
-                fail(f"Registry journey could not prepare the install-time Gateway route: {error}")
+                fail(f"Registry journey could not prepare the declarative install config: {error}")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
-            request_path = HOME / "registry-install-request.json"
-            request_path.write_text(json.dumps(request, indent=2) + "\n", encoding="utf-8")
-            request_path.chmod(0o600)
-            args = [launcher, "install", "--json", "--index",
-                    str(HOME / ".local/share/kb-create/release-index.json"),
-                    "--input", str(request_path), "--registry", REGISTRY,
+            index_path = HOME / ".local/share/kb-create/release-index.json"
+            initial_plan_path = HOME / "registry-install-initial-plan.json"
+            config_path = HOME / "registry-install-config.json"
+            plan_path = HOME / "registry-install-plan.json"
+            initial_plan_path.write_text(json.dumps(preview_envelope, indent=2) + "\n", encoding="utf-8")
+            config_path.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+            initial_plan_path.chmod(0o600)
+            config_path.chmod(0o600)
+            plan_args = [launcher, "plan", "--json", "--index", str(index_path),
+                         "--input", str(initial_plan_path), "--config", str(config_path),
+                         "--registry", REGISTRY]
+            final_plan, _ = run(plan_args, env=env, timeout=120)
+            if final_plan.returncode != 0:
+                fail(f"Registry journey could not resolve the final configured plan: {' '.join(final_plan.stdout.split())[-500:]}")
+                cleanup_partial_install(outer_graph, env, launcher)
+                return finalize_run(False)
+            final_plan_envelope = read_kb_create_cli_result("plan", final_plan)
+            decode_ux_success_result(final_plan_envelope)
+            plan_path.write_text(json.dumps(final_plan_envelope, indent=2) + "\n", encoding="utf-8")
+            plan_path.chmod(0o600)
+            args = [launcher, "apply", "--json", "--index", str(index_path),
+                    "--input", str(plan_path), "--config", str(config_path), "--registry", REGISTRY,
                     "--secret-env", "gateway.internalSecret=GATEWAY_INTERNAL_SECRET"]
         if operation == "install":
             with invocation_context(step_id="PC-001.2", report_root=CLEAN_INSTALL_ATTEMPT_ROOT):
                 result, elapsed = run(args, env=env, timeout=1200)
         else:
             result, elapsed = run(args, env=env, timeout=1200)
+        executed_operation = str(args[1]) if len(args) > 1 else operation
         TIMES["apply"] = elapsed
         if VARIANT == "relative-path":
             try:
-                payload = decode_ux_success_result(read_kb_create_cli_result("apply", result))
+                payload = decode_ux_success_result(read_ux_cli_result(result))
                 root = payload.get("plan", {}).get("request", {}).get("platformRoot", "")
-            except json.JSONDecodeError:
+            except ValueError:
                 root = ""
             passed = result.returncode == 0 and Path(root).is_absolute() and root == str(PLATFORM.resolve())
             if not passed:
                 fail(f"relative platform root: expected a successful plan with an absolute normalized root; {' '.join(result.stdout.split())[-500:]}")
             return finalize_run(passed)
-        if handle_json_install_failure(operation, result):
+        if handle_json_install_failure(executed_operation, result):
             return finalize_run(False)
         if not require(result, step=f"kb-create {operation} --json"):
             cleanup_partial_install(outer_graph, env, launcher)
             return finalize_run(False)
-        if operation == "install":
+        if executed_operation == "install":
             try:
                 records = read_ux_cli_stream(result)
             except json.JSONDecodeError:
@@ -1603,16 +1623,44 @@ def _main(*, update_variant_runner=None):
             payload = {}
         else:
             try:
-                envelope = read_kb_create_cli_result(operation, result)
-            except json.JSONDecodeError:
+                if executed_operation == "apply":
+                    envelope, payload = read_apply_result(result)
+                else:
+                    envelope = read_kb_create_cli_result(executed_operation, result)
+                    payload = envelope.get("data") if isinstance(envelope, dict) else None
+            except ValueError:
                 fail(f"kb-create {operation} --json: output was not valid JSON")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
-            payload = envelope.get("data") if isinstance(envelope, dict) else None
             if envelope.get("ok") is not True or not isinstance(payload, dict):
                 fail(f"kb-create {operation} --json: result did not contain a success data object")
                 cleanup_partial_install(outer_graph, env, launcher)
                 return finalize_run(False)
+            if operation == "install" and executed_operation == "apply":
+                receipt = payload.get("receipt", {})
+                install_plan = receipt.get("plan", {}) if isinstance(receipt, dict) else {}
+                install_marketplace_ok = requested_commit_marketplace_install_satisfied(receipt)
+                install_plan_summary_ok = (isinstance(install_plan, dict)
+                                           and bool(install_plan.get("serviceGraph", {}).get("platformVersion"))
+                                           and bool(install_plan.get("artifacts")))
+                install_ok = result.returncode == 0 and install_plan_summary_ok
+                if VARIANT.endswith("secured"):
+                    credential = payload.get("firstAdmin")
+                    if isinstance(credential, dict):
+                        password = credential.get("password", "")
+                        store_report_secret(env, "KB_JOURNEY_ADMIN_PASSWORD", password,
+                                            "installed first-admin password")
+                        first_admin_shown_once = first_admin_credential_disclosed_once(
+                            credential, result.stdout)
+                        if first_admin_shown_once:
+                            env["KB_JOURNEY_ADMIN_EMAIL"] = credential["email"]
+                    if not first_admin_shown_once:
+                        fail("secured apply did not return firstAdmin credentials with state=disclosed")
+                    else:
+                        register_install_password_absence_step(
+                            CASE_JOURNEY, PLATFORM,
+                            (("kb-home", Path(env.get("KB_HOME", str(Path(env["HOME"]) / ".kb")))),
+                             ("bin", BIN)), password)
         if operation == "plan":
             plan_payload = payload.get("plan", {})
             plan_ok = (result.returncode == 0
@@ -1622,7 +1670,7 @@ def _main(*, update_variant_runner=None):
                        "plan omitted the isolated root, resolved artifacts, or service graph", cases=["PC-001.3"],
                        requires=("step:launcher version",),
                        runners=("agent-input:commit", "agent-relative:commit"))
-        elif operation == "install":
+        elif operation == "install" and executed_operation == "install":
             if FRONT_DOOR == "agent":
                 record_case("agent JSON install", install_ok,
                             "agent install stream omitted progress or terminal success", cases=["S-203.10"],
@@ -1644,10 +1692,10 @@ def _main(*, update_variant_runner=None):
                     cleanup_partial_install(outer_graph, env, launcher)
                     return finalize_run(False)
                 try:
-                    read_kb_create_cli_result("apply", result)
+                    read_apply_result(result)
                     if result.returncode != 0:
                         fail("kb-create apply --input: result did not report ok=true")
-                except json.JSONDecodeError:
+                except ValueError:
                     fail("kb-create apply --input: output was not one JSON document")
 
     outer_graph.flow("installed platform bootstrap", "install", "platform.install", lambda: None,

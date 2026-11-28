@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 // Note: /plugins/snapshot does not exist as a route.
 // Snapshot data is embedded in /plugins/registry and /plugins/refresh responses.

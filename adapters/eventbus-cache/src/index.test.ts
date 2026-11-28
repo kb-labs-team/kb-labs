@@ -41,7 +41,7 @@ class MockCache implements ICache {
 
     // Add new member and sort by score
     set.push({ score, member });
-    set.sort((a, b) => a.score - b.score);
+    set.sort((a, b) => a.score - b.score || a.member.localeCompare(b.member));
   }
 
   async zrangebyscore(key: string, min: number, max: number): Promise<string[]> {
@@ -125,6 +125,26 @@ describe('CacheEventBusAdapter', () => {
       expect(parsed[0].data.order).toBe(1);
       expect(parsed[1].data.order).toBe(2);
       expect(parsed[2].data.order).toBe(3);
+    });
+
+    it('preserves publish order for events written within the same wall-clock millisecond', async () => {
+      const received: number[] = [];
+      eventBus.subscribe(TEST_TOPIC, async (event: { order: number }) => {
+        received.push(event.order);
+      });
+      await vi.advanceTimersByTimeAsync(1);
+
+      await eventBus.publish(TEST_TOPIC, { order: 1 });
+      await eventBus.publish(TEST_TOPIC, { order: 2 });
+      await eventBus.publish(TEST_TOPIC, { order: 3 });
+
+      const stored = await cache.zrangebyscore('test:eventbus:test.topic', 0, Date.now() + 1);
+      const parsed = stored.map((event) => JSON.parse(event));
+      expect(parsed.map((event) => event.timestamp)).toEqual([parsed[0].timestamp, parsed[0].timestamp, parsed[0].timestamp]);
+      expect(parsed.map((event) => event.sequence)).toEqual(['0000000000000001', '0000000000000002', '0000000000000003']);
+
+      await vi.advanceTimersByTimeAsync(200);
+      expect(received).toEqual([1, 2, 3]);
     });
   });
 

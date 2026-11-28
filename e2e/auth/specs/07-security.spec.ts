@@ -4,6 +4,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import {
   loginAsAdmin,
   cookieMap,
@@ -156,7 +157,7 @@ test('AUTH-30: Bearer auth (machine client) succeeds without CSRF header', async
     data: { clientId, clientSecret },
   })
   expect(tokenRes.ok()).toBe(true)
-  const { accessToken } = (await tokenRes.json()) as { accessToken: string }
+  const { accessToken } = unwrapGatewaySuccess<{ accessToken: string }>(await tokenRes.json())
 
   // Call a protected endpoint with Bearer — NO X-CSRF-Token header.
   // Bearer requests are exempt from CSRF, so we must not see 403.
@@ -182,7 +183,7 @@ test('AUTH-31: /api/auth/me response contains no role field (CD-3)', async ({
     },
   })
   expect(res.status()).toBe(200)
-  const body = await res.json() as Record<string, unknown>
+  const body = unwrapGatewaySuccess<Record<string, unknown>>(await res.json())
 
   // Must have userId, email, tenantId.
   expect(body['userId']).toBeTruthy()

@@ -257,39 +257,44 @@ func splitSecretMappings(mappings string) [][2]string {
 	return values
 }
 
-func compileScenario(id, answers string, resume bool, base contracts.InstallRequest) (contracts.InstallRequest, error) {
+type compiledScenarioState struct {
+	definition scenario.Scenario
+	state      scenario.State
+}
+
+func compileScenario(id, answers string, resume bool, base contracts.InstallRequest) (contracts.InstallRequest, compiledScenarioState, error) {
 	definition, err := scenario.Load(id)
 	if err != nil {
-		return contracts.InstallRequest{}, err
+		return contracts.InstallRequest{}, compiledScenarioState{}, err
 	}
 	state, err := scenario.New(definition)
 	if resume {
 		state, err = scenario.LoadState(base.PlatformRoot, definition)
 	}
 	if err != nil {
-		return contracts.InstallRequest{}, err
+		return contracts.InstallRequest{}, compiledScenarioState{}, err
 	}
 	if answers != "" {
 		var values map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(answers), &values); err != nil {
-			return contracts.InstallRequest{}, fmt.Errorf("decode scenario answers: %w", err)
+			return contracts.InstallRequest{}, compiledScenarioState{}, fmt.Errorf("decode scenario answers: %w", err)
 		}
 		for field, value := range values {
 			state, err = scenario.Answer(definition, state, field, value)
 			if err != nil {
-				return contracts.InstallRequest{}, err
+				return contracts.InstallRequest{}, compiledScenarioState{}, err
 			}
 		}
 	}
-	if err := scenario.SaveState(base.PlatformRoot, definition, state); err != nil {
-		return contracts.InstallRequest{}, err
-	}
 	request, err := scenario.Compile(definition, state, base)
 	if err != nil {
-		return contracts.InstallRequest{}, err
+		return contracts.InstallRequest{}, compiledScenarioState{}, err
 	}
 	request.ScenarioStateDigest, err = scenario.StateDigest(definition, state)
-	return request, err
+	if err != nil {
+		return contracts.InstallRequest{}, compiledScenarioState{}, err
+	}
+	return request, compiledScenarioState{definition: definition, state: state}, nil
 }
 
 func (value directRequest) normalize() (contracts.InstallRequest, error) {

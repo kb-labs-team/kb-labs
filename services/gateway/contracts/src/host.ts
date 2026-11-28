@@ -32,6 +32,8 @@ export const HostDescriptorSchema = z.object({
   updatedAt: z.number().optional(),
 });
 
+export const HostListResponseSchema = z.object({ hosts: z.array(HostDescriptorSchema) });
+
 export const HostRegisterResponseSchema = z.object({
   hostId: z.string(),
   machineToken: z.string(),

@@ -16,7 +16,10 @@ test('O-01: /health returns a valid observability contract payload', async ({ re
   const res = await request.get(`${MCP}/health`)
   expect(res.status()).toBe(200)
 
-  const body = await res.json()
+  const responseBody = await res.json()
+  // Gateway project health is returned through the standard UX success
+  // envelope; direct daemon health is the payload itself.
+  const body = responseBody.data ?? responseBody
   expect(body.schema).toBe('kb.observability/1')
   expect(body.contractVersion).toBe('1.0')
   expect(body.serviceId).toBe('mcp-daemon')
@@ -28,7 +31,8 @@ test('O-01: /health returns a valid observability contract payload', async ({ re
 
 test('O-02: /health checks include registry and execution entries', async ({ request }) => {
   const res = await request.get(`${MCP}/health`)
-  const body = await res.json()
+  const responseBody = await res.json()
+  const body = responseBody.data ?? responseBody
 
   const ids = body.checks.map((c: { id: string }) => c.id)
   expect(ids).toContain('registry')

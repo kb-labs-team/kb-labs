@@ -87,6 +87,7 @@ type InstallRequest struct {
 	ServiceProfile          string              `json:"serviceProfile,omitempty"`
 	GatewayURL              string              `json:"gatewayUrl,omitempty"`
 	MarketplaceSources      *MarketplaceSources `json:"marketplaceSources,omitempty"`
+	ServiceTransportURLs    map[string]string   `json:"serviceTransportURLs,omitempty"`
 	Plugins                 []ComponentRequest  `json:"plugins,omitempty"`
 	MarketplaceInstallSpecs []string            `json:"marketplaceInstallSpecs,omitempty"`
 	Adapters                []ComponentRequest  `json:"adapters,omitempty"`
@@ -169,11 +170,26 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 				continue
 			}
 			parsed, err := url.Parse(endpoint)
-			if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
+			if err != nil || parsed.Scheme != "http" && parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 				return InstallRequest{}, invalidRequestField("marketplaceSources."+field,
 					"Marketplace source URL must be an absolute HTTP(S) URL without embedded credentials",
 					"Set the Marketplace source URL to an absolute HTTP(S) URL, then rerun `kb-create plan`.", err)
 			}
+		}
+	}
+	for serviceID, endpoint := range r.ServiceTransportURLs {
+		if !validServiceID(serviceID) {
+			return InstallRequest{}, invalidRequestField("serviceTransportURLs",
+				"service transport override has an invalid service ID", "Use a manifest service ID such as marketplace-registry.", nil)
+		}
+		if serviceID == "gateway" {
+			return InstallRequest{}, invalidRequestField("serviceTransportURLs.gateway",
+				"the Gateway transport URL is derived from gatewayUrl and cannot be overridden", "Set gatewayUrl on the install request instead.", nil)
+		}
+		parsed, err := url.Parse(endpoint)
+		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return InstallRequest{}, invalidRequestField("serviceTransportURLs."+serviceID,
+				"service transport URL must be an absolute HTTP(S) URL without credentials, query or fragment", "Set a base service URL, then retry.", err)
 		}
 	}
 	if r.Platform.Version == "" && r.Platform.Channel == "" {
@@ -266,6 +282,19 @@ func (r InstallRequest) Normalize() (InstallRequest, error) {
 		delete(r.Values, key)
 	}
 	return r, nil
+}
+
+func validServiceID(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func validEnvironmentVariableName(value string) bool {

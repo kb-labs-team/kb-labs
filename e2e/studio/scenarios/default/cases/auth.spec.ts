@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 
 const GATEWAY = (process.env.GATEWAY_URL ?? 'http://127.0.0.1:4000').replace(/\/+$/, '')
 const enabled = process.env.KB_STUDIO_OAUTH_JOURNEY === '1'
@@ -8,17 +9,22 @@ const userEmail = process.env.KB_STUDIO_OIDC_EMAIL ?? process.env.KB_STUDIO_ADMI
 
 test.skip(!enabled, 'Enabled by the configured-OIDC Studio journey')
 
-test('configured identity providers are discoverable @S-109.1', async ({ request }) => {
+test('configured identity providers are discoverable @S-109.1', async ({ request, page }) => {
   const response = await request.get(`${GATEWAY}/api/auth/providers`)
   expect(response.status()).toBe(200)
 
-  const payload = await response.json() as {
+  const payload = unwrapGatewaySuccess<{
     providers?: Array<{ id: string; kind: string }>
-  }
+  }>(await response.json())
   expect(payload.providers).toEqual(expect.arrayContaining([
     expect.objectContaining({ id: 'email-password', kind: 'password' }),
     expect.objectContaining({ id: providerId, kind: 'redirect' }),
   ]))
+
+  await page.goto(`${GATEWAY}/login`)
+  await expect(page.getByRole('link', {
+    name: new RegExp(`continue with ${providerName}`, 'i'),
+  })).toBeVisible()
 })
 
 test('configured identity provider starts a stateful redirect @S-109.2', async ({ page }) => {
@@ -49,7 +55,7 @@ test(`${providerName} authenticates an existing tenant user @S-109.3`, async ({ 
 
   const profile = await page.request.get(`${GATEWAY}/api/auth/me`)
   expect(profile.status()).toBe(200)
-  const body = await profile.json() as { email?: string; tenantId?: string }
+  const body = unwrapGatewaySuccess<{ email?: string; tenantId?: string }>(await profile.json())
   expect(body.email?.toLowerCase()).toBe(userEmail!.toLowerCase())
   expect(body.tenantId).toBeTruthy()
   expect((await context.cookies(GATEWAY)).some(cookie => cookie.name === 'kb_access')).toBe(true)

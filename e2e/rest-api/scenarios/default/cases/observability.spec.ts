@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
 
 // Envelope middleware wraps all responses: { ok: true, data: <payload>, meta: {...} }
 
@@ -40,7 +40,7 @@ test('RA-OB-04: GET /observability/health contains checks array with registry en
   expect(Array.isArray(data.checks)).toBe(true)
   const registryCheck = data.checks.find((c: { id: string }) => c.id === 'registry')
   expect(registryCheck).toBeDefined()
-  expect(['ok', 'warn', 'fail']).toContain(registryCheck.status)
+  expect(['ok', 'warn', 'error']).toContain(registryCheck.status)
 })
 
 test('RA-OB-05: GET /observability/health has state field', async ({ request }) => {

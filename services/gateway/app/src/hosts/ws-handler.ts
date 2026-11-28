@@ -233,26 +233,6 @@ export function createWsHandler(
     await registry.setOnline(hostId, namespaceId, connectionId);
     globalDispatcher.registerConnection(hostId, namespaceId, socket, capabilities);
 
-    send(socket, {
-      type: 'connected',
-      protocolVersion,
-      hostId,
-      sessionId,
-    });
-
-    // 4. Flush buffered calls
-    const buffered = await buffer.flush(hostId);
-    for (const call of buffered) {
-      send(socket, {
-        type: 'call',
-        requestId: call.requestId,
-        adapter: call.adapter,
-        method: call.method,
-        args: call.args,
-        trace: { traceId: call.requestId, spanId: randomUUID() },
-      });
-    }
-
     // 5. Heartbeat watchdog
     let lastHeartbeat = Date.now();
     const heartbeatWatchdog = setInterval(async () => {
@@ -337,6 +317,28 @@ export function createWsHandler(
 
       await registry.setOffline(hostId, namespaceId, connectionId);
     });
+
+    // The client may send messages as soon as it receives connected.
+    send(socket, {
+      type: 'connected',
+      protocolVersion,
+      hostId,
+      sessionId,
+    });
+
+    // 4. Flush buffered calls
+    const buffered = await buffer.flush(hostId);
+    for (const call of buffered) {
+      send(socket, {
+        type: 'call',
+        requestId: call.requestId,
+        adapter: call.adapter,
+        method: call.method,
+        args: call.args,
+        trace: { traceId: call.requestId, spanId: randomUUID() },
+      });
+    }
+
   };
 
   /**

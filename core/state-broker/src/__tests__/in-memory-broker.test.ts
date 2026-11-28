@@ -35,6 +35,35 @@ describe('InMemoryStateBroker', () => {
       expect(result).toBeNull();
     });
 
+    it('applies concurrent sorted-set mutations atomically', async () => {
+      await Promise.all([
+        broker.zadd('queue', 1, 'first'),
+        broker.zadd('queue', 2, 'second'),
+        broker.zadd('queue', 3, 'third'),
+      ]);
+      expect(await broker.zrangebyscore('queue', 0, 10)).toEqual(['first', 'second', 'third']);
+
+      await Promise.all([
+        broker.zrem('queue', 'second'),
+        broker.zadd('queue', 4, 'fourth'),
+      ]);
+      expect(await broker.zrangebyscore('queue', 0, 10)).toEqual(['first', 'third', 'fourth']);
+    });
+
+    it('keeps delete and clear ordered after a sorted-set mutation starts', async () => {
+      const deleteWrite = broker.zadd('delete-queue', 1, 'new');
+      await Promise.resolve();
+      await broker.delete('delete-queue');
+      await deleteWrite;
+      expect(await broker.get('delete-queue')).toBeNull();
+
+      const clearWrite = broker.zadd('clear:queue', 1, 'new');
+      await Promise.resolve();
+      await broker.clear('clear:*');
+      await clearWrite;
+      expect(await broker.get('clear:queue')).toBeNull();
+    });
+
     it('should delete value', async () => {
       await broker.set('test-key', 'value', 60_000);
       await broker.delete('test-key');

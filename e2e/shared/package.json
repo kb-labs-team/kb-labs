@@ -7,6 +7,8 @@
     ".": "./src/index.ts",
     "./urls.js": "./src/urls.ts",
     "./auth.js": "./src/auth.ts",
+    "./project-rest.js": "./src/project-rest.ts",
+    "./project-auth-setup.js": "./src/project-auth-setup.ts",
     "./reporter.js": "./src/reporter.ts",
     "./flaky-reporter.js": "./src/flaky-reporter.ts"
   },

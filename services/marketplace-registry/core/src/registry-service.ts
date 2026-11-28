@@ -37,6 +37,11 @@ function shortIdentity(identity: string): string {
   return identity.slice(identity.lastIndexOf('/') + 1);
 }
 
+function versionIdentity(entry: RegistryEntry, version: RegistryVersionEntry): string | undefined {
+  const identity = version.meta?.identity ?? entry.meta?.identity;
+  return typeof identity === 'string' ? identity : undefined;
+}
+
 function canonicalIdentityNamespace(identity: string): string | undefined {
   const separator = identity.indexOf('/');
   if (!identity.startsWith('@') || separator <= 1 || separator === identity.length - 1) { return undefined; }
@@ -179,7 +184,7 @@ export class RegistryService {
     await this.storage.write(tarballPath, tarball);
 
     let signature: EntitySignature | undefined;
-    if (visibility === 'public' && this.signingPrivateKey) {
+    if (this.signingPrivateKey) {
       signature = this.signTarball(
         tarball,
         integrity,
@@ -478,8 +483,9 @@ export class RegistryService {
     const qualifiedIdentity = identity.includes('/');
     const matchingVersions = (entry: RegistryEntry, exact: boolean) => entry.versions.filter(version => {
       if (version.yanked || (requestedVersion && version.version !== requestedVersion)) { return false; }
-      const versionIdentity = version.meta?.identity ?? entry.meta.identity;
-      return exact ? versionIdentity === identity : shortIdentity(versionIdentity) === identity;
+      const candidateIdentity = versionIdentity(entry, version);
+      if (!candidateIdentity) { return false; }
+      return exact ? candidateIdentity === identity : shortIdentity(candidateIdentity) === identity;
     });
     const exactMatches = qualifiedIdentity ? entries.filter(entry => matchingVersions(entry, true).length > 0) : [];
     const shortMatches = entries.filter(entry => matchingVersions(entry, false).length > 0);
@@ -509,7 +515,10 @@ export class RegistryService {
     }
 
     const namespace = canonicalIdentityNamespace(identity);
-    if (namespace && entries.some(candidate => canonicalIdentityNamespace(candidate.meta.identity) === namespace)) {
+    if (namespace && entries.some(candidate => {
+      const candidateIdentity = candidate.meta?.identity;
+      return typeof candidateIdentity === 'string' && canonicalIdentityNamespace(candidateIdentity) === namespace;
+    })) {
       return { status: 'not-found-owned' };
     }
     const handle = identityHandle(identity);
@@ -528,14 +537,23 @@ export class RegistryService {
     identity?: string,
     exactIdentity = false,
   ): RegistryIdentityResolution {
-    const available = entry.versions.filter(version => !version.yanked && (!requestedVersion || version.version === requestedVersion) &&
-      (!identity || (exactIdentity ? (version.meta?.identity ?? entry.meta.identity) === identity :
-        shortIdentity(version.meta?.identity ?? entry.meta.identity) === identity)) &&
-      (includeDeniedVersion || this.canAccess(entry, callerNamespaceId, shareToken, version.version)));
+    const available = entry.versions.filter(version => {
+      if (version.yanked || (requestedVersion && version.version !== requestedVersion)) { return false; }
+      if (identity) {
+        const candidateIdentity = versionIdentity(entry, version);
+        if (!candidateIdentity || (exactIdentity ? candidateIdentity !== identity : shortIdentity(candidateIdentity) !== identity)) {
+          return false;
+        }
+      }
+      return includeDeniedVersion || this.canAccess(entry, callerNamespaceId, shareToken, version.version);
+    });
     const latest = available.at(-1) ?? (includeDeniedVersion
-      ? entry.versions.find(version => !version.yanked && (!requestedVersion || version.version === requestedVersion) &&
-        (!identity || (exactIdentity ? (version.meta?.identity ?? entry.meta.identity) === identity :
-          shortIdentity(version.meta?.identity ?? entry.meta.identity) === identity)))
+      ? entry.versions.find(version => {
+        if (version.yanked || (requestedVersion && version.version !== requestedVersion)) { return false; }
+        if (!identity) { return true; }
+        const candidateIdentity = versionIdentity(entry, version);
+        return !!candidateIdentity && (exactIdentity ? candidateIdentity === identity : shortIdentity(candidateIdentity) === identity);
+      })
       : undefined);
     if (!latest || entry.deprecated) { return { status: 'not-found-owned' }; }
     const meta = latest.meta ?? entry.meta;

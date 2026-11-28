@@ -1,7 +1,13 @@
-import { test, expect } from '@playwright/test'
-import { REST } from '@kb-labs/e2e-shared/urls.js'
+import { test, expect, type APIRequestContext } from '@playwright/test'
+import { getAccessToken } from '@kb-labs/e2e-shared/auth.js'
+import { REST, REST_API_PREFIX } from '@kb-labs/e2e-shared/urls.js'
 
-const BASE = `${REST}/api/v1`
+const BASE = `${REST}${REST_API_PREFIX}`
+
+async function projectAuthHeaders(request: APIRequestContext): Promise<Record<string, string>> {
+  if (!process.env.KB_PROJECT_ID) return {}
+  return { Authorization: `Bearer ${await getAccessToken(request)}` }
+}
 
 // Workflow SSE endpoints: only stream lifecycle tests (no real workflow running).
 // Full event-payload coverage lives in e2e/workflows/.
@@ -32,7 +38,7 @@ test('RA-WF-02: GET /workflows/runs/:runId/events response has no-cache header',
   expect(cc).toContain('no-cache')
 })
 
-test('RA-WF-03: GET /workflows/runs/:runId/events closes after idle timeout', async () => {
+test('RA-WF-03: GET /workflows/runs/:runId/events closes after idle timeout', async ({ request }) => {
   // Note: ?idleTimeoutMs query param may not be supported — skip gracefully if stream stays open.
   const idleMs = 2_000
   const url = `${BASE}/workflows/runs/${FAKE_RUN_ID}/events?idleTimeoutMs=${idleMs}`
@@ -43,7 +49,7 @@ test('RA-WF-03: GET /workflows/runs/:runId/events closes after idle timeout', as
   let streamClosed = false
   try {
     const res = await fetch(url, {
-      headers: { Accept: 'text/event-stream' },
+      headers: { Accept: 'text/event-stream', ...await projectAuthHeaders(request) },
       signal: ctrl.signal,
     })
     if (res.body) {
@@ -83,7 +89,7 @@ test('RA-WF-04: GET /workflows/runs/:runId/logs opens SSE stream', async ({ requ
   expect(ct).toContain('text/event-stream')
 })
 
-test('RA-WF-05: GET /workflows/runs/:runId/logs closes after idle timeout', async () => {
+test('RA-WF-05: GET /workflows/runs/:runId/logs closes after idle timeout', async ({ request }) => {
   // Note: ?idleTimeoutMs query param may not be supported — skip gracefully if stream stays open.
   const idleMs = 2_000
   const url = `${BASE}/workflows/runs/${FAKE_RUN_ID}/logs?idleTimeoutMs=${idleMs}`
@@ -94,7 +100,7 @@ test('RA-WF-05: GET /workflows/runs/:runId/logs closes after idle timeout', asyn
   let streamClosed = false
   try {
     const res = await fetch(url, {
-      headers: { Accept: 'text/event-stream' },
+      headers: { Accept: 'text/event-stream', ...await projectAuthHeaders(request) },
       signal: ctrl.signal,
     })
     if (res.body) {

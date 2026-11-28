@@ -18,15 +18,46 @@ from unittest.mock import patch
 import jsonl
 from service_steps import FlowGraph, Journey
 from journey_selection import JourneySelection, read_journey_selection
-from invocations import catalogued_error_hint, catalogued_error_message
+from invocations import (catalogued_error_hint, catalogued_error_message,
+                         read_kb_create_cli_result)
 from test_catalog_exit_status import catalogued_exit
 from installer_case_steps import (commit_marketplace_install_record,
                                   first_admin_credential_disclosed_once,
                                   requested_commit_marketplace_install_satisfied)
 import runner
 from runner import (REGISTRY, marketplace_install_flags, registry_gateway_url_from_plan,
-                    registry_install_request)
+                    read_apply_result, registry_install_config)
 import journey_resources
+
+
+class KbCreateApplyEnvelopeTests(unittest.TestCase):
+    # case: PC-001.2
+    def test_apply_reads_single_result_envelope_and_keeps_first_admin(self):
+        payload = {"operation": "apply", "firstAdmin": {
+            "state": "disclosed", "email": "admin@example.test", "password": "one-time"}}
+        result = subprocess.CompletedProcess(
+            ["kb-create", "apply", "--json"], 0,
+            json.dumps({"ok": True, "data": payload}), "")
+
+        envelope, data = read_apply_result(result)
+
+        self.assertEqual(envelope["data"], payload)
+        self.assertEqual(data["firstAdmin"]["password"], "one-time")
+        self.assertEqual(data["firstAdmin"]["state"], "disclosed")
+
+    def test_install_stream_reader_still_accepts_jsonl_result(self):
+        output = "\n".join([
+            json.dumps({"ok": True, "data": {"message": "installing"}}),
+            json.dumps({"ok": True, "data": {"operation": "install"},
+                        "meta": {"stream": {"result": True}}}),
+            json.dumps({"ok": True, "data": None,
+                        "meta": {"stream": {"terminal": True, "exitCode": 0}}}),
+        ])
+        result = subprocess.CompletedProcess(["kb-create", "install", "--json"], 0, output, "")
+
+        envelope = read_kb_create_cli_result("install", result)
+
+        self.assertEqual(envelope["data"]["operation"], "install")
 
 
 class WorkflowHostStateBoundaryTests(unittest.TestCase):
@@ -137,25 +168,25 @@ class MarketplaceInstallFlagTests(unittest.TestCase):
         ])
 
     # case: S-268.1
-    def test_install_request_configures_route_and_transport_before_apply(self):
-        prepared = registry_install_request({
+    def test_install_config_configures_route_and_transport_without_mutating_plan(self):
+        plan_data = {
             "plan": {
                 "request": {"schema": "kb.create/v2", "marketplaceSources": {"registryUrl": "http://old"}},
-                "configPatches": [{"path": "/platform/adapterOptions", "json": json.dumps({
-                    "serviceTransport": {"services": {"marketplace": {"url": "http://127.0.0.1:5070"}}},
-                })}],
             },
-        }, gateway_url="http://127.0.0.1:4317", registry_upstream="http://marketplace-tamper:8081")
+        }
+        prepared = registry_install_config({
+            **plan_data,
+            "plan": {**plan_data["plan"], "host": {"healthUrl": "http://127.0.0.1:4317/health"}},
+        }, registry_upstream="http://marketplace-tamper:8081")
         self.assertEqual(prepared["marketplaceSources"]["registryUrl"],
                          "http://127.0.0.1:4317/api/v1/marketplace-registry")
         self.assertIn("gateway.internalSecret", prepared["secretInputs"])
-        self.assertEqual(json.loads(prepared["values"]["gateway.marketplaceRegistryRoute"]), {
+        self.assertEqual(prepared["serviceTransportURLs"], {"marketplace-registry": "http://marketplace-tamper:8081"})
+        self.assertEqual(prepared["values"]["gateway.marketplaceRegistryRoute"], {
             "serviceId": "marketplace-registry", "prefix": "/api/v1/marketplace-registry", "rewritePrefix": "",
         })
-        self.assertEqual(json.loads(prepared["values"]["platform.adapterOptions"])["serviceTransport"]["services"], {
-            "marketplace": {"url": "http://127.0.0.1:5070"},
-            "marketplace-registry": {"url": "http://marketplace-tamper:8081"},
-        })
+        self.assertNotIn("platform.adapterOptions", prepared["values"])
+        self.assertEqual(plan_data["plan"]["request"]["marketplaceSources"]["registryUrl"], "http://old")
 
     def test_clean_install_requires_the_marketplace_commit_receipt(self):
         self.assertIsNotNone(commit_marketplace_install_record({"marketplaceInstalls": [

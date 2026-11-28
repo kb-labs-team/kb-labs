@@ -1,5 +1,5 @@
 import { test, expect, type APIRequestContext } from '@playwright/test';
-import { WORKFLOW } from '@kb-labs/e2e-shared/urls.js';
+import { WORKFLOW, WORKFLOW_API_PREFIX } from '@kb-labs/e2e-shared/urls.js';
 
 // Job execution API: /api/v1/jobs
 // These tests cover the raw job layer (below workflow runs).
@@ -10,7 +10,7 @@ async function submitJob(
   request: APIRequestContext,
   handler = 'e2e-hello#default',
 ): Promise<string> {
-  const res = await request.post(`${WORKFLOW}/api/v1/jobs`, {
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs`, {
     data: { type: handler, payload: {} },
   });
   expect([200, 201]).toContain(res.status());
@@ -23,7 +23,7 @@ async function submitJob(
 // ── tests ─────────────────────────────────────────────────────────────────────
 
 test('WJ-01: GET /api/v1/jobs returns an array', async ({ request }) => {
-  const res = await request.get(`${WORKFLOW}/api/v1/jobs`);
+  const res = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs`);
   expect(res.status()).toBe(200);
   const body = await res.json();
   const jobs = body.data?.jobs ?? body.data ?? body.jobs;
@@ -31,7 +31,7 @@ test('WJ-01: GET /api/v1/jobs returns an array', async ({ request }) => {
 });
 
 test('WJ-02: POST /api/v1/jobs submits a job and returns a jobId', async ({ request }) => {
-  const res = await request.post(`${WORKFLOW}/api/v1/jobs`, {
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs`, {
     data: { type: 'e2e-hello#default', payload: { source: 'wj-02' } },
   });
   expect([200, 201], 'e2e-hello#default handler must be registered by the workflow service').toContain(res.status());
@@ -44,7 +44,7 @@ test('WJ-02: POST /api/v1/jobs submits a job and returns a jobId', async ({ requ
 
 test('WJ-03: GET /api/v1/jobs/:jobId returns job detail', async ({ request }) => {
   // Submit a job first so we have a real ID
-  const res = await request.post(`${WORKFLOW}/api/v1/jobs`, {
+  const res = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs`, {
     data: { type: 'e2e-hello#default', payload: {} },
   });
   expect([200, 201], 'e2e-hello#default handler must be registered by the workflow service').toContain(res.status());
@@ -53,16 +53,16 @@ test('WJ-03: GET /api/v1/jobs/:jobId returns job detail', async ({ request }) =>
   const jobId: string = submitBody.data?.jobId ?? submitBody.data?.id ?? submitBody.jobId;
   expect(jobId).toBeTruthy();
 
-  const detailRes = await request.get(`${WORKFLOW}/api/v1/jobs/${jobId}`);
+  const detailRes = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs/${jobId}`);
   expect(detailRes.status()).toBe(200);
   const body = await detailRes.json();
   const job = body.data?.job ?? body.data ?? body;
   expect(job?.id ?? job?.jobId).toBeTruthy();
-  expect(job?.status).toMatch(/pending|running|completed|failed|cancelled/);
+  expect(['queued', 'running', 'success', 'failed', 'cancelled', 'skipped', 'dlq']).toContain(job?.status);
 });
 
 test('WJ-04: GET /api/v1/jobs/:jobId/logs returns log entries array', async ({ request }) => {
-  const submitRes = await request.post(`${WORKFLOW}/api/v1/jobs`, {
+  const submitRes = await request.post(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs`, {
     data: { type: 'e2e-hello#default', payload: {} },
   });
   expect([200, 201], 'e2e-hello#default handler must be registered by the workflow service').toContain(submitRes.status());
@@ -72,7 +72,7 @@ test('WJ-04: GET /api/v1/jobs/:jobId/logs returns log entries array', async ({ r
   expect(jobId).toBeTruthy();
 
   // Logs may be empty while job is pending — just verify endpoint responds correctly
-  const logsRes = await request.get(`${WORKFLOW}/api/v1/jobs/${jobId}/logs`);
+  const logsRes = await request.get(`${WORKFLOW}${WORKFLOW_API_PREFIX}/jobs/${jobId}/logs`);
   expect(logsRes.status()).toBe(200);
   const body = await logsRes.json();
   const logs = body.data?.logs ?? body.data ?? body.logs;

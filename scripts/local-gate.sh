@@ -19,8 +19,24 @@ while (($#)); do
   esac
   shift
 done
+BASE_COMMIT=""
+for candidate in 'origin/HEAD^{commit}' 'origin/master^{commit}'; do
+  if resolved="$(git rev-parse --verify --quiet "$candidate" 2>/dev/null)"; then
+    BASE_COMMIT="$resolved"
+    break
+  fi
+done
+if [[ -z "$BASE_COMMIT" ]] && ! git remote get-url origin >/dev/null 2>&1; then
+  BASE_COMMIT="$(git rev-parse --verify --quiet 'local/main^{commit}' 2>/dev/null || true)"
+fi
+BASE_RANGE="HEAD"
+[[ -z "$BASE_COMMIT" ]] || BASE_RANGE="$BASE_COMMIT...HEAD"
 [[ "$MODE" == quick || "$MODE" == batch ]] || { echo "Usage: scripts/local-gate.sh quick [--packages a,b] [--dry-run] | batch [--full] [--dry-run] [--keep-going]" >&2; exit 2; }
 if [[ "$MODE" == quick && "$FULL" == 1 ]]; then echo "local-gate: --full is only available with batch" >&2; exit 2; fi
+if [[ ( "$MODE" == batch || -z "$PACKAGES" ) && -z "$BASE_COMMIT" ]]; then
+  echo "local-gate: no base commit found; fetch origin and update origin/HEAD or origin/master" >&2
+  exit 2
+fi
 if ! command -v go >/dev/null 2>&1; then
   echo "local-gate: Go 1.26 is required to build kb-devkit from this checkout." >&2
   echo "Install Go from https://go.dev/dl/ (Homebrew: brew install go), then rerun: scripts/local-gate.sh $MODE" >&2
@@ -48,11 +64,11 @@ trap cleanup_devkit EXIT
 
 if [[ "$MODE" == quick ]]; then
   if [[ -z "$PACKAGES" ]]; then
-    git rev-parse --verify local/main >/dev/null 2>&1 || { echo "local-gate: local/main is required; update the local main ref, then rerun this command" >&2; exit 2; }
-    PACKAGES="$(python3 - <<'PY'
-import json, pathlib, subprocess
+    PACKAGES="$(LOCAL_GATE_BASE_RANGE="$BASE_RANGE" python3 - <<'PY'
+import json, os, pathlib, subprocess
 files=set()
-for args in (["git","diff","--name-only","local/main...HEAD"],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
+base_range = os.environ["LOCAL_GATE_BASE_RANGE"]
+for args in (["git","diff","--name-only",base_range],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
     files.update(subprocess.check_output(args,text=True).splitlines())
 names=set()
 for file in files:
@@ -83,10 +99,11 @@ PY
   for package in "${package_list[@]}"; do
     "$DEVKIT_BIN" run type-check test --packages "$package"
   done
-  go_packages="$(python3 - <<'PY'
-import pathlib, subprocess
+  go_packages="$(LOCAL_GATE_BASE_RANGE="$BASE_RANGE" python3 - <<'PY'
+import os, pathlib, subprocess
 files=set()
-for args in (["git","diff","--name-only","local/main...HEAD"],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
+base_range = os.environ["LOCAL_GATE_BASE_RANGE"]
+for args in (["git","diff","--name-only",base_range],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
     files.update(subprocess.check_output(args,text=True).splitlines())
 print("\n".join(sorted({"./"+str(pathlib.Path(f).parent.relative_to("tools/kb-create")) for f in files if f.startswith("tools/kb-create/") and f.endswith(".go")})))
 PY
@@ -101,11 +118,11 @@ fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT="$ROOT/.kb/local-gate/$STAMP"
-git rev-parse --verify local/main >/dev/null 2>&1 || { echo "local-gate: local/main is required; update the local main ref, then rerun batch" >&2; exit 2; }
-changed_packages="$(python3 - <<'PY'
-import json, pathlib, subprocess
+changed_packages="$(LOCAL_GATE_BASE_RANGE="$BASE_RANGE" python3 - <<'PY'
+import json, os, pathlib, subprocess
 files=set()
-for args in (["git","diff","--name-only","local/main...HEAD"],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
+base_range = os.environ["LOCAL_GATE_BASE_RANGE"]
+for args in (["git","diff","--name-only",base_range],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
     files.update(subprocess.check_output(args,text=True).splitlines())
 names=set()
 for file in files:
@@ -120,11 +137,12 @@ for file in files:
 print(",".join(sorted(names)))
 PY
 )"
-[[ -n "$changed_packages" ]] || { echo "local-gate: no changed workspace packages found relative to local/main" >&2; exit 2; }
-go_packages="$(python3 - <<'PY'
-import pathlib, subprocess
+[[ -n "$changed_packages" ]] || { echo "local-gate: no changed workspace packages found relative to $BASE_COMMIT" >&2; exit 2; }
+go_packages="$(LOCAL_GATE_BASE_RANGE="$BASE_RANGE" python3 - <<'PY'
+import os, pathlib, subprocess
 files=set()
-for args in (["git","diff","--name-only","local/main...HEAD"],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
+base_range = os.environ["LOCAL_GATE_BASE_RANGE"]
+for args in (["git","diff","--name-only",base_range],["git","diff","--name-only"],["git","diff","--name-only","--cached"]):
     files.update(subprocess.check_output(args,text=True).splitlines())
 print("\n".join(sorted({"./"+str(pathlib.Path(f).parent.relative_to("tools/kb-create")) for f in files if f.startswith("tools/kb-create/") and f.endswith(".go")})))
 PY
@@ -222,7 +240,7 @@ if [[ "${INSTALL_FAILED:-0}" == 1 ]]; then
   if ((!FULL)); then block_stage "${STAGE_NAMES[$((JOURNEY_STAGE + 1))]}" 'blocked because frozen install failed'; fi
   block_stage "${STAGE_NAMES[$AGGREGATION_STAGE]}" 'blocked because frozen install failed'
 else
-stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF=local/main...HEAD "$DEVKIT_BIN" run build --affected || exit 1
+stage "${STAGE_NAMES[1]}" env KB_DEVKIT_BASE_REF="$BASE_RANGE" "$DEVKIT_BIN" run build --affected || exit 1
 if [[ ! -f "$ROOT/cli/bin/dist/bin.js" ]]; then
   echo "local-gate: built workspace CLI is missing at $ROOT/cli/bin/dist/bin.js; run: kb-devkit run build --affected" >&2
   exit 1
@@ -231,7 +249,7 @@ stage "${STAGE_NAMES[2]}" node ./cli/bin/dist/bin.js qa cases validate || exit 1
 # The release plugin (Commit) suites always run: a change elsewhere must not
 # leave the only release-contour plugin untested (they were red unnoticed).
 RELEASE_PLUGIN_PACKAGES='@kb-labs/commit,@kb-labs/commit/core'
-stage "${STAGE_NAMES[3]}" bash -c 'env KB_DEVKIT_BASE_REF=local/main...HEAD "$1" run lint type-check test --affected && "$1" run test --packages "$2"' _ "$DEVKIT_BIN" "$RELEASE_PLUGIN_PACKAGES" || exit 1
+stage "${STAGE_NAMES[3]}" bash -c 'env KB_DEVKIT_BASE_REF="$3" "$1" run lint type-check test --affected && "$1" run test --packages "$2"' _ "$DEVKIT_BIN" "$RELEASE_PLUGIN_PACKAGES" "$BASE_RANGE" || exit 1
 TEMP_HOME="$(mktemp -d "${TMPDIR:-/tmp}/kb-create-local-gate.XXXXXX")"
 go_index=0
 while IFS= read -r package; do stage "${STAGE_NAMES[$((GO_STAGE_START + go_index))]}" bash -c 'cd tools/kb-create && env -u KB_PLATFORM_ROOT -u KB_HOME -u KB_NET_OFFSET HOME="$1" go test "$2"' _ "$TEMP_HOME" "$package" || exit 1; go_index=$((go_index + 1)); done <<< "$go_packages"

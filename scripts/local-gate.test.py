@@ -102,6 +102,14 @@ class LocalGateExecutionTests(unittest.TestCase):
         calls = log.read_text().splitlines() if log.exists() else []
         return result, report, calls
 
+    def run_quick(self, *args):
+        env = os.environ.copy()
+        env.update({"PATH": f"{self.bin}{os.pathsep}{env['PATH']}", "TMPDIR": self.temp.name})
+        return subprocess.run(
+            ["bash", "scripts/local-gate.sh", "quick", *args], cwd=self.root,
+            env=env, text=True, capture_output=True,
+        )
+
     @staticmethod
     def stages(report):
         return {item["name"]: item for item in report["stages"]}
@@ -149,6 +157,46 @@ class LocalGateExecutionTests(unittest.TestCase):
         dry, _, _ = self.run_gate("--full", "--dry-run")
         self.assertEqual(dry.returncode, 0, dry.stderr)
         self.assertIn("full release case journey matrix", dry.stdout)
+
+    def test_quick_uses_origin_default_branch_when_local_main_is_stale(self):
+        unrelated = self.root / "packages/unrelated"
+        unrelated.mkdir()
+        (unrelated / "package.json").write_text('{"name":"@test/unrelated"}\n')
+        subprocess.run(["git", "add", "packages/unrelated/package.json"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "advance default branch"], cwd=self.root, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/master", "HEAD"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"],
+            cwd=self.root, check=True,
+        )
+
+        result = self.run_quick("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("quick packages: @test/gate", result.stdout)
+        self.assertNotIn("@test/unrelated", result.stdout)
+
+    def test_quick_falls_back_to_origin_master_when_origin_head_is_dangling(self):
+        unrelated = self.root / "packages/unrelated"
+        unrelated.mkdir()
+        (unrelated / "package.json").write_text('{"name":"@test/unrelated"}\n')
+        subprocess.run(["git", "add", "packages/unrelated/package.json"], cwd=self.root, check=True)
+        subprocess.run(["git", "commit", "-qm", "advance default branch"], cwd=self.root, check=True)
+        subprocess.run(["git", "update-ref", "refs/remotes/origin/master", "HEAD"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/missing"],
+            cwd=self.root, check=True,
+        )
+
+        result = self.run_quick("--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("quick packages: @test/gate", result.stdout)
+        self.assertNotIn("@test/unrelated", result.stdout)
+
+    def test_quick_explicit_package_selection_bypasses_base_detection(self):
+        subprocess.run(["git", "update-ref", "-d", "refs/heads/local/main"], cwd=self.root, check=True)
+        result = self.run_quick("--packages", "@test/selected", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("quick packages: @test/selected", result.stdout)
 
     def test_missing_go_reports_a_working_install_step(self):
         no_go_bin = Path(self.temp.name) / "no-go-bin"

@@ -31,6 +31,7 @@ type planInput struct {
 	Operation     string
 	Index         string
 	RequestFile   string
+	ConfigFile    string
 	Request       *contracts.InstallRequest
 	Direct        directRequest
 	ScenarioID    string
@@ -57,14 +58,14 @@ type planResult struct {
 }
 
 type planCommandInput struct {
-	Index, RequestFile, ScenarioID, Answers, Executable string
-	RetryCommand                                        string
-	Direct                                              directRequest
-	Resume                                              bool
-	KnownGateways                                       []gateway.Root
-	TelemetryEndpoint                                   string
-	TelemetryConsent                                    bool
-	Arguments                                           []string
+	Index, RequestFile, ConfigFile, ScenarioID, Answers, Executable string
+	RetryCommand                                                    string
+	Direct                                                          directRequest
+	Resume                                                          bool
+	KnownGateways                                                   []gateway.Root
+	TelemetryEndpoint                                               string
+	TelemetryConsent                                                bool
+	Arguments                                                       []string
 }
 
 func executePlan(_ context.Context, request planCommandInput) (planResult, *diag.Diag) {
@@ -76,7 +77,7 @@ func executePlan(_ context.Context, request planCommandInput) (planResult, *diag
 			string(plan.Request.Platform.Channel), string(plan.Request.Source), len(plan.Artifacts), time.Since(started)))
 	}()
 
-	resolved, failure := resolvePlan(planInput{Index: request.Index, RequestFile: request.RequestFile, Direct: request.Direct,
+	resolved, failure := resolvePlan(planInput{Index: request.Index, RequestFile: request.RequestFile, ConfigFile: request.ConfigFile, Direct: request.Direct,
 		Operation: "plan", ScenarioID: request.ScenarioID, Answers: request.Answers, Resume: request.Resume,
 		Executable: request.Executable, KnownGateways: request.KnownGateways, Arguments: request.Arguments})
 	if failure != nil {
@@ -252,26 +253,46 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 		planOptions.Operation = resolve.OperationUpdate
 	}
 	var response transport.PlanResponse
+	var pendingScenario *compiledScenarioState
+	var config installConfig
+	if input.ConfigFile != "" {
+		config, err = readInstallConfig(input.ConfigFile)
+		if err != nil {
+			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "install config could not be read", "supply a valid JSON config containing declared values and Marketplace source settings", err)
+		}
+	}
 	if input.Request != nil {
-		data, marshalErr := json.Marshal(input.Request)
+		request := *input.Request
+		if input.ConfigFile != "" {
+			request, err = mergeInstallConfig(request, config)
+			if err != nil {
+				return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "install config is invalid", "correct the declared config values and retry", err)
+			}
+		}
+		data, marshalErr := json.Marshal(request)
 		if marshalErr != nil {
 			return resolvedPlan{}, failure(contracts.CodeInputRequired, "install request could not be encoded", "correct direct CI flags or provide --input", marshalErr)
 		}
 		response = transport.PlanWith(data, source, planOptions)
 	} else if input.RequestFile != "" {
-		data := requestData
+		request, decodeErr := transport.DecodeRequest(requestData)
+		if decodeErr != nil {
+			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a V2 request or saved kb-create plan JSON", decodeErr)
+		}
 		if input.Operation == "update" {
-			var request contracts.InstallRequest
-			if err := json.Unmarshal(data, &request); err != nil {
-				return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be read", "supply a readable V2 request JSON file", err)
-			}
 			if sources := input.Direct.marketplaceSources(); sources != nil {
 				request.MarketplaceSources = sources
-				data, err = json.Marshal(request)
-				if err != nil {
-					return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be encoded", "correct the update request JSON, then retry", err)
-				}
 			}
+		}
+		if input.ConfigFile != "" {
+			request, err = mergeInstallConfig(request, config)
+			if err != nil {
+				return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "install config is invalid", "correct the declared config values and retry", err)
+			}
+		}
+		data, marshalErr := json.Marshal(request)
+		if marshalErr != nil {
+			return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "request could not be encoded", "correct the request JSON, then retry", marshalErr)
 		}
 		response = transport.PlanWith(data, source, planOptions)
 	} else {
@@ -316,13 +337,21 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			if !slices.Contains(ids, input.ScenarioID) {
 				return resolvedPlan{}, failure("KB_INSTALL_SCENARIO_INVALID", "unknown scenario", "Pass --scenario with one of: "+strings.Join(ids, ", "), nil)
 			}
-			request, requestErr = compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
+			compiledRequest, compiled, compileErr := compileScenario(input.ScenarioID, input.Answers, input.Resume, request)
+			request, requestErr = compiledRequest, compileErr
 			if requestErr != nil {
 				var staging *versionroot.OwnershipStagingArtifactError
 				if errors.Is(requestErr, versionroot.ErrOwnershipPublicationConflict) || errors.As(requestErr, &staging) {
 					return resolvedPlan{}, unsupportedPlatformLayout(request.PlatformRoot, requestErr)
 				}
 				return resolvedPlan{}, failure("KB_INSTALL_SCENARIO_INVALID", "scenario could not be compiled", "inspect scenario answers and manifest requirements", requestErr)
+			}
+			pendingScenario = &compiled
+		}
+		if input.ConfigFile != "" {
+			request, requestErr = mergeInstallConfig(request, config)
+			if requestErr != nil {
+				return resolvedPlan{}, failure("KB_INSTALL_INPUT_REQUIRED", "install config is invalid", "correct the declared config values and retry", requestErr)
 			}
 		}
 		data, marshalErr := json.Marshal(request)
@@ -342,6 +371,9 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 			}
 		}
 		return resolvedPlan{}, response.Error
+	}
+	if err := validateConfigValues(response.Plan.Request, response.Plan.Artifacts); err != nil {
+		return resolvedPlan{}, failure(contracts.CodeInputRequired, "install config contains an unsafe value", "use typed Marketplace source settings and the manifest-declared secret environment reference", err)
 	}
 	state, err := host.StateHome(response.Plan.Request.PlatformRoot)
 	if err != nil {
@@ -424,6 +456,11 @@ func resolvePlan(input planInput) (resolvedPlan, *diag.Diag) {
 				}
 				return resolvedPlan{}, response.Error
 			}
+		}
+	}
+	if pendingScenario != nil {
+		if err := scenario.SaveState(response.Plan.Request.PlatformRoot, pendingScenario.definition, pendingScenario.state); err != nil {
+			return resolvedPlan{}, failure("KB_INSTALL_SCENARIO_INVALID", "scenario answers could not be saved", "check platform-root permissions, then retry the validated request", err)
 		}
 	}
 	return resolvedPlan{Catalog: source, Plan: *response.Plan, State: state}, nil

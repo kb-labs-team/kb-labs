@@ -97,6 +97,9 @@ export interface PackageSource {
 
   /** Return a copy of this source with a per-request share token injected (optional) */
   withShareToken?(token: string): PackageSource;
+
+  /** Auth headers for a resolved artifact URL, scoped by the source implementation to its trusted origin. */
+  getArtifactRequestHeaders?(downloadUrl: string): Record<string, string>;
 }
 
 export type MarketplaceSourceKind = 'registry' | 'npm';

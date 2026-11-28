@@ -177,7 +177,8 @@ class DockerBuildInputsTest(unittest.TestCase):
     # case: S-262.23
     def test_e2e_readiness_waits_for_registered_project_after_install(self):
         entrypoint = (ROOT / "e2e" / "platform" / "entrypoint.sh").read_text()
-        apply = entrypoint.index("kb-create apply \\")
+        registry_apply = entrypoint.index("kb-create apply --index /release-index.json --input")
+        default_apply = entrypoint.index('kb-create apply "$@"')
         fixtures = entrypoint.index("mkdir -p .kb/workflows")
         login = entrypoint.index("| kb auth login")
         register = entrypoint.index('kb project add "$PLATFORM_ROOT"')
@@ -185,7 +186,8 @@ class DockerBuildInputsTest(unittest.TestCase):
         restart = entrypoint.index('kb-create restart --platform-root')
         host_readiness = entrypoint.index('curl -sf http://localhost:4000/ready')
         ready = entrypoint.index('touch "$READY_FILE"')
-        self.assertLess(apply, fixtures)
+        self.assertLess(registry_apply, default_apply)
+        self.assertLess(default_apply, fixtures)
         self.assertLess(fixtures, login)
         self.assertLess(login, register)
         self.assertLess(register, configure_provider)

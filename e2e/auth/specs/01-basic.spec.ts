@@ -4,6 +4,7 @@
  */
 
 import { test, expect } from '@playwright/test'
+import { unwrapGatewaySuccess } from '@kb-labs/e2e-shared/auth.js'
 import { loginAsAdmin, cookieMap, GATEWAY, ADMIN_EMAIL, ADMIN_PASSWORD } from '../fixtures/auth.js'
 
 // ── 1. Cold visit without cookie → redirect to /login ─────────────────────────
@@ -160,7 +161,7 @@ test('AUTH-CD4: email canonicalization — login with uppercase/padded email suc
     headers: { Cookie: cookieHeader },
   })
   expect(meRes.status()).toBe(200)
-  const me = await meRes.json() as { email: string }
+  const me = unwrapGatewaySuccess<{ email: string }>(await meRes.json())
   // Server stores and returns canonical (lowercase, trimmed) email.
   expect(me.email).toBe(ADMIN_EMAIL.toLowerCase().trim())
 })
